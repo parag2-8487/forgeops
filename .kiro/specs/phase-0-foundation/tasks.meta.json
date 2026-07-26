@@ -1,0 +1,796 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Create the Phase 0 monorepo structure directly in the workspace root": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022688773
+      },
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022711989
+      },
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785023308415
+      }
+    ],
+    "1.2 Add the settled two-licence layout and project identity": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022688896
+      },
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785023315549
+      }
+    ],
+    "1.3 Add the committed environment baseline and idempotent initialization": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022688956
+      },
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785023316618
+      }
+    ],
+    "1.4 Configure repository ignores and pre-commit hygiene": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689016
+      },
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785023317731
+      }
+    ],
+    "1.5 Create the initial root Makefile and bootstrap contracts": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689113
+      },
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785023319008
+      }
+    ],
+    "1.6 Write the Phase 0 contributor and architecture documentation": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689172
+      },
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785023320040
+      }
+    ],
+    "1.7 Create the initial root `PROGRESS.md`": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689234
+      }
+    ],
+    "1.8 Test the repository-boundary safeguards": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689292
+      }
+    ],
+    "2.1 Define the exact backend package metadata and dependency source of truth": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689349
+      }
+    ],
+    "2.2 Add reproducible runtime and development lock workflows": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689421
+      }
+    ],
+    "2.3 Implement strict project configuration loading without ambient-environment false positives": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689481
+      }
+    ],
+    "2.4 Implement structured logging and RFC 9457 problem primitives": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689538
+      }
+    ],
+    "2.5 Implement backend W3C Trace Context primitives and middleware": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689702
+      }
+    ],
+    "2.6 Implement the engine-neutral task seam, SSE vocabulary, and core middleware": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689765
+      }
+    ],
+    "2.7 Run backend-core unit tests": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689827
+      }
+    ],
+    "3.1 Initialize the Go 1.26 module and structural package boundary": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689888
+      }
+    ],
+    "3.2 Implement the typed Go configuration loader": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022689957
+      }
+    ],
+    "3.3 Implement Go structured logging and redaction": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690056
+      }
+    ],
+    "3.4 Implement Go trace propagation and the telemetry seam": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690122
+      }
+    ],
+    "3.5 Implement atomic file operations, path guards, backups, and unified diffs": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690187
+      }
+    ],
+    "3.6 Implement the real fsnotify watcher seam": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690246
+      }
+    ],
+    "3.7 Exercise self-update signature verification without implementing auto-update": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690315
+      }
+    ],
+    "3.8 Write property test P-08 for atomic change sets": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690379
+      }
+    ],
+    "3.9 Write cross-runtime property test P-13 for trace context": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690473
+      }
+    ],
+    "3.10 Write cross-runtime property test P-15 for configuration strictness": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690532
+      }
+    ],
+    "3.11 Run Go primitive tests and module-boundary checks": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690596
+      }
+    ],
+    "4.1 Create the initial Compose data plane": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690663
+      }
+    ],
+    "4.2 Implement the Phase 0 OPA gateway policy": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690727
+      }
+    ],
+    "4.3 Validate the staged data plane and policy": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690785
+      }
+    ],
+    "5.1 Implement async database/session primitives": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690846
+      }
+    ],
+    "5.2 Implement the three Phase 0 SQLModel tables": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022690913
+      }
+    ],
+    "5.3 Configure Alembic and write the only Phase 0 migration": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691012
+      }
+    ],
+    "5.4 Test the initial schema against PostgreSQL": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691075
+      }
+    ],
+    "5.5 Implement the backend app factory, non-destructive lifespan, and probes": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691132
+      }
+    ],
+    "5.6 Test lifespan and health during dependency loss and recovery": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691204
+      }
+    ],
+    "5.7 Containerize the backend and add its default Compose service": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691267
+      }
+    ],
+    "6.1 Scaffold the exact frontend package and build configuration": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691354
+      }
+    ],
+    "6.2 Implement shadcn primitives, providers, UI state, and the form standard": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691436
+      }
+    ],
+    "6.3 Implement the RFC 9457-aware API client and public environment contract": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691499
+      }
+    ],
+    "6.4 Build the shell with one real accessible Home link": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691568
+      }
+    ],
+    "6.5 Write property test P-14 for frontend error normalization": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691634
+      }
+    ],
+    "6.6 Run frontend unit and accessibility tests": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691699
+      }
+    ],
+    "6.7 Add Playwright shell coverage and a k6 health smoke script": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691760
+      }
+    ],
+    "6.8 Containerize the frontend and add its default Compose service": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691837
+      }
+    ],
+    "6.9 Test frontend build-time URL inlining": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691932
+      }
+    ],
+    "7.1 Add readiness polling and wire `make up` without changing direct Compose behavior": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022691994
+      }
+    ],
+    "7.2 Test exact fresh-clone default service topology": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692056
+      }
+    ],
+    "7.3 Test default-profile liveness/readiness outage semantics": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692152
+      }
+    ],
+    "8.1 Implement JSON-RPC envelopes and the real coder/websocket transport": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692223
+      }
+    ],
+    "8.2 Implement read-only Docker and Kubernetes doctor probes": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692289
+      }
+    ],
+    "8.3 Run transport and probe tests": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692353
+      }
+    ],
+    "9.1 Implement the runner contract, bounded execution, and output streaming": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692418
+      }
+    ],
+    "9.2 Implement platform-specific process-tree termination": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692492
+      }
+    ],
+    "9.3 Implement isolated OpenTofu child environments": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692559
+      }
+    ],
+    "9.4 Implement `Validate` and `Plan` with fake-binary and unit coverage": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692629
+      }
+    ],
+    "9.5 Add the exact provider fixture, six-platform lock, shared sample, devtools image, and tools profile": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692727
+      }
+    ],
+    "9.6 Run real OpenTofu and lock-integrity integration tests": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692795
+      }
+    ],
+    "9.7 Write property test P-12 for environment isolation": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692859
+      }
+    ],
+    "10.1 Define the Git/PR contracts and token seam": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692924
+      }
+    ],
+    "10.2 Implement local branch, stage, commit, and push operations": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022692988
+      }
+    ],
+    "10.3 Implement PR creation, status retrieval, and bounded polling": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693086
+      }
+    ],
+    "10.4 Run the complete GitOps flow tests": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693156
+      }
+    ],
+    "11.1 Build the server and shared handler middleware": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693221
+      }
+    ],
+    "11.2 Register only the three non-mutating Phase 0 tools": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693288
+      }
+    ],
+    "11.3 Test the Go MCP protocol surface": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693357
+      }
+    ],
+    "12.1 Implement registry loading, header routing, and OIDC verification": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693426
+      }
+    ],
+    "12.2 Implement Redis-authoritative tool-list TTL caching": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693491
+      }
+    ],
+    "12.3 Implement OPA policy, upstream transport, and side-effect-free metadata resolution": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693599
+      }
+    ],
+    "12.4 Implement the Redis Tasks Extension state machine": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693679
+      }
+    ],
+    "12.5 Implement MCP Apps sandbox hosting": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693752
+      }
+    ],
+    "12.6 Implement the Python MCP server template": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693825
+      }
+    ],
+    "12.7 Implement and wire the `tools/list` gateway path": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022693888
+      }
+    ],
+    "12.8 Implement and wire the `tools/call` gateway path": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694010
+      }
+    ],
+    "12.9 Write property test P-05 for gateway routing and zero upstream work": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694082
+      }
+    ],
+    "12.10 Write property and real-Redis integration coverage for P-06": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694159
+      }
+    ],
+    "12.11 Write stateful/concurrent property test P-10": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694239
+      }
+    ],
+    "12.12 Run end-to-end MCP gateway tests": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694309
+      }
+    ],
+    "13.1 Implement six-tier configuration and endpoint descriptor validation": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694386
+      }
+    ],
+    "13.2 Implement `ModelEndpoint`, `EndpointRegistry`, and production `OpenAICompatibleEndpoint`": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694458
+      }
+    ],
+    "13.3 Implement the per-endpoint circuit breaker registry": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694530
+      }
+    ],
+    "13.4 Implement the tiered semantic cache and recoverable index setup": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694631
+      }
+    ],
+    "13.5 Implement BYO-key resolvers and only then add the vault profile": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694696
+      }
+    ],
+    "13.6 Implement the Redis/Lua atomic token bucket": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694760
+      }
+    ],
+    "13.7 Implement the concrete fallback router": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694820
+      }
+    ],
+    "13.8 Wire model routes with the fixed security/admission order": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022694887
+      }
+    ],
+    "13.9 Run deterministic endpoint/cascade integration tests": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695105
+      }
+    ],
+    "13.10 Write stateful property test P-01 for the circuit breaker": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695168
+      }
+    ],
+    "13.11 Write property test P-02 for registry-backed cascade termination and order": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695240
+      }
+    ],
+    "13.12 Write property test P-03 for zero invocation of skipped endpoints": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695298
+      }
+    ],
+    "13.13 Write property test P-04 for semantic-cache precedence and resilience": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695362
+      }
+    ],
+    "13.14 Test the limiter against a real Redis under concurrency and failures": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695424
+      }
+    ],
+    "13.15 Test the optional vault profile separately": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695486
+      }
+    ],
+    "14.1 Implement plan parsing, syntax/schema stages, and the stage-agnostic pipeline runner": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695548
+      }
+    ],
+    "14.2 Implement deterministic destructive-action and blast-radius analysis": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695627
+      }
+    ],
+    "14.3 Implement and wire the approval seam": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695693
+      }
+    ],
+    "14.4 Expose plan analysis and test the real shared sample": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695800
+      }
+    ],
+    "14.5 Write property test P-11 for analyzer monotonicity": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695864
+      }
+    ],
+    "15.1 Implement final `internal/app` composition and graceful shutdown after all constructors exist": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022695937
+      }
+    ],
+    "15.2 Implement final Cobra commands, doctor composition, and thin `main.go`": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696055
+      }
+    ],
+    "15.3 Write property test P-07 for shutdown ordering": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696165
+      }
+    ],
+    "15.4 Complete the Go dependency-exercise matrix and boundary checks": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696278
+      }
+    ],
+    "15.5 Complete and audit `agent/NOTICE`": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696382
+      }
+    ],
+    "15.6 Complete all root Makefile contracts": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696491
+      }
+    ],
+    "15.7 Implement CI with lock, scope, and fresh-clone gates": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696584
+      }
+    ],
+    "15.8 Implement reproducible release, SBOM, signing, provenance, and verification configuration": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696679
+      }
+    ],
+    "15.9 Write property test P-09 across the final backend route set": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696768
+      }
+    ],
+    "15.10 Verify all Phase 0 completion criteria using only earlier implementation": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696848
+      }
+    ],
+    "15.11 Finalize documentation and `PROGRESS.md` from captured evidence": [
+      {
+        "executionId": "5da36fa7-9a00-4fc3-9560-1aeef9a7a2f1",
+        "chatSessionId": "sess_71191783-8752-45f4-acc5-492ca1afa59b",
+        "timestamp": 1785022696918
+      }
+    ]
+  }
+}

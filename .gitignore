@@ -1,0 +1,87 @@
+# ForgeOps repository ignores — design.md §0.3, §14.1.
+#
+# Ignore generated output, the local `.env` override, tool caches and IDE state.
+# NEVER ignore: licence/notice files, committed lockfiles, `.env.example`, or the
+# four authoritative root documents
+# (AI-Powered-DevOps-Platform-Complete-Technical-Research.md, PRD.md,
+# Tech-Stack-Analysis.md, phases.md). Those are tracked inputs.
+# scripts/check-hygiene.sh asserts both halves of that rule.
+
+# ─── Local environment override (design §13.1, §13.3) ────────────────────────
+# `.env` is created locally by scripts/init-env.sh; `.env.example` is committed.
+.env
+.env.local
+.env.*.local
+
+# ─── Python / backend build + cache output ───────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+# Hash-pinned locks are committed (design §16.2) — never ignored.
+!backend/requirements.lock
+!backend/requirements-dev.lock
+
+# ─── Go / agent build output ─────────────────────────────────────────────────
+agent/bin/
+agent/dist/
+*.exe
+*.test
+*.prof
+# `go.sum` is committed (design §16.1) — never ignored.
+!agent/go.sum
+
+# ─── Node / frontend build output and caches ─────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+.pnpm-store/
+*.tsbuildinfo
+playwright-report/
+test-results/
+blob-report/
+# `pnpm-lock.yaml` is committed (design §16.3) — never ignored.
+!frontend/pnpm-lock.yaml
+
+# ─── OpenTofu working state (design §10.6, §16.4) ────────────────────────────
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tofuplan.bin
+crash.log
+crash.*.log
+# Provider lock files are committed with six-platform checksums — never ignored.
+!**/.terraform.lock.hcl
+
+# ─── Release / supply-chain output (design §8.1–§8.2) ────────────────────────
+dist/
+sbom/
+
+# ─── IDE and editor state ────────────────────────────────────────────────────
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# ─── OS noise ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Local logs and scratch space ────────────────────────────────────────────
+*.log
+tmp/
+.cache/

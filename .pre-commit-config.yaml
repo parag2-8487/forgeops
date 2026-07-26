@@ -1,0 +1,77 @@
+# ForgeOps pre-commit configuration — design.md §8.4, §0.3, §14.1.
+#
+# Two-gate secret scanning (Gitleaks here and in CI), backend-scoped Ruff,
+# agent-scoped gofmt/go vet, scoped Prettier and the file-hygiene hooks.
+#
+# The four authoritative root documents are read-only inputs (design §0.3). The
+# single top-level `exclude:` below removes them from every hook that receives
+# filenames — that is, from every mutating hook. Gitleaks is structurally immune
+# to that exclusion: it takes no filenames (`pass_filenames: false`) and runs
+# unconditionally (`always_run: true`), so it still scans all four documents.
+# scripts/check-hygiene.sh asserts both halves of this contract.
+minimum_pre_commit_version: "3.5.0"
+
+exclude: |
+  (?x)^(
+    AI-Powered-DevOps-Platform-Complete-Technical-Research\.md|
+    PRD\.md|
+    Tech-Stack-Analysis\.md|
+    phases\.md
+  )$
+
+repos:
+  # ─── Secret scanning: reads only, never rewrites, never excluded ───────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        name: gitleaks (all files, including the four authoritative documents)
+        # Scans staged content directly; no filename filtering applies, so the
+        # top-level exclusion cannot hide a secret in a reference document.
+        pass_filenames: false
+        always_run: true
+
+  # ─── Backend: Ruff lint + format, scoped to backend/ (design §16.2) ────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.7
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^backend/.*\.py$
+      - id: ruff-format
+        files: ^backend/.*\.py$
+
+  # ─── Agent: gofmt + go vet, scoped to agent/ (design §16.1) ────────────────
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt (agent)
+        entry: gofmt -l -w
+        language: system
+        types: [go]
+        files: ^agent/.*\.go$
+      - id: go-vet
+        name: go vet (changed agent packages)
+        entry: scripts/go-vet-changed.sh
+        language: script
+        types: [go]
+        files: ^agent/.*\.go$
+
+  # ─── Prettier: frontend sources plus project-owned markdown/yaml/json ──────
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        additional_dependencies: ["prettier@3.3.3"]
+        files: ^(frontend/.*\.(js|jsx|ts|tsx|css|scss|json|md|mdx|ya?ml)|docs/.*\.md|policies/.*\.ya?ml|config/.*\.ya?ml|\.github/.*\.ya?ml|[^/]+\.md)$
+
+  # ─── File hygiene (design §8.4) ───────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=2048]
