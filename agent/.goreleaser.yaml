@@ -1,0 +1,38 @@
+version: 2
+project_name: forgeops-agent
+builds:
+  - id: agent
+    main: ./cmd/agent
+    binary: forgeops-agent
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .CommitDate }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: default
+    format_overrides:
+      - goos: windows
+        format: zip
+
+nfpms:
+  - id: packages
+    package_name: forgeops-agent
+    vendor: parag8487
+    homepage: https://github.com/parag8487/ForgeOps
+    license: Apache-2.0
+    formats: [deb, rpm]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^ci:"]

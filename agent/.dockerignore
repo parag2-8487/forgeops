@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Built binaries and provider caches are produced inside the image; shipping the
+# host copies would break the reproducible CGO_ENABLED=0 build.
+dist
+.terraform
+*.exe
+coverage.out
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+Dockerfile
+.dockerignore

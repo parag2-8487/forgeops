@@ -1,0 +1,152 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[project]
+name = "forgeops-backend"
+version = "0.0.0"
+description = "ForgeOps — AI-powered DevOps automation platform backend"
+license = "FSL-1.1-ALv2"
+requires-python = ">=3.13,<3.14"
+authors = [{ name = "parag8487" }]
+
+dependencies = [
+    "fastapi==0.139.2",
+    "uvicorn[standard]==0.34.0",
+    "sqlmodel==0.0.39",
+    "sqlalchemy[asyncio]==2.0.38",
+    "asyncpg==0.30.0",
+    "pgvector==0.3.6",
+    "alembic==1.14.1",
+    "pydantic==2.11.0",
+    "pydantic-settings==2.9.1",
+    "redis==5.2.1",
+    "httpx==0.27.2",
+    "orjson==3.11.6",
+    "pyjwt[crypto]==2.13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-asyncio==0.25.3",
+    "pytest-cov==6.0.0",
+    "hypothesis==6.125.3",
+    "ruff==0.9.7",
+    "pip-audit==2.7.3",
+    "pip-tools==7.6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+]
+markers = [
+    "integration: marks integration tests (deselect with '-m not integration')",
+]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+# Coverage is a GOAL (>70%), not a gate in Phase 0 (design.md §7.6, OQ-17).
+show_missing = true
+skip_empty = true
+
+[tool.ruff]
+target-version = "py313"
+src = ["src", "tests"]
+line-length = 120
+# Paths in `include` resolve relative to THIS file's directory (backend/), so the
+# patterns must not be prefixed with `backend/` — that would make ruff look for
+# backend/backend/**, match nothing, and silently pass.
+include = ["src/**/*.py", "tests/**/*.py", "alembic/**/*.py", "*.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "TID",  # flake8-tidy-imports
+]
+ignore = [
+    # TID252 bans parent-relative imports. This codebase uses them ON PURPOSE:
+    # `src` is a single package, and relative imports are what guarantee one
+    # module identity — so `core.errors.ProblemException` is the same class object
+    # in every importer. Forcing absolute paths reintroduces the double-import
+    # hazard where main.py's registered exception handler silently stops catching
+    # a domain's ProblemException. The cross-domain rule (TID251) still applies.
+    "TID252",
+    # B008 forbids function calls in argument defaults. `Depends(...)` in a
+    # default IS the FastAPI dependency-injection idiom (design.md §7.5); the
+    # framework evaluates it per request, so the usual mutable-default hazard the
+    # rule guards against does not apply.
+    "B008",
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Cross-domain imports: domains must depend only on src/core, never on each other.
+"src.projects".msg = "Cross-domain import: use src.core only"
+"src.analysis".msg = "Cross-domain import: use src.core only"
+"src.ai".msg = "Cross-domain import: use src.core only"
+"src.mcp".msg = "Cross-domain import: use src.core only"
+"src.auth".msg = "Cross-domain import: use src.core only"
+"src.generation".msg = "Cross-domain import: use src.core only"
+"src.deployment".msg = "Cross-domain import: use src.core only"
+"src.monitoring".msg = "Cross-domain import: use src.core only"
+"src.incidents".msg = "Cross-domain import: use src.core only"
+"src.policies".msg = "Cross-domain import: use src.core only"
+"src.secrets".msg = "Cross-domain import: use src.core only"
+"src.notifications".msg = "Cross-domain import: use src.core only"
+"src.websocket".msg = "Cross-domain import: use src.core only"
+# Queue engines forbidden outside the task seam (design.md §7.9).
+"celery".msg = "Celery is permanently banned (Research §0). Use src.core.tasks.TaskDispatcher"
+"arq".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
+"dramatiq".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
+"temporalio".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
+"inngest".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
+
+[tool.ruff.lint.per-file-ignores]
+"src/core/tasks.py" = ["TID251"]
+# The cross-domain ban exists to stop DOMAINS coupling to each other, which is
+# what keeps the monolith extractable (design.md §5.2). Tests are not a domain:
+# a unit test for the gateway must import the gateway. Exempting tests keeps the
+# rule meaningful for production code instead of forcing every test to smuggle
+# imports past the linter.
+"tests/**/*.py" = ["TID251"]
+# The composition root is the one place allowed to know the whole graph: main.py
+# constructs every domain's collaborators and mounts their routers (design.md §7.5).
+"src/main.py" = ["TID251"]
+# A domain importing ITS OWN namespace is not a cross-domain import, but ruff's
+# banned-api matches on module-path prefix and cannot express "except from
+# within". Each domain is therefore exempted from its own entry; the ban still
+# catches the case that matters, e.g. src/ai reaching into src/mcp.
+"src/ai/**/*.py" = ["TID251"]
+"src/mcp/**/*.py" = ["TID251"]
+"src/analysis/**/*.py" = ["TID251"]
+"src/projects/**/*.py" = ["TID251"]
+# Alembic's env.py must import every domain's models to build target_metadata;
+# that is migration wiring, not runtime domain coupling.
+"alembic/env.py" = ["TID251"]
+# Design §11.2 names this exception `ProblemException` after RFC 9457 "Problem
+# Details"; renaming it to ProblemError would obscure the spec it implements.
+"src/core/errors.py" = ["N818"]
+# Design §7.2 and §7.8 name these modules `logging` and `trace`. They live inside
+# the `core` package, so they are `core.logging` / `core.trace` and shadow nothing
+# at import time — A005 is a false alarm for packaged modules.
+# `formatTime` is an override of `logging.Formatter.formatTime`; the camelCase
+# name is fixed by the stdlib API, so N802 cannot be satisfied here.
+"src/core/logging.py" = ["A005", "N802"]
+"src/core/trace.py" = ["A005"]

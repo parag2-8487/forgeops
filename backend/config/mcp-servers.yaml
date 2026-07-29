@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+# MCP server registry — the set of upstream MCP servers the gateway may route to.
+#
+# `Mcp-Name` is matched against `name` EXACTLY. An unknown name is a 404 and
+# never falls through to a default server (Design §11.4, Appendix A.8).
+#
+# Phase 0 registers the two servers that actually exist: the Go agent's MCP
+# server (§10.8) and the backend-hosted Python template (§11.10). No entry is a
+# placeholder for a future server — an unroutable name must 404, not half-work.
+servers:
+  - name: agent
+    url: http://host.docker.internal:8900
+    description: ForgeOps local agent MCP server (agent.health, agent.tofu.*)
+    capabilities:
+      - tools/list
+      - tools/call
+
+  - name: platform
+    url: http://localhost:8000/internal/mcp
+    description: Backend-hosted MCP server template (platform.health)
+    capabilities:
+      - tools/list
+      - tools/call

@@ -1,0 +1,297 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+# ForgeOps release — design.md §8.1 supply-chain chain of custody.
+#
+#   tagged commit → GoReleaser (6 targets, CGO_ENABLED=0, -trimpath,
+#   mod_timestamp) → Syft CycloneDX SBOM per artifact → Cosign keyless
+#   (OIDC → Fulcio) → Rekor transparency log → SLSA provenance → GitHub Release
+#
+# Every link is verifiable by a third party with NO shared secret: the signing
+# identity is this workflow's OIDC identity, the certificate is issued by
+# Fulcio, and the signature is logged in Rekor. `make verify-release` is the
+# check that custody actually worked (criterion 16).
+#
+# `id-token: write` is what makes keyless signing possible — it is the OIDC
+# token the workflow presents to Fulcio. It is NOT a long-lived secret.
+#
+# ── Step ordering is load-bearing (design.md §17.1 D-20) ───────────────────
+# 1. Criterion 16 — "Self-verify signatures" — runs BEFORE any provenance step
+#    so that no provenance failure can skip or mask it. In run 30465284754 the
+#    verify step sat downstream of the GitHub attestation step, the attestation
+#    step failed, and criterion 16's only evidence was never produced.
+# 2. SLSA provenance is delivered by `cosign attest-blob` (keyless → Fulcio →
+#    Rekor). This is the PRIMARY provenance path and runs unconditionally.
+# 3. The native `actions/attest-build-provenance` path is kept, guarded on repo
+#    visibility, and marked non-fatal. GitHub artifact attestations are not
+#    available for private repositories outside GitHub Enterprise Cloud, so on
+#    this repository the step is skipped rather than failed; it activates by
+#    itself if the repository is ever made public.
+# 4. The custody upload runs even if a later step fails, so `.sig`, `.pem`,
+#    `.sbom.json` and `.intoto.jsonl` always reach the release (§8.1 REL node).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release and upload artifacts
+      id-token: write # keyless signing: OIDC token for Fulcio
+      attestations: write # SLSA provenance attestation
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # GoReleaser needs full history for the changelog
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: agent/go.sum
+
+      - name: Install Syft (CycloneDX SBOM)
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Install Cosign (keyless signing)
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      # ── Build: 6 targets, CGO_ENABLED=0, reproducible metadata ────────────
+      # tree-sitter is deliberately absent from go.mod (D-1), which is exactly
+      # what keeps CGO_ENABLED=0 viable across all six targets.
+      #
+      # Pinned to the exact version the v0.0.1-rc3 run (30469955653) resolved
+      # "~> v2" to and released with, so this pin cannot change that run's
+      # proven behaviour — it only removes the floating resolution.
+      - name: GoReleaser release
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          distribution: goreleaser
+          version: "v2.17.1"
+          args: release --clean
+          workdir: agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── SBOM: one CycloneDX document per released artifact ─────────────────
+      - name: Generate a CycloneDX SBOM per artifact
+        working-directory: agent
+        run: |
+          set -eu
+          for f in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm; do
+            [ -e "$f" ] || continue
+            syft "file:$f" -o cyclonedx-json > "$f.sbom.json"
+            grep -q '"bomFormat"' "$f.sbom.json"
+            echo "sbom: $f.sbom.json"
+          done
+
+      # ── Sign: keyless, OIDC → Fulcio, logged in Rekor ──────────────────────
+      - name: Cosign keyless sign every artifact and its SBOM
+        working-directory: agent
+        run: |
+          set -eu
+          for f in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/checksums.txt dist/*.sbom.json; do
+            [ -e "$f" ] || continue
+            cosign sign-blob --yes \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.pem" \
+              "$f"
+            echo "signed: $f"
+          done
+
+      # ── CRITERION 16 ──────────────────────────────────────────────────────
+      # `cosign verify-blob` must exit 0 against the expected keyless identity
+      # and OIDC issuer. This runs before every provenance step on purpose: a
+      # provenance failure must never be able to skip the one check that proves
+      # custody. A release that cannot be verified is not a release (§14.4).
+      - name: Self-verify every signature against the expected keyless identity
+        working-directory: agent
+        run: |
+          set -eu
+          identity="^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v.*$"
+          issuer="https://token.actions.githubusercontent.com"
+          verified=0
+          for f in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/checksums.txt; do
+            [ -e "$f" ] || continue
+            echo "verify-release: cosign verify-blob $f"
+            cosign verify-blob \
+              --certificate "$f.pem" \
+              --signature "$f.sig" \
+              --certificate-identity-regexp "$identity" \
+              --certificate-oidc-issuer "$issuer" \
+              "$f"
+            verified=$((verified + 1))
+          done
+          [ "$verified" -gt 0 ] || { echo "criterion 16: nothing verified"; exit 1; }
+          # SBOM presence beside every archive and package (criterion 8).
+          for f in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm; do
+            [ -e "$f" ] || continue
+            test -f "$f.sbom.json"
+            grep -q '"bomFormat"' "$f.sbom.json"
+          done
+          echo "criterion 16: OK ${verified} signatures verified against ${identity}"
+
+      # ── Provenance, primary path: in-toto SLSA v1 predicate, keyless ───────
+      # Built from the Actions context, so the same facts GitHub's own
+      # attestation records — workflow ref, repository, commit, run id — are
+      # present, but the signature is Fulcio + Rekor and therefore verifiable
+      # by a third party with no dependency on the GitHub attestations API.
+      - name: Build the SLSA v1 provenance predicate
+        working-directory: agent
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          REPO_REF: ${{ github.ref }}
+          REPO_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO_ID: ${{ github.repository_id }}
+          OWNER_ID: ${{ github.repository_owner_id }}
+          RUNNER_ENV: ${{ runner.environment }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          set -eu
+          jq -n \
+            --arg workflow_path ".github/workflows/release.yml" \
+            --arg repo_url "$REPO_URL" \
+            --arg repo_ref "$REPO_REF" \
+            --arg repo_sha "$REPO_SHA" \
+            --arg event_name "$EVENT_NAME" \
+            --arg repo_id "$REPO_ID" \
+            --arg owner_id "$OWNER_ID" \
+            --arg runner_env "$RUNNER_ENV" \
+            --arg builder_id "$REPO_URL/.github/workflows/release.yml@$REPO_REF" \
+            --arg invocation_id "$RUN_URL" \
+            '{
+              buildDefinition: {
+                buildType: "https://actions.github.io/buildtypes/workflow/v1",
+                externalParameters: {
+                  workflow: {
+                    ref: $repo_ref,
+                    repository: $repo_url,
+                    path: $workflow_path
+                  }
+                },
+                internalParameters: {
+                  github: {
+                    event_name: $event_name,
+                    repository_id: $repo_id,
+                    repository_owner_id: $owner_id,
+                    runner_environment: $runner_env
+                  }
+                },
+                resolvedDependencies: [
+                  {
+                    uri: ("git+" + $repo_url + "@" + $repo_ref),
+                    digest: { gitCommit: $repo_sha }
+                  }
+                ]
+              },
+              runDetails: {
+                builder: { id: $builder_id },
+                metadata: { invocationId: $invocation_id }
+              }
+            }' > dist/provenance-predicate.json
+          jq -e '.buildDefinition.buildType' dist/provenance-predicate.json > /dev/null
+          echo "provenance predicate:"
+          cat dist/provenance-predicate.json
+
+      # Three outputs per artifact, each with a distinct job:
+      #   .intoto.jsonl        the signed DSSE envelope (--output-signature)
+      #   .att.pem             the Fulcio certificate that signed it
+      #   .att.sigstore.json   a Sigstore bundle carrying the envelope, the
+      #                        certificate AND the Rekor inclusion proof
+      #
+      # The bundle exists because verification must not depend on a Rekor
+      # *search*. cosign 2.4.3's search path builds a `dsse` proposed entry
+      # without the `verifiers` field that the current Rekor server requires,
+      # so `POST /api/v1/log/entries/retrieve` answers 400. Verifying from the
+      # bundle uses the embedded inclusion proof offline instead, which is both
+      # the recommended path and the one a third party can run behind a
+      # network that cannot reach Rekor.
+      - name: Cosign attest-blob SLSA provenance for every artifact
+        working-directory: agent
+        run: |
+          set -eu
+          for f in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm; do
+            [ -e "$f" ] || continue
+            cosign attest-blob --yes \
+              --predicate dist/provenance-predicate.json \
+              --type slsaprovenance1 \
+              --new-bundle-format \
+              --bundle "$f.att.sigstore.json" \
+              --output-signature "$f.intoto.jsonl" \
+              --output-certificate "$f.att.pem" \
+              "$f"
+            test -s "$f.intoto.jsonl"
+            test -s "$f.att.sigstore.json"
+            echo "attested: $f.intoto.jsonl"
+          done
+
+      - name: Self-verify the SLSA provenance attestations
+        working-directory: agent
+        run: |
+          set -eu
+          identity="^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v.*$"
+          issuer="https://token.actions.githubusercontent.com"
+          checked=0
+          for f in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm; do
+            [ -e "$f" ] || continue
+            echo "verify-attestation: cosign verify-blob-attestation $f"
+            cosign verify-blob-attestation \
+              --bundle "$f.att.sigstore.json" \
+              --new-bundle-format \
+              --type slsaprovenance1 \
+              --check-claims=true \
+              --certificate-identity-regexp "$identity" \
+              --certificate-oidc-issuer "$issuer" \
+              "$f"
+            checked=$((checked + 1))
+          done
+          [ "$checked" -gt 0 ] || { echo "provenance: nothing verified"; exit 1; }
+          echo "provenance: OK ${checked} SLSA v1 attestations verified"
+
+      # ── Provenance, native path: dormant while the repository is private ───
+      # GitHub artifact attestations are unavailable for private repositories
+      # outside GitHub Enterprise Cloud, so this step is skipped rather than
+      # failed. It activates automatically if the repository becomes public.
+      # `continue-on-error` guarantees it can never block the custody upload.
+      - name: Attest build provenance (GitHub native, public repositories only)
+        id: native_attestation
+        if: ${{ github.event.repository.private == false }}
+        continue-on-error: true
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
+        with:
+          subject-path: |
+            agent/dist/*.tar.gz
+            agent/dist/*.zip
+            agent/dist/*.deb
+            agent/dist/*.rpm
+
+      # ── Publish the custody artifacts alongside the binaries ──────────────
+      # Runs even if an earlier step failed, so evidence produced before a
+      # failure is never lost (§8.1 REL node names these files explicitly).
+      - name: Upload signatures, certificates, SBOMs and provenance
+        if: ${{ !cancelled() }}
+        working-directory: agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          tag="${GITHUB_REF#refs/tags/}"
+          uploaded=0
+          for f in dist/*.sig dist/*.pem dist/*.sbom.json dist/*.intoto.jsonl dist/*.att.sigstore.json dist/provenance-predicate.json; do
+            [ -e "$f" ] || continue
+            gh release upload "$tag" "$f" --clobber
+            uploaded=$((uploaded + 1))
+          done
+          echo "uploaded ${uploaded} custody files to ${tag}"
+
+      - name: Report the provenance path taken
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          echo "cosign attest-blob SLSA v1 provenance: primary path, executed"
+          echo "GitHub native attestation: ${{ steps.native_attestation.outcome || 'skipped (private repository)' }}"

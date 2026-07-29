@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+# The runtime image installs only requirements.lock with --require-hashes, so a
+# host virtualenv or cache in the context is dead weight and can leak local state.
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+htmlcov
+.coverage
+coverage.xml
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+Dockerfile
+.dockerignore

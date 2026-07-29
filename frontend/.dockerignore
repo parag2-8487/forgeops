@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+# Keep the frontend build context small: node_modules is reinstalled inside the
+# image from the committed pnpm-lock.yaml, so shipping it wastes ~230MB and can
+# smuggle host-platform binaries into a Linux image.
+node_modules
+.next
+out
+coverage
+playwright-report
+test-results
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.git
+.gitignore
+Dockerfile
+.dockerignore

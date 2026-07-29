@@ -1,7 +1,7 @@
 # PROGRESS
 
 **Current phase:** Phase 0 — Foundation & Project Scaffolding
-**Last updated:** 2026-07-26
+**Last updated:** 2026-07-29
 
 This file is the project's durable progress record (design §18). It is updated in the same
 commit as the work it describes, so a fresh clone answers "where are we?" without reading
@@ -10,107 +10,307 @@ exactly `completed`, `in-progress`, `not-started` or `blocked`.
 
 ## Phase status
 
-| Phase | Name | Status |
-|:---|:---|:---|
-| 0 | Foundation & Project Scaffolding | in-progress |
-| 1 | MVP Core — Analysis, Generation, Approval | not-started |
-| 2 | Deploy, Manage & Command | not-started |
-| 3 | Observe, Troubleshoot & Self-Heal | not-started |
-| 4 | Scale, Collaborate & Polish | not-started |
-| 5 | Advanced & Ecosystem | not-started |
+| Phase | Name                                      | Status      |
+| :---- | :---------------------------------------- | :---------- |
+| 0     | Foundation & Project Scaffolding          | completed   |
+| 1     | MVP Core — Analysis, Generation, Approval | not-started |
+| 2     | Deploy, Manage & Command                  | not-started |
+| 3     | Observe, Troubleshoot & Self-Heal         | not-started |
+| 4     | Scale, Collaborate & Polish               | not-started |
+| 5     | Advanced & Ecosystem                      | not-started |
+
+Phase 0 is `completed`: all 108 executable task leaves are implemented, all 18 completion
+criteria carry real evidence, and P-01 through P-15 are all present and passing. The work
+lives on the branch `phase-0-implementation`; merging it into `main` is the repository
+owner's decision and has deliberately not been done here.
+
+## Authoritative gates
+
+| Gate                     | Reference                                                                             | Result                                                                                                       |
+| :----------------------- | :------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------- |
+| CI (code gate)           | run `30474610382`, commit `2e35737`                                                   | all 9 jobs pass: changes, pre-commit, lock-integrity, backend, frontend, agent, supply, audit, compose-smoke |
+| CI (documentation gate)  | run `30476517964`, commit `8f2cee8`                                                   | all 9 jobs pass                                                                                              |
+| Release chain of custody | run `30469955653`, tag `v0.0.1-rc3` (commit `7f5213f`)                                | all steps green; 94 release assets; 31 Rekor entries, indices `2281269542`–`2281270394`                      |
+| Secret scanning          | gitleaks `v8.30.1`, full history (`--log-opts=--all`) plus the one unreachable commit | no leaks found                                                                                               |
 
 ## Current phase task list — Phase 0
 
-| # | Deliverable group | Task | Status |
-|:---|:---|:---|:---|
-| 0.1 | Repository Structure | monorepo layout per PRD §8 in the workspace root | done |
-| 0.1 | Repository Structure | two-licence layout: root `LICENSE` FSL-1.1-ALv2, `agent/LICENSE` Apache-2.0, complete `agent/NOTICE` | done |
-| 0.1 | Repository Structure | committed `.env.example` baseline and idempotent `scripts/init-env.sh` | done |
-| 0.1 | Repository Structure | `.gitignore` plus pre-commit: gitleaks + ruff + gofmt + prettier + hygiene | done |
-| 0.1 | Repository Structure | root `Makefile` initial targets and `bootstrap` toolchain verification | in-progress |
-| 0.1 | Repository Structure | `docs/{architecture,api,development,deployment}.md` | done |
-| 0.1 | Repository Structure | `docker-compose.yml` default profile | pending |
-| 0.2 | Go Agent Scaffold | Go module `github.com/parag8487/ForgeOps/agent`, pinned deps, `.golangci.yml` | pending |
-| 0.2 | Go Agent Scaffold | independent primitives: config, logging, telemetry, fileops, scanner watcher | pending |
-| 0.2 | Go Agent Scaffold | transports and probes: WSS transport, docker/k8s doctor probes | pending |
-| 0.2 | Go Agent Scaffold | final `internal/app` composition, Cobra CLI, graceful shutdown | pending |
-| 0.2 | Go Agent Scaffold | GitHub Actions CI, GoReleaser + Cosign + Syft SBOM + SLSA provenance | pending |
-| 0.3 | Python Backend Scaffold | `pyproject.toml` exact pins and hash-pinned locks | pending |
-| 0.3 | Python Backend Scaffold | core primitives: config, logging, RFC 9457 errors, trace context, task seam | pending |
-| 0.3 | Python Backend Scaffold | async DB engine/session, three SQLModel tables, `0001_initial` with pgvector HNSW | pending |
-| 0.3 | Python Backend Scaffold | app factory, non-destructive lifespan, health and readiness probes | pending |
-| 0.3 | Python Backend Scaffold | multi-stage Dockerfile and default Compose service | pending |
-| 0.4 | Next.js Frontend Scaffold | package scaffold, exact pins, committed `pnpm-lock.yaml` | pending |
-| 0.4 | Next.js Frontend Scaffold | shadcn primitives, providers, Zustand UI store, RHF + Zod standard | pending |
-| 0.4 | Next.js Frontend Scaffold | RFC 9457-aware API client and validated public env contract | pending |
-| 0.4 | Next.js Frontend Scaffold | accessible shell layout with one real Home link | pending |
-| 0.4 | Next.js Frontend Scaffold | Vitest, Playwright shell spec, k6 health smoke, Dockerfile | pending |
-| 0.5 | MCP Gateway Integration | registry, header routing, OIDC verification | pending |
-| 0.5 | MCP Gateway Integration | OPA policy (`policies/mcp/gateway.rego`), Redis TTL tool cache, metadata resolver | pending |
-| 0.5 | MCP Gateway Integration | `tools/list` and `tools/call` security-ordered paths | pending |
-| 0.5 | MCP Gateway Integration | Tasks Extension state machine, MCP Apps sandbox hosting | pending |
-| 0.5 | MCP Gateway Integration | Go and Python MCP server templates | pending |
-| 0.6 | GitOps Workflow | Git/PR contracts and `TokenSource` seam | pending |
-| 0.6 | GitOps Workflow | branch → commit → push → PR → poll flow | pending |
-| 0.7 | Plan Analyzer | validation pipeline runner with syntax and schema stages | pending |
-| 0.7 | Plan Analyzer | deterministic destructive-action and blast-radius analysis | pending |
-| 0.7 | Plan Analyzer | approval seam and `POST /api/v1/analysis/plan` | pending |
-| 0.8 | OpenTofu Switch | runner: bounded execution, streaming, signal propagation, env isolation | pending |
-| 0.8 | OpenTofu Switch | null-provider fixture, six-platform lock, devtools image, `tools` profile | pending |
-| 0.9 | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | six tiers and endpoint descriptor validation | pending |
-| 0.9 | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | executable OpenAI-compatible endpoint adapter and registry | pending |
-| 0.9 | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | circuit breaker | pending |
-| 0.9 | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | tiered semantic cache | pending |
-| 0.9 | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | BYO-key resolvers and the `vault` profile | pending |
-| 0.9 | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | Redis/Lua per-caller token bucket and fallback cascade routes | pending |
-| Progress record | Progress record | root `PROGRESS.md` durable progress record | in-progress |
+| #               | Deliverable group                                          | Task                                                                                                 | Status |
+| :-------------- | :--------------------------------------------------------- | :--------------------------------------------------------------------------------------------------- | :----- |
+| 0.1             | Repository Structure                                       | monorepo layout per PRD §8 in the workspace root                                                     | done   |
+| 0.1             | Repository Structure                                       | two-licence layout: root `LICENSE` FSL-1.1-ALv2, `agent/LICENSE` Apache-2.0, complete `agent/NOTICE` | done   |
+| 0.1             | Repository Structure                                       | committed `.env.example` baseline and idempotent `scripts/init-env.sh`                               | done   |
+| 0.1             | Repository Structure                                       | `.gitignore` plus pre-commit: gitleaks + ruff + gofmt + prettier + hygiene                           | done   |
+| 0.1             | Repository Structure                                       | root `Makefile` initial targets and `bootstrap` toolchain verification                               | done   |
+| 0.1             | Repository Structure                                       | `docs/{architecture,api,development,deployment}.md`                                                  | done   |
+| 0.1             | Repository Structure                                       | `docker-compose.yml` default profile                                                                 | done   |
+| 0.2             | Go Agent Scaffold                                          | Go module `github.com/parag8487/ForgeOps/agent`, pinned deps, `.golangci.yml`                        | done   |
+| 0.2             | Go Agent Scaffold                                          | independent primitives: config, logging, telemetry, fileops, scanner watcher                         | done   |
+| 0.2             | Go Agent Scaffold                                          | transports and probes: WSS transport, docker/k8s doctor probes                                       | done   |
+| 0.2             | Go Agent Scaffold                                          | final `internal/app` composition, Cobra CLI, graceful shutdown                                       | done   |
+| 0.2             | Go Agent Scaffold                                          | GitHub Actions CI, GoReleaser + Cosign + Syft SBOM + SLSA provenance                                 | done   |
+| 0.3             | Python Backend Scaffold                                    | `pyproject.toml` exact pins and hash-pinned locks                                                    | done   |
+| 0.3             | Python Backend Scaffold                                    | core primitives: config, logging, RFC 9457 errors, trace context, task seam                          | done   |
+| 0.3             | Python Backend Scaffold                                    | async DB engine/session, three SQLModel tables, `0001_initial` with pgvector HNSW                    | done   |
+| 0.3             | Python Backend Scaffold                                    | app factory, non-destructive lifespan, health and readiness probes                                   | done   |
+| 0.3             | Python Backend Scaffold                                    | multi-stage Dockerfile and default Compose service                                                   | done   |
+| 0.4             | Next.js Frontend Scaffold                                  | package scaffold, exact pins, committed `pnpm-lock.yaml`                                             | done   |
+| 0.4             | Next.js Frontend Scaffold                                  | shadcn primitives, providers, Zustand UI store, RHF + Zod standard                                   | done   |
+| 0.4             | Next.js Frontend Scaffold                                  | RFC 9457-aware API client and validated public env contract                                          | done   |
+| 0.4             | Next.js Frontend Scaffold                                  | accessible shell layout with one real Home link                                                      | done   |
+| 0.4             | Next.js Frontend Scaffold                                  | Vitest, Playwright shell spec, k6 health smoke, Dockerfile                                           | done   |
+| 0.5             | MCP Gateway Integration                                    | registry, header routing, OIDC verification                                                          | done   |
+| 0.5             | MCP Gateway Integration                                    | OPA policy (`policies/mcp/gateway.rego`), Redis TTL tool cache, metadata resolver                    | done   |
+| 0.5             | MCP Gateway Integration                                    | `tools/list` and `tools/call` security-ordered paths                                                 | done   |
+| 0.5             | MCP Gateway Integration                                    | Tasks Extension state machine, MCP Apps sandbox hosting                                              | done   |
+| 0.5             | MCP Gateway Integration                                    | Go and Python MCP server templates                                                                   | done   |
+| 0.6             | GitOps Workflow                                            | Git/PR contracts and `TokenSource` seam                                                              | done   |
+| 0.6             | GitOps Workflow                                            | branch → commit → push → PR → poll flow                                                              | done   |
+| 0.7             | Plan Analyzer                                              | validation pipeline runner with syntax and schema stages                                             | done   |
+| 0.7             | Plan Analyzer                                              | deterministic destructive-action and blast-radius analysis                                           | done   |
+| 0.7             | Plan Analyzer                                              | approval seam and `POST /api/v1/analysis/plan`                                                       | done   |
+| 0.8             | OpenTofu Switch                                            | runner: bounded execution, streaming, signal propagation, env isolation                              | done   |
+| 0.8             | OpenTofu Switch                                            | null-provider fixture, six-platform lock, devtools image, `tools` profile                            | done   |
+| 0.9             | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | six tiers and endpoint descriptor validation                                                         | done   |
+| 0.9             | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | executable OpenAI-compatible endpoint adapter and registry                                           | done   |
+| 0.9             | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | circuit breaker                                                                                      | done   |
+| 0.9             | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | tiered semantic cache                                                                                | done   |
+| 0.9             | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | BYO-key resolvers and the `vault` profile                                                            | done   |
+| 0.9             | Model Routing (a.k.a. "Phase 0.5" in the dependency graph) | Redis/Lua per-caller token bucket and fallback cascade routes                                        | done   |
+| Progress record | Progress record                                            | root `PROGRESS.md` durable progress record                                                           | done   |
 
 ## Completion criteria — Phase 0
 
-| Criterion | Status | Evidence |
-|:---|:---|:---|
-| 1. `make build` succeeds for all three components | pending | — |
-| 2. `make test` passes | pending | — |
-| 3. `make lint` passes | pending | — |
-| 4. `docker-compose up` starts all services | pending | — |
-| 5. Health check endpoint returns 200 | pending | — |
-| 6. Frontend loads at localhost:3000 | pending | — |
-| 7. Go binary compiles for Windows/macOS/Linux × amd64+arm64 | pending | — |
-| 8. GoReleaser produces signed + SBOM-attested binaries | pending | — |
-| 9. Pre-commit hooks pass on all files | pending | — |
-| 10. MCP Gateway responds to `tools/list` and `tools/call` | pending | — |
-| 11. MCP Tasks lifecycle works (create → poll → cancel) | pending | — |
-| 12. OAuth 2.1/OIDC issuer validation blocks unauthorized requests | pending | — |
-| 13. Plan Analyzer returns results for sample input | pending | — |
-| 14. SQLModel models defined with pgvector column support (HNSW index) | pending | — |
-| 15. CycloneDX SBOM generated for the Go agent build | pending | — |
-| 16. Cosign keyless signing verified on a release artifact | pending | — |
-| 17. Model routing fallback cascade functions end-to-end | pending | — |
-| 18. Circuit breaker trips on simulated failures | pending | — |
+| Criterion                                                             | Status | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| :-------------------------------------------------------------------- | :----- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. `make build` succeeds for all three components                     | done   | `go build ./...` exit 0 (14 packages); `docker compose build` produced `forgeops-backend` and `forgeops-frontend`; `Makefile` carries all 26 design §13.4 targets; CI run `30474610382` `agent`/`backend`/`frontend` jobs all green                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 2. `make test` passes                                                 | done   | CI run `30474610382`: backend `419 passed, 9 skipped, 1 warning in 20.54s`; agent `go test -race` 13 packages `ok`; frontend `Test Files 8 passed (8)`. Locally: full agent suite `-race -shuffle=on` green, and the four real-OpenTofu integration tests pass (`TestIntegration_InitLockfileReadonly`, `_ValidateFixture`, `_PlanFixture`, `_PlanSampleValidity`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 3. `make lint` passes                                                 | done   | CI run `30474610382`: `pre-commit` job green; `agent` Lint (golangci-lint) green; backend `ruff` — `All checks passed!`; frontend `tsc --noEmit` and eslint green                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 4. `docker-compose up` starts all services                            | done   | `docker compose up -d --wait` exit 0; `docker compose ps` shows postgres, redis, opa, backend, frontend all healthy; `docker compose config --services` returns exactly those five, with `infisical`/`agent-dev` only under `--profile vault` / `--profile tools`; CI `compose-smoke` job green                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 5. Health check endpoint returns 200                                  | done   | Deps up: `/health` 200, `/health/ready` 200 `{"postgres":"ok","redis":"ok"}`, `/api/v1/health` 200. Deps stopped: `/health` stays 200 while `/health/ready` returns 503 `application/problem+json`. Deps restarted: readiness returns to 200 with no backend restart                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 6. Frontend loads at localhost:3000                                   | done   | `GET http://localhost:3000` → 200, 14455 bytes, served from the built container image                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 7. Go binary compiles for Windows/macOS/Linux × amd64+arm64           | done   | Release run `30469955653` built and published all six targets for `v0.0.1-rc3`: `linux_amd64`/`linux_arm64` (tar.gz + deb + rpm), `darwin_amd64`/`darwin_arm64` (tar.gz), `windows_amd64`/`windows_arm64` (zip) — 10 artifacts plus `checksums.txt`, `CGO_ENABLED=0`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 8. GoReleaser produces signed + SBOM-attested binaries                | done   | Release `v0.0.1-rc3` publishes, per artifact, `.sig`, `.pem`, `.sbom.json` and `.intoto.jsonl` (plus `.att.pem` and `.att.sigstore.json`): 94 assets, `uploaded 83 custody files to v0.0.1-rc3`. 21 `sign-blob` and 10 `attest-blob` Rekor entries. CI also validates the GoReleaser config on every PR via `goreleaser release --snapshot` (`supply` job)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 9. Pre-commit hooks pass on all files                                 | done   | CI `pre-commit` job green on run `30474610382` with the whole tree committed, so gitleaks, ruff, ruff-format, gofmt, go vet, prettier, end-of-file-fixer, trailing-whitespace, check-merge-conflict, check-yaml and check-added-large-files all exercise real files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 10. MCP Gateway responds to `tools/list` and `tools/call`             | done   | `tests/integration/test_mcp_wiring.py` composes the gateway with the **real** `OpaGatewayPolicy`, `TtlToolCache`, `McpUpstream` and `RedisTaskStore` exactly as `main.py:137-145` does, and drives both paths through `mcp/routes.py`: `tools/list` returns the policy-filtered set, a second call is served from Redis with no second upstream fetch, the OPA input carries the keys `gateway.rego` reads, an allowed `tools/call` dispatches exactly once, and denied / unknown-tool / unauthenticated / malformed calls all leave the upstream counter at 0. `tests/unit/test_mcp_contract.py` binds all 11 call sites against the real classes. **Corrected 2026-07-30:** the prior evidence was OpenAPI route registration plus `test_mcp_e2e.py`, whose `AsyncMock` doubles shadowed their own `spec=`; the production composition raised `TypeError` on both paths when this row was first marked done. See D-23, D-24                  |
+| 11. MCP Tasks lifecycle works (create → poll → cancel)                | done   | `tasks/create → tasks/get → tasks/cancel → tasks/cancel` handled in `mcp/routes.py`; `test_p10_tasks.py` `RuleBasedStateMachine` proves terminal absorption and idempotent cancel. **Corrected 2026-07-30:** that was a code-reading claim about `store.create(kind=…, owner=…)`, which did not bind against the then-current `create(*, tool_name, arguments)` and raised `TypeError` on every create. Real evidence now: `tests/integration/test_mcp_wiring.py::TestTasksLifecycleThroughTheRealGraph` drives create/poll/cancel/cancel over HTTP against the real `RedisTaskStore` — idempotent cancellation, absorbing terminal state (400 problem+json), 404 for an unknown id, 401 without a token — and `tests/unit/test_task_cas.py` proves P-10's concurrency clause: two writers that both read `submitted` yield exactly one winner and one `TaskConflictError`. See D-24                                                           |
+| 12. OAuth 2.1/OIDC issuer validation blocks unauthorized requests     | done   | Live gateway: no token → 401, malformed bearer → 401, non-bearer scheme → 401, missing routing headers → 400, all `application/problem+json`; auth precedes routing so the registry cannot be enumerated anonymously                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 13. Plan Analyzer returns results for sample input                    | done   | `POST /api/v1/analysis/plan` with the real `agent/testdata/plan-sample.json` → 200 `{"blast_radius":{"score":3,"affected_resources":1},"verdict":"allow","approval_decision":"auto_ok"}`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 14. SQLModel models defined with pgvector column support (HNSW index) | done   | `alembic upgrade head` against the live container, then `psql`: tables projects, file_tree, embeddings; `embeddings.embedding` is `vector(1536)`; index `ix_embeddings_embedding_hnsw` is `USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')`; pgvector 0.8.5. **Corrected 2026-07-30:** that was a one-off manual `psql` observation. The automated evidence named in design Appendix E — the seven tests in `tests/integration/test_initial_schema.py` — was **skipping everywhere**, because it gates on `FORGEOPS_TEST_DATABASE_URL` and nothing in the repository set that variable, so CI started a real `pgvector/pgvector:pg17` service and then asserted nothing against it. CI now sets it, and `FORGEOPS_REQUIRE_INTEGRATION=1` makes the skip a hard failure, so the column type, the HNSW cosine index, transaction-scoped `ef_search`, a clean autogenerate and the downgrade are all gated. See D-26 |
+| 15. CycloneDX SBOM generated for the Go agent build                   | done   | Release run `30469955653` produced one CycloneDX document per artifact, each gated on `"bomFormat"`; the published `forgeops-agent_0.0.1-rc3_linux_amd64.tar.gz.sbom.json` was downloaded and is 87533 bytes. Locally `scripts/sbom.sh` yields `agent/dist/forgeops-agent.sbom.json`, `bomFormat: CycloneDX`, `specVersion: 1.6`, 94 components                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 16. Cosign keyless signing verified on a release artifact             | done   | Release run `30469955653`, step "Self-verify every signature against the expected keyless identity": eleven consecutive `Verified OK` and then `criterion 16: OK 11 signatures verified against ^https://github.com/parag8487/ForgeOps/.github/workflows/release.yml@refs/tags/v.*$` with `--certificate-oidc-issuer https://token.actions.githubusercontent.com`. See "Chain of custody" below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 17. Model routing fallback cascade functions end-to-end               | done   | `test_cascade_integration.py` (12 tests) drives primary timeout, HTTP 500, cross-provider fallback, self-hosted success, unsupported-native skip and full exhaustion against local fixture servers with no vendor key or network; `GET /api/v1/ai/tiers` is live                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 18. Circuit breaker trips on simulated failures                       | done   | `test_p01_breaker.py` `RuleBasedStateMachine` plus focused examples prove 5 failures in 30s → OPEN, 60s → HALF_OPEN, single probe, success reset, probe failure re-opens                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+
+## Chain of custody — criterion 16 and SLSA provenance
+
+The §8.1 chain was exercised end to end by tag `v0.0.1-rc3` (release run `30469955653`,
+commit `7f5213f`). Every link produced evidence:
+
+| Link                      | Evidence                                                                                                                                                 |
+| :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GoReleaser, 6 targets     | 6 binaries, 4 `tar.gz`, 2 `zip`, 2 `deb`, 2 `rpm`, `checksums.txt`, `CGO_ENABLED=0`, `-trimpath`, `mod_timestamp`                                        |
+| Syft CycloneDX SBOM       | one `.sbom.json` per artifact, each gated on `"bomFormat"`                                                                                               |
+| Cosign keyless → Fulcio   | 21 blobs signed (10 artifacts + `checksums.txt` + 10 SBOMs), each with a real ephemeral Fulcio certificate                                               |
+| Rekor transparency log    | 31 `tlog entry created` lines, indices `2281269542`–`2281270394` (21 `sign-blob` + 10 `attest-blob`)                                                     |
+| `cosign verify-blob`      | `criterion 16: OK 11 signatures verified …`, preceded by 11 × `Verified OK`                                                                              |
+| SLSA v1 provenance        | `cosign attest-blob --type slsaprovenance1` for all 10 artifacts, then `provenance: OK 10 SLSA v1 attestations verified`, preceded by 10 × `Verified OK` |
+| GitHub Release            | 94 assets; `uploaded 83 custody files to v0.0.1-rc3`                                                                                                     |
+| GitHub native attestation | `GitHub native attestation: skipped` — dormant by design while the repository is private (D-20)                                                          |
+
+**Independent verification from published assets.** All 94 `v0.0.1-rc3` release assets
+(127.8 MB) were downloaded and checked on the workstation, not in the runner. The asset set
+is complete: 12 artifacts and manifests, 21 `.sig`, 21 `.pem`, 10 `.sbom.json`, 10
+`.intoto.jsonl`, 10 `.att.pem`, 10 `.att.sigstore.json`.
+
+- **Integrity, 10/10.** Every one of the 10 entries in `checksums.txt` matches the
+  downloaded file's SHA-256: `checksum match: 10 ok, 0 bad`. The `linux_amd64` archive is
+  `5983caa9897f30e8c44a47c701f84f10843c123429f3032e6f09eacca10ef109`.
+- **SBOMs, 10/10.** Every `.sbom.json` parses and declares `bomFormat: CycloneDX`.
+- **Provenance, 10/10, offline.** `cosign verify-blob-attestation --bundle
+<artifact>.att.sigstore.json --new-bundle-format --type slsaprovenance1
+--check-claims=true` with the expected identity regexp and OIDC issuer printed
+  **`Verified OK`, exit 0** for all ten artifacts. `--check-claims` means each attestation's
+  in-toto subject digest was matched against the downloaded bytes. This succeeded even
+  though Rekor is unreachable from this network, because the inclusion proof travels inside
+  the bundle.
+- **Envelope shape.** The `linux_amd64` `.intoto.jsonl` is a real DSSE envelope:
+  `payloadType: application/vnd.in-toto+json`, one signature. Its decoded statement is
+  `predicateType: https://slsa.dev/provenance/v1`, `subject[0].digest.sha256` equal to the
+  hash above, and `predicate.runDetails.builder.id` is
+  `https://github.com/parag8487/ForgeOps/.github/workflows/release.yml@refs/tags/v0.0.1-rc3`.
+- **Six real platform binaries**, extracted from the published archives: `linux_amd64` ELF
+  64-bit machine 62 (x86-64) 40.4 MB, `linux_arm64` ELF 64-bit machine 183 (aarch64)
+  37.8 MB, `darwin_amd64` Mach-O 41.3 MB, `darwin_arm64` Mach-O 38.9 MB, `windows_amd64` PE
+  41.5 MB, `windows_arm64` PE 38.3 MB.
+- **The published binary self-reports the tagged commit.** Running the downloaded
+  `windows_amd64` executable natively prints `forgeops-agent 0.0.1-rc3 (commit:
+7f5213f65931b80f6abd6a16baa46c808e723e75, built: 2026-07-29T16:15:30Z)`, which is exactly
+  the commit that `v0.0.1-rc3` points at and the commit named in the provenance predicate's
+  `resolvedDependencies`. Source, provenance and shipped binary agree.
+
+`cosign verify-blob` on the same assets fails locally, and only because of the network:
+`x509: certificate is valid for *.airtel.com, airtel.com, not rekor.sigstore.dev`. That path
+requires a Rekor search, which is why criterion 16 is proven inside the runner.
+
+## Deviations, environment notes and outstanding items
+
+Recorded rather than hidden. None of these blocks a Phase 0 criterion.
+
+- **`pip-tools` is pinned at `7.6.0`, not the design's `7.4.1`.** Forced by an upstream
+  incompatibility between `pip-tools 7.4.1` and current `pip`. Applied consistently in
+  `backend/pyproject.toml` and CI (`PIP_TOOLS_VERSION: 7.6.0`). Recorded as D-21.
+- **Rekor is unreachable from this workstation.** The network presents a TLS-intercepting
+  certificate: `x509: certificate is valid for *.airtel.com, airtel.com, not
+rekor.sigstore.dev`. Any `cosign verify-blob` that must search the transparency log
+  therefore fails locally, which is why criterion 16 is proven inside the runner. The
+  bundle-based attestation check above is the one custody check that does verify locally,
+  because the Rekor inclusion proof travels inside the bundle.
+- **GitHub artifact attestations are unavailable** for user-owned private repositories on
+  Free/Pro/Team plans. The native step is retained and gated on
+  `github.event.repository.private == false`; it reports `skipped`, not failed, and turns
+  itself on if the repository is ever made public (D-20).
+- **GitHub secret scanning is disabled on the repository.** `GET
+/repos/parag8487/ForgeOps/secret-scanning/alerts` returns `404 Secret scanning is
+disabled on this repository.`, so there is no server-side alert list to reconcile
+  against. The local gitleaks history scan is currently the only secret-scanning evidence.
+  Enabling secret scanning is a repository setting the owner controls. **Outstanding.**
+- **`-race` on Windows** requires a gcc-compatible C toolchain. It now works locally via
+  WinLibs mingw64 gcc with `CGO_ENABLED=1`; the earlier Visual Studio `cl.exe` failure
+  (`invalid numeric argument '/Werror'`) no longer applies. CI runs `-race -shuffle=on` on
+  Linux regardless.
+- **Host port conflicts.** A host Redis service holds 6379 and the host reserves 5432, so
+  the live Compose evidence was captured with `REDIS_PORT=6380` and `POSTGRES_PORT=5433`
+  supplied as process environment, not as a committed `.env`. The fresh-clone five-service
+  selection was verified separately with no `.env`.
+- **`golangci-lint` cannot run its `goimports` linter on this host** because `diff` is not
+  on `PATH` by default; adding Git's `usr/bin` fixes it. With that, the only local finding
+  is `internal/iac/runner_test.go:1 File is not gofmt-ed with -s`, which is purely a
+  Windows CRLF checkout artifact — `git ls-files --eol` reports `i/lf w/crlf` for that
+  file, so CI on Linux sees LF and passes.
+- **The commit message of `7f5213f` is mangled.** PowerShell quoting truncated the body
+  while embedding a JSON error string. The commit content is correct and its full rationale
+  lives in the `.github/workflows/release.yml` comments and in D-20 below. Not repaired,
+  because doing so would require rewriting a pushed commit. **Outstanding, cosmetic.**
+- **`phase-0-implementation` is not merged into `main`.** Merging is the owner's call.
+- **`load_tier_config` is not called by production code.** `${VAR}` expansion in
+  `config/model-tiers.yaml` now works and rejects unset names (D-24 group), but a
+  repository-wide search finds no caller outside its own module: `main.py` does not build the
+  model router from the YAML, so the six-tier chain that criterion 17 exercises is assembled
+  from fixtures in tests only. Criterion 17's cascade behaviour is genuinely proven against
+  real local HTTP fixtures; what is **not** proven is that the shipped YAML is what a running
+  backend loads. **Outstanding.**
+- **`compose-smoke` still only runs `docker compose config`.** The job asserts the unprofiled
+  service set is exactly the five and that profiles stay out, which is real, but it never runs
+  `docker compose up -d --wait` and never builds either image — so criterion 4's own wording
+  and criterion 1's container half rest on local runs recorded above, not on CI. **Outstanding.**
+- **`pnpm audit` is still non-gating** (`|| true` in the `audit` job) and `govulncheck` is
+  still installed from `@latest`. The Go and Python vulnerability gates do fail the build;
+  the frontend one does not, and the vulnerability scanner itself is not pinned. **Outstanding.**
+- **No Playwright `e2e` job exists**, although `ci.yml`'s header comment lists an `e2e` stage.
+  Criterion 6's keyboard-navigation evidence is the Vitest shell-layout suite plus the new
+  bundle inspection in `scripts/check-frontend-container.sh`; the browser-level assertion
+  runs locally only. **Outstanding.**
+- **`infisical` is not digest-pinned** (`infisical/infisical:v0.91.1`) while every other
+  Compose image is, and **OPA runs the non-rootless variant** where design §13.3 specifies
+  `1.4.2-rootless`. Both are inside the optional `vault` profile / the local-only topology.
+  **Outstanding.**
+- **`.kiro/steering/agent-autonomy.md` is untracked**, so the file-preservation and autonomy
+  rules do not survive a fresh clone even though the sibling `secret-safety.md` does.
+  **Outstanding — the owner's call, since it is a workflow rule rather than product code.**
+  **Outstanding.**
+
+## Property test coverage — P-01 to P-15
+
+| Property                               | Location                                                                                   |
+| :------------------------------------- | :----------------------------------------------------------------------------------------- |
+| P-01 circuit breaker                   | `backend/tests/property/test_p01_breaker.py`                                               |
+| P-02 cascade termination/order         | `backend/tests/property/test_p02_cascade.py`                                               |
+| P-03 zero invocation when skipped      | `backend/tests/property/test_p03_skip_invocation.py`                                       |
+| P-04 semantic cache precedence         | `backend/tests/property/test_p04_cache_precedence.py`                                      |
+| P-05 gateway routing / zero work       | `backend/tests/property/test_p05_gateway.py`                                               |
+| P-06 tool-list TTL cache               | `backend/tests/property/test_p06_ttl_cache.py`                                             |
+| P-07 shutdown ordering                 | `agent/internal/app/app_test.go` — `TestProperty_P07_ShutdownOrdering`                     |
+| P-08 atomic change sets                | `agent/internal/fileops/property_test.go` — `TestProperty_P08_AtomicChangeSets` and 3 more |
+| P-09 RFC 9457 across all routes        | `backend/tests/property/test_p09_rfc9457.py`                                               |
+| P-10 Tasks state machine               | `backend/tests/property/test_p10_tasks.py`                                                 |
+| P-11 analyzer monotonicity             | `backend/tests/property/test_p11_monotonicity.py`                                          |
+| P-12 OpenTofu env isolation            | `agent/internal/iac/property_test.go`                                                      |
+| P-13 trace context (cross-runtime)     | `backend/tests/unit/test_trace.py` + `agent/internal/telemetry/property_test.go`           |
+| P-14 frontend error normalization      | `frontend/__tests__/p14-error-normalization.test.ts`                                       |
+| P-15 config strictness (cross-runtime) | `backend/tests/unit/test_config.py` + `agent/internal/config/property_test.go`             |
+
+Go properties use `pgregory.net/rapid`; Python properties use `hypothesis`.
+
+## Final traceability check — task 15.11
+
+- **No tree-sitter dependency.** `agent/go.mod` and `agent/go.sum` contain no `tree-sitter`
+  string. The only occurrences in tracked source are the guard itself
+  (`scripts/check-go-module.sh`), the assertion that it is absent
+  (`agent/internal/app/deps_test.go`) and the D-1 deferral comment
+  (`agent/internal/scanner/watcher.go`).
+- **`agent/NOTICE` is complete.** 24 lines, no `TODO`, `FIXME`, `TBD`, `XXX`, `PLACEHOLDER`
+  or unfilled `<…>` placeholder text.
+- **The four authoritative root documents are untouched.**
+  `AI-Powered-DevOps-Platform-Complete-Technical-Research.md`, `PRD.md`,
+  `Tech-Stack-Analysis.md` and `phases.md` are byte-identical to their committed state and
+  are excluded from every mutating pre-commit hook while remaining inside the gitleaks scan.
+- **No future-phase implementation.** Phase 1+ behaviour is present only as named seams
+  (`TokenSource`, `TaskDispatcher`, the `Transport` `tls.Config` shape), each with a
+  Phase 0 implementation and no Phase 1 dependency.
+
+## Secret-scanning result
+
+gitleaks `v8.30.1`, run through its pinned Docker image because the binary is not installed
+locally.
+
+| Scope                                                   | Result                                                                                                                                                                                                                                         |
+| :------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Entire reachable history, all refs (`--log-opts=--all`) | `8 commits scanned` … `no leaks found`                                                                                                                                                                                                         |
+| Unreachable pre-amend commit `69a3b4d`                  | `1 commits scanned` … `no leaks found`. Reflog shows it was amended into `f5ad2b0` before any push, so it was never published                                                                                                                  |
+| Staged changes before every push (`protect --staged`)   | `no leaks found` each time                                                                                                                                                                                                                     |
+| Working tree including untracked files (`--no-git`)     | 216 findings, all rule `generic-api-key`, all inside `backend/.venv/` (200 of them in `license_expression`'s `scancode-licensedb-index.json`). `.venv/` is ignored by `.gitignore:21` and `git ls-files backend/.venv` returns 0 tracked files |
+
+**Nothing requires rotation on this evidence.** The bearer-token incident recorded in
+`.kiro/steering/secret-safety.md` is not present in any reachable or unreachable object in
+this clone. Because GitHub secret scanning is disabled on the repository there is no
+server-side alert history to cross-check, so if that credential was ever real it should be
+treated as compromised and rotated on the issuing side regardless of this clean scan.
 
 ## Open questions requiring a decision
 
-| # | Question | Blocking | Status |
-|:---|:---|:---|:---|
-| OQ-3 | Python logging library — no authority names one | no | stdlib `logging` + `dictConfig` + JSON formatter implemented, awaiting confirmation |
-| OQ-4 | Property-based testing libraries (hypothesis / rapid / fast-check) | no | recommendation implemented, awaiting confirmation |
-| OQ-6 | Windows process-tree termination for the OpenTofu runner | no | `taskkill /T /F` in Phase 0; Job Objects recorded as Phase 1 hardening |
-| OQ-7 | PRD §6 mandates a GitHub App, but token minting is auth-adjacent | no | `EnvTokenSource` in Phase 0 behind `TokenSource`, awaiting confirmation |
-| OQ-10 | D2 version `0.7+` (PRD §5) vs `2.x` (Tech-Stack) | no | deferred to the phase that adopts D2; no D2 dependency in Phase 0 |
-| OQ-11 | `DEEP_RESEARCH_SYNTHESIS.md` is cited but absent from the workspace | no | PRD §2.1a and phases.md 0.5 used; nothing invented |
-| OQ-13 | JWT/JWKS library for gateway OIDC verification | no | `pyjwt[crypto]` recommendation implemented, awaiting confirmation |
-| OQ-15 | Include the nullable `tenant_id` seam in the initial migration? | no | included, nullable, with no RLS policies |
-| OQ-16 | Durable engine choice (Temporal vs Inngest) at the P2 boundary | no | `TaskDispatcher` kept engine-neutral; decision deferred to Phase 2 |
-| OQ-17 | Is backend >70 % coverage a Phase 0 gate or a goal? | no | reported goal in Phase 0, gate from Phase 1 |
-| OQ-18 | Research §9 requires a build-rules document that does not exist | no | `docs/development.md` designated the build-rules home |
-| OQ-20 | Source of the agent blast radius before agents exist | no | `MCP_AGENT_BLAST_RADIUS` (default `read_only`); Phase 1 derives it from attested identity |
+| #     | Question                                                                                                                                      | Blocking | Status                                                                                                      |
+| :---- | :-------------------------------------------------------------------------------------------------------------------------------------------- | :------- | :---------------------------------------------------------------------------------------------------------- |
+| OQ-3  | Python logging library — no authority names one                                                                                               | no       | stdlib `logging` + `dictConfig` + JSON formatter implemented, awaiting confirmation                         |
+| OQ-4  | Property-based testing libraries (hypothesis / rapid / fast-check)                                                                            | no       | recommendation implemented, awaiting confirmation                                                           |
+| OQ-6  | Windows process-tree termination for the OpenTofu runner                                                                                      | no       | `taskkill /T /F` in Phase 0; Job Objects recorded as Phase 1 hardening                                      |
+| OQ-7  | PRD §6 mandates a GitHub App, but token minting is auth-adjacent                                                                              | no       | `EnvTokenSource` in Phase 0 behind `TokenSource`, awaiting confirmation                                     |
+| OQ-10 | D2 version `0.7+` (PRD §5) vs `2.x` (Tech-Stack)                                                                                              | no       | deferred to the phase that adopts D2; no D2 dependency in Phase 0                                           |
+| OQ-11 | `DEEP_RESEARCH_SYNTHESIS.md` is cited but absent from the workspace                                                                           | no       | PRD §2.1a and phases.md 0.5 used; nothing invented                                                          |
+| OQ-13 | JWT/JWKS library for gateway OIDC verification                                                                                                | no       | `pyjwt[crypto]` recommendation implemented, awaiting confirmation                                           |
+| OQ-15 | Include the nullable `tenant_id` seam in the initial migration?                                                                               | no       | included, nullable, with no RLS policies                                                                    |
+| OQ-16 | Durable engine choice (Temporal vs Inngest) at the P2 boundary                                                                                | no       | `TaskDispatcher` kept engine-neutral; decision deferred to Phase 2                                          |
+| OQ-17 | Is backend >70 % coverage a Phase 0 gate or a goal?                                                                                           | no       | reported goal in Phase 0, gate from Phase 1                                                                 |
+| OQ-18 | Research §9 requires a build-rules document that does not exist                                                                               | no       | `docs/development.md` designated the build-rules home                                                       |
+| OQ-20 | Source of the agent blast radius before agents exist                                                                                          | no       | `MCP_AGENT_BLAST_RADIUS` (default `read_only`); Phase 1 derives it from attested identity                   |
+| OQ-21 | Should the repository be made public, or moved to GitHub Enterprise Cloud, to enable native GitHub artifact attestations and secret scanning? | no       | `cosign attest-blob` delivers verifiable SLSA provenance today (D-20); the native path is wired and dormant |
 
 ## Decision log
 
-| Date | Decision | Rationale | Authority |
-|:---|:---|:---|:---|
-| 2026-07-26 | D-14 — project is ForgeOps; Go module `github.com/parag8487/ForgeOps/agent` | real repo supersedes the `org` / `ai-devops-platform` placeholders; module path must match the repo exactly | design §17.1 D-14, §15.6 |
-| 2026-07-26 | D-19 — repo licence `FSL-1.1-ALv2`; `agent/` `Apache-2.0` | BSL 1.1 would contradict the §E18 reasoning that drove the OpenTofu switch; FSL is fixed-text with a 2-year Apache conversion. `FSL-1.1-ALv2` is the registered SPDX id for that licence | design §17.1 D-19, NFR-31/32 |
-| 2026-07-26 | D-1 — defer `tree-sitter/go-tree-sitter` to Phase 1 §1.3 | CGO conflicts with the `CGO_ENABLED=0` six-target build criterion; defers a dependency, not a capability | design §17.1 D-1, §15.7 |
-| 2026-07-26 | D-2 — pgvector column 1536-d, HNSW, `model_id` provenance | matches Voyage Code 3; HNSW mandated by Research §0/§A0a; provenance keeps the Phase 1 multi-model options open | design §17.1 D-2 |
-| 2026-07-26 | D-5 — `go-git/go-git/v5` + `google/go-github` for 0.6 | preserves the single-static-binary property; both permissively licensed; `TokenSource` seam untouched | design §17.1 D-5 |
+| Date       | Decision                                                                                                                                                | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Authority                                   |
+| :--------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------ |
+| 2026-07-26 | D-14 — project is ForgeOps; Go module `github.com/parag8487/ForgeOps/agent`                                                                             | real repo supersedes the `org` / `ai-devops-platform` placeholders; module path must match the repo exactly                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | design §17.1 D-14, §15.6                    |
+| 2026-07-26 | D-19 — repo licence `FSL-1.1-ALv2`; `agent/` `Apache-2.0`                                                                                               | BSL 1.1 would contradict the §E18 reasoning that drove the OpenTofu switch; FSL is fixed-text with a 2-year Apache conversion. `FSL-1.1-ALv2` is the registered SPDX id for that licence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | design §17.1 D-19, NFR-31/32                |
+| 2026-07-26 | D-1 — defer `tree-sitter/go-tree-sitter` to Phase 1 §1.3                                                                                                | CGO conflicts with the `CGO_ENABLED=0` six-target build criterion; defers a dependency, not a capability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | design §17.1 D-1, §15.7                     |
+| 2026-07-26 | D-2 — pgvector column 1536-d, HNSW, `model_id` provenance                                                                                               | matches Voyage Code 3; HNSW mandated by Research §0/§A0a; provenance keeps the Phase 1 multi-model options open                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | design §17.1 D-2                            |
+| 2026-07-26 | D-5 — `go-git/go-git/v5` + `google/go-github` for 0.6                                                                                                   | preserves the single-static-binary property; both permissively licensed; `TokenSource` seam untouched                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | design §17.1 D-5                            |
+| 2026-07-29 | D-20 — SLSA provenance is delivered by `cosign attest-blob`; the native GitHub attestation stays configured but dormant, gated on repository visibility | GitHub artifact attestations require a public repository or GitHub Enterprise Cloud; release run `30465284754` failed with `Failed to persist attestation: Feature not available for user-owned private repositories`. `cosign attest-blob --type slsaprovenance1` produces an in-toto SLSA v1 statement signed keyless via Fulcio and logged in Rekor, so the §8.1 `ATT` link stays real and third-party verifiable with no plan dependency and no visibility change. The native step is retained under `if: github.event.repository.private == false` with `continue-on-error`, so it reports `skipped` today and activates by itself if the repository is made public. **Cost recorded:** the cosign attestation is _not_ discoverable through GitHub's attestations API or `gh attestation verify`, and its predicate is asserted by this workflow's OIDC identity rather than issued by GitHub's attestation service                                                                                                                                                                   | design §8.1, §14.4, Appendix E criterion 16 |
+| 2026-07-29 | D-20a — criterion 16's self-verify runs before every provenance step                                                                                    | In run `30465284754` the verify step sat downstream of the attestation step; the attestation failed and criterion 16's only evidence was never produced. Ordering is now load-bearing and commented as such, and the custody upload runs under `if: !cancelled()` so evidence produced before any failure still reaches the release                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | design §8.1 REL node, §14.4                 |
+| 2026-07-29 | D-20b — attestations are verified from a Sigstore bundle, not a Rekor search                                                                            | `cosign 2.4.3` builds a `dsse` proposed entry without the `verifiers` field the current Rekor server requires, so `POST /api/v1/log/entries/retrieve` answers `400 … proposedContent.proposedContent.verifiers in body is required` (run `30468699177`). `attest-blob` now also writes `--new-bundle-format --bundle`, and verification reads the embedded inclusion proof offline. Side benefit: the attestation is verifiable from a network that cannot reach Rekor. Also, `--signature` needs the signed DSSE envelope, which cosign writes via `--output-signature`; `--output-attestation` writes the unsigned statement, so `.intoto.jsonl` is now the envelope                                                                                                                                                                                                                                                                                                                                                                                                                      | cosign v2.4.3 CLI contract                  |
+| 2026-07-29 | D-21 — `pip-tools` pinned at `7.6.0` instead of the design's `7.4.1`                                                                                    | `7.4.1` is incompatible with current `pip`; the pin is applied consistently in `backend/pyproject.toml` and CI so lock regeneration stays reproducible. Deliberate, recorded deviation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | design §16.2 (pin table)                    |
+| 2026-07-29 | D-22 — the OpenTofu runner owns its stdout/stderr pipes                                                                                                 | `run()` called `cmd.Wait()` before joining the scanner goroutines. `os/exec` closes `StdoutPipe`/`StderrPipe` descriptors inside `Wait`, and that contract states it is "incorrect to call Wait before all reads from the pipe have completed", so buffered stdout was intermittently lost and `ValidateResult.Diagnostics` came back nil (CI run `30468655307`, `runner_test.go:145`). Draining first is also wrong: a killed process tree can leave a descendant holding a write end, so the scanners never see EOF — that variant hung the suite for 600 s. `run()` now creates its own `os.Pipe` pair, so `cmd.Wait` never touches the read ends: the process is reaped first, then the drain is bounded by `KillGrace` and forced to completion by closing the read ends                                                                                                                                                                                                                                                                                                               | design §9.1 (bounded execution, streaming)  |
+| 2026-07-30 | **D-23 — a test double must never shadow a `spec=`; every seam needs one test over the real object graph**                                              | This is the most important lesson of Phase 0 and it is recorded so the next phase does not repeat it. `test_mcp_e2e.py` built `AsyncMock(spec=OpaGatewayPolicy)` and then **reassigned** the spec'd child (`policy.filter_tools = AsyncMock(...)`). Reassignment discards signature enforcement, so the doubles implemented the contract the gateway _wanted_ while the real collaborators implemented a different one. Result: 419 green tests over a production composition that raised `TypeError` on every `tools/list`, `tools/call` and `tasks/create`. Neither type checking nor coverage could see it, because collaborators arrive by constructor injection and the call sites dispatch dynamically. **Rules now in force:** (1) configure behaviour on the spec'd child (`m.method.side_effect = …`), never by assigning over it; (2) every seam carries at least one test that composes the REAL classes; (3) `tests/unit/test_mcp_contract.py` binds every gateway→collaborator call site with `inspect.signature().bind()`, so drift fails in milliseconds without any service | review finding; design §7.5, §11.4          |
+| 2026-07-30 | D-24 — the gateway's call sites are the contract; the collaborators were corrected to match                                                             | design §11.4 states `filter_tools(*, server, tools, claims, blast_radius)`, `authorise_call(*, server, tool, metadata, claims, blast_radius)`, a cache that exchanges `list[dict]` with an optional server `ttlMs`, and an upstream that returns tools plus that TTL; §11.5 states `create(*, kind, owner)`. Four call sites disagreed, so the callees changed, not the callers. Types were fixed rather than papered over: `ToolCall` and `ToolListResult` replace dict-fishing, `TtlToolCache` owns its JSON encoding, and `_effective_ttl_ms(None) == 0` means "do not cache" instead of crashing on `min(None, n)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | design §11.4, §11.5                         |
+| 2026-07-30 | D-25 — `default allow := false` in `gateway.rego`, and an undefined OPA document is a loud 503                                                          | The backend queried `/v1/data/forgeops/mcp/{filter_tools,allow_call}`; `package mcp.gateway` defines `filter` and `allow`. OPA answers an undefined document with **HTTP 200 and no `result` key**, so `raise_for_status()` never fired: every `tools/list` returned empty and every `tools/call` 403'd, indistinguishable from a working fail-closed policy. Paths and input keys (`input.tools`, `input.tool`, `input.agent_blast_radius`) are now aligned, and an undefined document raises `mcp-policy-undefined` (503) instead of being read as a deny. That required a deny to be a **defined** `false`, hence the explicit `default allow := false` — which leaves the 27 Rego tests unchanged. Transport failure still fails closed quietly (empty list, then 403)                                                                                                                                                                                                                                                                                                                  | design §11.4, §5.4, §14.1                   |
+| 2026-07-30 | D-26 — a capability probe that skips must fail when the environment promised the capability                                                             | `FORGEOPS_TEST_DATABASE_URL` was referenced only by `tests/integration/conftest.py` and set nowhere, so criterion 14's seven schema assertions skipped **while the CI job paid to run a real `pgvector/pgvector:pg17` service beside them**. `tofu` was likewise absent from the agent job, so the four real-OpenTofu integration tests skipped. A skip printed inside a green run is indistinguishable from coverage. `tests/integration/capability.py::require_capability` now skips locally but **fails** when `FORGEOPS_REQUIRE_INTEGRATION=1`, which CI sets                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | review finding; design Appendix E crit. 14  |
+| 2026-07-30 | D-27 — redaction covers exception tracebacks, and P-09 asserts its own secret clause                                                                    | `SecretRedactingFilter` rewrote `record.msg` and `record.args` only, while `JSONFormatter.format` wrote the inherited, unredacted `formatException` output — the likeliest leak of all, since `asyncpg`, `sqlalchemy` and `httpx` all put the URL (with its password) in the exception message. `formatException` is now overridden in both the JSON and console formatters and `record.exc_text` is scrubbed. Separately, P-09's clause 4 was decorative: with **both** pattern lists emptied all 13 of its tests still passed, because the 500 handler emits a fixed generic `detail`. P-09 now drives handlers whose `detail` carries a synthetic credential, so emptying the patterns fails it                                                                                                                                                                                                                                                                                                                                                                                          | design §7.2, §14.4; P-09                    |

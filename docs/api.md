@@ -39,7 +39,7 @@ Every non-2xx response carries `Content-Type: application/problem+json` and this
   "detail": "Field 'tier' is not a recognised model tier.",
   "instance": "/api/v1/ai/complete",
   "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-  "errors": [{ "pointer": "#/tier", "detail": "unknown tier 'ultra'" }]
+  "errors": [{ "pointer": "#/tier", "detail": "unknown tier 'ultra'" }],
 }
 ```
 
@@ -58,22 +58,22 @@ not RFC 9457 conforming.
 
 ## Health and readiness
 
-| Route | Purpose | Dependency I/O | Success | Failure |
-|:---|:---|:---|:---|:---|
-| `GET /health` | Liveness | none | `200 {"status":"ok","version":"…","commit":"…"}`, including during a dependency outage | only when the process is dead or wedged |
-| `GET /health/ready` | Readiness | PostgreSQL `SELECT 1` + Redis `PING`, 2 s timeout each | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}` | RFC 9457 `503`, one `errors[]` item per failed or timed-out check |
-| `GET /api/v1/health` | Versioned liveness echo | none | `200` | process-level failure only |
+| Route                | Purpose                 | Dependency I/O                                         | Success                                                                                | Failure                                                           |
+| :------------------- | :---------------------- | :----------------------------------------------------- | :------------------------------------------------------------------------------------- | :---------------------------------------------------------------- |
+| `GET /health`        | Liveness                | none                                                   | `200 {"status":"ok","version":"…","commit":"…"}`, including during a dependency outage | only when the process is dead or wedged                           |
+| `GET /health/ready`  | Readiness               | PostgreSQL `SELECT 1` + Redis `PING`, 2 s timeout each | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}`                       | RFC 9457 `503`, one `errors[]` item per failed or timed-out check |
+| `GET /api/v1/health` | Versioned liveness echo | none                                                   | `200`                                                                                  | process-level failure only                                        |
 
 `/health` is the container liveness check. `/health/ready` is the gate polled by
 `scripts/dev-up.sh` after startup.
 
 ## MCP Gateway
 
-| Route | Method | Notes |
-|:---|:---|:---|
-| `/api/v1/mcp` | `POST` | Stateless gateway entry. Routing comes from the `Mcp-Method` and `Mcp-Name` headers only, never the body, and only after bearer verification succeeds |
-| `/api/v1/mcp/servers` | `GET` | Registered MCP servers, OPA-filtered |
-| `/api/v1/mcp/apps/{name}` | `GET` | MCP Apps descriptor `{name, title, entry_url, capabilities, csp}` |
+| Route                     | Method | Notes                                                                                                                                                 |
+| :------------------------ | :----- | :---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/v1/mcp`             | `POST` | Stateless gateway entry. Routing comes from the `Mcp-Method` and `Mcp-Name` headers only, never the body, and only after bearer verification succeeds |
+| `/api/v1/mcp/servers`     | `GET`  | Registered MCP servers, OPA-filtered                                                                                                                  |
+| `/api/v1/mcp/apps/{name}` | `GET`  | MCP Apps descriptor `{name, title, entry_url, capabilities, csp}`                                                                                     |
 
 `tools/list` order: verify bearer/OIDC → route from headers → Redis TTL cache or upstream
 list → OPA filter on every response (cache hit or miss) → return. Only the unfiltered
@@ -109,9 +109,9 @@ ships one descriptor, for the agent's `agent.health` tool.
 
 ## Model routing
 
-| Route | Method | Notes |
-|:---|:---|:---|
-| `/api/v1/ai/tiers` | `GET` | The six tiers with protocol, availability reason, and circuit-breaker state |
+| Route                 | Method | Notes                                                                                                                    |
+| :-------------------- | :----- | :----------------------------------------------------------------------------------------------------------------------- |
+| `/api/v1/ai/tiers`    | `GET`  | The six tiers with protocol, availability reason, and circuit-breaker state                                              |
 | `/api/v1/ai/complete` | `POST` | Fixed order: OIDC verify → require `claims.sub` → Redis token-bucket limiter → semantic cache → registry/router/provider |
 
 Before admission completes, no semantic-cache or provider operation runs. Invalid bearer
@@ -121,8 +121,8 @@ admission is an ordinary `200` routing outcome reporting `EXHAUSTED`, not an err
 
 ## Plan analysis
 
-| Route | Method | Notes |
-|:---|:---|:---|
+| Route                   | Method | Notes                                                                                                                                                                                                            |
+| :---------------------- | :----- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/api/v1/analysis/plan` | `POST` | Deterministic analysis of an OpenTofu plan JSON document: findings, blast radius, verdict (`allow`/`warn`/`block`), and the approval decision (`AUTO_OK`/`REQUIRES_APPROVAL`/`BLOCKED`). No LLM call is involved |
 
 Malformed plan documents return RFC 9457 `422` with JSON-pointer field detail.

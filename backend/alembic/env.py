@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+"""Alembic async environment (design.md §6.3–§6.4).
+
+- Async migrations via asyncpg.
+- Uses SQLModel.metadata with compare_type=True.
+- render_item teaches autogenerate the pgvector Vector type so it does not
+  produce spurious drop/recreate diffs on every revision.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from logging.config import fileConfig
+
+from alembic import context
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlmodel import SQLModel
+
+# Ensure the backend src is importable
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Import all models so SQLModel.metadata is populated
+from src.analysis.models import Embedding, FileTreeEntry  # noqa: F401, E402
+from src.projects.models import Project  # noqa: F401, E402
+
+# Alembic Config object
+config = context.config
+
+# Set up logging from alembic.ini
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# Use DATABASE_URL from environment if available
+database_url = os.environ.get("DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url)
+
+target_metadata = SQLModel.metadata
+
+
+def render_item(type_: str, obj: object, autogen_context: object) -> str | bool:
+    """Teach autogenerate to emit pgvector columns correctly.
+
+    Without this, autogenerate does not know the Vector type and produces a
+    spurious drop/recreate on every revision (design.md §6.3).
+    """
+    if type_ == "type" and isinstance(obj, Vector):
+        autogen_context.imports.add("from pgvector.sqlalchemy import Vector")  # type: ignore[attr-defined]
+        return f"Vector({obj.dim})"
+    return False
+
+
+def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode (SQL generation only)."""
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+        render_item=render_item,
+        compare_type=True,
+        include_schemas=False,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def do_run_migrations(connection: object) -> None:
+    """Configure and run migrations with a live connection."""
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_item=render_item,
+        compare_type=True,
+        include_schemas=False,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    """Run migrations asynchronously using asyncpg."""
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode with a live database."""
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

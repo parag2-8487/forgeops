@@ -78,9 +78,13 @@ printf '%s\n' "$REQUIRED_SECTIONS" | {
 }
 
 # ── Phase rows: all six phases must appear ───────────────────────────────────
+# Row matching is deliberately whitespace-tolerant: Prettier owns markdown
+# formatting (design §8.4) and pads table cells to align columns, so a check
+# that demanded exactly one space either side of a cell value would break the
+# moment the mandated formatter ran.
 echo 'Checking the phase status table lists phases 0 through 5...'
 for phase in 0 1 2 3 4 5; do
-	if grep -E "^\| $phase \|" "$LOWER" >/dev/null 2>&1; then
+	if grep -E "^\|[[:space:]]*$phase[[:space:]]*\|" "$LOWER" >/dev/null 2>&1; then
 		ok "phase row present: $phase"
 	else
 		fail "phase status table is missing a row for phase $phase (design §18)"
@@ -90,7 +94,7 @@ done
 # ── Deliverable coverage: every Phase 0 group needs at least one row ─────────
 echo 'Checking every Phase 0 deliverable group 0.1-0.9 has at least one task row...'
 for group in 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9; do
-	if grep -E "^\| $group \|" "$LOWER" >/dev/null 2>&1; then
+	if grep -E "^\|[[:space:]]*$group[[:space:]]*\|" "$LOWER" >/dev/null 2>&1; then
 		ok "deliverable group covered: $group"
 	else
 		fail "no task row for Phase 0 deliverable group $group (design §18)"
@@ -146,13 +150,13 @@ printf '%s\n' "$CRITERIA" | {
 }
 
 # Every numbered criterion row 1..18 must exist and carry three columns.
-CRIT_ROWS=$(grep -cE '^\| [0-9]+\. ' "$LOWER" 2>/dev/null || printf '0')
+CRIT_ROWS=$(grep -cE '^\|[[:space:]]*[0-9]+\. ' "$LOWER" 2>/dev/null || printf '0')
 if [ "$CRIT_ROWS" -eq 18 ]; then
 	ok 'exactly 18 numbered completion-criteria rows'
 else
 	fail "expected 18 numbered completion-criteria rows, found $CRIT_ROWS (Appendix E)"
 fi
-MISSING_EVIDENCE=$(grep -E '^\| [0-9]+\. ' "$LOWER" | awk -F'|' 'NF < 5 { print $2 }')
+MISSING_EVIDENCE=$(grep -E '^\|[[:space:]]*[0-9]+\. ' "$LOWER" | awk -F'|' 'NF < 5 { print $2 }')
 if [ -z "$MISSING_EVIDENCE" ]; then
 	ok 'every completion criterion has a status and an evidence column'
 else
@@ -161,7 +165,7 @@ fi
 
 # ── Status vocabularies (design §18) ─────────────────────────────────────────
 echo 'Checking the status vocabularies (design §18)...'
-BAD_PHASE_STATUS=$(grep -E '^\| [0-9] \| ' "$LOWER" |
+BAD_PHASE_STATUS=$(grep -E '^\|[[:space:]]*[0-9][[:space:]]*\|' "$LOWER" |
 	awk -F'|' '{ s=$4; gsub(/^[ \t]+|[ \t]+$/, "", s);
 		if (s != "completed" && s != "in-progress" && s != "not-started" && s != "blocked") print s }')
 if [ -z "$BAD_PHASE_STATUS" ]; then
@@ -170,7 +174,7 @@ else
 	fail "invalid phase status(es): $BAD_PHASE_STATUS (design §18 allows exactly four)"
 fi
 
-BAD_TASK_STATUS=$(grep -E '^\| (0\.[1-9]|progress record) \|' "$LOWER" |
+BAD_TASK_STATUS=$(grep -E '^\|[[:space:]]*(0\.[1-9]|progress record)[[:space:]]*\|' "$LOWER" |
 	awk -F'|' '{ s=$5; gsub(/^[ \t]+|[ \t]+$/, "", s);
 		if (s != "done" && s != "in-progress" && s != "pending") print s }')
 if [ -z "$BAD_TASK_STATUS" ]; then
@@ -179,7 +183,7 @@ else
 	fail "invalid task status(es): $BAD_TASK_STATUS (design §18 allows exactly three)"
 fi
 
-BAD_CRIT_STATUS=$(grep -E '^\| [0-9]+\. ' "$LOWER" |
+BAD_CRIT_STATUS=$(grep -E '^\|[[:space:]]*[0-9]+\. ' "$LOWER" |
 	awk -F'|' '{ s=$3; gsub(/^[ \t]+|[ \t]+$/, "", s);
 		if (s != "done" && s != "in-progress" && s != "pending") print s }')
 if [ -z "$BAD_CRIT_STATUS" ]; then

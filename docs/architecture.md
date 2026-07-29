@@ -11,17 +11,17 @@ behaviour outside the table below, the table wins.
 
 ### In scope for Phase 0
 
-| Deliverable | Content |
-|:---|:---|
-| 0.1 | Monorepo layout, root `Makefile`, `docker-compose.yml`, `.env.example`, `.gitignore`, pre-commit (Gitleaks + Ruff + gofmt + Prettier), the two-licence layout, `docs/` |
-| 0.2 | Go module `github.com/parag8487/ForgeOps/agent`, thin `cmd/agent/main.go`, `internal/` tree, constructor-injection DI, graceful shutdown, GoReleaser + Cosign + Syft SBOM + SLSA provenance |
-| 0.3 | FastAPI modular monolith: config, logging, async session, app factory, health/readiness, PostgreSQL 17 + pgvector, single Alembic revision, multi-stage Dockerfile |
-| 0.4 | Next.js 16 App Router shell: sidebar + header + theme toggle, TanStack Query + Zustand, RFC 9457-aware API client, Vitest, Playwright, k6 |
-| 0.5 | Stateless MCP Gateway: header routing, OIDC token verification, OPA policy, TTL tool cache, W3C Trace Context, Go and Python MCP server templates, Tasks Extension, MCP Apps hosting |
-| 0.6 | Git and PR client in the agent (`go-git` locally, `go-github` for the PR REST API) |
-| 0.7 | Validation pipeline skeleton and the deterministic Semantic Plan Analyzer wired to the approval seam |
-| 0.8 | OpenTofu 1.12.5 runner in the agent: timeout, output streaming, signal propagation, environment isolation, `validate` and `plan` |
-| 0.9 | Six model routing tiers, endpoint registry, OpenAI-compatible adapter, fallback cascade, circuit breaker, BYO-key resolvers, tiered semantic cache, Redis/Lua per-caller limiter |
+| Deliverable | Content                                                                                                                                                                                     |
+| :---------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.1         | Monorepo layout, root `Makefile`, `docker-compose.yml`, `.env.example`, `.gitignore`, pre-commit (Gitleaks + Ruff + gofmt + Prettier), the two-licence layout, `docs/`                      |
+| 0.2         | Go module `github.com/parag8487/ForgeOps/agent`, thin `cmd/agent/main.go`, `internal/` tree, constructor-injection DI, graceful shutdown, GoReleaser + Cosign + Syft SBOM + SLSA provenance |
+| 0.3         | FastAPI modular monolith: config, logging, async session, app factory, health/readiness, PostgreSQL 17 + pgvector, single Alembic revision, multi-stage Dockerfile                          |
+| 0.4         | Next.js 16 App Router shell: sidebar + header + theme toggle, TanStack Query + Zustand, RFC 9457-aware API client, Vitest, Playwright, k6                                                   |
+| 0.5         | Stateless MCP Gateway: header routing, OIDC token verification, OPA policy, TTL tool cache, W3C Trace Context, Go and Python MCP server templates, Tasks Extension, MCP Apps hosting        |
+| 0.6         | Git and PR client in the agent (`go-git` locally, `go-github` for the PR REST API)                                                                                                          |
+| 0.7         | Validation pipeline skeleton and the deterministic Semantic Plan Analyzer wired to the approval seam                                                                                        |
+| 0.8         | OpenTofu 1.12.5 runner in the agent: timeout, output streaming, signal propagation, environment isolation, `validate` and `plan`                                                            |
+| 0.9         | Six model routing tiers, endpoint registry, OpenAI-compatible adapter, fallback cascade, circuit breaker, BYO-key resolvers, tiered semantic cache, Redis/Lua per-caller limiter            |
 
 ### Explicitly out of scope
 
@@ -109,11 +109,11 @@ and an optional `.env` as an override, so a fresh clone starts without any manua
 The distinction is a contract, not a convenience, and the probe endpoints are unversioned
 so they do not move when the API version bumps.
 
-| Endpoint | Meaning | Dependency I/O | Behaviour during a PostgreSQL or Redis outage |
-|:---|:---|:---|:---|
-| `GET /health` | Liveness: the event loop accepts work | none | stays `200` |
-| `GET /health/ready` | Readiness: PostgreSQL `SELECT 1` + Redis `PING`, each with a 2 s timeout | yes | RFC 9457 `503` with one `errors[]` item per failed or timed-out check |
-| `GET /api/v1/health` | Versioned informational echo of liveness | none | stays `200` |
+| Endpoint             | Meaning                                                                  | Dependency I/O | Behaviour during a PostgreSQL or Redis outage                         |
+| :------------------- | :----------------------------------------------------------------------- | :------------- | :-------------------------------------------------------------------- |
+| `GET /health`        | Liveness: the event loop accepts work                                    | none           | stays `200`                                                           |
+| `GET /health/ready`  | Readiness: PostgreSQL `SELECT 1` + Redis `PING`, each with a 2 s timeout | yes            | RFC 9457 `503` with one `errors[]` item per failed or timed-out check |
+| `GET /api/v1/health` | Versioned informational echo of liveness                                 | none           | stays `200`                                                           |
 
 Startup fails fast on invalid configuration and on failures to construct local resources.
 It does **not** abort merely because PostgreSQL or Redis is unreachable; clients and pools
@@ -131,8 +131,8 @@ Full contract and the route inventory live in `docs/api.md`.
 ## Middleware order
 
 Outermost first: `ServerErrorMiddleware` → `RequestIdMiddleware` →
-`TraceContextMiddleware` → `AccessLogMiddleware` → `CORSMiddleware` → *(Phase 1
-`TenantContextMiddleware` inserts here)* → router and endpoint dependencies. Starlette
+`TraceContextMiddleware` → `AccessLogMiddleware` → `CORSMiddleware` → _(Phase 1
+`TenantContextMiddleware` inserts here)_ → router and endpoint dependencies. Starlette
 prepends middleware, so registration order in the app factory is the reverse of execution
 order.
 
@@ -153,10 +153,10 @@ a `NoopTracer` implementation. No OTel SDK, Collector, or exporter is introduced
 
 One repository, two licences, by path:
 
-| Path | SPDX identifier | Covers |
-|:---|:---|:---|
-| `LICENSE` (repository root) | `FSL-1.1-ALv2` | everything except paths carrying their own `LICENSE` |
-| `agent/LICENSE` | `Apache-2.0` | the whole `agent/` subtree — the local agent and the CLI |
+| Path                        | SPDX identifier | Covers                                                   |
+| :-------------------------- | :-------------- | :------------------------------------------------------- |
+| `LICENSE` (repository root) | `FSL-1.1-ALv2`  | everything except paths carrying their own `LICENSE`     |
+| `agent/LICENSE`             | `Apache-2.0`    | the whole `agent/` subtree — the local agent and the CLI |
 
 `FSL-1.1-ALv2` is the registered SPDX short identifier and the only form used in package
 metadata and SBOMs. In prose the licence is the Functional Source License 1.1 with an
@@ -167,13 +167,13 @@ since the licence a change lands under depends on the directory it touches.
 
 ## Recorded decisions carried by Phase 0
 
-| Decision | Summary |
-|:---|:---|
-| D-1 | `tree-sitter/go-tree-sitter` deferred to Phase 1; CGO conflicts with the `CGO_ENABLED=0` six-target static build. The real `fsnotify` watcher stays in scope |
-| D-2 | Phase 0 vector column is 1536-d with an HNSW index and a `model_id` provenance column |
-| D-5 | `go-git/go-git/v5` for local Git operations, `google/go-github` for the PR REST API |
-| D-14 | Project identity ForgeOps; module path `github.com/parag8487/ForgeOps/agent` |
-| D-19 | `FSL-1.1-ALv2` for the repository, `Apache-2.0` for the agent and CLI |
+| Decision | Summary                                                                                                                                                      |
+| :------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-1      | `tree-sitter/go-tree-sitter` deferred to Phase 1; CGO conflicts with the `CGO_ENABLED=0` six-target static build. The real `fsnotify` watcher stays in scope |
+| D-2      | Phase 0 vector column is 1536-d with an HNSW index and a `model_id` provenance column                                                                        |
+| D-5      | `go-git/go-git/v5` for local Git operations, `google/go-github` for the PR REST API                                                                          |
+| D-14     | Project identity ForgeOps; module path `github.com/parag8487/ForgeOps/agent`                                                                                 |
+| D-19     | `FSL-1.1-ALv2` for the repository, `Apache-2.0` for the agent and CLI                                                                                        |
 
 ## Reference documents
 

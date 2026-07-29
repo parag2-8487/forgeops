@@ -47,7 +47,9 @@ flatten_file() {
 	_key=$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_')
 	_out="$FLATDIR/$_key"
 	if [ ! -f "$_out" ]; then
-		tr '\n\t' '  ' <"$1" | tr -s ' ' | tr 'A-Z' 'a-z' >"$_out"
+		# CR is deleted first: on a CRLF checkout a wrapped phrase would otherwise
+		# flatten to "general user\r authentication" and never match.
+		tr -d '\r' <"$1" | tr '\n\t' '  ' | tr -s ' ' | tr 'A-Z' 'a-z' >"$_out"
 	fi
 	printf '%s' "$_out"
 }
@@ -100,7 +102,7 @@ if [ -f docs/deployment.md ]; then
 		/^[[:space:]]*$/ { if (started) exit; next }
 		/^#/             { if (started) exit; next }
 		                 { started = 1; print }
-	' docs/deployment.md | tr '\n\t' '  ' | tr -s ' ')
+	' docs/deployment.md | tr -d '\r' | tr '\n\t' '  ' | tr -s ' ')
 	for phrase in 'local development on a trusted machine only' 'must never be exposed to a network'; do
 		case $FIRST_PARA in
 		*"$phrase"*) ;;

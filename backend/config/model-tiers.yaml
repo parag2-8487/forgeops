@@ -1,0 +1,106 @@
+version: 1
+tiers:
+  high_coding:
+    primary: gpt-5.6-sol
+    secondary: claude-fable-5
+    cross_vendor: [grok-4.5]
+    self_hosted: [glm-5.2]
+  high_analysis:
+    primary: claude-fable-5
+    secondary: gpt-5.6-sol
+    cross_vendor: [deepseek-v4]
+    self_hosted: [glm-5.2]
+  medium:
+    primary: grok-4.5
+    secondary: claude-sonnet-5
+    cross_vendor: [deepseek-v4]
+    self_hosted: [qwen3-coder-next]
+  medium_value:
+    primary: claude-sonnet-5
+    secondary: deepseek-v4
+    cross_vendor: [grok-4.5]
+    self_hosted: [qwen3-coder-next]
+  low_logs:
+    primary: gemini-3-flash
+    secondary: deepseek-v4
+    cross_vendor: []
+    self_hosted: [deepseek-v4-flash]
+  self_hosted:
+    primary: qwen3-coder-next
+    secondary: glm-5.2
+    cross_vendor: []
+    self_hosted: []
+
+endpoints:
+  gpt-5.6-sol:
+    provider: openai
+    model: gpt-5.6-sol
+    protocol: openai_compatible
+    base_url: ${OPENAI_BASE_URL}
+    key_ref: openai
+    timeout_seconds: 60
+    rank_source: internal_golden
+  grok-4.5:
+    provider: xai
+    model: grok-4.5
+    protocol: openai_compatible
+    base_url: ${XAI_BASE_URL}
+    key_ref: xai
+    timeout_seconds: 60
+    rank_source: internal_golden
+  deepseek-v4:
+    provider: deepseek
+    model: deepseek-v4
+    protocol: openai_compatible
+    base_url: ${DEEPSEEK_BASE_URL}
+    key_ref: deepseek
+    timeout_seconds: 60
+    rank_source: internal_golden
+  qwen3-coder-next:
+    provider: self_hosted
+    model: qwen3-coder-next
+    protocol: openai_compatible
+    base_url: ${SELF_HOSTED_BASE_URL}
+    key_ref: null
+    timeout_seconds: 60
+    rank_source: unranked
+  glm-5.2:
+    provider: self_hosted
+    model: glm-5.2
+    protocol: openai_compatible
+    base_url: ${SELF_HOSTED_BASE_URL}
+    key_ref: null
+    timeout_seconds: 60
+    rank_source: unranked
+  deepseek-v4-flash:
+    provider: self_hosted
+    model: deepseek-v4-flash
+    protocol: openai_compatible
+    base_url: ${SELF_HOSTED_BASE_URL}
+    key_ref: null
+    timeout_seconds: 60
+    rank_source: unranked
+  claude-fable-5:
+    provider: anthropic
+    model: claude-fable-5
+    protocol: anthropic_native
+    base_url: ${ANTHROPIC_BASE_URL}
+    key_ref: anthropic
+    timeout_seconds: 60
+    rank_source: internal_golden
+  claude-sonnet-5:
+    provider: anthropic
+    model: claude-sonnet-5
+    protocol: anthropic_native
+    base_url: ${ANTHROPIC_BASE_URL}
+    key_ref: anthropic
+    timeout_seconds: 60
+    rank_source: internal_golden
+  gemini-3-flash:
+    provider: google
+    model: gemini-3-flash
+    protocol: google_native
+    base_url: ${GOOGLE_BASE_URL}
+    key_ref: google
+    timeout_seconds: 60
+    rank_source: internal_golden

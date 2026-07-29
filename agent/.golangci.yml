@@ -1,0 +1,37 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gofmt
+    - goimports
+    - misspell
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/parag8487/ForgeOps/agent
+  errcheck:
+    # Report ignored errors even when discarded via assignment, so production code
+    # has to say `_ = f()` deliberately rather than dropping an error silently.
+    check-blank: false
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Test files: an unchecked Close/WriteFile in a fixture is noise, not risk —
+    # if the setup genuinely failed the assertions that follow will fail loudly.
+    # Production code gets NO such exemption: every dropped error there must be
+    # written as an explicit `_ =` with a reason.
+    - path: _test\.go
+      linters:
+        - errcheck

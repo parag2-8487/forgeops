@@ -129,7 +129,7 @@ else
 	fail 'make --dry-run bootstrap failed'
 fi
 
-for pin in '2\.24\.7' '7\.4\.1'; do
+for pin in '2\.24\.7' '7\.6\.0'; do
 	if grep -Eq "$pin" "$MAKEFILE"; then
 		ok "Makefile pins version matching $pin"
 	else
@@ -138,10 +138,10 @@ for pin in '2\.24\.7' '7\.4\.1'; do
 done
 
 if [ -f scripts/bootstrap.sh ]; then
-	if grep -q 'pip-tools==' scripts/bootstrap.sh && grep -q '7\.4\.1' scripts/bootstrap.sh; then
-		ok 'bootstrap verifies pip-tools==7.4.1'
+	if grep -q 'pip-tools==' scripts/bootstrap.sh && grep -q '7\.6\.0' scripts/bootstrap.sh; then
+		ok 'bootstrap verifies pip-tools==7.6.0'
 	else
-		fail 'bootstrap must verify pip-tools==7.4.1 (design.md §16.2)'
+		fail 'bootstrap must verify pip-tools==7.6.0 (design.md §16.2)'
 	fi
 	if grep -q 'docker compose version' scripts/bootstrap.sh && grep -q '2\.24\.7' scripts/bootstrap.sh; then
 		ok 'bootstrap verifies Docker Compose 2.24.7'

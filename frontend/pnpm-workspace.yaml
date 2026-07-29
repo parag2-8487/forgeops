@@ -1,0 +1,27 @@
+# Build scripts are opt-in under pnpm 10. Both entries below are native-binary
+# packages that legitimately need their install script: sharp (image codecs) and
+# unrs-resolver (the ESLint resolver). Approving them explicitly is what keeps
+# `pnpm install --frozen-lockfile` from failing with ERR_PNPM_IGNORED_BUILDS
+# inside the Docker build, which has no TTY to run `pnpm approve-builds`.
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - "@hookform/resolvers@5.5.1"
+  - "@next/env@16.2.12"
+  - "@next/eslint-plugin-next@16.2.12"
+  - "@next/swc-darwin-arm64@16.2.12"
+  - "@next/swc-darwin-x64@16.2.12"
+  - "@next/swc-linux-arm64-gnu@16.2.12"
+  - "@next/swc-linux-arm64-musl@16.2.12"
+  - "@next/swc-linux-x64-gnu@16.2.12"
+  - "@next/swc-linux-x64-musl@16.2.12"
+  - "@next/swc-win32-arm64-msvc@16.2.12"
+  - "@next/swc-win32-x64-msvc@16.2.12"
+  - eslint-config-next@16.2.12
+  - lucide-react@1.27.0
+  - next@16.2.12
+onlyBuiltDependencies:
+  - "@next/swc-win32-x64-msvc"
+  - sharp
+  - unrs-resolver

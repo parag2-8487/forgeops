@@ -84,7 +84,6 @@ frontend/components/layout
 frontend/components/providers
 frontend/features
 frontend/lib/api
-frontend/lib/env
 frontend/hooks
 frontend/stores
 frontend/e2e
@@ -148,8 +147,18 @@ printf '%s\n' "$REQUIRED_DIRS" | {
 	done
 }
 
-echo 'Checking structural-only Go directories (design §1.3)...'
-printf '%s\n' "$GO_STRUCTURAL_DIRS" | {
+echo 'Checking the validated public env surface (design §2.3 vs §12.1)...'
+# design §2.3 draws `frontend/lib/{api,env}/` as directories, while the frontend
+# low-level design §12.1 specifies `lib/env.ts` as a single zod-validated module.
+# §12.1 is the more specific authority for the frontend's own layout, so either
+# form satisfies the layout; what must never happen is the surface being absent.
+if [ -d frontend/lib/env ] || [ -f frontend/lib/env.ts ]; then
+	:
+else
+	fail 'the validated public env surface is missing: expected frontend/lib/env/ (design §2.3) or frontend/lib/env.ts (design §12.1)'
+fi
+
+echo 'Checking structural-only Go directories (design §1.3)...'printf '%s\n' "$GO_STRUCTURAL_DIRS" | {
 	while IFS= read -r dir; do
 		[ -n "$dir" ] || continue
 		[ -d "$dir" ] || continue

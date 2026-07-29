@@ -22,20 +22,20 @@ The Makefile itself needs **GNU make** and a **POSIX shell**. All business logic
 WSL2. On Windows, run `make` from Git Bash or WSL2; `cmd.exe` and PowerShell are not
 supported shells for these targets.
 
-| Tool | Version | Notes |
-|:---|:---|:---|
-| GNU make | 4.x | invoked as `make`; BSD make is not supported |
-| POSIX shell | `sh` (dash/bash) | Git Bash or WSL2 on Windows |
-| Go toolchain | 1.26 | agent; builds run with `CGO_ENABLED=0` |
-| Python | `>=3.13,<3.14` | backend |
-| `pip-tools` | 7.4.1 (exact) | the only lock generator |
-| Node.js + pnpm | pnpm 10+ | frontend |
-| Docker + Docker Compose | Compose 2.24.7 (exact) | long-form `env_file.required` is required |
-| OpenTofu | 1.12.5 (exact) | IaC runner tests; also available in the `tools` profile container |
-| `pre-commit` | pinned by `bootstrap` | Gitleaks, Ruff, gofmt, Prettier, hygiene |
+| Tool                    | Version                | Notes                                                             |
+| :---------------------- | :--------------------- | :---------------------------------------------------------------- |
+| GNU make                | 4.x                    | invoked as `make`; BSD make is not supported                      |
+| POSIX shell             | `sh` (dash/bash)       | Git Bash or WSL2 on Windows                                       |
+| Go toolchain            | 1.26                   | agent; builds run with `CGO_ENABLED=0`                            |
+| Python                  | `>=3.13,<3.14`         | backend                                                           |
+| `pip-tools`             | 7.6.0 (exact)          | the only lock generator                                           |
+| Node.js + pnpm          | pnpm 10+               | frontend                                                          |
+| Docker + Docker Compose | Compose 2.24.7 (exact) | long-form `env_file.required` is required                         |
+| OpenTofu                | 1.12.5 (exact)         | IaC runner tests; also available in the `tools` profile container |
+| `pre-commit`            | pinned by `bootstrap`  | Gitleaks, Ruff, gofmt, Prettier, hygiene                          |
 
 `make bootstrap` verifies the pinned toolchain, including Docker Compose 2.24.7 and
-`pip-tools==7.4.1`, and installs git hooks. It never silently rewrites lockfiles.
+`pip-tools==7.6.0`, and installs git hooks. It never silently rewrites lockfiles.
 
 ## Getting started
 
@@ -95,13 +95,28 @@ Docker volumes, or lockfiles. Optional Compose profiles are separate commands:
 
 ## Testing
 
-| Component | Command | Notes |
-|:---|:---|:---|
-| Agent | `go test -race -shuffle=on ./...` | run from `agent/` |
-| Backend | `pytest` | async tests via `pytest-asyncio`; Compose-managed PostgreSQL and Redis |
-| Frontend | `vitest --run` | never watch mode |
-| E2E | Playwright | `make e2e` against a built frontend |
-| Load | k6 `/health` smoke | `make load`, non-gating |
+| Component | Command                           | Notes                                                                  |
+| :-------- | :-------------------------------- | :--------------------------------------------------------------------- |
+| Agent     | `go test -race -shuffle=on ./...` | run from `agent/`; needs `CGO_ENABLED=1` and a gcc — see below         |
+| Backend   | `pytest`                          | async tests via `pytest-asyncio`; Compose-managed PostgreSQL and Redis |
+| Frontend  | `vitest --run`                    | never watch mode                                                       |
+| E2E       | Playwright                        | `make e2e` against a built frontend                                    |
+| Load      | k6 `/health` smoke                | `make load`, non-gating                                                |
+
+### The race detector on Windows
+
+`-race` requires cgo, and cgo requires a **gcc-compatible** compiler. Visual Studio
+Build Tools do _not_ work: they provide `cl.exe`, which rejects the gcc-style flags
+cgo passes and fails with `invalid numeric argument '/Werror'`. Install MinGW-w64
+instead:
+
+```powershell
+winget install --id BrechtSanders.WinLibs.POSIX.UCRT
+```
+
+Then make sure its `mingw64\bin` is on `PATH` and run with `CGO_ENABLED=1`. Release
+builds are unaffected — they stay `CGO_ENABLED=0` for the six-target static matrix
+(§8.2), which is exactly why `tree-sitter` is deferred to Phase 1 (D-1).
 
 Property-based tests use `hypothesis` (Python), `pgregory.net/rapid` (Go), and `fast-check`
 (TypeScript), and map one-for-one to the numbered correctness properties P-01 through P-15
@@ -124,10 +139,10 @@ RBAC in Phase 0 — that is Phase 1 §1.11.
 
 The licence a change lands under depends on the directory it touches:
 
-| Path | SPDX identifier | Requirement for contributors |
-|:---|:---|:---|
-| `agent/**` | `Apache-2.0` | Every Go file starts with `// SPDX-License-Identifier: Apache-2.0`; `agent/LICENSE` and a complete `agent/NOTICE` govern the subtree |
-| everything else (`backend/`, `frontend/`, `policies/`, `scripts/`, `docs/`, root tooling) | `FSL-1.1-ALv2` | Covered by the root `LICENSE`; declared in `backend/pyproject.toml` and `frontend/package.json` |
+| Path                                                                                      | SPDX identifier | Requirement for contributors                                                                                                         |
+| :---------------------------------------------------------------------------------------- | :-------------- | :----------------------------------------------------------------------------------------------------------------------------------- |
+| `agent/**`                                                                                | `Apache-2.0`    | Every Go file starts with `// SPDX-License-Identifier: Apache-2.0`; `agent/LICENSE` and a complete `agent/NOTICE` govern the subtree |
+| everything else (`backend/`, `frontend/`, `policies/`, `scripts/`, `docs/`, root tooling) | `FSL-1.1-ALv2`  | Covered by the root `LICENSE`; declared in `backend/pyproject.toml` and `frontend/package.json`                                      |
 
 `FSL-1.1-ALv2` is the registered SPDX short identifier and the only form allowed in package
 metadata, SPDX headers, and SBOM-visible fields. In prose, call it the Functional Source

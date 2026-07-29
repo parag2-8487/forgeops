@@ -1,0 +1,44 @@
+# Normalise line endings so a Windows checkout cannot break Linux execution.
+#
+# Git stores text as LF; without the rules below a Windows working copy gets CRLF
+# on checkout, and a CRLF shell script fails under bash with an opaque
+# `\r: command not found`. The same applies to Dockerfiles and anything the CI
+# runner executes, so every executable-by-a-shell file is pinned to LF
+# regardless of platform.
+
+# Default: let Git decide what is text and normalise it in the repository.
+* text=auto
+
+# --- Must be LF: executed by a POSIX shell or a Linux container -------------
+*.sh            text eol=lf
+Makefile        text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+.dockerignore   text eol=lf
+*.rego          text eol=lf
+*.tf            text eol=lf
+*.hcl           text eol=lf
+
+# --- Windows-only helpers keep CRLF ----------------------------------------
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.ps1           text eol=crlf
+
+# --- Binary: never touch ----------------------------------------------------
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.woff          binary
+*.woff2         binary
+*.pdf           binary
+*.zip           binary
+*.gz            binary
+*.exe           binary
+
+# --- Generated locks: keep diffs quiet in review ---------------------------
+pnpm-lock.yaml       -diff linguist-generated
+requirements.lock    -diff linguist-generated
+requirements-dev.lock -diff linguist-generated
+go.sum               -diff linguist-generated

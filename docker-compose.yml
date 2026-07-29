@@ -1,0 +1,121 @@
+# ForgeOps Phase 0 — the unprofiled DEFAULT profile: postgres, redis, opa,
+# backend, frontend. That five-service set is exactly what
+# `docker compose up -d --wait` starts on a fresh clone (Appendix E criterion 4).
+#
+# No optional service is declared here: `infisical` (profile vault) and
+# `agent-dev` (profile tools) are added only by their owning implementation
+# tasks, so they cannot be pulled in by the default command.
+#
+# Every service loads the committed ./.env.example as a REQUIRED env file and
+# ./.env as an OPTIONAL override, which is what lets a fresh clone start with no
+# .env present. Compose interpolation does not read env_file, so every ${VAR} in
+# a port or build argument carries its own safe default.
+#
+# Design: §2.2, §13.3, §14.2, §16.4
+name: forgeops
+
+x-service-env: &service-env
+  - path: ./.env.example
+    required: true
+  - path: ./.env
+    required: false
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+    env_file: *service-env
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis/redis-stack-server:7.4.0-v3@sha256:7d8e657d60d525534d6abe96e7645ab30ef1b4f1ffedc6eeb2d4d4283b3a49b9
+    env_file: *service-env
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  opa:
+    image: openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5
+    env_file: *service-env
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "/policies"]
+    volumes:
+      - ./policies:/policies:ro
+    ports:
+      - "127.0.0.1:${OPA_PORT:-8181}:8181"
+    healthcheck:
+      test: ["CMD", "/opa", "version"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runtime
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-ForgeOps}
+    env_file: *service-env
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  backend:
+    build: { context: ./backend, target: runtime }
+    env_file: *service-env
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres: { condition: service_started }
+      redis: { condition: service_started }
+      opa: { condition: service_started }
+    healthcheck:
+      # Liveness only: /health performs NO dependency I/O (§4.4).
+      # Readiness is polled separately by scripts/dev-up.sh.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Added by task 13.15: Infisical vault for BYO-key secret management.
+  # Only starts with `docker compose --profile vault up -d --wait`.
+  infisical:
+    profiles: ["vault"]
+    image: infisical/infisical:v0.91.1
+    env_file: *service-env
+    depends_on:
+      postgres: { condition: service_started }
+      redis: { condition: service_started }
+
+  # Added by task 9.5: devtools container for OpenTofu integration tests.
+  # Only starts with `docker compose --profile tools up -d --wait`.
+  agent-dev:
+    profiles: ["tools"]
+    build:
+      context: ./agent
+      target: devtools
+    env_file: *service-env
+    volumes:
+      - ./agent:/workspace:rw
+      - tofucache:/var/cache/tofu/plugins
+    command: ["sleep", "infinity"]
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+  tofucache: {}
