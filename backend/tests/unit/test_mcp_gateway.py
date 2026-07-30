@@ -275,7 +275,7 @@ class TestOidcTokenVerifier:
         mock_signing_key.key = public_key
         mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
 
-        with patch.object(verifier, "_get_jwks_client", return_value=mock_jwks_client):
+        with patch.object(verifier, "_get_jwks_client", autospec=True, return_value=mock_jwks_client):
             with pytest.raises(ProblemException) as exc_info:
                 await verifier.verify(f"Bearer {token}")
             assert exc_info.value.problem.status == 401
@@ -305,7 +305,7 @@ class TestOidcTokenVerifier:
         mock_signing_key.key = public_key
         mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
 
-        with patch.object(verifier, "_get_jwks_client", return_value=mock_jwks_client):
+        with patch.object(verifier, "_get_jwks_client", autospec=True, return_value=mock_jwks_client):
             with pytest.raises(ProblemException) as exc_info:
                 await verifier.verify(f"Bearer {token}")
             assert exc_info.value.problem.status == 401
@@ -337,7 +337,7 @@ class TestOidcTokenVerifier:
         mock_signing_key.key = public_key
         mock_jwks_client.get_signing_key_from_jwt.return_value = mock_signing_key
 
-        with patch.object(verifier, "_get_jwks_client", return_value=mock_jwks_client):
+        with patch.object(verifier, "_get_jwks_client", autospec=True, return_value=mock_jwks_client):
             result = await verifier.verify(f"Bearer {token}")
             assert isinstance(result, Claims)
             assert result.sub == "user42"

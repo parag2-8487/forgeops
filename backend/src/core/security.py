@@ -98,6 +98,12 @@ class OidcTokenVerifier:
         "signature": "mcp-token-verification-failed",
     }
 
+    #: How long to wait for the issuer's discovery document before falling back to the
+    #: well-known JWKS path (D-58). Short on purpose: this runs inside token
+    #: verification, and a slow IdP must not turn every authenticated request into a
+    #: hung connection. The result is cached with the JWKS client for `jwks_ttl_seconds`.
+    _discovery_timeout: float = 5.0
+
     def __init__(
         self,
         *,
@@ -139,7 +145,7 @@ class OidcTokenVerifier:
             )
 
         try:
-            jwks_client = self._get_jwks_client(issuer)
+            jwks_client = await self._get_jwks_client(issuer)
             signing_key = jwks_client.get_signing_key_from_jwt(token)
 
             claims = jwt.decode(
@@ -186,14 +192,64 @@ class OidcTokenVerifier:
             )
         return parts[1]
 
-    def _get_jwks_client(self, issuer: str) -> PyJWKClient:
+    async def _get_jwks_client(self, issuer: str) -> PyJWKClient:
         now = time.time()
         if issuer in self._jwks_clients:
             if now - self._jwks_cache_times.get(issuer, 0) < self._jwks_ttl:
                 return self._jwks_clients[issuer]
 
-        jwks_url = f"{issuer.rstrip('/')}/.well-known/jwks.json"
+        jwks_url = await self._resolve_jwks_uri(issuer)
         client = PyJWKClient(jwks_url, cache_keys=True, lifespan=self._jwks_ttl)
         self._jwks_clients[issuer] = client
         self._jwks_cache_times[issuer] = now
         return client
+
+    async def _resolve_jwks_uri(self, issuer: str) -> str:
+        """The issuer's `jwks_uri`, taken from its discovery document (D-58).
+
+        This used to be `f"{issuer}/.well-known/jwks.json"`, guessed rather than
+        discovered. That guess is not part of any specification — OIDC Discovery
+        standardises `/.well-known/openid-configuration` and requires it to *name*
+        `jwks_uri`, and providers put the keys wherever they like. Real Authentik serves
+        `<issuer>jwks/`, so every token it minted was rejected as `signature` — the JWKS
+        fetch 404'd and `PyJWKClientError` reads exactly like a bad signature. The bug
+        survived because the test fixture issuers were written to serve the guessed path,
+        so the guess and the discovery document agreed by construction.
+
+        The fallback is deliberate and narrow: an issuer that publishes no discovery
+        document, or one whose document omits `jwks_uri`, keeps the historical behaviour.
+        Phase 0's MCP gateway accepts tokens from upstream issuers it does not control,
+        and at least one test issuer publishes a JWKS and nothing else; turning that into
+        a hard failure would be a behaviour change to a shipped contract in order to fix
+        a different bug. `test_jwks_discovery.py` asserts the discovered URI WINS when the
+        two differ, which is the assertion whose absence let this through.
+        """
+        fallback = f"{issuer.rstrip('/')}/.well-known/jwks.json"
+        document = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
+
+        try:
+            if self._http is not None:
+                response = await self._http.get(document, timeout=self._discovery_timeout)
+            else:
+                async with httpx.AsyncClient(timeout=self._discovery_timeout) as http:
+                    response = await http.get(document)
+            if response.status_code != 200:
+                return fallback
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return fallback
+
+        if not isinstance(payload, dict):
+            return fallback
+
+        # The exact-issuer guard, at the one place a substituted document could redirect
+        # key discovery. A document that names a different issuer is not this issuer's
+        # metadata, whatever it says about keys.
+        declared = payload.get("issuer")
+        if isinstance(declared, str) and declared.rstrip("/") != issuer.rstrip("/"):
+            return fallback
+
+        jwks_uri = payload.get("jwks_uri")
+        if isinstance(jwks_uri, str) and jwks_uri.startswith(("http://", "https://")):
+            return jwks_uri
+        return fallback

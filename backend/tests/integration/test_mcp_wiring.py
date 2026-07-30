@@ -136,7 +136,32 @@ class StubNetwork:
             return self._opa(path, request)
         if path.endswith("/mcp"):
             return self._upstream(request)
+        if path == "/.well-known/openid-configuration":
+            return self._discovery(request)
         raise AssertionError(f"unexpected request to {request.url}")
+
+    def _discovery(self, request: httpx.Request) -> httpx.Response:
+        """The issuer's OIDC metadata, naming the loopback JWKS server's real path.
+
+        Added with D-58: the verifier no longer guesses where an issuer keeps its keys, it
+        reads `jwks_uri` out of this document — over the SHARED httpx client, which this
+        transport routes. Before D-58 nothing fetched it, so the router had no case for it
+        and every gateway request through the real graph became a 500.
+
+        Answered rather than 404'd on purpose. Production's issuer publishes metadata, so
+        answering it means the gateway suite exercises the code path a deployment takes;
+        `test_jwks_discovery.py` covers the no-metadata fallback in isolation.
+        """
+        issuer = f"{request.url.scheme}://{request.url.netloc.decode()}"
+        return httpx.Response(
+            200,
+            json={
+                "issuer": issuer,
+                "authorization_endpoint": f"{issuer}/authorize",
+                "token_endpoint": f"{issuer}/token",
+                "jwks_uri": f"{issuer}/.well-known/jwks.json",
+            },
+        )
 
     # Mirrors policies/mcp/gateway.rego closely enough to exercise the client.
     def _opa(self, path: str, request: httpx.Request) -> httpx.Response:

@@ -257,7 +257,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add integration tests against a fixture issuer whose signing key is generated per test run: successful exchange, replayed `state`, expired token, wrong audience, and refresh rotation.
     - _Design: §3.5, §11.2, §13.1; Deliverable: 1.11; Criterion: 1_
 
-  - [ ] 6.3 Add the Authentik services and the real-IdP CI job
+  - [x] 6.3 Add the Authentik services and the real-IdP CI job
     - Add `authentik-server` and `authentik-worker` to the **default** Compose profile with digest-pinned images sharing the existing Postgres and Redis, plus the §13.1 bootstrap variables as placeholders.
     - Add the `auth` CI job exercising the real code+PKCE flow and the RBAC matrix against the container, gated by `require_capability("oidc")`.
     - Keep Authentik out of `/health/ready`: an IdP outage must degrade login, not readiness of authenticated traffic.
