@@ -171,7 +171,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests for CSR shape, TLS config assembly from an issued certificate, and `RenewBefore` behaviour near expiry.
     - _Design: §10.2, §14.3, §17.1 D-36; Deliverable: 1.1, 1.10_
 
-  - [ ] 4.5 Implement the credential store with a reported fallback
+  - [x] 4.5 Implement the credential store with a reported fallback
     - Implement `session.Store` over the OS keychain via `zalando/go-keyring`, with a `0600` file fallback when no keychain is available, and a `Backend()` accessor surfaced by `agent doctor`.
     - Persist only `Credentials` as defined in §10.3; assert the file mode on every load and refuse a world-readable file.
     - Add tests for save/load/wipe round trips on both backends and for the degraded-mode report.
