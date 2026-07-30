@@ -1,0 +1,44 @@
+# NEGATIVE fixture for scripts/check-compose-validate.py: a root user override.
+#
+# Debt D5's OPA clause asked for a `-rootless` tag. D-51 records why that gate was
+# retired: OPA 1.x publishes no such tag, the pinned `1.4.2` image already runs as
+# `1000:1000` on a Chainguard base, and — the part that matters here — a tag-name
+# substring never proved a runtime user in the first place. This fixture is the
+# counterexample. Its image IS the non-root one, correctly digest-pinned, and the
+# container still runs as root, because Compose's `user:` wins. A `-rootless`
+# suffix check would have passed this file.
+name: forgeops-fixture-root-user
+
+x-service-env: &service-env
+  - ./.env.example
+  - path: ./.env
+    required: false
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+    env_file: *service-env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # The offender: the right image, pinned the right way, handed back to uid 0.
+  opa:
+    image: openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5
+    user: "0:0"
+    env_file: *service-env
+    healthcheck:
+      test: ["CMD", "/opa", "version"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # A second spelling Compose also accepts, so the rule cannot pass by only
+  # matching the numeric form.
+  sidecar:
+    profiles: ["vault"]
+    image: infisical/infisical:v0.162.15@sha256:bcb31ccb2a3784315ad9d9e180a9c53c6423f0daf3087c3bb158093de99617f2
+    user: root
+    env_file: *service-env

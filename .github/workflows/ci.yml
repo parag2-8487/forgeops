@@ -308,6 +308,14 @@ jobs:
           echo
       - name: Assert the frontend serves its shell from the built image
         run: curl -fsS --retry 10 --retry-delay 3 --retry-all-errors -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/
+      # Debt D5's OPA clause, as corrected by D-51. The clause asked for a
+      # `1.4.2-rootless` tag that OPA 1.x does not publish, and a tag-name suffix was
+      # never evidence of a runtime user anyway: a `-rootless` image handed `user: root`
+      # in Compose would have satisfied it. `check-compose-validate.py` now rejects a
+      # root `user:` override statically; this is the other half, read out of the host
+      # process table of the container that is actually running.
+      - name: Assert the OPA container does not run as root
+        run: bash scripts/check-container-nonroot.sh opa
       # Optional-profile evidence. Each command lands with the task that owns the
       # service it starts, so this job never waits on a container that does not exist:
       #   - `vault` (infisical): task 10.4

@@ -98,11 +98,12 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Implement `scripts/check-no-latest.sh`, which greps every workflow, script and Dockerfile for `@latest` and fails on a match; wire it into `pre-commit`.
     - _Design: §0.5 debt D4, §8.4, §16.1; Deliverable: 1.11_
 
-  - [ ] 2.5 Digest-pin every image and move OPA to the rootless variant
-    - Replace `infisical/infisical:v0.91.1` with a tag-plus-digest reference and change the OPA image tag to `1.4.2-rootless` with its digest, resolving both digests at implementation time.
-    - Extend `scripts/check-compose-validate.py` to fail if **any** image reference lacks `@sha256:`, if the OPA tag does not end in `-rootless`, or if a `<committed-digest>` placeholder survives.
+  - [x] 2.5 Digest-pin every image and prove the OPA container is not root
+    - Replace `infisical/infisical:v0.91.1` with a tag-plus-digest reference (`v0.162.15`, per D-52 — `v0.91.1` was never published) and keep the OPA reference digest-pinned, resolving both digests at implementation time.
+    - Extend `scripts/check-compose-validate.py` to fail if **any** image reference lacks `@sha256:`, if any service overrides its image's runtime user back to root, or if a `<committed-digest>` placeholder survives.
     - Add fixture compose files proving each of the three failure modes is detected.
-    - _Design: §0.5 debt D5, §8.4, §13.3, §16.4; Deliverable: 1.8; Criterion: 8_
+    - **Corrected by D-51.** The original second failure mode — "the OPA tag does not end in `-rootless`" — rested on a tag OPA 1.x does not publish, while the pinned `1.4.2` image already runs as `USER 1000:1000` on a Chainguard base. A tag substring was never evidence of a runtime user, so the runtime proof moved to `compose-smoke`, which asserts `id -u` inside the running `opa` container is not `0`.
+    - _Design: §0.5 debt D5, §8.4, §13.3, §16.4, §17.1 D-51, D-52; Deliverable: 1.8; Criterion: 8_
 
   - [x] 2.6 Restore lockfile diff visibility
     - Drop `-diff` from all four lockfile entries in `.gitattributes` while keeping `linguist-generated`, so a dependency bump is reviewable.
@@ -147,17 +148,17 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests over the RFC 8785 test vectors plus the project's own fixture corpus.
     - _Design: §7.6, §11.9, §16.2, Appendix A.2, A.8; Deliverable: 1.1, 1.9; Property: Q-14_
 
-- [ ] 4. Extend Go agent primitives before any session or executor work
+- [x] 4. Extend Go agent primitives before any session or executor work
   - [x] 4.1 Extend the typed Go configuration loader
     - Add the pairing, session, journal, identity, scanner and validator fields from §13.1 to `agent/internal/config`, preserving the single joined error containing every problem and ignoring unrelated ambient keys.
     - Add table examples for defaults, combined failures, and invalid durations/enums/paths.
     - _Design: §7.1, §13.1; Deliverable: 1.1_
 
-  - [ ] 4.2 Make the redacting logger the only agent logger and redact validator output
+  - [x] 4.2 Make the redacting logger the only agent logger
     - Change `app.New` to construct the logger via `logging.NewRedacted` only, and add a wiring assertion that no other constructor is reachable.
-    - Route scanner and validator diagnostics through `secretscan.Redact` before they are logged or transmitted, so a validator echoing file contents cannot leak a secret ahead of the log filter.
-    - Add tests injecting synthetic self-labelling credentials into validator output and asserting they never appear in captured logs.
-    - _Design: §7.2, §10.7, §14.5; Deliverable: 1.8; Property: Q-24_
+    - Add tests injecting synthetic self-labelling credentials into logged values and asserting they never appear in captured logs.
+    - **Resequenced.** The "route scanner and validator diagnostics through `secretscan.Redact`" bullet moved to leaf 10.1, which is the leaf that creates `secretscan.Redact`. It was unbuildable here: this leaf sits in wave 2 and `agent/internal/secretscan` does not exist until wave 12.
+    - _Design: §7.2, §14.5; Deliverable: 1.8; Property: Q-24_
 
   - [x] 4.3 Replace `taskkill` with Windows Job Objects
     - Implement `setProcessGroup`/`terminateGroup` in `agent/internal/iac/procattr_windows.go` using `golang.org/x/sys/windows` `CreateJobObject`, `SetInformationJobObject` with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and `AssignProcessToJobObject`; terminate gracefully then close the job handle.
@@ -466,8 +467,9 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
   - [ ] 10.1 Implement agent-side secret scanning and redaction
     - Implement `agent/internal/secretscan` over `github.com/zricethezav/gitleaks/v8 v8.30.1` plus project-configured patterns, returning findings with `kind`, `path`, `line`, `entropy` and a keyed fingerprint — **never** the matched value.
     - Make `Redact` the only constructor of `RedactedChunk`, replacing findings with `FORGEOPS_REDACTED:<kind>:<hash8>` where `hash8` is `HMAC-SHA256(project_pepper, value)` truncated, so the same secret is recognisable across chunks without being recoverable.
-    - Add tests over synthetic self-labelling credentials in fixture files asserting no value is ever returned, logged or transmitted.
-    - _Design: §7.11, §10.9, §14.5, §16.1; Deliverable: 1.8; Criterion: 8; Property: Q-24_
+    - Route scanner and validator diagnostics through `secretscan.Redact` before they are logged or transmitted, so a validator echoing file contents cannot leak a secret ahead of the log filter. **Moved here from leaf 4.2**, which sits ten waves earlier and could not call a function this leaf creates; making it a chokepoint here also binds group 14's validators, which land later still.
+    - Add tests over synthetic self-labelling credentials in fixture files asserting no value is ever returned, logged or transmitted, including credentials injected into validator diagnostic output.
+    - _Design: §7.2, §7.11, §10.7, §10.9, §14.5, §16.1; Deliverable: 1.8; Criterion: 8; Property: Q-24_
 
   - [ ] 10.2 Implement the backend redactor and the single prompt-assembly chokepoint
     - Implement `secrets/redaction.py` as the only constructor of `RedactedChunk`, `RedactedPrompt` and `RedactedInstruction`, redacting both by pattern and by the project's known secret values.
@@ -996,6 +998,8 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 - Task 2.1 (wiring `load_tier_config` into `create_app`) and task 2.2 (Q-27) are the gate for all of group 13. **No generation leaf appears before them**, because §1.5 sits entirely on six-tier routing and Phase 0 proved the shipped YAML was never what a running backend loaded.
 - Group 7 (`MutationAuthority`, the `executor/internal/mutate` boundary, `check-chokepoint.sh`) precedes group 8's mutating operations and group 16's apply surface, so no mutating path is ever written outside the boundary even transiently.
 - Group 10 (the redaction chokepoint and `RedactedPrompt`) precedes group 13, so the first prompt assembled from repository content cannot predate the type that makes redaction mandatory.
+- **Resequencing applied during implementation.** Leaf 4.2 originally carried a bullet requiring `secretscan.Redact`, which leaf 10.1 creates. The wave graph put 4.2 in wave 2 and 10.1 in wave 12, so the bullet was unbuildable where it stood. It moved to 10.1 rather than dragging 4.2 ten waves later, because 4.2's other half — making `logging.NewRedacted` the only reachable agent logger — is a wave-2 prerequisite for every later agent subsystem. No wave-graph edge changed: removing the bullet removed the only forward dependency 4.2 had. The other direction was rejected: pushing 4.2 to wave 12 would have let eight agent subsystems land against an unfiltered logger first.
+- **Debt D5's OPA premise was false and is corrected by D-51.** Leaf 2.5 as written required `openpolicyagent/opa:1.4.2-rootless`, which OPA 1.x does not publish, while the already-pinned `1.4.2` image runs as `USER 1000:1000` on a Chainguard base. The leaf's second failure mode became "no service may override its image's runtime user back to root", and the non-root property is proved at runtime in `compose-smoke` instead of by a tag substring.
 - Property tasks map one-for-one onto Design Appendix B Q-01 … Q-31 and each carries its `mutations.toml` row and negative control. Cross-runtime properties are tested in one leaf against a shared fixture corpus.
 - Optional and new Compose services arrive only with their owning implementation: Authentik and the `auth` job in 6.3, Cerbos in 6.4, Infisical and the `secrets` job in 10.4, Trivy in the devtools image in 14.5, the kind cluster in 14.9, the e2e overlay in 18.1.
 - Migrations `0002` … `0009` are separate leaves 5.1–5.8, each with the §6.5 proof gated by `require_capability("postgres")` so it fails rather than skips in CI; 5.9 adds the linearity and clean-autogenerate assertions.

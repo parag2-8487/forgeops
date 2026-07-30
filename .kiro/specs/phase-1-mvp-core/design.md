@@ -282,7 +282,7 @@ The ordering is the point: **debt items D1 and D2 must land before any §1.5 gen
 | **D2** | **`compose-smoke` only runs `docker compose config`.** It never runs `docker compose up -d --wait` and never builds either image, so criterion 4's own wording and the container half of criterion 1 rest on local runs | Phase 1 adds four services (Authentik, Cerbos, Infisical, OPA promoted to a hard dependency) and an `e2e` journey that must start real containers. A smoke job that never starts anything cannot gate that | §8.3, §13.3 | `compose-smoke`: builds `backend` and `frontend` images, runs `docker compose up -d --wait`, asserts the exact default service set is healthy, then `docker compose --profile vault --profile auth up -d --wait` for the optional set |
 | **D3** | **No Playwright `e2e` job exists**, though `ci.yml`'s header comment claims one | Criterion 10 is an end-to-end user journey. Asserting it from unit tests would be the same category error Phase 0 made | §8.3, §12.6 | new `e2e` job: Playwright against built containers, running the criterion-10 journey (§12.6). Also carries criterion 5's diff/approve/apply flow |
 | **D4** | **`pnpm audit` is non-gating** (`|| true`) and **`govulncheck` is installed from `@latest`**; `golangci-lint@v1.62.2` is pinned by a mutable tag; `pip install pre-commit` / `pip install pip-audit` are unpinned | Phase 1 adds ~14 Go and ~6 frontend dependencies. An advisory-only frontend gate and an unpinned scanner mean the supply-chain posture degrades exactly as the surface grows | §8.4, §16 | `audit`: `|| true` removed; every tool installed from a checksum-verified pinned module (`agent/tools/go.mod` + `go.sum`) or a hash-pinned pip requirement. `scripts/check-no-latest.sh` greps every workflow and script for `@latest` and fails |
-| **D5** | **`infisical/infisical:v0.91.1` is not digest-pinned** while every other Compose image is, and **OPA runs the non-rootless variant** where Phase 0 §13.3 specified `1.4.2-rootless` | §1.8 uses Infisical for real, and §1.7/§1.10 make OPA a hard dependency rather than an optional one | §13.3 | `compose-smoke` + `pre-commit`: `scripts/check-compose-validate.py` extended to fail if **any** image reference lacks `@sha256:`, and to assert the OPA image tag ends in `-rootless` |
+| **D5** | **`infisical/infisical:v0.91.1` is not digest-pinned** while every other Compose image is. The second half of this row — "OPA runs the non-rootless variant where Phase 0 §13.3 specified `1.4.2-rootless`" — **was factually wrong and is corrected by D-51**: OPA 1.x publishes no `-rootless` tag, and `openpolicyagent/opa:1.4.2` already runs as `USER 1000:1000` on a Chainguard base, so the security intent was already met | §1.8 uses Infisical for real, and §1.7/§1.10 make OPA a hard dependency rather than an optional one | §13.3, D-51 | `compose-smoke` + `pre-commit`: `scripts/check-compose-validate.py` extended to fail if **any** image reference lacks `@sha256:`, if a `<committed-digest>` placeholder survives, or if any service overrides its image's runtime user back to root; `compose-smoke` additionally asserts `id -u` inside the running `opa` container is not `0` — a runtime proof of non-root, which a tag-name substring never was |
 
 Carried forward as smaller items, each with an owner in §8 or §13:
 
@@ -3905,17 +3905,20 @@ services:
       timeout: 3s
       retries: 10
 
-  # ── debt D5: OPA becomes rootless as design §13.3 always specified, and now
-  #    serves the governance bundle as well as the gateway policy.
+  # ── debt D5, as corrected by D-51: OPA 1.x publishes no `-rootless` tag, and the
+  #    pinned image already runs as USER 1000:1000 on a Chainguard base. The tag stays
+  #    `1.4.2`; non-root is proved at runtime in `compose-smoke`, not by a tag substring.
+  #    OPA now serves the governance bundle as well as the gateway policy.
   opa:
-    image: openpolicyagent/opa:1.4.2-rootless@sha256:<committed-digest>
+    image: openpolicyagent/opa:1.4.2@sha256:<committed-digest>
     command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "/policies"]
 
   # ── debt D5: digest-pinned like every other image. §1.8 uses it for real, so it
-  #    stays a profile only because EnvKeyResolver remains a valid dev path.
+  #    stays a profile only because EnvKeyResolver remains a valid dev path. The
+  #    version is `v0.162.15` per D-52; `v0.91.1` was never published.
   infisical:
     profiles: ["vault"]
-    image: infisical/infisical:v0.91.1@sha256:<committed-digest>
+    image: infisical/infisical:v0.162.15@sha256:<committed-digest>
 
   # ── tools profile: gains the external binaries §1.5's validators use when present
   agent-dev:
@@ -3925,7 +3928,7 @@ services:
       target: devtools          # tofu 1.12.5 + trivy + helm, all pinned in the image
 ```
 
-`scripts/check-compose-validate.py` is extended to fail if **any** image lacks `@sha256:`, if the OPA tag does not end in `-rootless`, or if a `<committed-digest>` placeholder survives — turning debt D5 into a gate rather than a note.
+`scripts/check-compose-validate.py` is extended to fail if **any** image lacks `@sha256:`, if a `<committed-digest>` placeholder survives, or if any service overrides its image's runtime user back to root (`user: root`, `user: "0"`, or any `0:*` form) — turning debt D5 into a gate rather than a note. The *rootless* half of D5 is corrected by **D-51**: a tag-name substring was never evidence of a runtime user, OPA 1.x publishes no such tag, and the runtime proof lives in `compose-smoke`, which asserts `docker compose exec -T opa id -u` is not `0`.
 
 ### 13.4 `Makefile` additions
 
@@ -4440,6 +4443,26 @@ Each entry is an architecture decision with its rationale preserved, because lat
 
 ---
 
+#### D-51 — Debt D5's "OPA is not rootless" premise was false; non-root is proved at runtime, not by a tag substring
+
+- **Status:** Accepted · **Date:** 2026-07-30 · **Supersedes:** the OPA half of §0.5 debt row D5 and the §13.3 OPA image reference
+- **Context.** §0.5 D5 and §13.3 both required `openpolicyagent/opa:1.4.2-rootless`, inheriting the string from Phase 0 §13.3. Implementing the row exposed two facts. First, **that tag does not exist**: OPA 1.x publishes `1.4.2`, `1.4.2-static`, `1.4.2-debug`, `1.4.2-envoy*` and `1.4.2-istio*`, and `docker manifest inspect openpolicyagent/opa:1.4.2-rootless` returns `no such manifest`. The `-rootless` variant belonged to OPA 0.x and was dropped when 1.0 made the default image non-root. Second, the image the repository already pins — `openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5` — reports `Config.User == "1000:1000"` with `org.opencontainers.image.vendor == "Chainguard"` and a `glibc-dynamic` base. **The security intent D5 asserted was unmet was already met.**
+- **Decision.** The OPA tag stays `1.4.2`, digest-pinned as it is. `scripts/check-compose-validate.py` drops the `-rootless` suffix assertion, which was never evidence of anything, and gains a rule that no service may override its image's runtime user back to root. `compose-smoke` gains the assertion that actually proves the property: `docker compose exec -T opa id -u` must not return `0` on the running container.
+- **Rationale.** A gate that pattern-matches a tag name proves a naming convention, not a runtime user; had the tag existed, a `-rootless` image reconfigured with `user: root` in Compose would have passed. It is also the exact failure class this phase exists to eliminate — Phase 0 shipped 419 green tests over a gateway that could not serve a request (D-23), and a check asserting a substring of an unpullable reference is the same category error. Keeping the requirement as written would have been worse than dropping it: `docker compose up` would fail on an image that cannot be resolved, so the design would have been unimplementable rather than merely unproven.
+- **Consequences.** §0.5 D5, §13.3, §16.4, task 2.5. Debt D5's Infisical half is unaffected and still stands: that image is now digest-pinned (see D-52). Reversal cost is nil — if OPA ever publishes a `-rootless` 1.x tag, the runtime assertion continues to hold and the tag can change without touching the gate.
+
+---
+
+#### D-52 — Infisical is pinned at `v0.162.15`; the integration assumptions were re-verified at that version before §11.8 was written
+
+- **Status:** Accepted · **Date:** 2026-07-30 · **Supersedes:** the `v0.91.1` reference in §13.3
+- **Context.** §13.3 named `infisical/infisical:v0.91.1`. That tag was never published, so the digest D5 demanded could not be resolved for it. The available line moves to `v0.162.15` — roughly seventy minor releases, not a patch bump — and §11.8 had not yet been implemented, so the integration assumptions could still be checked at pin time rather than discovered at integration time. A digest-pinned image whose API moved underneath the design is worse than an unpinned one, because it converts a review-time question into a runtime failure.
+- **Decision.** Pin `infisical/infisical:v0.162.15@sha256:bcb31ccb2a3784315ad9d9e180a9c53c6423f0daf3087c3bb158093de99617f2` and keep §11.8's shape: no SDK, five REST calls over the shared `httpx` client, Universal Auth with a machine-identity `clientId`/`clientSecret`. §11.8's secret CRUD calls are written against the **v4** secrets API (`/api/v4/secrets`, `/api/v4/secrets/{secretName}`, keyed by `projectId`) rather than the v3 raw API (`/api/v3/secrets/raw`, keyed by `workspaceId`), which the vendor's own reference has moved under `endpoints/deprecated/`.
+- **Rationale.** What was checked, and what it found: the **self-hosted deployment shape is unchanged** — one `infisical/infisical` container, external Postgres and Redis, no separate standalone image, and the server env contract (`ENCRYPTION_KEY`, `AUTH_SECRET`, `SITE_URL`, `DB_CONNECTION_URI`, `REDIS_URL`) keeps its names; **port 8080 is unchanged**; **schema migrations now run automatically at boot** (since v0.111.0, where v0.91.1 required them to be run by hand — a change in our favour); **the auth model is unchanged and is now the only supported one** — Universal Auth at `/api/v1/auth/universal-auth/login` with `clientId` + `clientSecret`, with legacy service tokens deprecated, so the design was already on the surviving path; and **the Python SDK question is unchanged** — `infisical-python` is deprecated, `infisicalsdk` replaces it, and §11.8 depends on neither. One thing did move: the **v3 raw-secrets endpoints are now labelled legacy** and superseded by v4. They still respond at v0.162.15, so writing v3 would have worked and then rotted; writing v4 costs nothing today because the code does not exist yet.
+- **Consequences.** §11.8, §13.1, §13.3, tasks 2.5 and 10.4. §13.1 gains the Infisical **server-side** variables, which were absent because Phase 0 only ever needed the client half; the `vault` profile gains a `/api/status` healthcheck and `service_healthy` conditions on Postgres and Redis. Task 10.4's integration test must provision an organisation, project and machine identity on first boot, because a fresh Infisical has no machine identity to authenticate as. Reversal cost is one line in `docker-compose.yml` plus the v4→v3 path change, and both are behind the `SecretStore` seam.
+
+---
+
 ### 17.2 Open questions
 
 **Status: no open question blocks the start of implementation.** Each carries a recommendation this design already implements, so work can begin and the choice stays visible and reversible. Phase 0 questions falling due in this phase are dispositioned in the second table.
@@ -4489,7 +4512,7 @@ Each entry is an architecture decision with its rationale preserved, because lat
 3. **Completion criteria:** the 14 Phase 1 criteria, verbatim, each with an evidence column naming a real CI run, command output or artifact path. Appendix E is the source of the evidence bars.
 4. **Inherited-debt table:** a new section tracking §0.5's five items to closure, because they are prerequisites rather than cleanup and their status must be visible.
 5. **Property coverage:** a `Q-01 … Q-31` table mirroring Phase 0's `P-01 … P-15` table, with file locations **and** the negative-control row from `mutations.toml`, so a reader can see both that a property exists and that it is non-vacuous.
-6. **Decision log:** D-28 … D-50 appended. The Phase 0 rows stay. Resolved open questions move into the decision log rather than being deleted.
+6. **Decision log:** D-28 … D-52 appended. The Phase 0 rows stay. Resolved open questions move into the decision log rather than being deleted.
 7. **Open questions:** OQ-22 … OQ-32 added; the Phase 0 dispositions of §17.2's second table applied in place.
 8. **Deviations and outstanding items:** carried forward, with each closed item marked closed and dated rather than removed — including the honest ones (Rekor unreachable from the workstation, GitHub attestations unavailable on a private repository, secret scanning disabled, `agent-autonomy.md` untracked).
 
@@ -5142,4 +5165,4 @@ The 14 criteria are reproduced **verbatim** from `phases.md` Phase 1 "Completion
 
 ---
 
-*End of Phase 1 design. Scope is bounded by §1; anything not listed in §1.1 is out of scope for this phase. Two owner decisions are recorded — **D-28** (kind-based Kubernetes CI job) and **D-29** (tree-sitter as WebAssembly under wazero, preserving `CGO_ENABLED=0`) — with the reversal cost of each stated in its entry. Twenty-one further decisions (D-30 … D-50) are design decisions open to owner override. Eleven open questions (OQ-22 … OQ-32) are recorded, none blocking, each with the recommendation this document already implements. Thirty-one correctness properties (Q-01 … Q-31) each carry an executable negative control, because a property that cannot fail is not a property.*
+*End of Phase 1 design. Scope is bounded by §1; anything not listed in §1.1 is out of scope for this phase. Two owner decisions are recorded — **D-28** (kind-based Kubernetes CI job) and **D-29** (tree-sitter as WebAssembly under wazero, preserving `CGO_ENABLED=0`) — with the reversal cost of each stated in its entry. Twenty-three further decisions (D-30 … D-52) are design decisions open to owner override. Eleven open questions (OQ-22 … OQ-32) are recorded, none blocking, each with the recommendation this document already implements. Thirty-one correctness properties (Q-01 … Q-31) each carry an executable negative control, because a property that cannot fail is not a property.*

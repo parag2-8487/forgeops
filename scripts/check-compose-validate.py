@@ -17,6 +17,10 @@ a machine without a container engine:
   * no default service declares a profile (that would remove it from the
     unprofiled set and silently break criterion 4);
   * image-based services are pinned by tag AND @sha256: digest;
+  * no service overrides `user:` back to uid 0, which would defeat an image that
+    already drops privilege (debt D5 as corrected by D-51 — the retired rule
+    matched a `-rootless` substring in a tag name, which proves a naming
+    convention rather than a runtime user);
   * build-based services declare an explicit build target;
   * every published port binds to 127.0.0.1 only (§14.2);
   * `.env.example` is a REQUIRED env file and `.env` an OPTIONAL override for
@@ -63,6 +67,20 @@ INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}")
 #: failing at `docker compose up` rather than at review, and looking like a pinned
 #: reference in a diff.
 PLACEHOLDER_DIGEST = re.compile(r"<[^>]*digest[^>]*>|@sha256:<|@sha256:\s*$|@sha256:(?:x|X|0){6,}")
+
+#: A `user:` override that puts the container back on uid 0. Compose accepts
+#: `root`, `0`, `0:0`, `root:root` and `0:root`; all of them defeat an image whose
+#: own Dockerfile dropped privilege. Design §0.5 debt D5, as corrected by D-51:
+#: the original gate matched a `-rootless` substring in a tag name, which proves a
+#: naming convention rather than a runtime user — a `-rootless` image reconfigured
+#: with `user: root` would have sailed through it. This rule checks the thing that
+#: actually decides the runtime uid in Compose, and `compose-smoke` proves the
+#: remaining half by reading `id -u` out of the running container.
+ROOT_USER = re.compile(r"^\s*(?:0|root)\s*(?::\s*(?:0|root)\s*)?$")
+
+
+def _uid_is_root(value: object) -> bool:
+    return bool(ROOT_USER.match(str(value)))
 
 
 def check(compose_path: str) -> list[str]:
@@ -154,6 +172,18 @@ def check(compose_path: str) -> list[str]:
                 )
         if name in IMAGE_SERVICES and not image:
             errors.append(f"service {name!r}: expected an image reference, found none")
+
+        # --- no service may climb back to uid 0 -----------------------------
+        # Debt D5, as corrected by D-51. Every image in the topology is non-root at
+        # rest (OPA is `1000:1000` on a Chainguard base; the two built images set
+        # their own USER), so the only way a container in this file ends up root is
+        # an explicit override here.
+        if "user" in svc and _uid_is_root(svc.get("user")):
+            errors.append(
+                f"service {name!r}: user override {svc.get('user')!r} puts the "
+                f"container back on uid 0, defeating an image that already drops "
+                f"privilege (design §0.5 debt D5, §17.1 D-51)"
+            )
         if name in BUILD_SERVICES:
             build = svc.get("build")
             if not isinstance(build, dict):
@@ -291,6 +321,7 @@ def main() -> int:
         "optional services: infisical behind 'vault', agent-dev behind 'tools' — "
         "declared but excluded from the unprofiled set",
         "image services: tag + @sha256: digest pinned",
+        "no service overrides user: back to uid 0 (D-51)",
         "build services: explicit runtime target",
         "published ports: 127.0.0.1 only, all interpolations defaulted",
         "env_file: ./.env.example required, ./.env optional",

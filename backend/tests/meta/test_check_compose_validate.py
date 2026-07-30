@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
 """The compose validator's image-pinning rules (design.md §0.5 debt D5, §8.4, §13.3).
 
-Three failure modes, each with its own fixture:
+Four failure modes, each with its own fixture:
 
 1. an image with **no digest** — behind an optional profile, because that is exactly
    how `infisical/infisical:v0.91.1` stayed unpinned while every other image carried
@@ -10,9 +10,12 @@ Three failure modes, each with its own fixture:
 2. a surviving `<committed-digest>` **placeholder**, which looks pinned in a diff and
    fails only at `docker compose up`;
 3. a digest with **no tag**, which is reproducible but leaves a reviewer unable to
-   tell which version is deployed.
+   tell which version is deployed;
+4. a `user:` override putting a container back on **uid 0** — the rule D-51 put in
+   place of D5's `-rootless` tag-suffix check, whose counterexample is a correctly
+   pinned non-root image reconfigured as root.
 
-The real `docker-compose.yml` must pass all three.
+The real `docker-compose.yml` must pass all four.
 """
 
 from __future__ import annotations
@@ -103,10 +106,12 @@ class TestTheOpaRootlessClauseIsRecorded:
     the 0.x line. The premise is also no longer true: the pinned image already runs
     as uid 1000 on a Chainguard apko base.
 
-    No check requires a `-rootless` suffix, because a gate that can never pass is
-    worse than no gate. This test pins the two facts the decision rests on, so if OPA
-    ever publishes a rootless variant, or the pinned reference changes, the reasoning
-    is re-examined rather than silently inherited.
+    D-51 replaces the retired suffix check with two things that mean something: a
+    static rule that no service overrides `user:` back to uid 0 (below), and a
+    runtime assertion in `compose-smoke` that reads `id -u` out of the running
+    container. This test pins the two facts the decision rests on, so if OPA ever
+    publishes a rootless variant, or the pinned reference changes, the reasoning is
+    re-examined rather than silently inherited.
     """
 
     def test_the_opa_reference_is_the_pinned_1_4_2_digest(self) -> None:
@@ -120,3 +125,49 @@ class TestTheOpaRootlessClauseIsRecorded:
         text = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         assert "-rootless" in text, "the D5 OPA finding is no longer documented in the compose file"
         assert "1000:1000" in text, "the non-root evidence is no longer recorded beside the image"
+
+
+class TestNoServiceClimbsBackToRoot:
+    """The rule that replaced the `-rootless` suffix check (D-51).
+
+    The fixture is the counterexample the retired gate could not catch: the correct
+    non-root image, correctly digest-pinned, handed back to uid 0 by `user:`.
+    """
+
+    def test_a_numeric_root_override_is_rejected(self) -> None:
+        errors = _errors("root-user-override.yml")
+        assert any("'opa'" in e and "uid 0" in e for e in errors), errors
+
+    def test_the_named_root_spelling_is_also_rejected(self) -> None:
+        errors = _errors("root-user-override.yml")
+        assert any("'sidecar'" in e and "uid 0" in e for e in errors), errors
+
+    def test_the_offending_file_would_have_passed_a_suffix_check(self) -> None:
+        """States the reason the old gate was wrong, executably."""
+        import yaml
+
+        document = yaml.safe_load(
+            (FIXTURES / "root-user-override.yml").read_text(encoding="utf-8")
+        )
+        opa = document["services"]["opa"]
+        assert "@sha256:" in opa["image"], "fixture must be correctly pinned to make its point"
+        assert VALIDATOR._uid_is_root(opa["user"]), "fixture must actually request root"
+
+    @pytest.mark.parametrize("value", ["0", "0:0", "root", "root:root", "0:root"])
+    def test_every_spelling_compose_accepts_is_recognised(self, value: str) -> None:
+        assert VALIDATOR._uid_is_root(value), value
+
+    @pytest.mark.parametrize("value", ["1000", "1000:1000", "forgeops", "10:0extra", "root2"])
+    def test_a_non_root_user_is_not_flagged(self, value: str) -> None:
+        assert not VALIDATOR._uid_is_root(value), value
+
+    def test_the_real_compose_file_overrides_no_user(self) -> None:
+        import yaml
+
+        document = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+        rooted = [
+            name
+            for name, svc in document["services"].items()
+            if VALIDATOR._uid_is_root(svc.get("user", "-"))
+        ]
+        assert not rooted, rooted
