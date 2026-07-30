@@ -34,6 +34,7 @@ Negative control (`mutations.toml` Q-19): drop the `require_principal` dependenc
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -45,6 +46,8 @@ from typing import Any
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+
+from tests import synthetic_secrets
 
 pytestmark = pytest.mark.mandatory
 
@@ -73,20 +76,35 @@ def checker() -> ModuleType:
 #: failures are the ones where something *is* presented — a scheme the verifier does not
 #: accept, an empty bearer, a bearer holding something that is not a JWT — because a
 #: verifier that returned a principal for any of these would be worse than one that merely
-#: required a header. Every value is synthetic and self-labelling.
-TOKENLESS_HEADERS: tuple[tuple[tuple[str, str], ...], ...] = (
-    (),
-    (("Authorization", ""),),
-    (("Authorization", "Bearer"),),
-    (("Authorization", "Bearer "),),
-    (("Authorization", "Bearer not-a-jwt"),),
-    (("Authorization", "Basic dGVzdC1vbmx5LW5vdC1hLXNlY3JldA=="),),
-    (("Authorization", "token test-only-not-a-real-secret"),),
-    (("authorization", "bearer test-only-not-a-real-secret"),),
-    # A structurally valid JWT with `alg: none` and no signature. The verifier must reject
-    # it on the algorithm allowlist, not decode it and trust the claims.
-    (("Authorization", "Bearer eyJhbGciOiJub25lIn0.e30."),),
-)
+#: required a header.
+#:
+#: **Assembled at runtime, and that is not cosmetic.** Written inline, these were
+#: `Bearer …`, `Basic <base64>` and an `eyJ`-prefixed JWT literal — three of the exact
+#: patterns `.kiro/steering/secret-safety.md` lists as high-risk, and the pre-push diff grep
+#: fired on them. None was ever a usable credential, but a scanner cannot tell, and
+#: `tests/synthetic_secrets.py` already records a real GitGuardian incident raised against a
+#: JWT-shaped placeholder in this repository. The bytes sent on the wire are identical; only
+#: the source no longer contains a contiguous credential-shaped string.
+def _tokenless_headers() -> tuple[tuple[tuple[str, str], ...], ...]:
+    return (
+        (),
+        (("Authorization", ""),),
+        (("Authorization", synthetic_secrets.bearer_with("")),),
+        (("Authorization", synthetic_secrets.bearer_with("") + " "),),
+        (("Authorization", synthetic_secrets.bearer_clause()),),
+        (("Authorization", synthetic_secrets.basic_clause()),),
+        (("Authorization", "token " + synthetic_secrets.SYNTHETIC_MARKER),),
+        # Lower-cased scheme and header name: HTTP header names are case-insensitive and
+        # the scheme comparison must be too, so a verifier that only matched `Bearer`
+        # exactly would accept this as "no scheme" and take a different path.
+        (("authorization", synthetic_secrets.bearer_with("").lower() + " " + synthetic_secrets.SYNTHETIC_MARKER),),
+        # A structurally valid JWT with `alg: none` and no signature. The verifier must
+        # reject it on the algorithm allowlist, not decode it and trust the claims.
+        (("Authorization", synthetic_secrets.bearer_with(synthetic_secrets.unsigned_jwt())),),
+    )
+
+
+TOKENLESS_HEADERS: tuple[tuple[tuple[str, str], ...], ...] = _tokenless_headers()
 
 
 @contextmanager
@@ -187,7 +205,52 @@ def _guard_family(dependency_names: set[str]) -> str:
     return "app"
 
 
+@contextmanager
+def _temporary_environment() -> Iterator[None]:
+    """Mutate `os.environ` for the duration of composition, then put it back.
+
+    Held around **both** `create_app()` and the lifespan entry, because the factory reads
+    configuration through pydantic-settings and the lifespan builds the engine and Redis
+    client from it. Restoring in between would compose the app against the developer's real
+    configuration, which is the opposite of the point.
+
+    Self-contained on purpose rather than left to a module fixture. `test_q20_rbac_confinement.py`
+    imports `built_app` to enumerate the real router, and a module-scoped guard in *this* file
+    does not protect *that* module — which is precisely what happened: six `test_config*.py`
+    assertions about production settings ran against a `test` environment and failed, while
+    passing in isolation. Containing the mutation where it is made means no importer can leak
+    it, however it is reached.
+    """
+    snapshot = dict(os.environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(snapshot)
+        from src.core.config import get_settings
+
+        if hasattr(get_settings, "cache_clear"):
+            # The cached Settings was built from the mutated environment. Leaving it cached
+            # would hand the next module a configuration it never asked for — the same defect
+            # one layer along.
+            get_settings.cache_clear()
+
+
 @lru_cache(maxsize=1)
+def _composed() -> tuple[Any, Any]:
+    """The app and a client over it, composed once under a temporary environment."""
+    from fastapi.testclient import TestClient
+
+    with _temporary_environment():
+        app = _build_app()
+        client = TestClient(app, base_url="http://testserver", raise_server_exceptions=False)
+        # Entered here — `__enter__` is what runs the lifespan — because a non-public route
+        # that answered 500 for a missing verifier would satisfy no clause of this property,
+        # and the composition error is a wiring bug rather than deny-by-default behaviour.
+        client.__enter__()
+    return app, client
+
+
 def built_app() -> Any:
     """The app `create_app()` builds — the same callable uvicorn runs.
 
@@ -201,10 +264,26 @@ def built_app() -> Any:
     Composing `app.state.app_token_verifier` by hand was rejected. It would be the one
     collaborator this property is really about, hand-placed by the test, and a route that
     lost its dependency would then be indistinguishable from one whose dependency worked.
-
-    Cached at module level rather than in a fixture because Hypothesis re-enters the test
-    body per example, and a function-scoped fixture would rebuild the app hundreds of times.
     """
+    return _composed()[0]
+
+
+def sync_client() -> Any:
+    """A synchronous client over the real ASGI app, with the real lifespan started.
+
+    `TestClient` rather than `httpx.ASGITransport`: the transport is async-only, and these
+    assertions are synchronous because Hypothesis drives them.
+
+    `sys.monitoring` local events are process-wide rather than per-thread, so the recorder
+    still sees the handler even though `TestClient` dispatches through an anyio portal
+    thread. That is why `TestTheRecorderCanSeeExecution` exercises a real route through this
+    same client rather than only a plain function.
+    """
+    return _composed()[1]
+
+
+def _build_app() -> Any:
+    """`create_app()` with infrastructure pointed at closed ports. Call under the guard."""
     import socket
     from contextlib import closing
 
@@ -219,8 +298,6 @@ def built_app() -> Any:
     # The committed baseline supplies the `${VAR}` expansions `load_tier_config` refuses to
     # leave unexpanded, so this is a CONFIGURATION substitution and simultaneously asserts
     # `.env.example` is complete enough to boot the app.
-    import os
-
     for key, value in load_project_dotenv((".env.example",)).items():
         os.environ.setdefault(key, value)
     os.environ["APP_ENV"] = "test"
@@ -231,28 +308,6 @@ def built_app() -> Any:
     if hasattr(get_settings, "cache_clear"):
         get_settings.cache_clear()
     return create_app()
-
-
-@lru_cache(maxsize=1)
-def sync_client() -> Any:
-    """A synchronous client over the real ASGI app, with the real lifespan started.
-
-    `TestClient` rather than `httpx.ASGITransport`: the transport is async-only, and these
-    assertions are synchronous because Hypothesis drives them. Entered here — `__enter__` is
-    what runs the lifespan — because a non-public route that answered 500 for a missing
-    verifier would satisfy no part of this property, and the composition error is a wiring
-    bug rather than the deny-by-default behaviour under test.
-
-    `sys.monitoring` local events are process-wide rather than per-thread, so the recorder
-    still sees the handler even though `TestClient` dispatches through an anyio portal
-    thread. That is why `TestTheRecorderCanSeeExecution` exercises a real route through this
-    same client rather than only a plain function.
-    """
-    from fastapi.testclient import TestClient
-
-    client = TestClient(built_app(), base_url="http://testserver", raise_server_exceptions=False)
-    client.__enter__()
-    return client
 
 
 @lru_cache(maxsize=1)

@@ -41,6 +41,52 @@ def bearer_clause() -> str:
     return "Bearer " + SYNTHETIC_MARKER + ".not-a-jwt"
 
 
+def bearer_with(value: str) -> str:
+    """`Bearer <value>`, assembled so no `Bearer `-prefixed literal exists in source.
+
+    Added for Q-19, which has to present a *range* of malformed credentials to prove each
+    one is refused. Writing them inline put `Bearer …` literals in
+    `test_q19_route_coverage.py` and the pre-push diff grep fired on them — correctly. The
+    scheme name is the trigger regardless of what follows it, so the scheme is joined here
+    and nowhere else.
+    """
+    return "Bearer" + (" " + value if value else "")
+
+
+def basic_clause(user: str = "forgeops-test", password: str | None = None) -> str:
+    """`Basic <base64>`, built at runtime.
+
+    Base64 inside an `Authorization: Basic` header is *exactly* the shape of real HTTP
+    Basic credentials, so a literal is indistinguishable from a leak to any scanner — and to
+    a reviewer. Encoding here means the source carries the plaintext, which is
+    self-labelling, and the encoded form exists only in memory.
+    """
+    import base64
+
+    secret = SYNTHETIC_MARKER if password is None else password
+    return "Basic " + base64.b64encode(f"{user}:{secret}".encode()).decode("ascii")
+
+
+def unsigned_jwt() -> str:
+    """A structurally valid JWT with `alg: none`, an empty payload and no signature.
+
+    Needed to prove a verifier rejects on its algorithm allowlist rather than decoding and
+    trusting the claims. It carries no secret of any kind — the two segments are
+    `{"alg":"none"}` and `{}` — but its `eyJ` prefix is the JWT-header pattern
+    `.kiro/steering/secret-safety.md` lists as high-risk, and the module docstring above
+    records a real GitGuardian incident for precisely this shape. So it is encoded at
+    runtime and no `eyJ`-prefixed literal appears in any source file.
+    """
+    import base64
+    import json
+
+    def segment(payload: dict[str, str]) -> str:
+        raw = json.dumps(payload, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    return segment({"alg": "none"}) + "." + segment({}) + "."
+
+
 def postgres_dsn() -> str:
     """A PostgreSQL DSN whose password is the synthetic marker."""
     return "postgresql+asyncpg://forgeops:" + SYNTHETIC_MARKER + "@db:5432/prod"

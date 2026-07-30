@@ -35,6 +35,8 @@ from src.mcp.routing import MCP_METHOD_HEADER, MCP_NAME_HEADER, HeaderRouter
 from src.mcp.tasks import RedisTaskStore, TaskState
 from src.mcp.upstream import McpUpstream
 
+from tests import synthetic_secrets
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -708,7 +710,7 @@ class TestAuthenticationBoundary:
     async def test_malformed_token_401(self, gateway: McpGateway):
         with pytest.raises(ProblemException) as exc_info:
             await gateway.handle_tools_list(
-                authorization="Bearer garbage.not.valid!!!",
+                authorization=synthetic_secrets.bearer_with("garbage.not.valid!!!"),
                 headers={MCP_METHOD_HEADER: "tools/list", MCP_NAME_HEADER: "terraform"},
             )
         assert exc_info.value.problem.status == 401

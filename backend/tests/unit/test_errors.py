@@ -21,15 +21,28 @@ from src.core.errors import (
 from src.core.logging import redact_secrets
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from tests.synthetic_secrets import pem_header
+from tests.synthetic_secrets import (
+    SYNTHETIC_MARKER,
+    anthropic_style_key,
+    bearer_clause,
+    openai_style_key,
+    pem_header,
+)
 
 
 class TestSecretRedaction:
-    """SecretRedactingFilter scrubs known patterns."""
+    """SecretRedactingFilter scrubs known patterns.
+
+    Every input is assembled at runtime by `tests/synthetic_secrets.py`. These tests must
+    hand the redactor something that matches its patterns, so the inputs necessarily look
+    like credentials — which is exactly why they must not be source literals. See that
+    module's docstring for the GitGuardian incident this repository already collected for a
+    JWT-shaped placeholder, and `scripts/check-test-credentials.py` for the gate.
+    """
 
     def test_redacts_bearer_token(self):
-        result = redact_secrets("Authorization: Bearer test-only-not-a-real-secret.not-a-jwt")
-        assert "test-only-not-a-real-secret" not in result
+        result = redact_secrets("Authorization: " + bearer_clause())
+        assert SYNTHETIC_MARKER not in result
         assert "[REDACTED]" in result
 
     def test_redacts_postgresql_url(self):
@@ -43,13 +56,15 @@ class TestSecretRedaction:
         assert "[REDACTED]" in result
 
     def test_redacts_openai_key(self):
-        result = redact_secrets("using key sk-proj1234567890abcdefghij")
-        assert "sk-proj1234567890abcdefghij" not in result
+        key = openai_style_key()
+        result = redact_secrets("using key " + key)
+        assert key not in result
         assert "[REDACTED]" in result
 
     def test_redacts_anthropic_key(self):
-        result = redact_secrets("key is sk-ant-1234567890abcdefghijklmnop")
-        assert "sk-ant-1234567890abcdefghijklmnop" not in result
+        key = anthropic_style_key()
+        result = redact_secrets("key is " + key)
+        assert key not in result
 
     def test_redacts_pem_material(self):
         result = redact_secrets("cert: " + pem_header("PRIVATE"))
@@ -96,7 +111,7 @@ class TestProblemHandlers:
 
         @app.get("/raise-bearer-leak")
         async def _raise_bearer_leak():
-            raise RuntimeError("Failed with Bearer test-only-not-a-real-secret.not-a-jwt")
+            raise RuntimeError("Failed with " + bearer_clause())
 
         return app
 

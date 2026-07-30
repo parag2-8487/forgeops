@@ -36,6 +36,8 @@ from src.ai.routing.tiers import (
     TierConfig,
 )
 
+from tests import synthetic_secrets
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -494,7 +496,9 @@ class TestTraceHeaderInjection:
         # Verify request was made with Authorization header
         assert len(transport.requests) == 1
         req = transport.requests[0]
-        assert req.headers.get("authorization") == "Bearer test-only-not-a-real-secret-hdr"
+        assert req.headers.get("authorization") == synthetic_secrets.bearer_with(
+            synthetic_secrets.SYNTHETIC_MARKER + "-hdr"
+        )
         assert req.headers.get("content-type") == "application/json"
 
 

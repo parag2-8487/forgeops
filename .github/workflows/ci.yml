@@ -256,6 +256,14 @@ jobs:
         # integration failures. Also asserts a non-zero policy count: a Cerbos with an
         # empty repository is healthy and denies everything.
         run: bash scripts/ci/start-cerbos.sh
+      - name: No credential-shaped literal in a test source (secret-safety.md)
+        working-directory: .
+        # The second gate, beside gitleaks. gitleaks answers "is this a real credential";
+        # this answers "does this LOOK like one", which is the question that actually blocks
+        # a pull request — a synthetic placeholder that trips a scanner is a red required
+        # check for the lifetime of the commit, and a scan people learn to wave through is
+        # worse than no scan.
+        run: python scripts/check-test-credentials.py backend/tests
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
       - run: pytest tests/ -q

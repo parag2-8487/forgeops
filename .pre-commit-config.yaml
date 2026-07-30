@@ -53,6 +53,18 @@ repos:
         entry: python scripts/check-test-doubles.py
         language: system
         files: ^backend/tests/.*\.py$
+      # secret-safety.md already says "never use a value that resembles a real provider
+      # token format". Until now that rule had no enforcement, so it held only as long as
+      # whoever wrote the test remembered it — and it stopped holding the first time it was
+      # inconvenient: a property test shipped `Bearer …`, `Basic <base64>` and an
+      # `eyJ`-prefixed JWT as source literals. None was ever usable; a scanner cannot tell,
+      # and this repository has already collected a GitGuardian incident for exactly that
+      # shape. `backend/tests/synthetic_secrets.py` is the remedy and this is the gate.
+      - id: check-test-credentials
+        name: no credential-shaped literal in a test source (FO-SEC001)
+        entry: python scripts/check-test-credentials.py
+        language: system
+        files: ^backend/tests/.*\.py$
       - id: check-ci-jobs
         name: every CI job Appendix E cites must exist
         entry: python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md
