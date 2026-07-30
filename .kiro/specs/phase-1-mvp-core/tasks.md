@@ -177,7 +177,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests for save/load/wipe round trips on both backends and for the degraded-mode report.
     - _Design: §10.3, §10.10, §17.2 OQ-26; Deliverable: 1.1_
 
-  - [ ] 4.6 Implement the durable outbound journal
+  - [x] 4.6 Implement the durable outbound journal
     - Implement `agent/internal/session/journal.go`: append-only file at `0600` under `AGENT_STATE_DIR`, length-prefixed records with CRC32C, `fsync` on append, bounds from `AGENT_JOURNAL_MAX_BYTES`/`AGENT_JOURNAL_MAX_AGE_HOURS`, truncation after a successful drain, and a corrupt tail record discarded with a warning rather than a startup failure.
     - Define `RecordKind` with exactly the six kinds in §10.3 and **no kind** for an envelope, `approval_id`, authority, device token, envelope key or secret value, so an authorisation cannot be represented let alone persisted.
     - Implement `Append`/`Drain`/`Wipe`/`Stats`, returning `ErrJournalFull` rather than evicting silently, and expose backlog in `agent.status` and `agent doctor`.

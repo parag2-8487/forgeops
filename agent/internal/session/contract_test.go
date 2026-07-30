@@ -4,7 +4,10 @@
 // (design.md §0.4.2, §10.3).
 package session
 
-var _ Store = (*FileStore)(nil)
+var (
+	_ Store   = (*FileStore)(nil)
+	_ Journal = (*FileJournal)(nil)
+)
 
 // FileStore also satisfies identity.CredentialSource once task 8.3 wires pairing, and
 // that assertion belongs here when the method lands. The interface is declared in
