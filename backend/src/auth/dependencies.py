@@ -22,7 +22,8 @@ from typing import Final
 
 from starlette.requests import Request
 
-from ..core.errors import forbidden_problem
+from ..core.errors import forbidden_problem, problem
+from .cerbos import CerbosPrincipal, CerbosResource, CerbosUnavailableError
 from .models import UserRole
 from .principal import Principal
 from .public_routes import is_public
@@ -106,6 +107,79 @@ def require_role(*allowed: UserRole) -> Callable[[Request], Awaitable[Principal]
         return principal
 
     return dependency
+
+
+async def require_permission(
+    request: Request,
+    principal: Principal,
+    *,
+    resource: CerbosResource,
+    action: str,
+) -> None:
+    """Resource-scoped authorisation via the Cerbos sidecar (§11.2, Tech-Stack §9).
+
+    Cerbos owns the policy; this function owns only the call — there is deliberately no
+    branch on role or action here, because a role check in Python is a second policy
+    that nobody reviews alongside the first.
+
+    A **deny** raises 403 with `FORBIDDEN_DETAIL`, byte-identical to the body a
+    non-existent resource produces, so error shape cannot be used to enumerate projects
+    (§4.2, Q-20). An **outage** raises `authorization-unavailable` (503) instead, per
+    D-56: an unevaluated permission is not a refused one, and collapsing them would make
+    a dead sidecar indistinguishable from a working one refusing everyone.
+
+    An action Cerbos does not answer for is a deny. That is deny-by-default at the last
+    possible layer, and it matters: a typo in an `action` string must not become an
+    allow because no rule matched it.
+    """
+    client = getattr(request.app.state, "cerbos", None)
+    if client is None:
+        # A composition error, not a fact about the caller — the same reasoning as
+        # `require_principal`'s missing verifier above. Reporting it as a 403 would let
+        # a broken deployment look like a correctly-enforced authorisation layer.
+        raise RuntimeError(
+            "app.state.cerbos is not composed; every resource-scoped route depends on "
+            "it (design §11.1, §11.2). create_app() must build it in the lifespan."
+        )
+
+    try:
+        allowed = await client.is_allowed(
+            principal=cerbos_principal(principal),
+            resource=resource,
+            action=action,
+        )
+    except CerbosUnavailableError as exc:
+        raise problem("authorization-unavailable") from exc
+
+    if not allowed:
+        raise forbidden_problem()
+
+
+def cerbos_principal(principal: Principal) -> CerbosPrincipal:
+    """Project a verified `Principal` onto Cerbos's principal shape.
+
+    Exactly one role, because §11.2's model is one role per user — Authentik's groups
+    are collapsed to a single role at the callback, and passing several here would let a
+    Cerbos policy see an authority combination the product does not model.
+
+    `tenant_id` travels as an attribute so a policy can express tenant scoping without
+    this function having to know whether one does. `blast_radius` travels too: it is
+    identity-derived (D-39) and a policy that wants to bar an `infrastructure` action
+    from a `read_only` principal should not have to re-derive it.
+    """
+    attr: dict[str, object] = {
+        "kind": principal.kind,
+        "blast_radius": principal.blast_radius,
+    }
+    if principal.tenant_id is not None:
+        attr["tenant_id"] = str(principal.tenant_id)
+    if principal.device_id is not None:
+        attr["device_id"] = str(principal.device_id)
+    return CerbosPrincipal(
+        id=str(principal.user_id),
+        roles=(principal.role.value,),
+        attr=attr,
+    )
 
 
 def route_requires_principal(path: str, methods: set[str] | frozenset[str]) -> bool:

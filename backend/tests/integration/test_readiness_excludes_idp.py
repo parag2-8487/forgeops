@@ -30,7 +30,9 @@ import pytest_asyncio
 from asgi_lifespan import LifespanManager
 
 from .capability import require_capability
+from .cerbos_stub import cerbos_health_stub
 from .production_app import apply_committed_baseline_env
+from .wiring import wires
 
 pytestmark = pytest.mark.mandatory
 
@@ -60,9 +62,16 @@ async def app_with_unreachable_idp(
     monkeypatch.setenv("OIDC_ISSUER", UNREACHABLE_ISSUER)
     monkeypatch.setenv("ENVELOPE_PEPPER", "test-only-not-a-real-secret-pepper")
 
-    app = create_app()
-    async with LifespanManager(app):
-        yield app
+    # Task 6.4 put Cerbos INTO readiness, which is the precise opposite of what this
+    # module asserts about the IdP — so Cerbos has to be reachable here or the 200
+    # below would be a 503 for a reason that has nothing to do with §6.3. A transport
+    # substitution (§0.4.1): the production client and a real socket, with a stub
+    # process answering only the health path.
+    with cerbos_health_stub() as cerbos_url:
+        monkeypatch.setenv("CERBOS_URL", cerbos_url)
+        app = create_app()
+        async with LifespanManager(app):
+            yield app
 
 
 @pytest_asyncio.fixture()
@@ -72,6 +81,7 @@ async def client(app_with_unreachable_idp: Any) -> AsyncIterator[httpx.AsyncClie
         yield http
 
 
+@wires("cerbos")
 class TestReadinessIgnoresTheIdentityProvider:
     async def test_readiness_is_ready_with_the_idp_unreachable(self, client: httpx.AsyncClient) -> None:
         response = await client.get("/health/ready")
@@ -94,6 +104,19 @@ class TestReadinessIgnoresTheIdentityProvider:
         checks = set((await client.get("/health/ready")).json()["checks"])
         assert {"postgres", "redis"} <= checks, checks
         assert not checks & {"authentik", "authentik-server", "idp", "oidc", "auth"}, checks
+
+    async def test_the_authorization_sidecar_is_probed(self, client: httpx.AsyncClient) -> None:
+        """The other side of the same line, and the reason this module can host the
+        `@wires("cerbos")` declaration.
+
+        §2.3 draws the distinction: an IdP outage degrades login only, so Authentik stays
+        out; an authorisation-sidecar outage refuses every non-public request under
+        deny-by-default, so a replica that cannot reach Cerbos should be drained. Asserting
+        only the absence of the IdP would leave "Cerbos is probed at all" untested, and a
+        probe that silently disappeared would take the operational guarantee with it.
+        """
+        checks = (await client.get("/health/ready")).json()["checks"]
+        assert checks.get("cerbos") == "ok", checks
 
     async def test_liveness_is_unaffected(self, client: httpx.AsyncClient) -> None:
         assert (await client.get("/health")).status_code == 200

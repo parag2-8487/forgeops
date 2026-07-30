@@ -86,6 +86,12 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # re-authenticate through the provider that is down.
     "idp-unavailable": ProblemSpec(503, "Identity provider unavailable"),
     "forbidden": ProblemSpec(403, "Forbidden"),
+    # D-56: the same distinction as `idp-unavailable`, one layer along. A Cerbos outage
+    # is not a policy decision, and `forbidden` is byte-identical to a real deny by
+    # design — so reporting an outage as 403 makes a dead authorisation layer look like
+    # a working one refusing everyone, which is unfalsifiable from the client side.
+    # Failing closed is preserved: nothing is allowed when Cerbos is silent.
+    "authorization-unavailable": ProblemSpec(503, "Authorization service unavailable"),
     # ─── Pairing and devices (§1.1) ──────────────────────────────────────────
     "pairing-code-invalid": ProblemSpec(401, "Pairing code invalid"),
     "pairing-rate-limited": ProblemSpec(429, "Too many pairing attempts"),

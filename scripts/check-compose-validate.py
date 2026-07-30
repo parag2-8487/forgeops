@@ -327,6 +327,8 @@ def check(compose_path: str) -> list[str]:
                 "service_healthy (design §13.3)"
             )
 
+    errors.extend(_check_opa_loads_only_rego(data, compose_path))
+
     volumes = data.get("volumes")
     if not isinstance(volumes, dict):
         errors.append("'volumes' is missing or not a mapping")
@@ -335,6 +337,84 @@ def check(compose_path: str) -> list[str]:
             if volume not in volumes:
                 errors.append(f"named volume {volume!r} is missing")
 
+    return errors
+
+
+def _check_opa_loads_only_rego(data: dict, compose_path: str) -> list[str]:
+    """Every path the `opa` service loads must contain Rego and nothing else (D-57).
+
+    Why this rule exists
+    --------------------
+    `opa run --server /policies` loads every file under the path, and a `.yaml` file is
+    loaded as a **data document**. Task 6.4 added `policies/cerbos/*.yaml` — six files
+    each declaring `apiVersion` at the top level — and OPA then refused to start at all:
+    `6 errors occurred during loading: ... merge error`. Nothing caught it, because the
+    only test that starts OPA reports a dead container as a missing *capability*.
+
+    Asserting the loaded tree rather than the mount means the next policy engine to
+    acquire a `policies/<engine>/` directory cannot break OPA, and a well-meaning change
+    back to `/policies` fails here with the reason attached.
+    """
+    errors: list[str] = []
+    services = data.get("services")
+    if not isinstance(services, dict):
+        return errors
+    opa = services.get("opa")
+    if not isinstance(opa, dict):
+        return errors
+
+    command = opa.get("command")
+    if not isinstance(command, list) or not command:
+        return ["service 'opa': command must be a list naming the policy paths it loads"]
+
+    # Container paths OPA is told to load: every bare argument after the flags.
+    loaded = [str(arg) for arg in command[1:] if not str(arg).startswith("-")]
+    if not loaded:
+        return ["service 'opa': command names no policy path to load"]
+
+    # Map each container path back to a host directory through the volume list.
+    mounts: list[tuple[str, str]] = []
+    for entry in opa.get("volumes") or []:
+        parts = str(entry).split(":")
+        if len(parts) >= 2:
+            mounts.append((parts[0], parts[1]))
+    if not mounts:
+        return ["service 'opa': no volume mounts, so the loaded paths resolve to nothing"]
+
+    repo_root = pathlib.Path(compose_path).resolve().parent
+    checked = 0
+    for container_path in loaded:
+        host_dir: pathlib.Path | None = None
+        for host_src, container_dst in mounts:
+            if container_path == container_dst or container_path.startswith(container_dst + "/"):
+                suffix = container_path[len(container_dst) :].lstrip("/")
+                host_dir = (repo_root / host_src.lstrip("./") / suffix).resolve()
+                break
+        if host_dir is None:
+            errors.append(f"service 'opa': loads {container_path} but no volume mounts it")
+            continue
+        if not host_dir.is_dir():
+            errors.append(f"service 'opa': loads {container_path}, which resolves to {host_dir}, not a directory")
+            continue
+
+        rego = sorted(p for p in host_dir.rglob("*") if p.is_file() and p.suffix == ".rego")
+        other = sorted(p for p in host_dir.rglob("*") if p.is_file() and p.suffix != ".rego")
+        if not rego:
+            errors.append(
+                f"service 'opa': loads {container_path} but it contains no .rego file; "
+                "an empty policy tree makes every query an undefined document"
+            )
+        if other:
+            names = ", ".join(p.relative_to(host_dir).as_posix() for p in other[:6])
+            errors.append(
+                f"service 'opa': loads {container_path}, which also contains non-Rego "
+                f"files ({names}). OPA loads those as DATA documents and refuses to "
+                "start when two of them collide (D-57). Point OPA at the Rego subtree."
+            )
+        checked += 1
+
+    if checked == 0 and not errors:
+        errors.append("service 'opa': no loaded path could be checked, so this rule proved nothing")
     return errors
 
 

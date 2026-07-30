@@ -64,8 +64,7 @@ def refresh_token_hmac(pepper: str, token: str) -> bytes:
         # correct: this is a misconfiguration, and it is one that leaves no trace at
         # runtime if it is tolerated.
         raise ValueError(
-            "ENVELOPE_PEPPER is empty; refresh-token HMACs would be unkeyed. Set it "
-            "in the environment (design §13.1)."
+            "ENVELOPE_PEPPER is empty; refresh-token HMACs would be unkeyed. Set it in the environment (design §13.1)."
         )
     return hmac.new(pepper.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).digest()
 

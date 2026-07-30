@@ -29,3 +29,13 @@ storage:
 # backend records the decision it acted on.
 audit:
   enabled: false
+
+# Anonymous telemetry is ON by default at 0.54.0 — the server logs "Anonymous telemetry
+# enabled" and posts to Cerbos on start. Cerbos is a DEFAULT-PROFILE service (§2.3), so
+# leaving it on means `docker compose up` makes an outbound call to a third party from a
+# developer's machine and from CI, on every start, unasked. Two independent reasons to
+# turn it off: an authorisation sidecar is the last service that should have an outbound
+# channel nobody audits, and a build that reaches the internet to start a local container
+# is a build that behaves differently on an air-gapped runner.
+telemetry:
+  disabled: true

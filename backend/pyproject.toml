@@ -81,6 +81,9 @@ markers = [
     # real Authentik is selected by `-m 'mandatory and oidc'` rather than by path. Moving
     # the file cannot drop it from the set the `auth` job runs.
     "oidc: needs a real Authentik container; selected by the `auth` CI job",
+    # Same rule, one service along (task 6.4). The RBAC matrix needs the digest-pinned
+    # Cerbos sidecar, and it is selected by marker in both the `backend` and `auth` jobs.
+    "cerbos: needs the real Cerbos sidecar; selected by the `backend` and `auth` CI jobs",
 ]
 
 [tool.coverage.run]

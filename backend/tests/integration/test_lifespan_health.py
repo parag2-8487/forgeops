@@ -36,6 +36,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from .capability import require_capability
+from .cerbos_stub import cerbos_health_stub
 
 PROBLEM_CONTENT_TYPE = "application/problem+json"
 
@@ -187,8 +188,16 @@ class TestReadinessRecovery:
         redis_port = _free_port()
         assert _port_is_closed(redis_port)
 
-        app = _build_app(database_url, f"redis://127.0.0.1:{redis_port}/0")
+        # Task 6.4 added Cerbos to readiness, so this test needs it reachable or the
+        # 200 it waits for could never arrive — and the subject here is Redis
+        # recovering, not authorisation. A transport substitution (§0.4.1): the
+        # production client over a real socket, with a stub answering only health.
+        with cerbos_health_stub() as cerbos_url:
+            os.environ["CERBOS_URL"] = cerbos_url
+            app = _build_app(database_url, f"redis://127.0.0.1:{redis_port}/0")
+            self._observe_recovery(app, redis_server, redis_port)
 
+    def _observe_recovery(self, app, redis_server: str, redis_port: int) -> None:
         redis_proc: subprocess.Popen[bytes] | None = None
         try:
             with TestClient(app) as client:
@@ -229,7 +238,10 @@ class TestReadinessRecovery:
                 )
                 payload = recovered.json()
                 assert payload["status"] == "ready"
-                assert payload["checks"] == {"postgres": "ok", "redis": "ok"}
+                # Still an EXACT set, now with the dependency task 6.4 added. Exact
+                # rather than a subset check because a probe silently disappearing from
+                # readiness is the failure this line exists to catch.
+                assert payload["checks"] == {"postgres": "ok", "redis": "ok", "cerbos": "ok"}
         finally:
             if redis_proc is not None:
                 redis_proc.terminate()

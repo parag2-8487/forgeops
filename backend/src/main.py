@@ -29,6 +29,7 @@ from .ai.routing.endpoints import EndpointRegistry
 from .ai.routing.keys import EnvKeyResolver
 from .ai.routing.router import ModelRouter
 from .ai.routing.tiers import load_tier_config
+from .auth.cerbos import CerbosClient
 from .auth.oidc import IdTokenVerifier, OidcClient
 from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
@@ -194,6 +195,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         pepper=settings.envelope_pepper.get_secret_value(),
         refresh_ttl_seconds=settings.refresh_ttl_seconds,
     )
+    # ── Resource-scoped authorisation (§11.2, task 6.4, D-55) ────────────────
+    # Over the SHARED httpx client, which is what §11.1 specifies and what D-55 records
+    # as the reason the vendor SDK is not pinned: its constructor owns its own
+    # transport, and its published metadata would drag grpcio-tools and protobuf into
+    # the runtime image to make one JSON POST. Non-destructive like every other
+    # collaborator here — an unreachable Cerbos changes readiness, not liveness.
+    app.state.cerbos = CerbosClient(str(settings.cerbos_url), http=shared_http)
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()
     app.state.mcp_gateway = McpGateway(
@@ -386,6 +394,20 @@ def create_app() -> FastAPI:
         except Exception as exc:
             errors.append({"dependency": "redis", "detail": str(exc)})
 
+        # Cerbos check (§2.3, task 6.4). Unlike the IdP, an authorisation-sidecar
+        # outage DOES belong here: deny-by-default means a request whose permission
+        # cannot be evaluated is refused, so a replica that cannot reach Cerbos is
+        # serving 503s to every non-public route and should be drained. That is the
+        # precise difference from Authentik, which only affects login (§6.3, D-56).
+        cerbos = getattr(request.app.state, "cerbos", None)
+        if cerbos is not None:
+            try:
+                await asyncio.wait_for(cerbos.health(), timeout=2.0)
+            except TimeoutError:
+                errors.append({"dependency": "cerbos", "detail": "health check timed out"})
+            except Exception as exc:
+                errors.append({"dependency": "cerbos", "detail": str(exc)})
+
         if errors:
             # Rendered with the same required RFC 9457 members as every other
             # problem document (§4.2): stable type URI, title, status equal to
@@ -405,7 +427,10 @@ def create_app() -> FastAPI:
                 media_type=PROBLEM_CONTENT_TYPE,
             )
 
-        return JSONResponse({"status": "ready", "checks": {"postgres": "ok", "redis": "ok"}})
+        checks = {"postgres": "ok", "redis": "ok"}
+        if cerbos is not None:
+            checks["cerbos"] = "ok"
+        return JSONResponse({"status": "ready", "checks": checks})
 
     # --- Versioned health (API surface informational echo) ---
     @app.get(f"{settings.api_prefix}/health")

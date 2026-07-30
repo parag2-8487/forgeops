@@ -69,9 +69,15 @@ services:
     # never pass is worse than no gate. Recorded rather than silently dropped.
     image: openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5
     env_file: *service-env
-    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "/policies"]
+    # `/policies/mcp`, not `/policies` — D-57. Task 6.4 put Cerbos's YAML policies in
+    # `policies/cerbos/`, and `opa run /policies` loads every YAML under the path as a
+    # DATA document: six files each declaring `apiVersion` at the top level collide and
+    # OPA exits with "6 errors occurred during loading: ... merge error" before it binds
+    # a port. Each engine is given only its own subtree, so adding a third can never
+    # break a second.
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "/policies/mcp"]
     volumes:
-      - ./policies:/policies:ro
+      - ./policies/mcp:/policies/mcp:ro
     ports:
       - "127.0.0.1:${OPA_PORT:-8181}:8181"
     healthcheck:

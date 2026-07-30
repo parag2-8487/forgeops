@@ -218,7 +218,9 @@ jobs:
       PGPASSWORD: forgeops
       # No OPA service container: a service starts before checkout, so it cannot
       # mount ./policies. tests/integration/test_opa_policy_integration.py starts
-      # the digest-pinned OPA image itself and tears it down.
+      # the digest-pinned OPA image itself and tears it down. Cerbos is the same
+      # shape and for the same reason — scripts/ci/start-cerbos.sh starts it below.
+      FORGEOPS_TEST_CERBOS_URL: http://127.0.0.1:3592
       # Turns a self-skipping integration test into a CI failure, so a capability
       # probe can never quietly remove a criterion's only evidence again.
       FORGEOPS_REQUIRE_INTEGRATION: "1"
@@ -247,9 +249,20 @@ jobs:
         run: |
           sudo apt-get install -y -qq postgresql-client
           bash scripts/postgres-init/10-forgeops-roles.sh
+      - name: Start the real Cerbos sidecar, digest-pinned (design §2.3, task 6.4)
+        working-directory: .
+        # Compiles the policy set with Cerbos's own test runner first, so a policy that
+        # stopped matching §11.2's table fails here rather than as forty confusing
+        # integration failures. Also asserts a non-zero policy count: a Cerbos with an
+        # empty repository is healthy and denies everything.
+        run: bash scripts/ci/start-cerbos.sh
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
       - run: pytest tests/ -q
+      - name: Cerbos logs on failure
+        if: failure()
+        working-directory: .
+        run: docker logs forgeops-ci-cerbos 2>&1 | tail -n 100
       # The revision proofs above left the schema at head, migrated by
       # `forgeops_migrator`. This asserts the arrangement actually took: that the
       # APPLICATION role cannot UPDATE, DELETE or TRUNCATE `audit_events`, does not own
@@ -318,6 +331,10 @@ jobs:
       AUTHENTIK_BOOTSTRAP_TOKEN: ci-only-not-a-real-secret-token
       AUTHENTIK_BOOTSTRAP_PASSWORD: ci-only-not-a-real-secret-admin
       FORGEOPS_TEST_OIDC_BASE_URL: http://localhost:9000
+      # Task 6.3 requires this job to exercise "the real code+PKCE flow AND the RBAC
+      # matrix against the container", so Cerbos runs here as well as in `backend`.
+      # Selected by marker below, not by path.
+      FORGEOPS_TEST_CERBOS_URL: http://127.0.0.1:3592
       PGHOST: localhost
       PGPORT: "5432"
       PGPASSWORD: forgeops
@@ -342,14 +359,22 @@ jobs:
           bash scripts/postgres-init/20-authentik-database.sh
       - name: Start real Authentik (server + worker), digest-pinned
         run: bash scripts/ci/start-authentik.sh
-      - name: The full OIDC code+PKCE flow and the RBAC matrix against the container
+      - name: Start the real Cerbos sidecar, digest-pinned
+        run: bash scripts/ci/start-cerbos.sh
+      - name: The full OIDC code+PKCE flow and the RBAC matrix against the containers
         working-directory: backend
-        run: python -m pytest -m 'mandatory and oidc' --report-log=auth.jsonl -q
+        # Both capability markers, because task 6.3 names both halves. `-m` is an
+        # expression over MARKERS rather than paths, so moving either module cannot drop
+        # it from the job that exists to run it.
+        run: python -m pytest -m 'mandatory and (oidc or cerbos)' --report-log=auth.jsonl -q
       - name: The mandatory selection recorded zero skips
         run: python scripts/check-no-skips.py backend/auth.jsonl
       - name: Authentik logs on failure
         if: failure()
         run: docker logs forgeops-ci-authentik-server 2>&1 | tail -n 200
+      - name: Cerbos logs on failure
+        if: failure()
+        run: docker logs forgeops-ci-cerbos 2>&1 | tail -n 100
 
   # ── 8. frontend: lint → test → build with a non-default browser URL ───────
   frontend:

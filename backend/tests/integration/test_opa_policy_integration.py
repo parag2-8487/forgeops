@@ -40,7 +40,12 @@ from .capability import require_capability
 
 # Same digest as docker-compose.yml, so the policy runs on the engine it ships with.
 OPA_IMAGE = "openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5"
-POLICY_DIR = Path(__file__).resolve().parents[3] / "policies"
+#: The REGO subtree, not `policies/` (D-57). Task 6.4 added `policies/cerbos/*.yaml`
+#: beside it, and `opa run /policies` loads every YAML it finds as a *data document* —
+#: six Cerbos policies all declaring `apiVersion` at the top level produce
+#: "6 errors occurred during loading: ... merge error" and OPA refuses to start. Loading
+#: only what OPA owns means a third policy engine's files can never do that again.
+POLICY_DIR = Path(__file__).resolve().parents[3] / "policies" / "mcp"
 
 CLAIMS = {"sub": "user-42"}
 

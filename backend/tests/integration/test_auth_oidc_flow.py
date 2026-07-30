@@ -258,8 +258,7 @@ def _require_redis_url() -> str:
     if not url:
         require_capability(
             "redis",
-            f"{TEST_REDIS_URL_ENV} is not set; the single-use PKCE record lives in a "
-            "real Redis (design.md §11.2)",
+            f"{TEST_REDIS_URL_ENV} is not set; the single-use PKCE record lives in a real Redis (design.md §11.2)",
         )
     return url
 

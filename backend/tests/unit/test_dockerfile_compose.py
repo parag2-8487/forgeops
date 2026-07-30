@@ -129,8 +129,7 @@ class TestComposeBackendService:
         services = self.compose["services"]
         default_services = {name for name, cfg in services.items() if "profiles" not in cfg}
         assert default_services == listed, (
-            f"unprofiled services {sorted(default_services)} do not match the committed "
-            f"default set {sorted(listed)}"
+            f"unprofiled services {sorted(default_services)} do not match the committed default set {sorted(listed)}"
         )
 
         # Profiled services must have their profiles set correctly

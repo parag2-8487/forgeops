@@ -263,7 +263,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Keep Authentik out of `/health/ready`: an IdP outage must degrade login, not readiness of authenticated traffic.
     - _Design: §2.3, §8.3, §13.3, §16.4, §17.1 D-34; Deliverable: 1.11; Criterion: 1_
 
-  - [ ] 6.4 Add the Cerbos sidecar and resource-scoped authorization
+  - [x] 6.4 Add the Cerbos sidecar and resource-scoped authorization
     - Add the digest-pinned `cerbos` service with `policies/cerbos/` and `config/cerbos/`, pin the `cerbos==0.14.0` client, and implement `require_permission` calling it.
     - Author the §11.2 policy matrix for `project`, `change_set`, `policy`, `secret`, `agent_device` and `audit`, including that **no role** may read a secret value and that self-approval can be barred by policy.
     - Add `/health/ready` coverage for Cerbos and integration tests over the full role × resource × action matrix.
