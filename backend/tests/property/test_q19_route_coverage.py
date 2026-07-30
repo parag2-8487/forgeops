@@ -147,9 +147,7 @@ class RouteUnderTest:
 
     __slots__ = ("code", "guard", "method", "path", "public", "raw_path")
 
-    def __init__(
-        self, *, method: str, raw_path: str, public: bool, code: CodeType | None, guard: str
-    ) -> None:
+    def __init__(self, *, method: str, raw_path: str, public: bool, code: CodeType | None, guard: str) -> None:
         self.method = method
         self.raw_path = raw_path
         self.path = _concrete_path(raw_path)

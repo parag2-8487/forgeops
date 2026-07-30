@@ -153,3 +153,134 @@ def _strip_one_auth_dependency():
 
 main_module.create_app = _strip_one_auth_dependency
 """
+
+[Q-20]
+runtime     = "python"
+property    = "backend/tests/property/test_q20_rbac_confinement.py"
+target      = "policies/cerbos/secret.yaml (viewer rules)"
+mutation    = "Add `read_value` to the viewer's Cerbos policy"
+description = """
+Grants the viewer the one permission §11.2 says no role may have, and removes the viewer
+from the blanket `read_value` deny so the grant actually takes effect. Q-20 must then fail
+on the clause that says NO role can read a secret value — asked of the real sidecar, so a
+policy edit is what the property is reading rather than a Python reimplementation of it.
+
+The tracked policy set is never touched. The mutation writes a COPY into a temp directory
+outside the repository and starts a second, digest-pinned Cerbos against it, then points
+`FORGEOPS_TEST_CERBOS_URL` at that container for the duration of the run — which is exactly
+what §0.4.5's outside-the-tree requirement makes possible. The container is removed on exit,
+and the image reference is read out of docker-compose.yml rather than restated so it cannot
+drift from the pin the compose checks police.
+
+The patch asserts that both edits actually applied. A control that silently matched nothing
+would report the property healthy while mutating an unchanged policy set, which is the
+failure mode this whole file exists to prevent.
+"""
+patch = """
+import atexit
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parent
+while not (_REPO / "docker-compose.yml").exists():
+    assert _REPO != _REPO.parent, "could not locate the repository root from the plugin"
+    _REPO = _REPO.parent
+
+_compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
+_image = re.search(r"ghcr\\.io/cerbos/cerbos:[^ \\n]+@sha256:[0-9a-f]{64}", _compose)
+assert _image, "no digest-pinned cerbos image found in docker-compose.yml"
+_image = _image.group(0)
+
+_tmp = Path(tempfile.mkdtemp(prefix="forgeops-q20-mutation-")).resolve()
+assert _REPO.resolve() not in _tmp.parents and _tmp != _REPO.resolve(), _tmp
+shutil.copytree(_REPO / "policies" / "cerbos", _tmp / "policies")
+shutil.copytree(_REPO / "config" / "cerbos", _tmp / "config")
+
+_secret = _tmp / "policies" / "secret.yaml"
+_text = _secret.read_text(encoding="utf-8")
+
+_deny_before = '''    - actions: ["read_value"]
+      effect: EFFECT_DENY
+      roles: ["admin", "developer", "viewer"]'''
+_deny_after = '''    - actions: ["read_value"]
+      effect: EFFECT_DENY
+      roles: ["admin", "developer"]'''
+assert _deny_before in _text, "the blanket read_value deny is not where the control expects it"
+_text = _text.replace(_deny_before, _deny_after)
+
+_allow_before = '''    - actions: ["read_metadata"]
+      effect: EFFECT_ALLOW
+      roles: ["viewer"]'''
+_allow_after = '''    - actions: ["read_metadata", "read_value"]
+      effect: EFFECT_ALLOW
+      roles: ["viewer"]'''
+assert _allow_before in _text, "the viewer allow rule is not where the control expects it"
+_text = _text.replace(_allow_before, _allow_after)
+
+_secret.write_text(_text, encoding="utf-8")
+
+_name = "forgeops-q20-mutation-cerbos"
+subprocess.run(["docker", "rm", "-f", _name], capture_output=True, check=False)
+_started = subprocess.run(
+    [
+        "docker", "run", "-d", "--name", _name,
+        "-p", "127.0.0.1:0:3592",
+        "-v", f"{_tmp / 'policies'}:/policies:ro",
+        "-v", f"{_tmp / 'config'}:/config:ro",
+        _image, "server", "--config=/config/cerbos.yaml",
+    ],
+    capture_output=True, text=True, check=False,
+)
+assert _started.returncode == 0, f"could not start the mutated Cerbos: {_started.stderr[:400]}"
+
+
+def _teardown():
+    subprocess.run(["docker", "rm", "-f", _name], capture_output=True, check=False)
+    shutil.rmtree(_tmp, ignore_errors=True)
+
+
+atexit.register(_teardown)
+
+_mapped = subprocess.run(
+    ["docker", "port", _name, "3592/tcp"], capture_output=True, text=True, check=True
+).stdout.splitlines()[0]
+_port = _mapped.rsplit(":", 1)[-1].strip()
+_url = f"http://127.0.0.1:{_port}"
+
+_deadline = time.time() + 90
+while True:
+    try:
+        with urllib.request.urlopen(f"{_url}/_cerbos/health", timeout=5) as response:
+            if response.status == 200:
+                break
+    except (urllib.error.URLError, OSError):
+        pass
+    assert time.time() < _deadline, "the mutated Cerbos never became healthy"
+    time.sleep(2)
+
+# The mutation must be OBSERVABLE before the property runs. A container serving the
+# unmutated set would make this control report a healthy property for the wrong reason.
+_probe = json.dumps({
+    "requestId": "q20-mutation-probe",
+    "principal": {"id": "33333333-3333-3333-3333-333333333333", "roles": ["viewer"], "attr": {}},
+    "resources": [{"resource": {"kind": "secret", "id": "probe", "attr": {}}, "actions": ["read_value"]}],
+}).encode()
+_request = urllib.request.Request(
+    f"{_url}/api/check/resources", data=_probe, headers={"Content-Type": "application/json"}
+)
+with urllib.request.urlopen(_request, timeout=10) as response:
+    _answer = json.load(response)
+_effect = _answer["results"][0]["actions"]["read_value"]
+assert _effect == "EFFECT_ALLOW", f"the mutated policy set did not take effect: read_value={_effect}"
+
+os.environ["FORGEOPS_TEST_CERBOS_URL"] = _url
+os.environ["FORGEOPS_REQUIRE_INTEGRATION"] = "1"
+"""

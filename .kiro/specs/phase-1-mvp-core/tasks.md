@@ -274,7 +274,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row dropping `require_principal` from `GET /api/v1/projects` without adding it to `PUBLIC_ROUTES`.
     - _Design: §4.4, §11.2, Appendix B Q-19; Deliverable: 1.11; Property: Q-19_
 
-  - [ ] 6.6 Write property test Q-20 for RBAC and secret-value confinement
+  - [x] 6.6 Write property test Q-20 for RBAC and secret-value confinement
     - Generate `(role, resource, action)` triples; prove a viewer is denied every mutating action, no role can read a secret **value** through any route, and a 403 body is byte-identical whether or not the resource exists.
     - Add the `mutations.toml` row adding `read_value` to the viewer's Cerbos policy.
     - _Design: §4.2, §11.2, §11.8, Appendix B Q-20; Deliverable: 1.8, 1.11; Criterion: 8; Property: Q-20_

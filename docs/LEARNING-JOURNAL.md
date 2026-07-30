@@ -65,13 +65,23 @@ need only Node.js ≥ 18:
 npx https://github.com/Egonex-AI/Understand-Anything/releases/download/v2.9.0/understand-anything-viewer.tgz docs/understand-anything
 ```
 
-That prints a tokenised `http://127.0.0.1:5173/?token=…` URL and serves the graph
-read-only from local disk — no LLM calls, no network egress. What it shows: every analysed
-file as a clickable node colour-coded by architectural layer, the import and dependency
-edges between them, a plain-English summary per node, and a guided tour ordered so that
-each step only depends on steps before it. `docs/understand-anything/README.md` records how
-it was generated, what was in scope, and what was deliberately left out. The regeneration
-command is in `docs/development.md` under "Comprehension artifact".
+That prints a tokenised `http://127.0.0.1:5173/?token=…` URL and serves the graph read-only
+from local disk — no LLM calls, no network egress.
+
+What it shows, as of the first generation: **2,002 nodes and 2,050 edges over 451 analysed
+files**, grouped into **fourteen architectural layers**, with a **fifteen-step guided tour**
+ordered so each step only depends on earlier ones. Files, functions and classes are clickable
+nodes with a plain-English summary; the 499 `imports` edges and the line ranges on every
+function and class are tree-sitter-derived, so they are facts about the code rather than
+descriptions of it. Search works by name and semantically over the summaries.
+
+Two honest caveats, both expanded in `docs/understand-anything/README.md`: source snippets do
+not resolve in this layout, because the dashboard resolves a node's path relative to the
+directory you hand it and these paths are relative to the repository root; and the node
+summaries, layer definitions and tour are **authored** in `semantic-overlay.json` rather than
+LLM-generated per run, so they are stable and reviewable but only as current as the last
+person who edited them. The structural half is fully reproducible. The regeneration command is
+in `docs/development.md` under "Comprehension artifact".
 
 ---
 
