@@ -34,6 +34,7 @@ from .core.db import create_db_engine, create_sessionmaker
 from .core.errors import PROBLEM_CONTENT_TYPE, install_problem_handlers
 from .core.logging import configure_logging
 from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
+from .core.tenancy import TenantContextMiddleware
 from .core.trace import TraceContextMiddleware, current_trace_id
 from .mcp.apps import McpAppRegistry
 from .mcp.auth import OidcTokenVerifier
@@ -268,6 +269,13 @@ def create_app() -> FastAPI:
     # Starlette PREPENDS middleware, so registration order is the REVERSE of
     # execution order. Registering innermost-first yields the §4.3 stack:
     # ServerError(1) -> RequestId(2) -> TraceContext(3) -> AccessLog(4) -> CORS(5)
+    #                -> TenantContext(6)
+    #
+    # Row 6 is the innermost, and that placement is the point: it runs INSIDE
+    # authentication, so it reads an already-verified principal rather than trusting a
+    # request header (§4.3, §6.7, D-35). Registered FIRST because Starlette reverses
+    # the order.
+    app.add_middleware(TenantContextMiddleware)  # executes 6th, innermost
     cors_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,

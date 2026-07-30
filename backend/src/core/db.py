@@ -28,6 +28,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from starlette.requests import Request
 
+from .tenancy import current_tenant_id
+
 # Deterministic naming convention so Alembic never emits database-generated
 # constraint names — otherwise Phase 1's migrations become environment-dependent.
 NAMING_CONVENTION: dict[str, str] = {
@@ -39,6 +41,27 @@ NAMING_CONVENTION: dict[str, str] = {
 }
 
 metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+def pooler_connect_args(pooler_mode: str) -> dict[str, Any]:
+    """asyncpg connect args implied by `DATABASE_POOLER_MODE` (§6.7, §7.12).
+
+    Split out from `create_db_engine` so the decision is assertable directly. Reading
+    it back off a constructed `AsyncEngine` means poking at dialect internals, which
+    makes the test a statement about SQLAlchemy's private attributes rather than about
+    our rule.
+
+    In `transaction` mode a pooler such as PgBouncer hands out a different backend
+    connection per transaction. asyncpg's prepared-statement cache assumes the
+    connection it prepared against is the one it will execute against, so the first
+    query after a rebind fails with `prepared statement "__asyncpg_stmt_N__" does not
+    exist` — intermittently, under load, and never in a single-connection test. Both
+    caches are disabled: asyncpg's own and the SQLAlchemy dialect's, because leaving
+    one on still hands the new backend a name it has never seen.
+    """
+    if pooler_mode == "transaction":
+        return {"statement_cache_size": 0, "prepared_statement_cache_size": 0}
+    return {}
 
 
 def create_db_engine(settings: Any) -> AsyncEngine:
@@ -54,8 +77,7 @@ def create_db_engine(settings: Any) -> AsyncEngine:
         pool_pre_ping=True,
         pool_recycle=1800,
         echo=False,
-        # Phase 1 note: behind PgBouncer in transaction mode this needs
-        # connect_args={"statement_cache_size": 0} (§6.5).
+        connect_args=pooler_connect_args(getattr(settings, "database_pooler_mode", "session")),
     )
 
 
@@ -75,15 +97,43 @@ def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
-    """Request-scoped session. Commits on success, rolls back on any exception."""
+    """Request-scoped session. Commits on success, rolls back on any exception.
+
+    Also issues `SET LOCAL app.tenant_id` when a tenant is in context (§6.7, D-35), so
+    the value is scoped to THIS transaction and reverts at COMMIT or ROLLBACK. See
+    `core.tenancy` for why `SET` would be a cross-tenant leak on a pooled connection.
+    """
     factory: async_sessionmaker[AsyncSession] = request.app.state.sessionmaker
     async with factory() as session:
         try:
+            await apply_tenant_context(session)
             yield session
             await session.commit()
         except Exception:
             await session.rollback()
             raise
+
+
+async def apply_tenant_context(session: AsyncSession) -> str | None:
+    """Set `app.tenant_id` for the current transaction, if a tenant is in context.
+
+    Returns the tenant that was applied, or None when there was none.
+
+    The value is bound as a parameter through `set_config` rather than interpolated
+    into a `SET LOCAL` statement. `SET LOCAL app.tenant_id = :v` is not
+    parameterisable in PostgreSQL — `SET` takes a literal — so the alternative would be
+    string interpolation of a value that, once task 6.1 lands, comes from a token
+    claim. `set_config(name, value, true)` is the parameterisable equivalent, with
+    `true` meaning transaction-local, and it removes the injection surface entirely.
+    """
+    tenant = current_tenant_id()
+    if tenant is None:
+        return None
+    await session.execute(
+        text("SELECT set_config('app.tenant_id', :tenant, true)"),
+        {"tenant": tenant},
+    )
+    return tenant
 
 
 async def with_ef_search(session: AsyncSession, ef_search: int) -> None:

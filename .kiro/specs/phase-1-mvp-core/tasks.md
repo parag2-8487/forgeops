@@ -122,13 +122,13 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add examples proving every new key is validated together and that unrelated ambient OS variables are still ignored.
     - _Design: §7.1, §13.1, §17.1 D-39; Deliverable: 1.5, 1.11; Property: Q-30_
 
-  - [ ] 3.2 Extend the RFC 9457 registry with the Phase 1 problem types
+  - [x] 3.2 Extend the RFC 9457 registry with the Phase 1 problem types
     - Add every suffix in Appendix C.1 to `backend/src/core/errors.py` as stable `https://errors.forgeops.dev/...` types with their fixed statuses.
     - Implement the non-disclosing 403: a forbidden response body must be byte-identical whether or not the resource exists.
     - Keep D-27's traceback redaction and add tests that no new problem type's `detail` can carry a secret pattern, a connection string or exception text.
     - _Design: §4.2, §11.2, Appendix C.1; Deliverable: 1.11; Property: Q-20, Q-24_
 
-  - [ ] 3.3 Fill middleware row 6 with tenant context and transaction-scoped tenancy
+  - [x] 3.3 Fill middleware row 6 with tenant context and transaction-scoped tenancy
     - Add `TenantContextMiddleware` at position 6 resolving the tenant from the verified principal into a `contextvar`, and issue `SET LOCAL app.tenant_id` inside the transaction from `get_session`.
     - Add `DATABASE_POOLER_MODE`; in `transaction` mode set asyncpg `statement_cache_size=0` and disable prepared-statement reuse. Create no RLS policies and set no column `NOT NULL`.
     - Add an integration test proving the variable is visible to `current_setting('app.tenant_id', true)` inside the transaction and **absent in the next transaction on the same pooled connection** — the assertion that proves `SET LOCAL` rather than `SET`.
