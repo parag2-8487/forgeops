@@ -27,6 +27,18 @@ dependencies = [
     "httpx==0.27.2",
     "orjson==3.11.6",
     "pyjwt[crypto]==2.13.0",
+    # design.md §4.6 / D-32: the Phase 1 task engine, behind the unchanged
+    # TaskDispatcher seam. Redis-backed, so it needs no new infrastructure. Importable
+    # only from src/core/tasks.py and src/worker.py — enforced by the Ruff banned-api
+    # rule below, which is what keeps the Phase 2 engine decision (OQ-16) a two-file
+    # change rather than a migration.
+    "arq==0.26.3",
+    # design.md §7.6 / §11.9: RFC 8785 JSON Canonicalization Scheme. One
+    # implementation shared by envelope signing and the audit hash chain, because a
+    # byte-level disagreement between those two makes a genuine audit chain look
+    # tampered with. Wrapped by src/core/canonical.py, which additionally refuses
+    # floats.
+    "rfc8785==0.1.4",
 ]
 
 [project.optional-dependencies]
@@ -135,7 +147,12 @@ ignore = [
 "inngest".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
 
 [tool.ruff.lint.per-file-ignores]
+# The two modules allowed to import ARQ. `core/tasks.py` owns the dispatcher and the
+# pool factory; `worker.py` is the process entry point ARQ itself loads. Everywhere
+# else `import arq` is a build failure, which is what keeps the Phase 2 durable-engine
+# decision (OQ-16) a change to these two files instead of a migration.
 "src/core/tasks.py" = ["TID251"]
+"src/worker.py" = ["TID251"]
 # The cross-domain ban exists to stop DOMAINS coupling to each other, which is
 # what keeps the monolith extractable (design.md §5.2). Tests are not a domain:
 # a unit test for the gateway must import the gateway. Exempting tests keeps the

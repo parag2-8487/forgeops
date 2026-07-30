@@ -74,7 +74,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Assert the four authoritative root documents remain outside every mutating hook while staying inside Gitleaks, and that no new script writes to the repository during a check run.
     - _Design: §0.4, §8.3, §8.4; Deliverable: 1.11_
 
-- [ ] 2. Close the inherited debt that all later work sits on
+- [x] 2. Close the inherited debt that all later work sits on
   - [x] 2.1 Wire the model router from the shipped tier YAML in the app factory
     - In `backend/src/main.py`'s lifespan, call `load_tier_config(settings.model_tier_config_path, env=os.environ)`, build `EndpointRegistry.from_config(...)` and `ModelRouter(...)` from it, and expose the parsed config as `app.state.tier_config`.
     - Do not change `load_tier_config`'s signature; it stays `load_tier_config(path, env=None) -> TierConfig`.
@@ -114,7 +114,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Keep P-07's other clauses (reverse order, exactly-once, continue-past-error, idempotence) unchanged and still passing.
     - _Design: §0.5, §10.4; Deliverable: 1.1_
 
-- [ ] 3. Extend backend core primitives for Phase 1
+- [x] 3. Extend backend core primitives for Phase 1
   - [x] 3.1 Extend `Settings` with the Phase 1 configuration surface
     - Add the auth, pairing, envelope, scanner, retrieval, generation, governance, secrets, tasks and pooling fields from §13.1 to `backend/src/core/config.py`, keeping `extra="forbid"` and the accumulate-all-errors contract.
     - Type `generation_max_iterations` as `Literal[3]` so the safety bound cannot be raised by an environment variable, and add the validator rejecting `CHUNK_OVERLAP_TOKENS >= CHUNK_TARGET_TOKENS`.
@@ -134,14 +134,14 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add an integration test proving the variable is visible to `current_setting('app.tenant_id', true)` inside the transaction and **absent in the next transaction on the same pooled connection** — the assertion that proves `SET LOCAL` rather than `SET`.
     - _Design: §4.3, §6.7, §7.12, §17.1 D-35; Deliverable: 1.11_
 
-  - [ ] 3.4 Add `ArqDispatcher` behind the unchanged task seam
+  - [x] 3.4 Add `ArqDispatcher` behind the unchanged task seam
     - Implement `ArqDispatcher` in `backend/src/core/tasks.py` mapping `(name, payload, idempotency_key)` onto ARQ's job id, returning `TaskHandle(dispatcher="arq")`, and pin `arq==0.26.3`.
     - Leave `TaskDispatcher`, `TaskHandle`, `_TASK_HANDLERS` and `@register_task` untouched, and leak no engine concept upward — no job object, no workflow id, no signal, no query.
     - Extend the Ruff banned-api rule so `arq` cannot be imported outside `core/tasks.py`, and add a test running the whole registered handler set under both `InlineDispatcher` and `ArqDispatcher` with identical results.
     - Add an `arq` worker entry point and `make worker`, plus a duplicate-enqueue test proving idempotency-key deduplication.
     - _Design: §4.6, §7.10, §11.1, §17.1 D-32; Deliverable: 1.3, 1.5_
 
-  - [ ] 3.5 Add the shared JCS canonicalisation primitive
+  - [x] 3.5 Add the shared JCS canonicalisation primitive
     - Pin `rfc8785==0.1.4` and add a thin `backend/src/core/canonical.py` wrapper used by both envelope signing and the audit hash chain, so two subsystems cannot diverge on canonical bytes.
     - Reject any input containing a float, matching §7.6's rule that no envelope or audit payload contains one.
     - Add tests over the RFC 8785 test vectors plus the project's own fixture corpus.

@@ -72,7 +72,11 @@ clean: ## Remove build output only; never .env, lockfiles or Docker volumes
 	@printf 'clean: build output removed\n'
 
 
-.PHONY: lock-backend lock-tools
+.PHONY: lock-backend lock-tools worker
+
+worker: ## Run the ARQ worker against the same Settings the API uses (design §4.6)
+	@printf '==> worker: arq src.worker.WorkerSettings\n'
+	@cd backend && arq src.worker.WorkerSettings
 lock-backend: ## Regenerate hash-pinned backend lockfiles from pyproject.toml
 	@printf '==> lock-backend: regenerating requirements.lock and requirements-dev.lock\n'
 	@sh scripts/lock-backend.sh
