@@ -146,9 +146,7 @@ class TestNoServiceClimbsBackToRoot:
         """States the reason the old gate was wrong, executably."""
         import yaml
 
-        document = yaml.safe_load(
-            (FIXTURES / "root-user-override.yml").read_text(encoding="utf-8")
-        )
+        document = yaml.safe_load((FIXTURES / "root-user-override.yml").read_text(encoding="utf-8"))
         opa = document["services"]["opa"]
         assert "@sha256:" in opa["image"], "fixture must be correctly pinned to make its point"
         assert VALIDATOR._uid_is_root(opa["user"]), "fixture must actually request root"
@@ -165,9 +163,5 @@ class TestNoServiceClimbsBackToRoot:
         import yaml
 
         document = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
-        rooted = [
-            name
-            for name, svc in document["services"].items()
-            if VALIDATOR._uid_is_root(svc.get("user", "-"))
-        ]
+        rooted = [name for name, svc in document["services"].items() if VALIDATOR._uid_is_root(svc.get("user", "-"))]
         assert not rooted, rooted

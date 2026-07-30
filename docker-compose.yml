@@ -28,6 +28,14 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # design §6.4, §6.7: the two-role arrangement. Migration `0002` creates
+      # `forgeops_app` and `forgeops_migrator` with NO password, because a migration is
+      # committed source; this init script grants LOGIN and a local password from the
+      # untracked `.env`, and grants the migrator CREATE on `public` so the first
+      # migration can run at all. `scripts/check-db-roles.py` fails the build if the
+      # split is not actually in effect, so this mount is load-bearing rather than
+      # convenience.
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s

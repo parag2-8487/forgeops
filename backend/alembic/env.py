@@ -23,9 +23,32 @@ from sqlmodel import SQLModel
 # Ensure the backend src is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-# Import all models so SQLModel.metadata is populated
-from src.analysis.models import Embedding, FileTreeEntry  # noqa: F401, E402
-from src.projects.models import Project  # noqa: F401, E402
+# Import all models so SQLModel.metadata is populated. A model that is not imported
+# here is invisible to `--autogenerate`, which then proposes dropping its table:
+# `test_alembic_autogenerate_clean.py` (task 5.9) is what turns that into a failure
+# rather than a surprise in a later diff.
+from src.analysis.models import (  # noqa: F401, E402
+    AnalysisReport,
+    Embedding,
+    EmbeddingLocal,
+    FileContent,
+    FileDependency,
+    FileTreeEntry,
+)
+from src.audit.models import AuditEvent  # noqa: F401, E402
+from src.auth.device_models import AgentDevice  # noqa: F401, E402
+from src.auth.models import Session, User  # noqa: F401, E402
+from src.generation.models import GenerationRun  # noqa: F401, E402
+from src.governance.models import (  # noqa: F401, E402
+    Approval,
+    ChangeItem,
+    ChangeSet,
+    RollbackHandle,
+    Validation,
+)
+from src.policies.models import Policy, PolicyBundle, PolicyEvaluation  # noqa: F401, E402
+from src.projects.models import Project, ProjectTag  # noqa: F401, E402
+from src.secrets.models import Secret  # noqa: F401, E402
 
 # Alembic Config object
 config = context.config

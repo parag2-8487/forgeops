@@ -191,54 +191,54 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add an enumerated matrix test over `.env`, `.env.local`, `.env.production`, `.env.example`, `.env.example.bak`, `.envrc` and `sub/.env` for both intents, and keep P-08's read clause passing.
     - _Design: §7.11(f), §17.1 D-46; Deliverable: 1.5, 1.8; Property: Q-01_
 
-- [ ] 5. Implement the Phase 1 schema as eight linear migrations, each with a gated proof
-  - [ ] 5.1 Add `0002_identity_and_devices`
+- [x] 5. Implement the Phase 1 schema as eight linear migrations, each with a gated proof
+  - [x] 5.1 Add `0002_identity_and_devices`
     - Create the `citext` extension, the `user_role` and `device_status` enums, and the `users`, `sessions` and `agent_devices` tables exactly as §6.3 defines them, plus the `forgeops_app` and `forgeops_migrator` roles.
     - Store `refresh_token_hmac`, `pairing_token_hmac` and `device_token_hmac` as HMACs and `envelope_key_enc` as AES-256-GCM ciphertext; never a plaintext token column.
     - Add `backend/tests/integration/test_0002_identity.py` under `require_capability("postgres")`: enum values, unique `idp_subject`, `CITEXT` case collapsing, `ondelete=CASCADE` from user to sessions, and the app role's grants.
     - _Design: §6.1, §6.3, §6.5; Deliverable: 1.1, 1.11; Criterion: 1_
 
-  - [ ] 5.2 Add `0003_codebase_index_extensions`
+  - [x] 5.2 Add `0003_codebase_index_extensions`
     - Create `file_contents`, `file_dependencies`, `analysis_reports` and `embeddings_local` with its HNSW cosine index at `m=16, ef_construction=64`; add the nullable cAST columns to `embeddings`; create `pg_trgm` and the `file_tree.path` trigram index.
     - Keep `embeddings.embedding` at `vector(1536)` and `model_id` `NOT NULL` on both vector tables (D-2, D-48); add the reverse-dependency index the incremental closure needs.
     - Add `test_0003_index.py`: both column dimensions, both HNSW indexes with `vector_cosine_ops` and the exact build parameters, the reverse-dependency index, and `with_ef_search` applying per transaction only.
     - _Design: §6.3, §6.4, §6.5, §17.1 D-48; Deliverable: 1.3; Criterion: 12_
 
-  - [ ] 5.3 Add `0004_change_sets_and_approvals`
+  - [x] 5.3 Add `0004_change_sets_and_approvals`
     - Create `change_sets`, `change_items`, `validations`, `approvals` and `rollback_handles` per §6.2/§6.3, including the `status` check constraint, the `version` optimistic-concurrency column and unique `(change_set_id, ordinal)`.
     - Store per-item `old_hash`/`new_hash` so a stale apply can be detected at the agent.
     - Add `test_0004_change_sets.py`: an unknown status is rejected, `version` defaults, ordinal uniqueness holds, and cascade behaviour matches the declared `ondelete`.
     - _Design: §6.2, §6.3, §6.5, §3.6; Deliverable: 1.6; Criterion: 5_
 
-  - [ ] 5.4 Add `0005_policies_and_bundles`
+  - [x] 5.4 Add `0005_policies_and_bundles`
     - Create `policies`, `policy_evaluations` and `policy_bundles`, with a unique bundle `digest` and a partial unique index enforcing one active bundle per scope.
     - Record the evaluating `side` (`backend`/`agent`) on every evaluation row so double-evaluation disagreements are visible in data.
     - Add `test_0005_policies.py` proving two active global bundles violate the partial unique index.
     - _Design: §6.1, §6.3, §6.5, §11.7; Deliverable: 1.7; Criterion: 7_
 
-  - [ ] 5.5 Add `0006_secrets`
+  - [x] 5.5 Add `0006_secrets`
     - Create `secrets` with `environment TEXT NOT NULL` constrained to `dev|test|staging|prod`, unique `(project_id, environment, key)`, **no FK** to a Phase 2 table, and a check constraint making exactly one of `infisical_path` and `encrypted_value` non-null.
     - Add `test_0006_secrets.py`: uniqueness, the environment constraint, the exclusivity constraint, and that no plaintext column is writable when `SECRET_BACKEND=infisical`.
     - _Design: §6.3, §6.5, §6.6, §17.1 D-50; Deliverable: 1.8; Criterion: 8_
 
-  - [ ] 5.6 Add `0007_audit_append_only` with database-enforced immutability
+  - [x] 5.6 Add `0007_audit_append_only` with database-enforced immutability
     - Create `audit_events` per §6.3 with `seq BIGSERIAL`, `prev_hash`, `hash`, and no FK on `project_id`/`actor_user_id` so a record survives deletion of what it describes.
     - Add the `audit_events_immutable()` trigger function and the three `BEFORE UPDATE`/`DELETE`/`TRUNCATE` triggers, then `REVOKE UPDATE, DELETE, TRUNCATE ... FROM forgeops_app` and grant only `INSERT, SELECT`.
     - Implement `scripts/check-db-roles.py` asserting the running application role lacks UPDATE on `audit_events`, and add `test_0007_audit.py`: INSERT succeeds; UPDATE, DELETE and TRUNCATE each raise `42501`; the app role has no UPDATE privilege.
     - _Design: §6.3, §6.4, §6.5, §11.9; Deliverable: 1.9; Criterion: 9; Property: Q-05_
 
-  - [ ] 5.7 Add `0008_generation_runs`
+  - [x] 5.7 Add `0008_generation_runs`
     - Create `generation_runs` per §6.2 with the `iterations_used BETWEEN 0 AND 3` check constraint, so the 3-iteration bound is expressed in the schema as well as in the type and the property.
     - Record `served_from`, `tier`, `endpoint_id`, `rubric`, `retrieval` and token counts for NFR-04 evidence.
     - Add `test_0008_generation_runs.py` proving `iterations_used = 4` is rejected.
     - _Design: §6.1, §6.2, §6.5, §11.5; Deliverable: 1.5; Criterion: 3; Property: Q-08_
 
-  - [ ] 5.8 Add `0009_project_tags_and_settings`
+  - [x] 5.8 Add `0009_project_tags_and_settings`
     - Create `project_tags` with per-project uniqueness and add validation for the `projects.settings` keys `embedding_backend`, `llm_budget_usd_month`, `favourite`, `auto_approve_readme_only`, `max_file_size_bytes` and `ignore_globs`.
     - Add `test_0009_projects.py`: tag uniqueness, and the settings validator rejecting an unknown embedding backend.
     - _Design: §6.5, §11.3; Deliverable: 1.2_
 
-  - [ ] 5.9 Add the cross-cutting migration integrity tests
+  - [x] 5.9 Add the cross-cutting migration integrity tests
     - Add `test_alembic_linearity.py` asserting a single head and that every `down_revision` chain reaches `0001_initial` with no branches.
     - Add `test_alembic_autogenerate_clean.py` running `alembic upgrade head` then `--autogenerate` and asserting an empty diff, which catches model/migration divergence and naming-convention slips in one assertion; extend `render_item` coverage to the 1024-d vector column.
     - Gate both under `require_capability("postgres")` so they fail rather than skip in CI.

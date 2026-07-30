@@ -123,4 +123,10 @@ def downgrade() -> None:
     op.drop_index("ix_projects_name", table_name="projects")
     op.drop_index("ix_projects_tenant_id", table_name="projects")
     op.drop_table("projects")
-    op.execute("DROP EXTENSION IF EXISTS vector")
+    # `vector` is deliberately NOT dropped. `CREATE EXTENSION vector` requires
+    # superuser, so under the §6.4 two-role arrangement `forgeops_migrator` runs this
+    # revision but does not own the extension, and a DROP would abort the entire
+    # downgrade. `scripts/postgres-init/10-forgeops-roles.sh` creates it as superuser
+    # at database initialisation, which makes the CREATE above a compatibility no-op
+    # for a superuser-run migration. An extension is database infrastructure that
+    # outlives one schema revision.

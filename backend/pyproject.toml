@@ -173,6 +173,13 @@ ignore = [
 # Alembic's env.py must import every domain's models to build target_metadata;
 # that is migration wiring, not runtime domain coupling.
 "alembic/env.py" = ["TID251"]
+# A revision imports the allowed-value tuples from the domain whose table it creates,
+# so the check constraint the database enforces is GENERATED from the same tuple the
+# application validates against — a new lifecycle state cannot be added to one without
+# the other. Retyping the values in the migration is the alternative, and it is how the
+# schema and the code drift apart silently. Migration wiring, like env.py above, not
+# runtime domain coupling: a revision runs once, offline, from the Alembic CLI.
+"alembic/versions/*.py" = ["TID251"]
 # Design §11.2 names this exception `ProblemException` after RFC 9457 "Problem
 # Details"; renaming it to ProblemError would obscure the spec it implements.
 "src/core/errors.py" = ["N818"]

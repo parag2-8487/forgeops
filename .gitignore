@@ -93,10 +93,14 @@ tmp/
 .cache/
 # One-shot local scratch: `*.tmp` intermediates and `scripts/_*.py` helpers that
 # generate a committed artifact once and are not part of the build. A script that
-# CI or a Make target invokes never carries the `_` prefix.
+# CI or a Make target invokes never carries the `_` prefix. `scripts/_*.txt` holds
+# long commit messages passed to `git commit -F`, which must not themselves become
+# untracked files — the mutation harness (§0.4.5) requires `git status --porcelain`
+# to be empty after a run, so scratch that is not ignored would fail it.
 *.tmp
 scripts/_*.py
 scripts/_*.sh
+scripts/_*.txt
 # Captured command output kept while working a task (check exit codes, test tails,
 # coverage numbers). Evidence belongs in PROGRESS.md, not in loose files, so this
 # directory is deliberately never committed.

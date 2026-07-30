@@ -163,20 +163,43 @@ class TestGetSessionRollback:
 
 
 class TestWithEfSearch:
-    """with_ef_search must use SET LOCAL for transaction-scoped tuning."""
+    """`with_ef_search` must scope the tuning to the transaction.
+
+    These are unit tests over a mock session, so they can only assert the statement
+    that is *issued*. They previously asserted `SET LOCAL hnsw.ef_search = :v`, which
+    the mock accepted happily and PostgreSQL rejects outright — `SET` is utility
+    syntax and takes no bind parameters, so the function had never worked against a
+    real server. `test_0003_index.py` now binds the behavioural assertion to this
+    function against real Postgres; these tests keep the *shape* honest.
+    """
 
     @pytest.mark.asyncio
-    async def test_ef_search_uses_set_local(self) -> None:
-        """with_ef_search executes SET LOCAL hnsw.ef_search with the given value."""
+    async def test_ef_search_is_transaction_local(self) -> None:
+        """`set_config(..., true)` is `SET LOCAL` semantics and is parameterisable."""
 
         mock_session = AsyncMock()
         await with_ef_search(mock_session, 200)
         mock_session.execute.assert_called_once()
         call_args = mock_session.execute.call_args
         sql_text = str(call_args[0][0].text)
-        assert "SET LOCAL hnsw.ef_search" in sql_text
+        assert "set_config" in sql_text
+        assert "hnsw.ef_search" in sql_text
+        # The third argument of set_config is `is_local`; `true` is what makes it
+        # revert at transaction end rather than leak across a pooled connection.
+        assert "true" in sql_text
         params = call_args[0][1]
-        assert params["v"] == 200
+        assert params["value"] == "200"
+
+    @pytest.mark.asyncio
+    async def test_the_value_is_bound_not_interpolated(self) -> None:
+        """The value must never appear in the statement text. Interpolating it would
+        be the other way to make `SET` work, and it turns a tuning knob into a
+        SQL-injection surface for no benefit."""
+
+        mock_session = AsyncMock()
+        await with_ef_search(mock_session, 4242)
+        sql_text = str(mock_session.execute.call_args[0][0].text)
+        assert "4242" not in sql_text, sql_text
 
     @pytest.mark.asyncio
     async def test_ef_search_different_values(self) -> None:
@@ -186,7 +209,7 @@ class TestWithEfSearch:
             mock_session = AsyncMock()
             await with_ef_search(mock_session, val)
             params = mock_session.execute.call_args[0][1]
-            assert params["v"] == val
+            assert params["value"] == str(val)
 
 
 class TestNamingConvention:
@@ -373,7 +396,21 @@ class TestMigrationShape:
         assert "down_revision" in content
         assert "None" in content
 
-    def test_downgrade_drops_extension(self) -> None:
-        """Downgrade drops the vector extension."""
+    def test_downgrade_does_not_drop_the_extension(self) -> None:
+        """The downgrade must NOT drop `vector`.
+
+        `CREATE EXTENSION vector` requires superuser, so under the §6.4 two-role
+        arrangement `forgeops_migrator` runs the migration but does not own the
+        extension — a `DROP EXTENSION` would fail and abort the whole downgrade.
+        `scripts/postgres-init/10-forgeops-roles.sh` creates it as superuser at
+        database initialisation instead, which leaves the `CREATE EXTENSION IF NOT
+        EXISTS` in `upgrade()` as a working no-op for a superuser-run migration.
+        An extension is database infrastructure that outlives one schema revision.
+        """
         content = self._read_migration()
-        assert "DROP EXTENSION IF EXISTS vector" in content
+        assert "CREATE EXTENSION IF NOT EXISTS vector" in content, (
+            "upgrade() must still create the extension so a superuser-run migration works standalone"
+        )
+        assert "DROP EXTENSION" not in content, (
+            "the downgrade must not drop an extension the migrating role may not own (design §6.4, §6.7)"
+        )

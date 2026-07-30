@@ -67,6 +67,21 @@ def migrated(database_url: str):
     alembic_ok(database_url, "downgrade", "base")
 
 
+@pytest.fixture()
+def migrated_phase0(database_url: str):
+    """Stop at revision `0001` — the whole of the Phase 0 schema and nothing else.
+
+    Phase 1 adds nineteen tables in revisions `0002` … `0009`, so "exactly three
+    tables exist" is only ever true at `0001`. Pinning the assertion to the revision
+    that makes the claim keeps it exact instead of relaxing it to a subset test,
+    which would no longer notice a fourth table arriving inside `0001`.
+    """
+    alembic_ok(database_url, "downgrade", "base")
+    alembic_ok(database_url, "upgrade", "0001")
+    yield database_url
+    alembic_ok(database_url, "downgrade", "base")
+
+
 async def _scalar(engine, sql: str, **params):
     async with engine.connect() as conn:
         return (await conn.execute(text(sql), params)).scalar()
@@ -81,7 +96,14 @@ class TestInitialSchemaAgainstPostgres:
             await engine.dispose()
         assert version is not None, "0001_initial must CREATE EXTENSION vector"
 
-    async def test_exactly_the_three_phase_0_tables(self, migrated, database_url: str) -> None:
+    async def test_exactly_the_three_phase_0_tables(self, migrated_phase0, database_url: str) -> None:
+        """At revision `0001`, exactly three tables — the original Phase 0 claim.
+
+        Uses `migrated_phase0` rather than `migrated`: Phase 1's `0002` … `0009` add
+        nineteen more tables, so at head this set is no longer three, and relaxing
+        the assertion to a subset check would stop it noticing a stray table created
+        by `0001` itself.
+        """
         engine = create_async_engine(database_url)
         try:
             async with engine.connect() as conn:
@@ -95,6 +117,28 @@ class TestInitialSchemaAgainstPostgres:
             await engine.dispose()
         assert tables == EXPECTED_TABLES, (
             f"Phase 0 defines exactly three tables (design.md §6.1); found {sorted(tables)}"
+        )
+
+    async def test_the_phase_0_tables_survive_every_phase_1_revision(self, migrated, database_url: str) -> None:
+        """And at head all three are still there.
+
+        The pair of assertions is the point: one pins what `0001` creates, the other
+        pins that Phase 1 was additive on it. A single subset check at head would
+        satisfy neither.
+        """
+        engine = create_async_engine(database_url)
+        try:
+            async with engine.connect() as conn:
+                rows = await conn.execute(
+                    text(
+                        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'alembic_version'"
+                    )
+                )
+                tables = {r[0] for r in rows}
+        finally:
+            await engine.dispose()
+        assert EXPECTED_TABLES <= tables, (
+            f"Phase 1 must be additive on the Phase 0 tables; missing {sorted(EXPECTED_TABLES - tables)}"
         )
 
     async def test_embedding_column_is_vector_1536(self, migrated, database_url: str) -> None:
@@ -140,6 +184,16 @@ class TestInitialSchemaAgainstPostgres:
         assert "ef_construction='64'" in definition or "ef_construction=64" in definition, definition
 
     async def test_ef_search_is_transaction_scoped(self, migrated, database_url: str) -> None:
+        """Exercises `src.core.db.with_ef_search`, not hand-written SQL.
+
+        This clause previously issued `SET LOCAL hnsw.ef_search = 128` itself and
+        never called the production function. The function bound a parameter into
+        `SET`, which PostgreSQL rejects outright, so it had never worked and no test
+        could have noticed. Calling it here is the whole point of the clause.
+        """
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from src.core.db import with_ef_search
+
         engine = create_async_engine(database_url)
         try:
             async with engine.connect() as conn:
@@ -154,7 +208,7 @@ class TestInitialSchemaAgainstPostgres:
                 # explicit block below is a genuinely new transaction boundary.
                 await conn.rollback()
                 async with conn.begin():
-                    await conn.execute(text("SET LOCAL hnsw.ef_search = 128"))
+                    await with_ef_search(AsyncSession(bind=conn), 128)
                     inside = (await conn.execute(text("SHOW hnsw.ef_search"))).scalar()
                 after = (await conn.execute(text("SHOW hnsw.ef_search"))).scalar()
         finally:

@@ -188,13 +188,34 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 3s --health-retries 20
     env:
-      DATABASE_URL: postgresql+asyncpg://forgeops:forgeops@localhost:5432/forgeops
+      # The §6.4 two-role arrangement, exercised rather than described. The
+      # application connects as `forgeops_app`, which `0007` REVOKEs
+      # UPDATE/DELETE/TRUNCATE on `audit_events` from; migrations connect as
+      # `forgeops_migrator`, which owns the schema. A single-role job would leave
+      # `scripts/check-db-roles.py` unable to pass, which is the "gate that can never
+      # pass" pattern D-51 exists to reject.
+      DATABASE_URL: postgresql+asyncpg://forgeops_app:ci-only-not-a-real-secret@localhost:5432/forgeops
       REDIS_URL: redis://localhost:6379/0
       # tests/integration/conftest.py gates the schema tests on this variable.
       # It was never set, so all seven of criterion 14's assertions — vector(1536),
       # the HNSW cosine index, transaction-scoped ef_search, clean autogenerate and
       # the downgrade — skipped while this job paid to run a real pgvector service.
-      FORGEOPS_TEST_DATABASE_URL: postgresql+asyncpg://forgeops:forgeops@localhost:5432/forgeops
+      #
+      # It names the MIGRATOR, because the revision proofs run `alembic downgrade base`
+      # then `upgrade head` through this URL: if they ran as the superuser, every table
+      # would be owned by it and `check-db-roles.py`'s ownership assertion — the one
+      # that catches "the app can drop the immutability triggers" — would fail.
+      FORGEOPS_TEST_DATABASE_URL: postgresql+asyncpg://forgeops_migrator:ci-only-not-a-real-secret@localhost:5432/forgeops
+      # Consumed by scripts/postgres-init/10-forgeops-roles.sh below. Synthetic and
+      # self-labelling: this cluster exists for the duration of one job and is
+      # reachable only from it.
+      FORGEOPS_APP_DB_PASSWORD: ci-only-not-a-real-secret
+      FORGEOPS_MIGRATOR_DB_PASSWORD: ci-only-not-a-real-secret
+      POSTGRES_USER: forgeops
+      POSTGRES_DB: forgeops
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGPASSWORD: forgeops
       # No OPA service container: a service starts before checkout, so it cannot
       # mount ./policies. tests/integration/test_opa_policy_integration.py starts
       # the digest-pinned OPA image itself and tears it down.
@@ -216,9 +237,33 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq redis-server
       - name: Install dev lock with hash enforcement
         run: pip install --require-hashes -r requirements-dev.lock
+      # A service container starts before checkout, so it cannot mount
+      # ./scripts/postgres-init the way Compose does (design §13.3). The runner invokes
+      # the SAME script instead, over TCP with PGHOST/PGPASSWORD — so the two-role
+      # setup CI proves is byte-identical to the one a developer gets, and cannot rot
+      # into a CI-only variant that passes for a different reason.
+      - name: Grant the two database roles a login (design §6.4)
+        working-directory: .
+        run: |
+          sudo apt-get install -y -qq postgresql-client
+          bash scripts/postgres-init/10-forgeops-roles.sh
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
       - run: pytest tests/ -q
+      # The revision proofs above left the schema at head, migrated by
+      # `forgeops_migrator`. This asserts the arrangement actually took: that the
+      # APPLICATION role cannot UPDATE, DELETE or TRUNCATE `audit_events`, does not own
+      # the table, and that all three immutability triggers are installed. It connects
+      # with the real DATABASE_URL, so it reports the privileges of whatever role that
+      # URL authenticates as rather than the role the configuration claims.
+      - name: The application role must not be able to rewrite the audit log
+        working-directory: .
+        run: |
+          # Migrate explicitly rather than relying on whatever revision the last test
+          # left behind: some proofs deliberately end at `base`, and a check whose
+          # result depends on test ordering is not a gate.
+          (cd backend && DATABASE_URL="$FORGEOPS_TEST_DATABASE_URL" python -m alembic upgrade head)
+          python scripts/check-db-roles.py
 
   # ── 7. frontend: lint → test → build with a non-default browser URL ───────
   frontend:

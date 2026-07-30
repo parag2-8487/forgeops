@@ -31,6 +31,15 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "POSTGRES_PASSWORD",
         "POSTGRES_DB",
         "POSTGRES_PORT",
+        # The §6.4 two-role arrangement. These are consumed by
+        # `scripts/postgres-init/10-forgeops-roles.sh` inside the Postgres container,
+        # not by `Settings`: the application never needs the migrator's password, and
+        # giving the app process a credential it has no use for would widen the blast
+        # radius of a compromise for nothing. They are registered here because
+        # `.env.example` declares them and the inventory check requires every declared
+        # key to be known.
+        "FORGEOPS_APP_DB_PASSWORD",
+        "FORGEOPS_MIGRATOR_DB_PASSWORD",
         "DATABASE_URL",
         "DATABASE_POOL_SIZE",
         "PGVECTOR_HNSW_EF_SEARCH",

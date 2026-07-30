@@ -139,8 +139,21 @@ async def apply_tenant_context(session: AsyncSession) -> str | None:
 async def with_ef_search(session: AsyncSession, ef_search: int) -> None:
     """Tune HNSW recall for the current transaction only (Research §A0a).
 
-    Uses SET LOCAL so the setting is scoped to the current transaction and
-    automatically reverts at the end of it. This is the correct pattern for
-    PgBouncer transaction-mode pooling (§6.5).
+    Uses `set_config(..., is_local => true)` — `SET LOCAL` semantics: the value is
+    scoped to the current transaction and reverts at the end of it, which is the
+    correct pattern for PgBouncer transaction-mode pooling (§6.5).
+
+    Not literally `SET LOCAL`, and the reason matters. `SET` is utility syntax and
+    accepts no bind parameters, so `SET LOCAL hnsw.ef_search = :v` fails with
+    `syntax error at or near "$1"` on every call — this function had never worked.
+    It also had no test that executed it: Phase 0's clause issued the raw SQL itself
+    and never called the production function, so the defect was invisible until
+    `test_0003_index.py` bound the assertion to this function instead. Interpolating
+    the value into the statement text would be the other way to make `SET` work, and
+    was rejected: it turns a tuning knob into a SQL-injection surface for no benefit,
+    since `set_config` is exactly equivalent and parameterised.
     """
-    await session.execute(text("SET LOCAL hnsw.ef_search = :v"), {"v": ef_search})
+    await session.execute(
+        text("SELECT set_config('hnsw.ef_search', :value, true)"),
+        {"value": str(int(ef_search))},
+    )
