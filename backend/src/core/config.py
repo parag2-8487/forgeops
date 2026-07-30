@@ -213,8 +213,16 @@ def load_project_dotenv(
     Unknown keys from project sources are accumulated into ONE error report.
     """
     if base_dir is None:
-        # Default to the repository root (parent of backend/)
-        base_dir = Path(__file__).resolve().parents[2]
+        # The repository root, which is the parent of backend/ and where the
+        # committed `.env.example` lives.
+        #
+        # This said `parents[2]` and resolved to backend/ itself, contradicting its
+        # own comment. Nothing caught it because every caller was a test passing an
+        # explicit base_dir; the first production-shaped caller
+        # (tests/integration/production_app.py, once debt D1 made the tier YAML
+        # load for real) hit `FileNotFoundError` immediately.
+        # config.py -> core -> src -> backend -> <repo root>
+        base_dir = Path(__file__).resolve().parents[3]
 
     merged: dict[str, str] = {}
     unknown_keys: list[str] = []

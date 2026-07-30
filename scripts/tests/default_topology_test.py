@@ -229,7 +229,7 @@ def case_validator_has_teeth() -> None:
     with_optional = copy.deepcopy(data)
     with_optional["services"]["infisical"] = {
         "profiles": ["vault"],
-        "image": "infisical/infisical:latest",
+        "image": "infisical/infisical:latest",  # allow-floating: negative fixture; this line exists to be rejected
     }
     mutations["an optional vault service is declared"] = with_optional
 

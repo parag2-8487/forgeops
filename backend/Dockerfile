@@ -15,6 +15,13 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 # Copy source for the editable install
 COPY pyproject.toml ./
 COPY src/ ./src/
+# `config/` holds model-tiers.yaml and mcp-servers.yaml. It was never copied into
+# the image, and nothing noticed: `load_mcp_server_config` returns an EMPTY registry
+# for a missing file — correct fail-closed behaviour for a gateway, and completely
+# invisible, so every containerised `tools/list` returned nothing by design rather
+# than by accident. Task 2.1 wired `load_tier_config` into the lifespan, which turned
+# the same missing directory into a startup crash and surfaced it (design §0.5 D1).
+COPY config/ ./config/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 
@@ -35,6 +42,7 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
 # Copy application source
 COPY --from=builder /app/src ./src
+COPY --from=builder /app/config ./config
 COPY --from=builder /app/alembic.ini ./
 COPY --from=builder /app/alembic ./alembic
 COPY --from=builder /app/pyproject.toml ./

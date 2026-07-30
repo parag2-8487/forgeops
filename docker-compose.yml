@@ -74,6 +74,21 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      # Added by task 2.3 (debt D2). Without a healthcheck, `docker compose up -d
+      # --wait` only waits for this container to be *running*, so the smoke job
+      # would report success on a Next.js server that started and then failed to
+      # serve. `node` is guaranteed present in the runtime image, unlike curl.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   backend:
     build: { context: ./backend, target: runtime }

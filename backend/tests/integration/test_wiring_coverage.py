@@ -70,5 +70,5 @@ class TestCompositionSurfaceIsDeclared:
         assert not undeclared, (
             "composed but never wiring-tested: "
             f"{undeclared}. Add a @wires(...) declaration to the test that drives "
-            "each one through the real object graph — see design.md §0.4.1."
+            "each one through the real object graph - see design.md 0.4.1."
         )

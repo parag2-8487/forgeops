@@ -46,8 +46,8 @@ test-backend: ## Run Python backend tests
 lint: lint-agent lint-backend lint-frontend ## Lint all components
 
 lint-agent: ## Lint Go agent with golangci-lint
-	@printf '==> lint-agent: golangci-lint run\n'
-	@cd agent && golangci-lint run ./...
+	@printf '==> lint-agent: golangci-lint v1.62.2 from agent/tools (checksum-verified)\n'
+	@cd agent && bash ../scripts/go-tool.sh github.com/golangci/golangci-lint/cmd/golangci-lint run ./...
 
 lint-backend: ## Lint Python backend with ruff
 	@printf '==> lint-backend: ruff check\n'
@@ -72,10 +72,15 @@ clean: ## Remove build output only; never .env, lockfiles or Docker volumes
 	@printf 'clean: build output removed\n'
 
 
-.PHONY: lock-backend
+.PHONY: lock-backend lock-tools
 lock-backend: ## Regenerate hash-pinned backend lockfiles from pyproject.toml
 	@printf '==> lock-backend: regenerating requirements.lock and requirements-dev.lock\n'
 	@sh scripts/lock-backend.sh
+
+lock-tools: ## Regenerate the hash-pinned CI tooling lock from requirements-tools.in
+	@printf '==> lock-tools: regenerating scripts/requirements-tools.lock\n'
+	@cd $(CURDIR) && pip-compile --generate-hashes --allow-unsafe --strip-extras \
+		--output-file=scripts/requirements-tools.lock scripts/requirements-tools.in
 
 
 # ─── Frontend targets (task 6) ─────────────────────────────────────────────

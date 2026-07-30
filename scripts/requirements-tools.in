@@ -1,0 +1,18 @@
+# Python tooling CI installs, pinned by version (design.md §0.5 debt D4, §8.4).
+#
+# `scripts/requirements-tools.lock` is compiled from this file with
+# `--generate-hashes` and installed with `pip install --require-hashes`, so the tools
+# that gate the build are verified by digest rather than resolved at run time.
+#
+# Phase 0 ran bare `pip install pre-commit` and `pip install pip-audit`. Both floated,
+# which meant the linter and the vulnerability scanner were the two least
+# reproducible pieces of the pipeline.
+#
+# Kept separate from backend/pyproject.toml on purpose: these are CI tools, not
+# backend runtime or test dependencies, and mixing them would put pre-commit into the
+# dependency graph that pip-audit and the SBOM report on.
+#
+# Regenerate with `make lock-tools`.
+pip-audit==2.7.3
+pip-tools==7.6.0
+pre-commit==4.0.1

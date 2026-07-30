@@ -231,15 +231,22 @@ def test_gitleaks_still_scans_them() -> None:
 
 
 def test_the_new_regime_hooks_are_read_only() -> None:
-    """Every §0.4 hook reads; none passes a rewriting flag."""
+    """Every §0.4 / §8.4 hook reads; none passes a rewriting flag.
+
+    These three take fixed arguments rather than a filename list, so they run with
+    `pass_filenames: false` — which means the top-level four-document exclusion does
+    not apply to them. `scripts/check-hygiene.sh` grants that exemption only to a
+    documented list, and this assertion is the evidence the exemption rests on.
+    """
     config = _pre_commit_config()
+    expected = {"check-test-doubles", "check-ci-jobs", "check-no-latest"}
     hooks = {
         hook["id"]: hook
         for repo in config["repos"]
         for hook in repo.get("hooks", [])
-        if hook.get("id") in {"check-test-doubles", "check-ci-jobs"}
+        if hook.get("id") in expected
     }
-    assert set(hooks) == {"check-test-doubles", "check-ci-jobs"}, sorted(hooks)
+    assert set(hooks) == expected, sorted(hooks)
     for identifier, hook in hooks.items():
         entry = hook.get("entry", "")
         for rewriting in ("--fix", "-w", "--write", "--in-place"):

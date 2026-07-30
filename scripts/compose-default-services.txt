@@ -1,0 +1,31 @@
+# The services `docker compose up -d --wait` must start with NO profile flags, and
+# with no `.env` present (design.md §2.3, §13.3).
+#
+# Read by the `compose-smoke` CI job and by scripts/check-compose-validate.py. Kept as
+# data rather than as a shell literal inside the workflow so that adding a
+# default-profile service is a reviewable one-line diff next to the task that adds it,
+# and so the assertion and the compose file cannot drift silently.
+#
+# Format: one service name per line. `# task N.N` marks a service design §2.3 requires
+# that has not landed yet; the owning task removes the marker in the same commit that
+# adds the service. A marker still present when Phase 1 closes is a real gap.
+#
+# design §2.3's complete target set is eight services:
+#   postgres redis opa cerbos authentik-server authentik-worker backend frontend
+#
+# Deviation recorded deliberately: task 2.3 cannot assert the eight-service set,
+# because `cerbos` arrives with task 6.4 and the two Authentik services with task 6.3.
+# Asserting a set containing services that do not exist would make the smoke job red
+# for four groups, and weakening it to "at least these" would stop it detecting an
+# accidental default-profile addition — which is the thing it is for. The three
+# pending rows below carry their owning task instead.
+
+postgres
+redis
+opa
+backend
+frontend
+
+# pending: cerbos            # task 6.4 (Cerbos sidecar, resource-scoped authorization)
+# pending: authentik-server  # task 6.3 (real OIDC IdP, default profile)
+# pending: authentik-worker  # task 6.3

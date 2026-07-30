@@ -52,6 +52,29 @@ UNREACHABLE_DATABASE_URL = f"postgresql+asyncpg://forgeops:forgeops@127.0.0.1:{_
 UNREACHABLE_REDIS_URL = f"redis://127.0.0.1:{_CLOSED_PORT}/0"
 
 
+def apply_committed_baseline_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Put the committed `.env.example` baseline into the environment.
+
+    Since debt D1 was closed (task 2.1) the lifespan builds the model router from
+    `config/model-tiers.yaml`, whose `base_url` values are `${VAR}` placeholders that
+    `load_tier_config` refuses to leave unexpanded. That refusal is correct — Phase 0
+    shipped the literal `${OPENAI_BASE_URL}/chat/completions` to httpx — so the app
+    now genuinely requires those variables at startup.
+
+    Sourcing them from `.env.example` rather than hard-coding them here does double
+    duty: the fixture stays a *configuration* substitution rather than a collaborator
+    substitution, and any key the baseline forgets breaks these tests, which is the
+    fresh-clone guarantee §13.3 asks for ("no committed `.env` required,
+    `.env.example` supplies every value").
+    """
+    from src.core.config import load_project_dotenv
+
+    baseline = load_project_dotenv((".env.example",))
+    for key, value in baseline.items():
+        monkeypatch.setenv(key, value)
+    return baseline
+
+
 @pytest.fixture
 async def production_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FastAPI]:
     """Build the app through the PRODUCTION factory, substituting only I/O edges.
@@ -65,6 +88,7 @@ async def production_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FastA
     from src.core.config import get_settings
     from src.main import create_app
 
+    apply_committed_baseline_env(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", UNREACHABLE_DATABASE_URL)
     monkeypatch.setenv("REDIS_URL", UNREACHABLE_REDIS_URL)
     monkeypatch.setenv("APP_ENV", "test")

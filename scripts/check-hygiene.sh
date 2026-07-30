@@ -213,16 +213,35 @@ if [ -f "$CONFIG" ]; then
 		done
 	}
 
-	# Only gitleaks may opt out of filename filtering.
-	awk -F'\t' '
-		$1=="hook" && ($3=="always_run" || $3=="pass_filenames") && $2!="gitleaks" {
+	# Hooks that may opt out of filename filtering.
+	#
+	# The rule exists because the top-level `exclude:` is what keeps the four
+	# authoritative root documents out of every MUTATING hook (design §0.3, §14.1),
+	# and a hook that takes no filenames is not subject to that exclusion. So the
+	# exemption is granted only to hooks that cannot rewrite anything:
+	#
+	#   gitleaks         reads staged content, reports, never writes
+	#   check-ci-jobs    reads ci.yml and design.md, compares job names, never writes
+	#   check-no-latest  greps tracked workflows/scripts/Dockerfiles, never writes
+	#
+	# Both Phase 1 additions take fixed arguments rather than a filename list, so
+	# `pass_filenames: true` would append paths and break them. Their read-only
+	# character is asserted mechanically, not just claimed here:
+	# backend/tests/meta/test_regime_end_to_end.py checks that neither hook's entry
+	# carries a rewriting flag, and that no regime check modifies a tracked file.
+	#
+	# Adding a name to this list without that evidence reopens the hole the rule
+	# closes, so the list is deliberately short and each entry is justified above.
+	NON_FILENAME_EXEMPT='gitleaks check-ci-jobs check-no-latest'
+	awk -F'\t' -v exempt=" $NON_FILENAME_EXEMPT " '
+		$1=="hook" && ($3=="always_run" || $3=="pass_filenames") && index(exempt, " " $2 " ")==0 {
 			if (($3=="always_run" && $4=="true") || ($3=="pass_filenames" && $4=="false"))
 				print $2 " (" $3 ": " $4 ")"
 		}
 	' "$FACTS" | {
 		while IFS= read -r offender; do
 			[ -n "$offender" ] || continue
-			fail "only gitleaks may bypass filename filtering; offender: $offender"
+			fail "only a documented read-only hook may bypass filename filtering; offender: $offender"
 		done
 	}
 

@@ -82,7 +82,9 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
       # Completion criterion 9: clean on a fresh clone, all files.
-      - run: pip install pre-commit
+      # Debt D4: `pip install pre-commit` floated, so the linter that gates every
+      # commit was itself unpinned. --require-hashes verifies every wheel by digest.
+      - run: pip install --require-hashes -r scripts/requirements-tools.lock
       - run: pre-commit run --all-files --show-diff-on-failure
 
   # ── 2. lock-integrity (Python hashes + six-platform tofu lock) ────────────
@@ -127,15 +129,16 @@ jobs:
           tofu_version: ${{ env.TOFU_VERSION }}
       - name: Assert tofu is on PATH so the iac integration tests cannot skip
         run: tofu version
-      # golangci-lint must be BUILT with a Go at least as new as the version it
-      # analyses. The prebuilt release binaries are compiled with an older
-      # toolchain and refuse to load a go1.26 config ("the Go language version
-      # (go1.23) used to build golangci-lint is lower than the targeted Go version
-      # (1.26)"), so it is installed from source with the Go set up above.
-      - name: Install golangci-lint (built with this Go)
-        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
-      - name: Lint
-        run: golangci-lint run ./...
+      # Debt D4 (design §0.5). `go install ...@v1.62.2` resolved a MUTABLE tag against
+      # nothing; agent/tools/go.mod pins the same version and its committed go.sum
+      # verifies the bytes. scripts/go-tool.sh builds it and runs it from the agent
+      # module, so `./...` still means the agent's packages.
+      #
+      # Building from source (rather than downloading a release binary) remains
+      # necessary for the reason Phase 0 recorded: the prebuilt binaries are compiled
+      # with an older toolchain and refuse to analyse a go1.26 module.
+      - name: Lint (golangci-lint v1.62.2, checksum-verified)
+        run: bash ../scripts/go-tool.sh github.com/golangci/golangci-lint/cmd/golangci-lint run ./...
       # design.md §0.4.2 clause 2: a compile-time `var _ Iface = (*Impl)(nil)`
       # assertion cannot rot, but it can be ABSENT — and an absent assertion is
       # indistinguishable from a satisfied one until a signature changes and only
@@ -258,20 +261,60 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      # Criterion 4: from a fresh clone with NO .env, the direct unprofiled
-      # command selects exactly postgres, redis, opa, backend, frontend.
-      - name: Assert the unprofiled service set is exactly five
+      # Debt D2 (design §0.5). Phase 0's job ran `docker compose config` and nothing
+      # else: it never built either image and never started a container, so
+      # criterion 4's own wording and the container half of criterion 1 rested on a
+      # developer's local runs. A smoke job that starts nothing cannot gate the four
+      # services Phase 1 adds, nor the `e2e` journey that needs them running.
+      #
+      # The fresh-clone path is asserted first and kept intact throughout: no `.env`
+      # is created, so every value comes from the committed `.env.example` defaults
+      # baked into docker-compose.yml (design §13.3).
+      - name: Assert no committed .env exists (fresh-clone path)
+        run: test ! -e .env
+      - name: Assert the unprofiled service set is exactly the committed set
         run: |
-          test ! -e .env
+          expected="$(grep -v '^#' scripts/compose-default-services.txt | grep -v '^$' | sort | tr '\n' ' ')"
           got="$(docker compose config --services | sort | tr '\n' ' ')"
-          echo "unprofiled services: $got"
-          test "$got" = "backend frontend opa postgres redis "
+          echo "expected: $expected"
+          echo "got     : $got"
+          test "$got" = "$expected"
       - name: Assert optional profiles stay out of the default set
         run: |
           docker compose config --services | grep -qx infisical && exit 1 || true
           docker compose config --services | grep -qx agent-dev && exit 1 || true
           docker compose --profile vault config --services | grep -qx infisical
           docker compose --profile tools config --services | grep -qx agent-dev
+      # D2's substance: build both images and start the stack for real.
+      - name: Build the backend and frontend images
+        run: docker compose build backend frontend
+      - name: Start the default stack and wait for health
+        run: docker compose up -d --wait --wait-timeout 300
+      - name: Assert every default service is healthy, not merely running
+        run: bash scripts/check-compose-healthy.sh
+      - name: Assert the backend answers liveness and readiness from the container
+        run: |
+          # /health is dependency-free; /health/ready proves Postgres and Redis are
+          # genuinely reachable from inside the compose network, which is the part a
+          # `config`-only job could never show.
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors http://127.0.0.1:8000/health
+          echo
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors http://127.0.0.1:8000/health/ready
+          echo
+      - name: Assert the frontend serves its shell from the built image
+        run: curl -fsS --retry 10 --retry-delay 3 --retry-all-errors -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/
+      # Optional-profile evidence. Each command lands with the task that owns the
+      # service it starts, so this job never waits on a container that does not exist:
+      #   - `vault` (infisical): task 10.4
+      #   - `auth`  (authentik): task 6.3
+      # `tools` (agent-dev) is a build-only devtools image with no long-running
+      # process, so it is asserted by the profile selection above rather than started.
+      - name: Compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+      - name: Tear the stack down
+        if: always()
+        run: docker compose down -v --remove-orphans
 
   # ── 9. audit: dependency vulnerability gates ──────────────────────────────
   audit:
@@ -289,19 +332,28 @@ jobs:
       - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
         with:
           version: ${{ env.PNPM_VERSION }}
-      - name: go mod verify + govulncheck
+      # Debt D4 (design §0.5). Every tool that gates this job is now itself pinned.
+      # `go run` from agent/tools resolves both tools through that module's committed
+      # go.sum, so the scanner's own bytes are checksum-verified. Phase 0 installed
+      # govulncheck from a floating version: the gate that proves the dependency set is safe
+      # was the one dependency verified against nothing.
+      - name: No floating tool versions anywhere
+        run: bash scripts/check-no-latest.sh
+      - name: go mod verify + govulncheck (pinned v1.1.4 via agent/tools)
         run: |
           cd agent && go mod verify && cd ..
-          go install golang.org/x/vuln/cmd/govulncheck@latest
           bash scripts/check-govulncheck.sh
-      - name: pip-audit
+      - name: pip-audit (hash-pinned via requirements-tools.lock)
         working-directory: backend
         run: |
-          pip install pip-audit
+          pip install --require-hashes -r ../scripts/requirements-tools.lock
           pip-audit -r requirements.lock --strict || pip-audit -r requirements.lock
-      - name: pnpm audit
+      # `|| true` removed. This step previously reported a finding and then exited 0,
+      # so the frontend advisory gate was decorative — and Phase 1 adds ~6 frontend
+      # dependencies, so it is the surface growing fastest.
+      - name: pnpm audit (gating at high)
         working-directory: frontend
-        run: pnpm audit --audit-level high || true
+        run: pnpm audit --audit-level high
 
   # ── 10. supply: validate the release config on every PR (no publish) ──────
   supply:

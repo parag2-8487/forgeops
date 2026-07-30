@@ -51,10 +51,10 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 | 1.6   | Establish the test-integrity regime before the components it polices                               | Implement the mutation harness and the negative-control manifest              | done    |
 | 1.7   | Establish the test-integrity regime before the components it polices                               | Add the CI-job existence check that keeps Appendix E honest                   | done    |
 | 1.8   | Establish the test-integrity regime before the components it polices                               | Exercise the regime's own safeguards end to end                               | done    |
-| 2.1   | Close the inherited debt that all later work sits on                                               | Wire the model router from the shipped tier YAML in the app factory           | pending |
-| 2.2   | Close the inherited debt that all later work sits on                                               | Write property test Q-27 for tier-configuration provenance                    | pending |
-| 2.3   | Close the inherited debt that all later work sits on                                               | Make `compose-smoke` actually start the stack                                 | pending |
-| 2.4   | Close the inherited debt that all later work sits on                                               | Harden the supply chain and remove every floating tool version                | pending |
+| 2.1   | Close the inherited debt that all later work sits on                                               | Wire the model router from the shipped tier YAML in the app factory           | done    |
+| 2.2   | Close the inherited debt that all later work sits on                                               | Write property test Q-27 for tier-configuration provenance                    | done    |
+| 2.3   | Close the inherited debt that all later work sits on                                               | Make `compose-smoke` actually start the stack                                 | done    |
+| 2.4   | Close the inherited debt that all later work sits on                                               | Harden the supply chain and remove every floating tool version                | done    |
 | 2.5   | Close the inherited debt that all later work sits on                                               | Digest-pin every image and move OPA to the rootless variant                   | pending |
 | 2.6   | Close the inherited debt that all later work sits on                                               | Restore lockfile diff visibility                                              | pending |
 | 2.7   | Close the inherited debt that all later work sits on                                               | Tighten P-07's shutdown-timeout assertion with a slow closer                  | pending |

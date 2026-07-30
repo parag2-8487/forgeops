@@ -45,20 +45,38 @@ ALLOWLIST=(
   "GO-2026-4883"
 )
 
-if ! command -v govulncheck >/dev/null 2>&1; then
-  printf 'govulncheck: SKIP not on PATH — install with:\n'
-  printf '  go install golang.org/x/vuln/cmd/govulncheck@latest\n'
-  exit 0
+# Debt D4 (design §0.5). This block used to be:
+#
+#   if ! command -v govulncheck >/dev/null 2>&1; then ... exit 0; fi
+#
+# which made the vulnerability gate exit 0 whenever the tool was absent — a silent
+# skip inside a green run, the exact shape D-26 exists to forbid. It also told the
+# reader to install from a floating version, so even when it did run, the version was
+# whatever the proxy served.
+#
+# The tool is now resolved from agent/tools/go.mod and verified against that module's
+# committed go.sum, so it is always available and always the pinned v1.1.4.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOOLS_DIR="$SCRIPT_DIR/../agent/tools"
+
+if [ ! -f "$TOOLS_DIR/go.mod" ]; then
+	printf 'ERROR: %s is missing; the pinned tool module is how this gate stays pinned\n' "$TOOLS_DIR/go.mod" >&2
+	exit 1
 fi
 
-cd "$(dirname "$0")/../agent"
+# Built rather than `go run` because the package pattern below (`./...`) must resolve
+# against the AGENT module, and `go run` would resolve it against agent/tools. That
+# build lives in scripts/go-tool.sh so there is one copy of the rule.
+BINDIR="$(mktemp -d)"
+trap 'rm -rf "$BINDIR"' EXIT INT TERM
 
-OUT="$(mktemp)"
-trap 'rm -f "$OUT"' EXIT INT TERM
+cd "$SCRIPT_DIR/../agent"
+
+OUT="$BINDIR/govulncheck.out"
 
 # govulncheck exits 3 when it finds called vulnerabilities; capture rather than abort.
 set +e
-govulncheck ./... > "$OUT" 2>&1
+bash "$SCRIPT_DIR/go-tool.sh" golang.org/x/vuln/cmd/govulncheck ./... > "$OUT" 2>&1
 set -e
 
 # Collect the advisory IDs govulncheck says the code actually CALLS. The symbol

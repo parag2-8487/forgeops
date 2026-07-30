@@ -59,6 +59,15 @@ repos:
         language: system
         pass_filenames: false
         files: ^(\.github/workflows/ci\.yml|\.kiro/specs/phase-1-mvp-core/design\.md)$
+      # Debt D4 (design §0.5). A floating tool version means two builds of the same
+      # commit can use different tools, and Phase 0 installed its own vulnerability
+      # scanner that way.
+      - id: check-no-latest
+        name: no floating tool versions (workflows, scripts, Dockerfiles)
+        entry: bash scripts/check-no-latest.sh
+        language: system
+        pass_filenames: false
+        files: ^(\.github/.*|scripts/.*|.*Dockerfile|Makefile|docker-compose.*\.yml)$
 
   # ─── Agent: gofmt + go vet, scoped to agent/ (design §16.1) ────────────────
   - repo: local

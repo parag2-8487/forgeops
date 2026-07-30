@@ -35,8 +35,36 @@
 # or a dirty working tree.
 #
 # CURRENT STATE
-# No `Q-` row yet: the first property is Q-27, which lands with task 2.2. The
-# harness's own behaviour - that it reports VACUOUS, that its temp directory is
-# outside the tree, and that it leaves `git status --porcelain` empty - is proven by
-# `backend/tests/meta/test_mutation_harness.py` against fixture manifests, so this
-# file being empty of controls does not mean the mechanism is unproven.
+# One `Q-` row: Q-27, landed with task 2.2. The remaining thirty arrive with their own
+# property leaves. The harness's own behaviour - that it reports VACUOUS, that its temp
+# directory is outside the tree, and that it leaves `git status --porcelain` empty - is
+# proven by `backend/tests/meta/test_mutation_harness.py` against fixture manifests.
+
+[Q-27]
+runtime     = "python"
+property    = "backend/tests/property/test_q27_tier_provenance.py"
+target      = "src.main.load_tier_config"
+mutation    = "Hard-code the tier map in the lifespan and ignore the path"
+description = """
+Freezes the tier configuration at whatever the committed config/model-tiers.yaml says
+and returns it for every path, which is precisely the Phase 0 state debt D1 describes:
+the shipped YAML is not what a running backend loads. Q-27 quantifies over GENERATED
+documents, so no fixed map can agree with them and the property must fail.
+"""
+patch = """
+import os
+from pathlib import Path
+
+import src.main as main_module
+from src.ai.routing.tiers import load_tier_config as _real_load_tier_config
+
+_committed = Path(main_module.__file__).resolve().parent.parent / "config" / "model-tiers.yaml"
+_frozen = _real_load_tier_config(_committed, env=os.environ)
+
+
+def _ignores_the_configured_path(path, env=None):
+    return _frozen
+
+
+main_module.load_tier_config = _ignores_the_configured_path
+"""

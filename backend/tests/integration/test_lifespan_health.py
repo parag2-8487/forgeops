@@ -93,6 +93,16 @@ def _clear_settings_cache() -> None:
 
 def _build_app(database_url: str, redis_url: str):
     """Import the app factory with a project configuration applied to the env."""
+    # Since debt D1 was closed (task 2.1) the lifespan builds the model router from
+    # config/model-tiers.yaml, whose `base_url` values are `${VAR}` placeholders that
+    # load_tier_config refuses to leave unexpanded. The committed baseline supplies
+    # them, which keeps this test a CONFIGURATION substitution and simultaneously
+    # asserts that `.env.example` is complete enough to boot the app.
+    from src.core.config import load_project_dotenv
+
+    for key, value in load_project_dotenv((".env.example",)).items():
+        os.environ.setdefault(key, value)
+
     os.environ["DATABASE_URL"] = database_url
     os.environ["REDIS_URL"] = redis_url
     os.environ.setdefault("MCP_OIDC_AUDIENCE", "forgeops-mcp-gateway")

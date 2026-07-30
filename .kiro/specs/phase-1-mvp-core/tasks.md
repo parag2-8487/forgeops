@@ -75,24 +75,24 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - _Design: §0.4, §8.3, §8.4; Deliverable: 1.11_
 
 - [ ] 2. Close the inherited debt that all later work sits on
-  - [ ] 2.1 Wire the model router from the shipped tier YAML in the app factory
+  - [x] 2.1 Wire the model router from the shipped tier YAML in the app factory
     - In `backend/src/main.py`'s lifespan, call `load_tier_config(settings.model_tier_config_path, env=os.environ)`, build `EndpointRegistry.from_config(...)` and `ModelRouter(...)` from it, and expose the parsed config as `app.state.tier_config`.
     - Do not change `load_tier_config`'s signature; it stays `load_tier_config(path, env=None) -> TierConfig`.
     - Add `backend/tests/integration/test_wiring_tier_config.py`: copy `config/model-tiers.yaml` to a temp path, mutate a tier, point `MODEL_TIER_CONFIG_PATH` at the copy, rebuild via `create_app()`, and assert the running app's tier set changed. **No generation leaf may land before this test exists.**
     - _Design: §0.5 debt D1, §11.1, §11.5.4; Deliverable: 1.5; Criterion: 3; Property: Q-27_
 
-  - [ ] 2.2 Write property test Q-27 for tier-configuration provenance
+  - [x] 2.2 Write property test Q-27 for tier-configuration provenance
     - Generate valid tier YAML documents into temporary paths and assert the tier set on the app built by `create_app()` equals the parsed document for every one, with no default fallback masking a load failure.
     - Add the `mutations.toml` row whose mutation hard-codes the tier map in the lifespan and ignores the configured path; the property must then fail.
     - _Design: §11.1, §11.5.4, Appendix B Q-27; Deliverable: 1.5; Criterion: 3; Property: Q-27_
 
-  - [ ] 2.3 Make `compose-smoke` actually start the stack
+  - [x] 2.3 Make `compose-smoke` actually start the stack
     - Extend the `compose-smoke` job to build the `backend` and `frontend` images and run `docker compose up -d --wait`, then assert the default service set is exactly the §2.3 set and all are healthy.
     - Add separate optional-profile evidence commands, each run only after its owning implementation task exists.
     - Keep the fresh-clone path intact: no committed `.env` required, `.env.example` supplies every value.
     - _Design: §0.5 debt D2, §2.3, §8.3, §13.3; Deliverable: 1.11; Criterion: 1_
 
-  - [ ] 2.4 Harden the supply chain and remove every floating tool version
+  - [x] 2.4 Harden the supply chain and remove every floating tool version
     - Create `agent/tools/go.mod` + committed `go.sum` pinning `golangci-lint v1.62.2` and `golang.org/x/vuln/cmd/govulncheck v1.1.4`, and run both via `go run` so `go.sum` verifies the checksum.
     - Remove `|| true` from `pnpm audit` and gate it at `--audit-level high`; add a hash-pinned `requirements-tools.lock` installed with `--require-hashes` for `pre-commit`, `pip-audit` and `pip-tools==7.6.0`.
     - Implement `scripts/check-no-latest.sh`, which greps every workflow, script and Dockerfile for `@latest` and fails on a match; wire it into `pre-commit`.

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,6 +21,14 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
+from .ai.rate_limit.redis_bucket import RedisTokenBucketLimiter
+from .ai.routes import AIDeps
+from .ai.routing.breaker import CircuitBreaker
+from .ai.routing.cache import TieredSemanticCache
+from .ai.routing.endpoints import EndpointRegistry
+from .ai.routing.keys import EnvKeyResolver
+from .ai.routing.router import ModelRouter
+from .ai.routing.tiers import load_tier_config
 from .core.config import get_settings
 from .core.db import create_db_engine, create_sessionmaker
 from .core.errors import PROBLEM_CONTENT_TYPE, install_problem_handlers
@@ -36,6 +46,19 @@ from .mcp.tasks import RedisTaskStore
 from .mcp.upstream import McpUpstream
 
 
+def _resolve_config_path(configured: str) -> Path:
+    """Resolve a configured config path against the backend root when relative.
+
+    Extracted rather than repeated: `load_mcp_server_config` already did this
+    inline, and two copies of a path rule is how a deployment ends up loading the
+    registry from one place and the tier map from another.
+    """
+    path = Path(configured or "")
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent.parent / path
+    return path
+
+
 def load_mcp_server_config(settings: Any) -> list[dict[str, Any]]:
     """Load the MCP server registry from the configured YAML path.
 
@@ -45,11 +68,8 @@ def load_mcp_server_config(settings: Any) -> list[dict[str, Any]]:
     route to. An invalid *config value* still fails fast in Settings.
     """
     import logging as _logging
-    from pathlib import Path
 
-    path = Path(getattr(settings, "mcp_server_registry_path", "") or "")
-    if not path.is_absolute():
-        path = Path(__file__).resolve().parent.parent / path
+    path = _resolve_config_path(getattr(settings, "mcp_server_registry_path", "") or "")
     if not path.is_file():
         return []
 
@@ -142,6 +162,67 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         cache=mcp_cache,
         upstream=mcp_upstream,
         agent_blast_radius=settings.mcp_agent_blast_radius,
+    )
+
+    # ── debt D1: the shipped YAML is now what a running backend loads ─────────
+    # Phase 0 defined load_tier_config(path, env) and never called it from
+    # production, so config/model-tiers.yaml was only ever exercised by fixtures
+    # (PROGRESS.md outstanding item, design §0.5 D1). §1.5's entire generation
+    # pipeline sits on six-tier routing, so this wiring lands BEFORE any generation
+    # code and is proven by Q-27 against the RUNNING app rather than by reading the
+    # file.
+    #
+    # A malformed or missing tier file is a startup failure, deliberately unlike
+    # the MCP registry above. An empty MCP registry fails closed — every route
+    # returns 404 — but an empty tier map would leave `/api/v1/ai/complete`
+    # answering 422 for every tier while looking healthy, which is precisely the
+    # silent-degradation shape D1 exists to remove.
+    tier_config = load_tier_config(_resolve_config_path(settings.model_tier_config_path), env=os.environ)
+    endpoint_registry = EndpointRegistry.from_config(tier_config, http=shared_http)
+    breakers = {
+        endpoint_id: CircuitBreaker(
+            failure_threshold=settings.cb_failure_threshold,
+            failure_window_seconds=float(settings.cb_window_seconds),
+            cooldown_seconds=float(settings.cb_open_seconds),
+        )
+        for endpoint_id in tier_config.endpoints
+    }
+    semantic_cache = TieredSemanticCache(redis=redis_client)
+    model_router = ModelRouter(
+        tier_config=tier_config,
+        registry=endpoint_registry,
+        cache=semantic_cache,
+        breakers=breakers,
+        key_resolver=EnvKeyResolver(),
+    )
+
+    # Exposed so Q-27 can assert provenance against the running app.
+    app.state.tier_config = tier_config
+    app.state.endpoint_registry = endpoint_registry
+    app.state.breakers = breakers
+    app.state.semantic_cache = semantic_cache
+    app.state.model_router = model_router
+
+    # `ai/routes.py` reads `app.state.ai_deps` and the Phase 0 lifespan never set
+    # it, so every request to `/api/v1/ai/tiers` and `/api/v1/ai/complete` raised
+    # AttributeError. That is the same class of defect as D-23: a registered route
+    # whose composition was never assembled, reported as live.
+    #
+    # The verifier is Phase 0's MCP verifier for now, which means the AI routes
+    # currently accept the gateway's audience. Task 6.1 replaces it with
+    # `AppTokenVerifier`, which has a DISTINCT app audience; until then this is the
+    # Phase 0 contract wired up rather than a new one invented here.
+    app.state.ai_deps = AIDeps(
+        tier_config=tier_config,
+        registry=endpoint_registry,
+        breakers=breakers,
+        model_router=model_router,
+        limiter=RedisTokenBucketLimiter(
+            redis=redis_client,
+            capacity=settings.ai_rate_limit_capacity,
+            refill_rate=settings.ai_rate_limit_refill_per_second,
+        ),
+        verifier=mcp_verifier,
     )
 
     # Best-effort initial observations: dependency outage changes readiness, not
