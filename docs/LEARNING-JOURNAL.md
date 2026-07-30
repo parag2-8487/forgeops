@@ -5,7 +5,7 @@
 | Snapshot date          | **2026-07-31**                                                                                                                                                                                           |
 | Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                               |
 | Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                       |
-| Leaves reflected       | **38 of 166** Phase 1 task leaves implemented in the working tree; 2 recorded `blocked`. `PROGRESS.md`'s own table still reads 25 `done` because rows 5.1–6.4 are flipped in the commit that lands them. |
+| Leaves reflected       | **41 of 166** Phase 1 task leaves implemented in the working tree; 2 recorded `blocked`. `PROGRESS.md`'s own table still reads 25 `done` because rows 5.1–6.5 are flipped in the commit that lands them. |
 | Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                              |
 
 This document teaches. It is not a changelog, not a status report, and never an
@@ -1545,7 +1545,7 @@ not random. Read this chapter for the pattern, not the list.
 **The recurring one, in one sentence: a check or a test that passes while examining nothing.**
 
 Not a check that examines the wrong thing — that would fail eventually. A check that
-successfully examines an empty set, or a substring, or a document *about* the thing instead of
+successfully examines an empty set, or a substring, or a document _about_ the thing instead of
 the thing. Those pass forever, and their green tick is indistinguishable from evidence.
 
 A note on counting before the list. `PROGRESS.md` does not carry a defect log, so there is no
@@ -1559,12 +1559,12 @@ this chapter as though it were authoritative.
 ### Pattern A — dead wiring: a registered surface whose composition was never assembled
 
 **1. `with_ef_search` had never worked.** The Phase 0 design prescribed
-`text("SET LOCAL hnsw.ef_search = :v")` with a bind parameter. `SET` is *utility syntax* in
+`text("SET LOCAL hnsw.ef_search = :v")` with a bind parameter. `SET` is _utility syntax_ in
 PostgreSQL and accepts no bind parameters, so every call failed with
 `syntax error at or near "$1"`. The function had never executed successfully — not once.
 
-Why nothing caught it is the part to learn: the Phase 0 integration test *issued the raw SQL
-itself* and never called the production function. The unit test asserted the mock received
+Why nothing caught it is the part to learn: the Phase 0 integration test _issued the raw SQL
+itself_ and never called the production function. The unit test asserted the mock received
 `SET LOCAL hnsw.ef_search = :v` — a string the mock accepted happily and PostgreSQL rejects
 outright. The fix is `set_config('hnsw.ef_search', :value, true)`, the parameterisable
 equivalent; string interpolation was rejected because it "turns a tuning knob into a
@@ -1589,7 +1589,7 @@ a `NOLOGIN` role cannot be connected as, so the split existed on paper only.
 The resolution is a separate `scripts/postgres-init/10-forgeops-roles.sh` that runs from
 `/docker-entrypoint-initdb.d/`, reads the untracked `.env`, and grants `LOGIN` and a password
 — "and is never itself a credential." Two ordering traps are recorded in that script: it runs
-*before* any migration, so `0002`'s idempotent `DO` block finds the roles present and only
+_before_ any migration, so `0002`'s idempotent `DO` block finds the roles present and only
 grants privileges; and since PostgreSQL 15 the `public` schema no longer grants `CREATE` to
 `PUBLIC`, so without an explicit grant `0001` cannot run as the migrator at all.
 
@@ -1597,13 +1597,13 @@ Why the split matters, in the script's own words: "A single-role deployment sile
 mechanism 3 — every trigger is still installed, every test still passes, and the application
 can drop the triggers whenever it likes, because dropping a trigger needs the ownership a
 merged role holds." `scripts/check-db-roles.py` is what turns that into a build failure, and
-CI now runs the job with two distinct DSNs so the check *can* pass — with a comment naming the
+CI now runs the job with two distinct DSNs so the check _can_ pass — with a comment naming the
 alternative: "A single-role job would leave `scripts/check-db-roles.py` unable to pass, which
 is the 'gate that can never pass' pattern D-51 exists to reject."
 
 **3. `app.state.ai_deps` was never set, so every AI route raised `AttributeError`.**
 `ai/routes.py` reads it; the Phase 0 lifespan never assigned it. `GET /api/v1/ai/tiers` and
-`POST /api/v1/ai/complete` failed on every request. The routes were *registered*, so route
+`POST /api/v1/ai/complete` failed on every request. The routes were _registered_, so route
 introspection and `PROGRESS.md` both reported them live. The fix records the diagnosis
 directly: "That is the same class of defect as D-23: a registered route whose composition was
 never assembled, reported as live."
@@ -1611,7 +1611,7 @@ never assembled, reported as live."
 **4. `load_tier_config` had no production caller.** `main.py` never built the model router
 from `config/model-tiers.yaml`, so the shipped YAML was never what a running backend loaded.
 Criterion 17's six-tier cascade was genuinely proven — against a configuration source
-production never read. This was tracked as inherited debt D1 and had to land *before* any
+production never read. This was tracked as inherited debt D1 and had to land _before_ any
 generation code, "because §1.5 sits directly on six-tier routing." The wiring now happens in
 the lifespan, and `Q-27` asserts provenance against the **running app**: it mutates a copy of
 the YAML in a temp directory, points `MODEL_TIER_CONFIG_PATH` at it, rebuilds through
@@ -1661,7 +1661,7 @@ resolves the tool from a pinned module so it is always present, rather than addi
 
 **10. The healthcheck-required service set excluded the frontend.** `check-compose-validate.py`
 required a healthcheck on `{postgres, redis, opa, backend}`, excusing the frontend "because
-`depends_on` gates it" — but `up -d --wait` waits only for *running* when there is no
+`depends_on` gates it" — but `up -d --wait` waits only for _running_ when there is no
 healthcheck. The exemption was already obsolete when it was written, and Authentik made it
 actively wrong: its first boot runs migrations for minutes, "so a stack that reports ready
 before `ak healthcheck` passes reports an IdP that cannot yet serve a login."
@@ -1670,7 +1670,7 @@ before `ak healthcheck` passes reports an IdP that cannot yet serve a login."
 looks.** The clause was `elapsed > 5*time.Second` — a hard-coded literal, unrelated to
 `cfg.ShutdownTimeout` — asserted over closers that return immediately. But the deeper problem
 is that the test **re-implemented `App.Close`'s loop instead of calling it**, and that copy had
-no timeout in it at all. So the assertion could not fail for any configuration, *and*, in the
+no timeout in it at all. So the assertion could not fail for any configuration, _and_, in the
 words of the replacement test: "because the loop was a copy, deleting `App.Close`'s context
 entirely would not have disturbed it."
 
@@ -1694,12 +1694,12 @@ profile and its integration was unwritten, so nothing ever pulled it. D-52.
 evidence column read like proof and named nothing real, and no tool disagreed."
 
 The fix is `scripts/check-ci-jobs.py`, and its design is instructive. It extracts every
-**bold *and* backticked** token from Appendix E — that pairing is what distinguishes a job
+**bold _and_ backticked** token from Appendix E — that pairing is what distinguishes a job
 citation from an ordinary code span like `kubectl` or a bold property id like `Q-17` — and
 compares against the workflow's `jobs:` keys. It exits 1 when the extracted set is **empty**,
 "a pattern that stopped matching would otherwise pass forever." And `ci-jobs-baseline.txt`
 stages the six jobs a later task will add, failing **both ways**: a cited job that is neither
-defined nor baselined fails, and a baselined job that *is* now defined also fails, "so the
+defined nor baselined fails, and a baselined job that _is_ now defined also fails, "so the
 file cannot outlive its purpose."
 
 **15. Still-unfixed documentation drift, recorded honestly.** `docker-compose.yml`'s header
@@ -1713,7 +1713,7 @@ rot, because every check reads `scripts/compose-default-services.txt` instead.
 **16. `.env.example` was blocked for writing.** The Phase 0 blocklist refused `.env` and any
 basename starting with `.env.`, which also refuses `.env.example` — a committed,
 placeholder-only file that `scripts/init-env.sh` copies from and that `phases.md` lists as a
-*generated artifact*. D-46 splits the rule by intent: "Reading a real `.env` into an LLM prompt
+_generated artifact_. D-46 splits the rule by intent: "Reading a real `.env` into an LLM prompt
 and writing a placeholder template are opposite acts that one rule conflated."
 
 The exemption is a closed list of exactly three names, never a glob, and the reason is
@@ -1723,7 +1723,7 @@ widened by a filename somebody else chooses."
 
 **17. The same blocklist compared case-sensitively, so it was bypassable by renaming.**
 `.ENV.PRODUCTION` was not blocked at all — and on Windows and macOS, where the filesystem is
-case-insensitive by default, that is the *same file* as `.env.production`. The `.pem` check
+case-insensitive by default, that is the _same file_ as `.env.production`. The `.pem` check
 immediately below already folded case. The comment records why nobody noticed: "the `.env`
 family did not, and nothing had asked." Note the deliberate asymmetry in the fix: reads fold
 case, while the three write exemptions are matched **exactly**, so `.ENV.EXAMPLE` stays
@@ -1740,7 +1740,7 @@ after a failed git push wrote the token verbatim, for exactly the same reason. T
 names it: "the Go side had the same shape and no test had asked." The fix handles
 `ByteStringType`, `ErrorType`, `StringerType`, `ReflectType` and `AnyType`, replacing an error
 field with a plain error carrying scrubbed text rather than hoping the encoder never calls
-`Error()`. Numeric and boolean kinds are left alone, and a test asserts redaction is *not*
+`Error()`. Numeric and boolean kinds are left alone, and a test asserts redaction is _not_
 total — deliberately, because an over-broad redactor is the shape of the decorative clause the
 review found in `P-09`.
 
@@ -1766,21 +1766,21 @@ that the environment is now asserted.
 **21. The readiness-recovery test defaulted to a Windows-only path.** It looked for
 `C:\Program Files\Redis\redis-server.exe`, so on Linux — including CI — the capability probe
 never found a binary and the test skipped. It is the only test that observes the
-unavailable → available readiness transition *in the same process*. The fix prefers
+unavailable → available readiness transition _in the same process_. The fix prefers
 `shutil.which("redis-server")` and routes the failure through `require_capability` rather than
 a bare skip, so an environment that promised Redis fails instead of skipping.
 
 **22. A dead OPA container was laundered into a missing capability.** See defect 23 for the
 cause. The consequence belongs here: the only test that starts OPA reports the failure through
 `require_capability("opa", "the OPA container never became healthy")`, so "a hard failure was
-being laundered into a *missing capability*, which skips locally." A total, hard, startup
+being laundered into a _missing capability_, which skips locally." A total, hard, startup
 failure presented as an absent optional dependency.
 
 ### Pattern F — the fixture shaped around the implementation
 
 **23. The JWKS URL was guessed, not discovered.** `OidcTokenVerifier` built its JWKS URL as
 `f"{issuer}/.well-known/jwks.json"`. That path is in no specification: OIDC Discovery
-standardises `/.well-known/openid-configuration` and requires it to *name* `jwks_uri`, and
+standardises `/.well-known/openid-configuration` and requires it to _name_ `jwks_uri`, and
 providers publish keys wherever they like. Real Authentik serves `<issuer>jwks/`, so the fetch
 404'd, `PyJWKClientError` was mapped to the signature-failure branch, and **every token real
 Authentik minted was rejected as if its signature were bad.**
@@ -1795,7 +1795,7 @@ Which yields the right shape for the repair's test: not "a JWKS can be fetched",
 two disagree, the **discovered** one is used". Every fixture issuer now serves its keys
 somewhere the old guess would never look, and one test asserts the guessed path "was never
 requested" — guarding against a fix that works for the wrong reason. The well-known path is
-kept as a *fallback* so an issuer publishing only a JWKS still works, "rather than breaking a
+kept as a _fallback_ so an issuer publishing only a JWKS still works, "rather than breaking a
 shipped contract to fix a different bug." Recorded as D-58.
 
 Note that defects 1 and 11 belong here too. In each case the test was written against what the
@@ -1806,7 +1806,7 @@ code did, so it could not disagree with it.
 **24. OPA refused to start once Cerbos policies landed.** Phase 0 mounted `./policies` and ran
 `opa run --server … /policies`, which was correct while `policies/` held nothing but Rego.
 Task 6.4 added `policies/cerbos/` — six YAML resource policies. `opa run <dir>` loads **every**
-file under the path, and a `.yaml` is loaded as a *data document*, so six documents each
+file under the path, and a `.yaml` is loaded as a _data document_, so six documents each
 declaring `apiVersion` at the top level collide:
 
 ```
@@ -1841,7 +1841,7 @@ the four.
 Two extra lessons ride along. The data file's own header claimed it was "Read by the
 `compose-smoke` CI job and by `scripts/check-compose-validate.py`" — **and it was not**: the
 module carried its own literal set, "so the two could drift and the file documented a coupling
-it did not have." And one of the copies was asserted as a *count*: `len(defaults) == 5`. A
+it did not have." And one of the copies was asserted as a _count_: `len(defaults) == 5`. A
 count proves less than it appears to — "five wrong services would have satisfied it."
 
 The single source is now parsed once, and a missing or empty data file is a hard failure rather
@@ -1855,7 +1855,7 @@ arithmetic." It now compares the inventory against `.env.example` in **both** di
 ### Pattern I — the tool that gates the build, verified against nothing
 
 **27. `govulncheck` came from `@latest`.** It "resolves at run time to whatever the proxy
-serves and is verified against nothing." `golangci-lint@v1.62.2` was pinned by a *mutable tag*.
+serves and is verified against nothing." `golangci-lint@v1.62.2` was pinned by a _mutable tag_.
 `pip install pre-commit` and `pip install pip-audit` were unpinned entirely. So "the gate that
 proves the dependency set is safe was the one dependency verified against nothing," and two
 builds of the same commit could use different tools.
@@ -1889,7 +1889,7 @@ Reviewing it required `git diff --text`, which showed `+asgi-lifespan==2.1.0` **
 Windows regeneration had silently dropped the Linux-only `uvloop`** — which would have broken
 CI. "A lockfile diff is the highest-signal artifact in a dependency bump."
 
-`scripts/check-lockfile-attrs.sh` now queries `git check-attr` — the attributes git *actually*
+`scripts/check-lockfile-attrs.sh` now queries `git check-attr` — the attributes git _actually_
 applies, including any inherited from a nested `.gitattributes` — "rather than grepping the
 file and hoping the two agree." And it fails when no lockfile is found, "so a rename cannot
 make the check trivially pass."
@@ -1908,8 +1908,320 @@ Four habits, all visible in the fixes above.
    `git check-attr`, not `.gitattributes`. Call the production function, not the SQL you think
    it emits.
 3. **Shape fixtures around the contract, not around your implementation.** If your fixture
-   serves the path your code guesses, you have built a mirror. Ask what an *independent*
+   serves the path your code guesses, you have built a mirror. Ask what an _independent_
    implementation of the protocol would do, and make the fixture do that.
 4. **Break it on purpose.** Every one of these defects would have been caught in seconds by
    disabling the thing the check claims to verify and observing that the check still passed.
    That is now a CI job.
+
+---
+
+## 10. Where we are right now
+
+**Snapshot: 2026-07-31, branch `phase-1-implementation`.** Phase 0 is `completed` but
+**unmerged into `main`** — that is the repository owner's decision and has deliberately not
+been taken. Phase 1 is `in-progress`. Phases 2 through 5 are `not-started`, and no
+future-phase behaviour exists in the tree beyond named seams.
+
+### The count
+
+|                                 |  Leaves |
+| :------------------------------ | ------: |
+| Implemented in the working tree |  **38** |
+| `blocked`                       |       2 |
+| Not started                     |     126 |
+| **Total**                       | **166** |
+
+`PROGRESS.md`'s own table records 25 `done` at this snapshot, because rows are flipped in the
+commit that lands the work and rows 5.1–6.4 have not been flipped yet. If the two numbers
+disagree when you read this, `PROGRESS.md` is right.
+
+### By group
+
+| Group                                                                    | Leaves | State                                                             |
+| :----------------------------------------------------------------------- | -----: | :---------------------------------------------------------------- |
+| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                      |
+| 2 · Close the inherited debt that all later work sits on                 |      7 | 6 done, **2.5 blocked**                                           |
+| 3 · Extend backend core primitives                                       |      5 | **complete**                                                      |
+| 4 · Extend Go agent primitives                                           |      7 | 6 done, **4.2 blocked**                                           |
+| 5 · Eight linear migrations, each with a gated proof                     |      9 | implemented in the tree                                           |
+| 6 · Auth, authorization and the identity provider                        |      7 | 6.1–6.4 implemented; 6.5–6.7 (`Q-19`, `Q-20`, `Q-30`) not started |
+| 7 · Governance chokepoint and the mutation boundary                      |     11 | not started                                                       |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                       |
+| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                       |
+| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                       |
+| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                       |
+| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                       |
+| 13 · AI generation pipeline                                              |     13 | not started                                                       |
+| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                       |
+| 15 · Safe Default Template Library                                       |      7 | not started                                                       |
+| 16 · Change Approval Center API                                          |      4 | not started                                                       |
+| 17 · Frontend feature surfaces                                           |     11 | not started                                                       |
+| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                       |
+| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                       |
+| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                       |
+
+Note the ordering. The test-integrity regime came first, before any component it polices. Then
+inherited debt, before anything that sits on it. Then primitives on both sides. Then the
+schema. Then identity — because the chokepoint needs a verified principal. The governance
+chokepoint lands _before_ any mutating operation exists, and secret redaction lands _before_
+the first prompt is assembled. That sequencing is the design's answer to chapter 5: build the
+thing that would have caught the defect before building the thing that would have contained it.
+
+### What exists on disk today
+
+**Backend.** `core/` is complete for Phase 1's needs: `Settings` with the full configuration
+surface and cross-field validators that accumulate every missing production secret into one
+error; the 38-entry RFC 9457 registry; the redacting logging stack with `formatException`
+overridden in both formatters; the async engine with `pooler_connect_args`,
+`apply_tenant_context` and `with_ef_search`; the `TaskDispatcher` seam with `InlineDispatcher`
+and `ArqDispatcher`; `canonical.py` for RFC 8785 JCS (which rejects floats with a path in the
+error); and six middlewares. `main.py` composes 24 attributes onto `app.state`. `mcp/` is
+complete and repaired. `ai/routing/` is complete and now wired from the shipped YAML.
+`analysis/` has the plan analyzer and the SQLModel tables. `auth/` is real: OIDC client, PKCE,
+ID-token and app-token verifiers, sessions, principals, blast radius, the Cerbos client,
+per-route dependencies and the public-route set. Nine linear Alembic migrations exist, `0001`
+through `0009`.
+
+`governance/`, `audit/`, `policies/`, `secrets/`, `projects/` and `generation/` currently
+contain **SQLModel tables and constants only** — no services, no routes. `deployment/`,
+`incidents/`, `monitoring/`, `notifications/` and `websocket/` are README-only structural
+markers. That distinction is deliberate: the design forbids importable placeholders.
+
+**Agent.** `app`, `config`, `logging`, `connection`, `fileops` (with the blocklist split),
+`git`, `iac`, `identity` (with the paired-device provider), `session` (the journal and the
+credential store), `mcp`, `scanner` (a watcher only — no parser yet), `telemetry` (trace
+context and a no-op tracer), `docker`, `k8s` and `selfupdate` (signature verification only) are
+real. `devtools`, `executor`, `policy` and `validator` are README-only markers.
+
+**Frontend.** The shell and nothing else: one layout, one page, an error boundary, a 404, the
+RFC 9457-aware API client, the validated env contract, one Zustand UI store, the shadcn
+primitives, and eight Vitest files plus a Playwright shell spec. No route segments beyond
+`app/(shell)`, no hooks, no feature modules.
+
+**CI.** Ten jobs exist: `changes`, `pre-commit`, `lock-integrity`, `agent`, `backend`, `auth`,
+`frontend`, `compose-smoke`, `audit`, `supply`. The design's full set is fifteen; the six
+missing (`e2e`, `k8s`, `mutation`, `policy`, `secrets`, `templates`) are listed in
+`scripts/ci-jobs-baseline.txt` and are owned by task 19.3. The `backend` job now runs against
+real pgvector and Redis Stack with `FORGEOPS_REQUIRE_INTEGRATION=1`, starts a real digest-pinned
+Cerbos, grants the two database roles a login with the same script Compose mounts, and runs
+`check-route-auth.py` and `check-db-roles.py`. The `auth` job drives real Authentik.
+
+**Compose.** Eight unprofiled services — postgres, redis, opa, cerbos, authentik-server,
+authentik-worker, backend, frontend — plus `infisical` behind the `vault` profile and
+`agent-dev` behind `tools`. All images digest-pinned.
+
+### What is explicitly not verified
+
+This section exists because the sources are careful about it and this journal must not be less
+careful.
+
+- **Coverage.** The ≥70 % per-component gate is decided (D-31) but leaf 19.1 has not landed.
+  No Phase 1 coverage figure is stated anywhere.
+- **The mutation harness runs, but almost empty.** `mutations.toml` currently carries **one**
+  row — `Q-27` — of the thirty-one Appendix B requires, and the harness runs with
+  `--allow-incomplete`. Leaf 19.2 completes it and adds the `mutation` CI job. Until then the
+  non-vacuity regime is built and proven on itself (`backend/tests/meta/`), but it is not yet
+  guarding the property set.
+- **Q-properties.** Exactly one is implemented: `Q-27`. The other thirty are pending task
+  leaves and are therefore **not implemented and not verified**.
+- **Phase 0's release chain.** `REVIEW-PHASE-0.md` states in five places that the reviewer did
+  not independently verify the `v0.0.1-rc3` artifacts, signatures, SBOMs or attestations —
+  `cosign`, `syft` and `goreleaser` were not installed on that host. `PROGRESS.md` records a
+  separate off-runner verification of all 94 assets which did succeed. Both statements are
+  true; they are different exercises.
+- **Criterion 4 and the container half of criterion 1** were unverified by both CI and the
+  review at the time of the review. Leaf 2.3 is `done` and `compose-smoke` now builds and starts
+  the stack, so that gap is addressed in the tree — but the review's finding is what the
+  historical record says, and `PROGRESS.md`'s Phase 0 deviations section still lists the old
+  state as `Outstanding`, because that section describes the Phase 0 baseline and is finalised
+  by leaf 20.15. If you read those two sections side by side they contradict each other; the
+  Phase 1 task table is the current truth.
+- **GitHub secret scanning is disabled on the repository** — an owner-only setting. A local
+  gitleaks history scan is the only secret-scanning evidence, and there is no server-side alert
+  list to reconcile against.
+
+### The two blocked leaves
+
+`PROGRESS.md` records **no reason** for either, which is contrary to its own stated rule that a
+blocked leaf carries one. That is worth knowing as a reader.
+
+- **2.5 — "Digest-pin every image and move OPA to the rootless variant."** The leaf's own
+  wording is now known to be factually wrong: D-51 establishes that no `-rootless` 1.x tag
+  exists and that the intent was already met, and D-52 establishes that the Infisical tag the
+  leaf inherited was never published. The work the leaf _meant_ has been done differently.
+- **4.2 — "Make the redacting logger the only agent logger and redact validator output."** No
+  reason is recorded and I did not find one. The redacting-logger half is implemented and
+  asserted (chapter 9); the validators the second half refers to are group 14, which has not
+  started. That is inference, not a recorded fact.
+
+### What remains, in one paragraph
+
+The chokepoint and the mutation boundary (group 7), then pairing and the session protocol
+(group 8), then double policy evaluation (group 9) and the redaction chokepoint (group 10) —
+those four groups are the trust architecture, and nothing after them is safe to build first.
+Then the analysis engine and the incremental index (group 11), the workspace and readiness
+scoring (group 12), and the generation pipeline (group 13), which is the product's headline
+feature and depends on all of the above. Then the validators and the Kubernetes harness (14),
+the template library (15), the approval API (16) and the eleven frontend surfaces (17). Then
+the end-to-end journey (18), the coverage and non-vacuity gates (19), and finally group 20,
+which verifies all fourteen completion criteria **using only earlier implementation** and
+finalises the records from captured evidence.
+
+---
+
+## 11. Glossary
+
+**Advisory rubric** — the LLM-as-judge score (best practice, security posture, cost
+efficiency, each 0–5). Recorded and shown to the user; never consulted by the blocking gate.
+
+**Agent** — the Go binary running on the developer's machine. Tier 3. Scans, validates,
+mutates files, executes IaC. Dials outward only.
+
+**Appendix B / Appendix C.1 / Appendix E** — sections of a phase's `design.md`: the property
+list, the problem-type registry, and the completion criteria with their evidence.
+
+**Approval id** — the identifier proving a specific mutation was approved. Carried in the
+command envelope and verified independently by the agent.
+
+**Blast radius** — how much a change can affect. Two distinct uses here. As an ordered scope on
+an identity: `read_only < workspace < infrastructure`, used by the gateway to filter which
+tools an agent may see. As a verdict from the Semantic Plan Analyzer: how many resources a plan
+destroys, whether it exposes something, and whether that forces a block.
+
+**cAST chunking** — "chunking by AST". Group source bottom-up (statements → functions →
+classes) so a chunk is a syntactic unit, splitting oversized units at the highest syntactic
+boundary that fits, and prepend the file's imports so a retrieved chunk is self-contained.
+Contrast with chunking every _N_ tokens, which the research prohibits.
+
+**Change set** — the unit of atomic modification: a `change_sets` row plus `change_items`
+carrying old content, new content, an action and a pre-image hash. Applied all-or-nothing.
+
+**Change Approval Center** — the UI surface where validated change sets appear as diffs for
+explicit approval.
+
+**Chokepoint** — one code path that every instance of some operation must traverse, enforced so
+that bypass is impossible rather than discouraged. Two here: the governance chokepoint for
+mutations, and `assemble_prompt` for LLM prompts.
+
+**Circuit breaker** — a per-endpoint state machine (CLOSED → OPEN → HALF-OPEN) that stops
+calling a failing dependency. Five failures in 30 s opens it; 60 s later a single probe is
+admitted.
+
+**Command envelope** — the signed message authorising one named operation on one device.
+Carries `operation`, `args`, `approval_id`, `policy_context`, `nonce`, `seq`, `not_after` and an
+HMAC-SHA256 signature over its JCS canonical bytes.
+
+**Completion criterion** — a testable statement that must hold for a phase to be complete, with
+a named piece of evidence. Phase 0 had 18, Phase 1 has 14. Where a criterion and a deliverable
+list disagree, the criterion governs.
+
+**Cosign / Fulcio / Rekor** — Sigstore. Cosign signs; Fulcio issues a short-lived certificate
+bound to a CI workload's OIDC identity, so there is no long-lived key; Rekor is the public
+transparency log that makes a signature's existence provable and non-repudiable.
+
+**cAST, cascade, casing** — see cAST chunking; see fallback cascade; see chapter 9 defect 17.
+
+**EARS** — Easy Approach to Requirements Syntax, a template for writing requirements as
+"When ⟨trigger⟩ the system shall ⟨response⟩". **Worth knowing because it is _not_ used here** —
+no `requirements.md` exists in this workspace. Requirements are `FR-nn`/`NFR-nn` rows in
+`PRD.md` with P0/P1/P2 priorities.
+
+**`ef_search`** — HNSW's query-time search-breadth parameter. Higher means better recall and
+slower queries. Set per transaction with `set_config('hnsw.ef_search', v, true)`.
+
+**Envelope** — see command envelope. Also, in a Sigstore context, a DSSE envelope: the signed
+wrapper around an in-toto provenance statement.
+
+**Fallback cascade** — the ordered list the model router walks on failure: primary →
+cross-vendor → self-hosted → Safe Default Template Library.
+
+**FSL-1.1-ALv2** — Functional Source License 1.1 with an Apache-2.0 future licence. The root
+licence; source-available now, Apache-2.0 after two years. `agent/` is Apache-2.0 outright.
+
+**HNSW** — Hierarchical Navigable Small World, an approximate-nearest-neighbour index. Slow to
+build, fast and high-recall to query. `m=16`, `ef_construction=64`, `vector_cosine_ops` here.
+
+**JCS / RFC 8785** — JSON Canonicalization Scheme. One byte-exact serialisation for a given
+JSON value: UTF-8, no insignificant whitespace, members sorted by UTF-16 code unit, canonical
+numbers. Necessary whenever two runtimes must sign or hash "the same JSON".
+
+**Matryoshka truncation** — a property of some embedding models: the first _k_ dimensions of the
+output are themselves a usable embedding, so vectors can be truncated to a smaller size without
+retraining. Ruled out here because BGE-M3 does not have it (D-48).
+
+**MCP** — Model Context Protocol. A standard for exposing tools to agents. The gateway in front
+of them routes on two headers, authenticates, filters by policy and caches tool lists.
+
+**Mint (of authority)** — construct a `MutationAuthority`. Only `governance.chokepoint` can, and
+only after all six stages.
+
+**Negative control** — the specific mutation that must make a property fail. If the property
+still passes, the property is vacuous.
+
+**Non-vacuous** — a test that actually depends on the thing it claims to test. Proved by
+breaking the subject and observing failure.
+
+**Outbound-only** — the agent opens connections; nothing connects to it. Zero inbound ports.
+
+**Pre-image hash** — the hash of a file's content as it was when a change set was compiled.
+Re-checked at apply time, so an edit during the interval yields a conflict instead of a silent
+overwrite.
+
+**Problem document / RFC 9457** — the standard error body: a stable `type` URI, a `title`, a
+`status` equal to the HTTP status, an optional `detail`, an `instance` path, and here a
+`trace_id`. Served as `application/problem+json`.
+
+**Property (`P-nn`, `Q-nn`)** — a universally quantified correctness statement, tested by
+generated inputs. `P-01`…`P-15` are Phase 0's and keep running; `Q-01`…`Q-31` are Phase 1's.
+
+**Readiness score** — a deterministic 0–100 number over six weighted categories, with a
+plain-language report. No LLM involved.
+
+**RRF** — Reciprocal Rank Fusion: `RRF(d) = Σ 1/(k + rank_i(d))` with `k=60`. Merges two
+ranked lists without needing their scores to be comparable.
+
+**Safe Default Template Library** — 8 languages × 5 artifact classes of hardcoded templates,
+each proven by the same validation pipeline the AI output traverses. The terminal rung of the
+cascade.
+
+**Seam** — an interface created in an earlier phase whose current implementation is _correct for
+that phase_, so a later phase can plug in without touching callers. "A seam, not a stub":
+`TokenSource`, `TaskDispatcher`, `KeyResolver`, `TerminalFallback`.
+
+**Semantic Plan Analyzer** — the third validation layer after syntax and dry-run. Answers "what
+will this change actually do?" by classifying destructive actions and computing blast radius.
+Deterministic and monotone.
+
+**SLSA** — Supply-chain Levels for Software Artifacts. Its provenance predicate records who
+built an artifact, from which source, with which dependencies.
+
+**SBOM / CycloneDX** — Software Bill of Materials: the component inventory of a built artifact.
+CycloneDX is the format; Syft produces it here.
+
+**SSE** — Server-Sent Events. One-way server → client streaming over plain HTTP with built-in
+reconnect. Used for LLM token streaming and progress; WebSocket is reserved for the
+bidirectional agent channel.
+
+**SVID** — SPIFFE Verifiable Identity Document. An X.509-SVID is a short-lived certificate
+whose subject is a workload identity, issued after platform attestation (namespace, service
+account, image digest). Used for the in-cluster agent; the laptop path uses a paired device
+certificate and is deliberately **not** called attestation.
+
+**Vacuity** — the failure mode of a check that passes while examining nothing. Chapter 9.
+
+**Wiring test** — a test that composes the real collaborators exactly as production does and
+drives them through the real entry point. May substitute a transport; never a collaborator.
+
+---
+
+## Appendix — how to keep this journal current
+
+`.kiro/steering/learning-journal.md` carries the standing obligation, and it is short by
+design. In summary: after every feature, task leaf, decision or defect fix, append what
+changed, which chapter it belongs to, why the approach was chosen, what was rejected and what
+cost was accepted; revise in place and never delete a chapter; update the header's date and
+leaf count; give every new decision from D-59 onward a paragraph in chapter 8 and every
+newly found defect a paragraph in chapter 9 with the pattern it belongs to; regenerate the
+comprehension artifact when a group of leaves completes; and never write "verified" where the
+underlying source says otherwise.

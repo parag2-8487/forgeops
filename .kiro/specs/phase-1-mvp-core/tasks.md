@@ -269,7 +269,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add `/health/ready` coverage for Cerbos and integration tests over the full role × resource × action matrix.
     - _Design: §2.3, §5.5, §11.2, §13.3, §16.4; Deliverable: 1.11; Criterion: 8; Property: Q-20_
 
-  - [ ] 6.5 Write property test Q-19 for deny-by-default route coverage
+  - [x] 6.5 Write property test Q-19 for deny-by-default route coverage
     - Generate requests without tokens against every route registered by `create_app()`; prove each route either depends on `require_principal` or is in `PUBLIC_ROUTES`, that unauthenticated calls return 401, and that no handler body executes.
     - Add the `mutations.toml` row dropping `require_principal` from `GET /api/v1/projects` without adding it to `PUBLIC_ROUTES`.
     - _Design: §4.4, §11.2, Appendix B Q-19; Deliverable: 1.11; Property: Q-19_

@@ -1,0 +1,41 @@
+# Understand-Anything exclusions for ForgeOps.
+#
+# Layered on top of the tool's DEFAULT_IGNORE_PATTERNS (node_modules/, .git/, .venv/,
+# dist/, *.lock, binaries, …). Everything here is either not source, not ours, or must
+# never be read into an analysis index.
+#
+# The order of these sections mirrors the reason each entry exists.
+
+# --- Must never be read. Non-negotiable. ------------------------------------
+# `.env` holds real local credentials. `.env.example` is placeholder-only by contract
+# and is deliberately NOT excluded: it is part of the configuration surface a reader
+# needs to understand.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+credentials.json
+
+# --- Not ours. ---------------------------------------------------------------
+backend/.venv/
+frontend/node_modules/
+agent/dist/
+.pytest_cache/
+.ruff_cache/
+
+# --- Not source: scratch, evidence capture and one-off probes. ---------------
+# `.evidence/` is a working capture directory, and `scripts/_*` are diagnostic
+# one-offs. Both would swamp the graph with nodes nobody navigates.
+.evidence/
+scripts/_*
+*.tmp
+.commitmsg.tmp
+
+# --- Vendored or generated artifacts that carry no design intent. ------------
+agent/testfixtures/
+backend/alembic/script.py.mako
+frontend/public/

@@ -68,3 +68,88 @@ def _ignores_the_configured_path(path, env=None):
 
 main_module.load_tier_config = _ignores_the_configured_path
 """
+
+[Q-19]
+runtime     = "python"
+property    = "backend/tests/property/test_q19_route_coverage.py"
+target      = "src.main.create_app route dependencies"
+mutation    = "Drop the `require_principal` dependency from `GET /api/v1/projects` without adding that path to `PUBLIC_ROUTES`"
+description = """
+Removes the per-route auth dependency from one protected route while leaving the public
+allowlist alone, which is exactly the drift deny-by-default exists to prevent: the route
+still looks protected in the router listing and answers whatever its handler returns.
+Q-19 must then fail twice over — structurally, because the route is classified protected
+and carries no auth dependency; and behaviourally, because an unauthenticated request no
+longer gets 401 and the handler body executes.
+
+Appendix B names `GET /api/v1/projects`, which task 11.3 adds. Until it exists the patch
+targets the first `app`-family protected route the real router serves, and asserts it
+stripped exactly one — so the control can never quietly become a no-op, and it starts
+hitting the path Appendix B names as soon as that path exists. Wording left as Appendix B
+words it so the two can be compared without reading code.
+"""
+patch = """
+import src.main as main_module
+
+_real_create_app = main_module.create_app
+
+#: Appendix B's route first; otherwise whichever protected route the router does serve.
+_PREFERRED = "/api/v1/projects"
+
+
+def _strip_one_auth_dependency():
+    from src.auth.dependencies import AUTH_DEPENDENCY_QUALNAMES, route_requires_principal
+
+    app = _real_create_app()
+
+    def _names(dependant):
+        call = getattr(dependant, "call", None)
+        return {
+            getattr(call, "__qualname__", "") or getattr(call, "__name__", ""),
+            f"{getattr(call, '__module__', '')}.{getattr(call, '__qualname__', '')}",
+        }
+
+    def _guards(dependant):
+        for name in _names(dependant):
+            for accepted in AUTH_DEPENDENCY_QUALNAMES:
+                if name == accepted or name.endswith("." + accepted):
+                    return True
+        return False
+
+    def _flatten(routes, prefix=""):
+        for route in routes:
+            included = getattr(route, "original_router", None)
+            if included is not None:
+                context = getattr(route, "include_context", None)
+                yield from _flatten(getattr(included, "routes", []), prefix + (getattr(context, "prefix", "") or ""))
+                continue
+            yield prefix, route
+
+    candidates = []
+    for prefix, route in _flatten(app.routes):
+        raw_path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        dependant = getattr(route, "dependant", None)
+        if raw_path is None or methods is None or dependant is None:
+            continue
+        path = prefix + raw_path
+        if not route_requires_principal(path, set(methods)):
+            continue
+        # `app` family only: the MCP surface keeps Phase 0's contract (design 4.4), and
+        # stripping its dependency would exercise a different clause.
+        if any("require_mcp_principal" in name for child in dependant.dependencies for name in _names(child)):
+            continue
+        if any(_guards(child) for child in dependant.dependencies):
+            candidates.append((path, dependant))
+
+    assert candidates, "the mutation found no protected route to strip; the control would be a no-op"
+    chosen = next((entry for entry in candidates if entry[0] == _PREFERRED), candidates[0])
+    path, dependant = chosen
+    before = len(dependant.dependencies)
+    dependant.dependencies = [child for child in dependant.dependencies if not _guards(child)]
+    assert len(dependant.dependencies) < before, f"nothing was stripped from {path}"
+    return app
+
+
+main_module.create_app = _strip_one_auth_dependency
+"""

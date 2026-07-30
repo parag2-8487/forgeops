@@ -105,3 +105,10 @@ scripts/_*.txt
 # coverage numbers). Evidence belongs in PROGRESS.md, not in loose files, so this
 # directory is deliberately never committed.
 /.evidence/
+# The comprehension artifact's own scratch. `docs/understand-anything/build-graph.mjs`
+# and `.ua/.understandignore` are source and ARE committed; `.ua/intermediate/` holds a
+# raw scan of the tree that the generator rebuilds on every run. Committing it would put
+# a second, staler copy of the repository's shape under version control, and it would
+# make `git status --porcelain` dirty after every regeneration — which the mutation
+# harness (§0.4.5) treats as a failure.
+docs/understand-anything/.ua/intermediate/
