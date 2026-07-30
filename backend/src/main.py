@@ -29,6 +29,7 @@ from .ai.routing.endpoints import EndpointRegistry
 from .ai.routing.keys import EnvKeyResolver
 from .ai.routing.router import ModelRouter
 from .ai.routing.tiers import load_tier_config
+from .auth.verifier import AppTokenVerifier
 from .core.config import get_settings
 from .core.db import create_db_engine, create_sessionmaker
 from .core.errors import PROBLEM_CONTENT_TYPE, install_problem_handlers
@@ -153,6 +154,20 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.shared_http = shared_http
     app.state.mcp_registry = mcp_registry
     app.state.mcp_verifier = mcp_verifier
+    # §4.4 keeps the MCP surface's token contract unchanged while giving it a principal,
+    # so `require_mcp_principal` verifies with the GATEWAY audience. Exposed under a
+    # second name because that dependency must not have to know it is the MCP verifier —
+    # if the surfaces ever diverge, only this line changes.
+    app.state.token_verifier = mcp_verifier
+    # The product API's verifier. Its audience is DISTINCT from the gateway's, so a
+    # token minted for one cannot be replayed against the other (§11.2). Two instances
+    # of one class rather than one shared instance, for exactly that reason.
+    app.state.app_token_verifier = AppTokenVerifier(
+        issuer=settings.oidc_issuer,
+        audience=settings.oidc_app_audience,
+        jwks_ttl_seconds=settings.mcp_oidc_jwks_ttl_seconds,
+        http=shared_http,
+    )
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()
     app.state.mcp_gateway = McpGateway(

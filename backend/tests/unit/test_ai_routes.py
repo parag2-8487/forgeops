@@ -255,12 +255,42 @@ def app(ai_deps: AIDeps) -> FastAPI:
     app = FastAPI()
     install_problem_handlers(app)
     app.state.ai_deps = ai_deps
+    # The router now carries `require_mcp_principal` (design §4.4), which resolves the
+    # caller from `app.state.token_verifier`. It is pointed at the SAME verifier the
+    # handler uses, not a second one: a token the handler accepts must be a token the
+    # dependency accepts, and two verifiers in one app is how those diverge.
+    app.state.token_verifier = ai_deps.verifier
     app.include_router(router)
     return app
 
 
 @pytest.fixture()
 def client(app: FastAPI) -> TestClient:
+    return TestClient(app)
+
+
+@pytest.fixture()
+def authed_client(app: FastAPI) -> TestClient:
+    """A client whose requests already carry a resolved principal.
+
+    Used by tests about the RESPONSE SHAPE of an authenticated route. Overriding the
+    dependency rather than minting a token per test keeps those tests about the thing
+    they assert; the authentication requirement itself is asserted separately, against
+    a client with no override, and by Q-19 over the whole router.
+    """
+    import uuid as _uuid
+
+    from src.auth.dependencies import require_mcp_principal
+    from src.auth.models import UserRole
+    from src.auth.principal import Principal
+
+    principal = Principal.for_user(
+        user_id=_uuid.uuid4(),
+        subject="test-only-not-a-real-subject",
+        email="tiers@example.invalid",
+        role=UserRole.DEVELOPER,
+    )
+    app.dependency_overrides[require_mcp_principal] = lambda: principal
     return TestClient(app)
 
 
@@ -289,17 +319,27 @@ def valid_token(rsa_keypair) -> str:
 
 
 class TestTiersEndpoint:
-    """GET /api/v1/ai/tiers returns 6 tiers with endpoint info."""
+    """GET /api/v1/ai/tiers returns 6 tiers with endpoint info.
 
-    def test_returns_six_tiers(self, client: TestClient):
-        resp = client.get("/api/v1/ai/tiers")
+    Phase 1 makes this route AUTHENTICATED, reversing Phase 0's "tiers listing is
+    public". §4.4's public set is exhaustive and does not name it, and the reason is
+    substantive rather than procedural: the response names every configured endpoint,
+    its protocol and its breaker state, which is a map of the deployment's model
+    supply chain. An unauthenticated caller has no use for it.
+
+    The shape assertions therefore go through `authed_client`, and the reversal itself
+    is asserted below against a client with no principal.
+    """
+
+    def test_returns_six_tiers(self, authed_client: TestClient):
+        resp = authed_client.get("/api/v1/ai/tiers")
         assert resp.status_code == 200
         data = resp.json()
         assert "tiers" in data
         assert len(data["tiers"]) == 6
 
-    def test_tier_info_structure(self, client: TestClient):
-        resp = client.get("/api/v1/ai/tiers")
+    def test_tier_info_structure(self, authed_client: TestClient):
+        resp = authed_client.get("/api/v1/ai/tiers")
         data = resp.json()
         tier = data["tiers"][0]
         assert "name" in tier
@@ -308,8 +348,8 @@ class TestTiersEndpoint:
         assert "available" in tier
         assert "breaker_state" in tier
 
-    def test_tier_names_are_correct(self, client: TestClient):
-        resp = client.get("/api/v1/ai/tiers")
+    def test_tier_names_are_correct(self, authed_client: TestClient):
+        resp = authed_client.get("/api/v1/ai/tiers")
         data = resp.json()
         tier_names = {t["name"] for t in data["tiers"]}
         expected = {
@@ -322,8 +362,8 @@ class TestTiersEndpoint:
         }
         assert tier_names == expected
 
-    def test_openai_compatible_endpoints_are_available(self, client: TestClient):
-        resp = client.get("/api/v1/ai/tiers")
+    def test_openai_compatible_endpoints_are_available(self, authed_client: TestClient):
+        resp = authed_client.get("/api/v1/ai/tiers")
         data = resp.json()
         # high_coding primary is gpt-5.6-sol (openai_compatible → available)
         high_coding = next(t for t in data["tiers"] if t["name"] == "high_coding")
@@ -332,8 +372,8 @@ class TestTiersEndpoint:
         assert high_coding["available"] is True
         assert high_coding["breaker_state"] == "closed"
 
-    def test_native_protocol_endpoints_not_available(self, client: TestClient):
-        resp = client.get("/api/v1/ai/tiers")
+    def test_native_protocol_endpoints_not_available(self, authed_client: TestClient):
+        resp = authed_client.get("/api/v1/ai/tiers")
         data = resp.json()
         # high_analysis primary is claude-fable-5 (anthropic_native → not available)
         high_analysis = next(t for t in data["tiers"] if t["name"] == "high_analysis")
@@ -341,10 +381,15 @@ class TestTiersEndpoint:
         assert high_analysis["primary_protocol"] == "anthropic_native"
         assert high_analysis["available"] is False
 
-    def test_tiers_does_not_require_auth(self, client: TestClient):
-        """Tiers listing is public — no auth required."""
+    def test_tiers_requires_auth(self, client: TestClient):
+        """The Phase 0 assertion, deliberately reversed (§4.4).
+
+        `client` carries no principal override, so this exercises the router-level
+        `require_mcp_principal` dependency on the real router — the same object
+        `scripts/check-route-auth.py` inspects statically.
+        """
         resp = client.get("/api/v1/ai/tiers")
-        assert resp.status_code == 200
+        assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------

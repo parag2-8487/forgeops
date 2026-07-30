@@ -130,7 +130,22 @@ ignore = [
 "src.analysis".msg = "Cross-domain import: use src.core only"
 "src.ai".msg = "Cross-domain import: use src.core only"
 "src.mcp".msg = "Cross-domain import: use src.core only"
-"src.auth".msg = "Cross-domain import: use src.core only"
+# `src.auth` is banned MODULE BY MODULE rather than wholesale, and the split is the
+# point: the identity *contract* is cross-cutting, the identity *implementation* is not.
+#
+# Deny-by-default routing (§4.4) is a property of every domain's router, so every router
+# must be able to name `require_principal` — §4.3 puts it at middleware row 7 precisely
+# because it is cross-cutting. `src.auth.dependencies`, `src.auth.principal`,
+# `src.auth.public_routes` and `src.auth.models` are therefore importable anywhere,
+# exactly as `core.security.TokenVerifier` already is. Everything that *implements*
+# authentication stays banned, so no domain can drive the login flow, construct a
+# verifier, or reach a device's envelope key. Exempting `src.auth` wholesale would have
+# granted all of that in order to reach one dependency.
+"src.auth.routes".msg = "Cross-domain import: the OIDC flow is auth's alone"
+"src.auth.oidc".msg = "Cross-domain import: the OIDC flow is auth's alone"
+"src.auth.sessions".msg = "Cross-domain import: session lifecycle is auth's alone"
+"src.auth.verifier".msg = "Cross-domain import: only the app factory constructs a verifier"
+"src.auth.devices".msg = "Cross-domain import: only governance may reach the device service (§2.2.1)"
 "src.generation".msg = "Cross-domain import: use src.core only"
 "src.deployment".msg = "Cross-domain import: use src.core only"
 "src.monitoring".msg = "Cross-domain import: use src.core only"

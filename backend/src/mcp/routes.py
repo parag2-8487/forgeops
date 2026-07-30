@@ -22,15 +22,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, ORJSONResponse
 
+from ..auth.dependencies import require_mcp_principal
 from ..core.errors import ProblemException
 from .apps import CSP_POLICY, SANDBOX_ATTRS, McpAppRegistry
 from .routing import MCP_METHOD_HEADER, MCP_NAME_HEADER
 from .tasks import TaskConflictError
 
-router = APIRouter(prefix="/mcp", tags=["mcp"])
+router = APIRouter(
+    prefix="/mcp",
+    tags=["mcp"],
+    # §4.4: the MCP surface gains RBAC "without changing its token contract", so the
+    # dependency here is the GATEWAY-audience one. Attaching the product-API verifier
+    # would reject every existing gateway token — RBAC bought by breaking the surface it
+    # was meant to protect. The gateway's own per-request verification inside the
+    # handler is unchanged; this resolves the caller so authorisation has a subject.
+    dependencies=[Depends(require_mcp_principal)],
+)
 
 
 def _require(request: Request, attr: str) -> Any:

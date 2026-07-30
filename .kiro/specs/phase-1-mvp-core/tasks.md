@@ -245,7 +245,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - _Design: §6.4, §6.5; Deliverable: 1.11; Criterion: 12_
 
 - [ ] 6. Implement authentication, authorization and the identity provider service
-  - [ ] 6.1 Implement token verification, principals and deny-by-default routing
+  - [x] 6.1 Implement token verification, principals and deny-by-default routing
     - Implement `AppTokenVerifier` extending Phase 0's JWKS verifier with a **distinct** app audience, and the frozen `Principal` carrying role, tenant, kind and identity-derived `blast_radius`.
     - Implement `require_principal`, `require_role` and the committed `PUBLIC_ROUTES` set containing exactly the seven §4.4 entries; attach the dependency **per route**, never globally.
     - Implement `scripts/check-route-auth.py`, which enumerates `create_app().routes` and fails when a route lacks the dependency and is not public, plus a negative fixture proving detection.

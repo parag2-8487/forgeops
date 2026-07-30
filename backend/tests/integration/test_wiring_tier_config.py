@@ -137,11 +137,35 @@ class TestTheTiersRouteServesTheLoadedConfig:
     This route was registered by Phase 0 and `app.state.ai_deps` was never set, so
     every request raised AttributeError while `PROGRESS.md` recorded the endpoint as
     live. Driving it here is what makes "live" mean something.
+
+    Phase 1 made the route authenticated (§4.4 does not list it as public — the response
+    names every configured endpoint, its protocol and its breaker state, which is a map
+    of the deployment's model supply chain). The auth dependency is therefore overridden
+    here rather than a token minted: the subject of these assertions is tier
+    PROVENANCE, and the authentication requirement itself is asserted by
+    `test_wiring_auth.py` over the same composed app and by Q-19 over the whole router.
     """
+
+    @staticmethod
+    def _authorise(app: FastAPI) -> None:
+        import uuid as _uuid
+
+        from src.auth.dependencies import require_mcp_principal
+        from src.auth.models import UserRole
+        from src.auth.principal import Principal
+
+        principal = Principal.for_user(
+            user_id=_uuid.uuid4(),
+            subject="test-only-not-a-real-subject",
+            email="tiers@example.invalid",
+            role=UserRole.DEVELOPER,
+        )
+        app.dependency_overrides[require_mcp_principal] = lambda: principal
 
     async def test_the_route_answers_from_the_loaded_tier_set(self, production_app: FastAPI) -> None:
         import httpx
 
+        self._authorise(production_app)
         transport = httpx.ASGITransport(app=production_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             response = await client.get("/api/v1/ai/tiers")
@@ -153,6 +177,7 @@ class TestTheTiersRouteServesTheLoadedConfig:
     async def test_the_route_reports_every_tiers_primary_endpoint(self, production_app: FastAPI) -> None:
         import httpx
 
+        self._authorise(production_app)
         transport = httpx.ASGITransport(app=production_app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             response = await client.get("/api/v1/ai/tiers")

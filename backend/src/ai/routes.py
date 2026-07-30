@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
+from ..auth.dependencies import require_mcp_principal
 from ..core.errors import ProblemException
 from ..core.security import TokenVerifier, VerifiedClaims
 from .rate_limit.redis_bucket import RateLimitServiceError, RedisTokenBucketLimiter
@@ -28,7 +29,15 @@ from .routing.endpoints import CompletionRequest, EndpointRegistry
 from .routing.router import ModelRouter, RoutingResult
 from .routing.tiers import ModelTier, TierConfig
 
-router = APIRouter(prefix="/api/v1/ai", tags=["ai"])
+router = APIRouter(
+    prefix="/api/v1/ai",
+    tags=["ai"],
+    # §4.4 names `/api/v1/ai/complete` alongside the MCP surface: same token contract,
+    # so the same gateway-audience dependency. `/tiers` is under the same router and
+    # therefore protected too, which is correct — the tier map names every configured
+    # endpoint and is not information an unauthenticated caller needs.
+    dependencies=[Depends(require_mcp_principal)],
+)
 
 
 # ---------------------------------------------------------------------------

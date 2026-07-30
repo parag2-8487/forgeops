@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from ..auth.dependencies import require_principal
 from .plan_analyzer import (
     PlanDocument,
     SemanticPlanAnalyzer,
@@ -22,7 +23,17 @@ from .plan_analyzer import (
 from .plan_analyzer.semantic import SemanticStage
 from .plan_analyzer.stages import SchemaStage, SyntaxStage
 
-router = APIRouter(prefix="/api/v1/analysis", tags=["analysis"])
+router = APIRouter(
+    prefix="/api/v1/analysis",
+    tags=["analysis"],
+    # Deny by default (§4.4). Attached at the ROUTER, which FastAPI applies to every
+    # route it carries, so a new endpoint added here is protected the moment it is
+    # declared rather than when someone remembers. Still per-route in effect — not a
+    # global dependency or a middleware, either of which would have to carve out the
+    # public set by path matching, and a path matcher is where an unauthenticated route
+    # hides. `scripts/check-route-auth.py` asserts the result over the real router.
+    dependencies=[Depends(require_principal)],
+)
 
 
 class PlanAnalysisRequest(BaseModel):

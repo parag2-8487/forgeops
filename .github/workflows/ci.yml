@@ -256,6 +256,13 @@ jobs:
       # the table, and that all three immutability triggers are installed. It connects
       # with the real DATABASE_URL, so it reports the privileges of whatever role that
       # URL authenticates as rather than the role the configuration claims.
+      - name: Every route requires a principal or is an explicit public exemption
+        working-directory: .
+        # Deny-by-default is attached per route (§4.4), which a global dependency would
+        # have made invisible at the route definition. The cost of per-route attachment
+        # is that a new router can forget it; this is the check that pays that cost, and
+        # it enumerates create_app().routes rather than a document about them.
+        run: python scripts/check-route-auth.py
       - name: The application role must not be able to rewrite the audit log
         working-directory: .
         run: |

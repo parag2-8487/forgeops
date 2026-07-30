@@ -661,6 +661,26 @@ class TestPlanAnalysisEndpoint:
         app = FastAPI()
         app.include_router(router)
 
+        # The analysis router now carries `require_principal` (design §4.4). These
+        # tests exercise plan analysis, not authentication, so the dependency is
+        # OVERRIDDEN with a fixed principal. An override is used rather than a stub
+        # verifier because it is honest about what is being skipped: a stub verifier
+        # would make these look like they exercise auth when they do not. Deny-by-
+        # default itself is asserted by Q-19 and scripts/check-route-auth.py.
+        import uuid as _uuid
+
+        from src.auth.dependencies import require_principal
+        from src.auth.models import UserRole
+        from src.auth.principal import Principal
+
+        _principal = Principal.for_user(
+            user_id=_uuid.uuid4(),
+            subject="test-only-not-a-real-subject",
+            email="analysis@example.invalid",
+            role=UserRole.DEVELOPER,
+        )
+        app.dependency_overrides[require_principal] = lambda: _principal
+
         # Install problem handlers for proper error rendering
         from src.core.errors import install_problem_handlers
 
