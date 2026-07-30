@@ -57,6 +57,13 @@ PUBLIC_BUILD_ARGS = {"NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_APP_NAME"}
 
 INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}")
 
+#: An unresolved digest placeholder. Design §13.3 writes image references with
+#: `<committed-digest>` where the real digest belongs, and a copy of that text
+#: reaching docker-compose.yml would be an image reference that cannot be pulled —
+#: failing at `docker compose up` rather than at review, and looking like a pinned
+#: reference in a diff.
+PLACEHOLDER_DIGEST = re.compile(r"<[^>]*digest[^>]*>|@sha256:<|@sha256:\s*$|@sha256:(?:x|X|0){6,}")
+
 
 def check(compose_path: str) -> list[str]:
     with open(compose_path, encoding="utf-8") as fh:
@@ -121,9 +128,22 @@ def check(compose_path: str) -> list[str]:
             )
 
         # --- image / build pinning -------------------------------------------
-        if name in IMAGE_SERVICES:
-            image = svc.get("image", "")
-            if "@sha256:" not in image:
+        # Debt D5 (design §0.5). This rule used to apply only to IMAGE_SERVICES
+        # (postgres, redis, opa), which is exactly how `infisical/infisical:v0.91.1`
+        # sat unpinned while every other image carried a digest: the optional
+        # profile was outside the set the check looked at. The rule is now universal
+        # — ANY service that names an image must pin it — so a new service cannot
+        # arrive unpinned by virtue of not being on a list.
+        image = svc.get("image", "")
+        if image:
+            if PLACEHOLDER_DIGEST.search(image):
+                errors.append(
+                    f"service {name!r}: image carries an unresolved digest "
+                    f"placeholder, got {image!r}. Resolve it with "
+                    f"`docker buildx imagetools inspect <ref> --format "
+                    f"'{{{{.Manifest.Digest}}}}'` and commit the real digest."
+                )
+            elif "@sha256:" not in image:
                 errors.append(
                     f"service {name!r}: image must be digest-pinned, got {image!r}"
                 )
@@ -132,6 +152,8 @@ def check(compose_path: str) -> list[str]:
                     f"service {name!r}: image must carry an explicit tag as well as "
                     f"a digest, got {image!r}"
                 )
+        if name in IMAGE_SERVICES and not image:
+            errors.append(f"service {name!r}: expected an image reference, found none")
         if name in BUILD_SERVICES:
             build = svc.get("build")
             if not isinstance(build, dict):

@@ -48,6 +48,17 @@ services:
       retries: 20
 
   opa:
+    # Debt D5's second clause asked for `1.4.2-rootless`. That tag DOES NOT EXIST:
+    # OPA 1.x publishes `1.4.2`, `-static`, `-debug`, `-envoy*` and `-istio*` and no
+    # `-rootless` variant at all (the suffix was retired after the 0.x line). The
+    # premise behind the request is also no longer true — this image already runs
+    # unprivileged. Its config declares user `1000:1000`, and the build history shows
+    # `ARG USER=1000:1000` followed by `USER 1000:1000`, because OPA 1.x is built on
+    # a Chainguard apko base that is non-root by default.
+    #
+    # So the security intent of D5's OPA clause is already satisfied by the pinned
+    # reference below, and no check requires a `-rootless` suffix: a gate that can
+    # never pass is worse than no gate. Recorded rather than silently dropped.
     image: openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5
     env_file: *service-env
     command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "/policies"]
@@ -111,7 +122,19 @@ services:
   # Only starts with `docker compose --profile vault up -d --wait`.
   infisical:
     profiles: ["vault"]
-    image: infisical/infisical:v0.91.1
+    # Debt D5 (design §0.5): this was the one image reference in the file without a
+    # digest, so the `vault` profile was the only service whose bytes were not
+    # reproducible.
+    #
+    # Deviation recorded, and it is a version bump rather than a pure pin. The design
+    # names v0.91.1, but that tag is NO LONGER PUBLISHED — `docker buildx imagetools
+    # inspect infisical/infisical:v0.91.1` answers `not found`, and the repository's
+    # tag list now starts at v0.162.x. A digest cannot be resolved for a pruned tag,
+    # so pinning the named version is impossible; leaving it unpinned would keep an
+    # unpullable reference in the file and defer the failure to task 10.4, which is
+    # the leaf that first starts this container for real. Pinning the newest published
+    # release by tag AND digest is the only option that leaves the profile working.
+    image: infisical/infisical:v0.162.15@sha256:bcb31ccb2a3784315ad9d9e180a9c53c6423f0daf3087c3bb158093de99617f2
     env_file: *service-env
     depends_on:
       postgres: { condition: service_started }

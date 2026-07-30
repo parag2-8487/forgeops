@@ -33,6 +33,7 @@ pytestmark = pytest.mark.mandatory
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMMITTED_TIER_YAML = REPO_ROOT / "backend" / "config" / "model-tiers.yaml"
 
+
 def _tier_names() -> tuple[str, ...]:
     """The tier names, read from the enum rather than restated here.
 
@@ -100,7 +101,6 @@ def _app_tier_map(tier_yaml: Path) -> dict[str, str]:
     `asyncio.run` keeps the strategy plumbing out of the property's statement.
     """
     from asgi_lifespan import LifespanManager
-
     from src.main import create_app
 
     async def _build() -> dict[str, str]:

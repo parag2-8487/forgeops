@@ -1,0 +1,21 @@
+# NEGATIVE fixture for scripts/check-compose-validate.py: a digest with NO tag.
+#
+# A bare `repo@sha256:...` is reproducible but unreadable: a reviewer cannot tell
+# which version is being deployed, and a bump becomes a diff of two hex strings. The
+# rule requires both, so the tag documents intent and the digest enforces it.
+name: forgeops-fixture-tagless
+
+x-service-env: &service-env
+  - ./.env.example
+  - path: ./.env
+    required: false
+
+services:
+  postgres:
+    image: pgvector/pgvector@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+    env_file: *service-env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

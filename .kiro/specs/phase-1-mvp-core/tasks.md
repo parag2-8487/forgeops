@@ -104,12 +104,12 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add fixture compose files proving each of the three failure modes is detected.
     - _Design: §0.5 debt D5, §8.4, §13.3, §16.4; Deliverable: 1.8; Criterion: 8_
 
-  - [ ] 2.6 Restore lockfile diff visibility
+  - [x] 2.6 Restore lockfile diff visibility
     - Drop `-diff` from all four lockfile entries in `.gitattributes` while keeping `linguist-generated`, so a dependency bump is reviewable.
     - Add a check asserting no lockfile carries `-diff` and that `grammars.lock.json` is treated the same way when it arrives.
     - _Design: §0.5, §8.5, §16.5; Deliverable: 1.11_
 
-  - [ ] 2.7 Tighten P-07's shutdown-timeout assertion with a slow closer
+  - [x] 2.7 Tighten P-07's shutdown-timeout assertion with a slow closer
     - Replace the instantaneous closers in `agent/internal/app/app_test.go`'s timeout clause with a deliberately slow closer so the configured `ShutdownTimeout` bound is actually exercised.
     - Keep P-07's other clauses (reverse order, exactly-once, continue-past-error, idempotence) unchanged and still passing.
     - _Design: §0.5, §10.4; Deliverable: 1.1_

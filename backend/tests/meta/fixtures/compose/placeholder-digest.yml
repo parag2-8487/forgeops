@@ -1,0 +1,21 @@
+# NEGATIVE fixture for scripts/check-compose-validate.py: a surviving placeholder.
+#
+# Design §13.3 writes image references with `<committed-digest>` where the real digest
+# belongs. A copy-paste of that text looks pinned in a diff and fails only at
+# `docker compose up`, so the check has to reject it at review time.
+name: forgeops-fixture-placeholder
+
+x-service-env: &service-env
+  - ./.env.example
+  - path: ./.env
+    required: false
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17@sha256:<committed-digest>
+    env_file: *service-env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

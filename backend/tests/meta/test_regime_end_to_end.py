@@ -241,10 +241,7 @@ def test_the_new_regime_hooks_are_read_only() -> None:
     config = _pre_commit_config()
     expected = {"check-test-doubles", "check-ci-jobs", "check-no-latest"}
     hooks = {
-        hook["id"]: hook
-        for repo in config["repos"]
-        for hook in repo.get("hooks", [])
-        if hook.get("id") in expected
+        hook["id"]: hook for repo in config["repos"] for hook in repo.get("hooks", []) if hook.get("id") in expected
     }
     assert set(hooks) == expected, sorted(hooks)
     for identifier, hook in hooks.items():

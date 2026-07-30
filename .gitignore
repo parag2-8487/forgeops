@@ -40,6 +40,12 @@ agent/dist/
 *.prof
 # `go.sum` is committed (design §16.1) — never ignored.
 !agent/go.sum
+# pgregory.net/rapid writes a reproduction failfile under testdata/rapid/ whenever a
+# property fails. It is a debugging artifact keyed to one seed and machine, not source,
+# and it appears every time a Go negative control is exercised — which would break the
+# mutation harness's "working tree is clean afterwards" guarantee (design §0.4.5) for a
+# reason that has nothing to do with the mutation.
+**/testdata/rapid/
 
 # ─── Node / frontend build output and caches ─────────────────────────────────
 node_modules/

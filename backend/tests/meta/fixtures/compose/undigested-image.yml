@@ -1,0 +1,29 @@
+# NEGATIVE fixture for scripts/check-compose-validate.py: an image with NO digest.
+#
+# The service is behind an optional profile on purpose. That is exactly how
+# `infisical/infisical:v0.91.1` stayed unpinned in the real file while every other
+# image carried a digest (debt D5): the old rule only looked at a fixed list of
+# default services, so an optional profile was outside its view. This fixture fails
+# only if the rule is universal.
+name: forgeops-fixture-undigested
+
+x-service-env: &service-env
+  - ./.env.example
+  - path: ./.env
+    required: false
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+    env_file: *service-env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forgeops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # The offender: a tag, no digest.
+  vaultish:
+    profiles: ["vault"]
+    image: infisical/infisical:v0.162.15
+    env_file: *service-env

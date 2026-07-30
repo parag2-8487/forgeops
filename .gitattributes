@@ -37,8 +37,31 @@ Dockerfile      text eol=lf
 *.gz            binary
 *.exe           binary
 
-# --- Generated locks: keep diffs quiet in review ---------------------------
-pnpm-lock.yaml       -diff linguist-generated
-requirements.lock    -diff linguist-generated
-requirements-dev.lock -diff linguist-generated
-go.sum               -diff linguist-generated
+# --- Generated locks: reviewable, but marked generated ---------------------
+#
+# `linguist-generated` collapses these by default in GitHub's diff view and keeps
+# them out of language statistics, which is what it is for. `-diff` was also set,
+# and that is different in kind: it tells git to treat the file as BINARY, so
+# `git diff` prints "Binary files differ" and the change cannot be reviewed at all —
+# not in the terminal, not by expanding the diff, not by a reviewer who asks for it.
+#
+# A lockfile diff is the highest-signal artifact in a dependency bump: it is where a
+# transitive package appearing, a version moving, or a hash changing becomes visible.
+# Hiding it is a review-integrity problem, not cosmetics (design.md §0.5, §8.5).
+#
+# Observed directly while doing this: adding one dev dependency reported
+# `backend/requirements-dev.lock | Bin 124995 -> 121317 bytes`, which says nothing
+# about what changed. Reviewing it needed `git diff --text`. Without that flag the
+# same diff showed `+asgi-lifespan==2.1.0` and nothing else — and that a Windows
+# regeneration had silently DROPPED the Linux-only `uvloop`, which would have broken
+# CI. That is precisely the class of change `-diff` was concealing.
+#
+# scripts/check-lockfile-attrs.sh asserts no lockfile carries `-diff`.
+pnpm-lock.yaml       linguist-generated
+requirements.lock    linguist-generated
+requirements-dev.lock linguist-generated
+requirements-tools.lock linguist-generated
+go.sum               linguist-generated
+# Arrives with task 11.1; listed now so the rule is stated once and the check has a
+# single place to look.
+grammars.lock.json   linguist-generated

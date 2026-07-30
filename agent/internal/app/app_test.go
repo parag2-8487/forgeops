@@ -60,14 +60,16 @@ func TestProperty_P07_ShutdownOrdering(t *testing.T) {
 			return closeErr
 		}
 
-		// First close — bounded time check
-		start := time.Now()
+		// First close — ordering and exactly-once clauses below.
+		//
+		// The bounded-time clause used to live here as `elapsed > 5*time.Second`
+		// over these instantaneous closers, which is unfalsifiable: n closers that
+		// return immediately finish in microseconds whatever ShutdownTimeout says,
+		// and this loop is a COPY of App.Close that has no timeout at all. Design
+		// §0.5 records it, and task 2.7 moves the clause to
+		// property_shutdown_deadline_test.go, where it drives the real App.Close
+		// against a deliberately slow closer.
 		firstErr := executeClose()
-		elapsed := time.Since(start)
-
-		if elapsed > 5*time.Second {
-			rt.Fatalf("Close took too long: %v", elapsed)
-		}
 
 		// Verify exact reverse order
 		if len(order) != n {

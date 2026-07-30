@@ -103,6 +103,11 @@ jobs:
       # Regenerate both locks and fail on ANY diff.
       - name: Backend lock freshness (no diff allowed)
         run: bash scripts/check-lock-freshness.sh
+      # Debt D5's sibling item (design §0.5, §8.5): `-diff` marks a file BINARY, so a
+      # lockfile change prints "Binary files differ" and cannot be reviewed at all.
+      # A lockfile diff is the highest-signal artifact in a dependency bump.
+      - name: Lockfiles must stay reviewable
+        run: bash scripts/check-lockfile-attrs.sh
       # tofu init -lockfile=readonly + six-platform freshness in an isolated copy.
       - name: OpenTofu six-platform lock integrity
         run: bash scripts/check-tofu-lock.sh

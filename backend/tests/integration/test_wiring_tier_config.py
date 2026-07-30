@@ -65,9 +65,7 @@ async def _app_from(tier_yaml: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
 class TestTheRunningAppLoadsTheConfiguredFile:
     """The six routing components the lifespan composes, driven through the app."""
 
-    async def test_the_committed_file_is_the_default_provenance(
-        self, production_app: FastAPI
-    ) -> None:
+    async def test_the_committed_file_is_the_default_provenance(self, production_app: FastAPI) -> None:
         """With no override, the app's tiers equal the committed document's tiers."""
         document = _committed_document()
         expected = set(document["tiers"])
@@ -106,9 +104,7 @@ class TestTheRunningAppLoadsTheConfiguredFile:
         document = _committed_document()
         tier_name = sorted(document["tiers"])[0]
         chain = document["tiers"][tier_name]
-        replacement = next(
-            eid for eid in document["endpoints"] if eid != chain["primary"]
-        )
+        replacement = next(eid for eid in document["endpoints"] if eid != chain["primary"])
         chain["primary"] = replacement
 
         copy = tmp_path / "model-tiers.yaml"
@@ -119,18 +115,14 @@ class TestTheRunningAppLoadsTheConfiguredFile:
 
             assert app.state.tier_config.tiers[ModelTier(tier_name)].primary == replacement
 
-    async def test_the_endpoint_registry_is_built_from_the_same_document(
-        self, production_app: FastAPI
-    ) -> None:
+    async def test_the_endpoint_registry_is_built_from_the_same_document(self, production_app: FastAPI) -> None:
         """One document, one registry: a second source would let them disagree."""
         tier_config = production_app.state.tier_config
         registry = production_app.state.endpoint_registry
         for endpoint_id in tier_config.endpoints:
             assert registry.get_availability(endpoint_id) is not None, endpoint_id
 
-    async def test_a_breaker_exists_for_every_configured_endpoint(
-        self, production_app: FastAPI
-    ) -> None:
+    async def test_a_breaker_exists_for_every_configured_endpoint(self, production_app: FastAPI) -> None:
         assert set(production_app.state.breakers) == set(production_app.state.tier_config.endpoints)
 
     async def test_the_router_routes_on_the_loaded_config(self, production_app: FastAPI) -> None:
@@ -173,17 +165,13 @@ class TestTheTiersRouteServesTheLoadedConfig:
 class TestALoadFailureIsNotMasked:
     """No default fallback may stand in for a file that failed to load."""
 
-    async def test_a_missing_file_fails_startup(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_a_missing_file_fails_startup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         missing = tmp_path / "absent.yaml"
         with pytest.raises((FileNotFoundError, OSError)):
             async for _ in _app_from(missing, monkeypatch):
                 pytest.fail("startup succeeded with no tier file")
 
-    async def test_a_malformed_file_fails_startup(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_a_malformed_file_fails_startup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         broken = tmp_path / "model-tiers.yaml"
         broken.write_text("tiers: {}\n", encoding="utf-8")  # no `endpoints` key
         with pytest.raises(ValueError):

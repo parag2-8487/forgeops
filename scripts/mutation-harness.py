@@ -290,6 +290,17 @@ def run_go_row(row: Row, tmp: Path) -> Result:
 
     # `go build -overlay` redirects the compiler at a replacement file, so the
     # mutation is never written into the tracked tree.
+    #
+    # The "from" path must be spelled exactly as the go command refers to the file, or
+    # the overlay is SILENTLY IGNORED and the mutated build is byte-identical to the
+    # real one. Observed directly while verifying P-07's deadline clause: an overlay
+    # written with MSYS-style `/c/...` paths produced a passing run and therefore a
+    # false VACUOUS report. `Path` here yields the native form, which is correct on
+    # both platforms.
+    #
+    # The failure direction is at least the safe one: a non-applying overlay makes the
+    # property pass and the row is reported VACUOUS, which is a false alarm demanding
+    # investigation rather than a false pass hiding a decorative property.
     staged = tmp / f"{row.ident}-{replacement.name}"
     staged.write_bytes(replacement.read_bytes())
     overlay_json = tmp / f"{row.ident}-overlay.json"
@@ -302,7 +313,11 @@ def run_go_row(row: Row, tmp: Path) -> Result:
         encoding="utf-8",
     )
 
-    argv = ["go", "test", f"-overlay={overlay_json}", "-count=1"]
+    # `-rapid.nofailfile` because a failing rapid property writes a reproduction
+    # file under `testdata/rapid/`, and every Go row here is EXPECTED to fail. Left
+    # on, the harness would dirty the tree it asserts is clean, for a reason
+    # unrelated to the mutation.
+    argv = ["go", "test", f"-overlay={overlay_json}", "-count=1", "-rapid.nofailfile"]
     if row.test_run:
         argv += ["-run", row.test_run]
     argv.append(row.package or "./...")
