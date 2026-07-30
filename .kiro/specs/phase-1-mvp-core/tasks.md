@@ -165,7 +165,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add an integration test that spawns a process which spawns a **detached grandchild** and asserts both are gone after termination — the case `taskkill /T` misses.
     - _Design: §8.2, §10.11, §17.1 D-37; Deliverable: 1.1_
 
-  - [ ] 4.4 Add the identity seam and the paired-device provider
+  - [x] 4.4 Add the identity seam and the paired-device provider
     - Create `agent/internal/identity` with the `Provider` interface (`ClientTLS`, `Identity`, `RenewBefore`) and the `PairedDevice` implementation: generate a P-256 key pair in memory, build a CSR, and never transmit the private key.
     - Add the compile-time assertions for both providers and reject any implementation path that would persist a non-expiring credential.
     - Add tests for CSR shape, TLS config assembly from an issued certificate, and `RenewBefore` behaviour near expiry.
