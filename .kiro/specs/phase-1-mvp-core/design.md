@@ -3727,7 +3727,7 @@ Existing Phase 0 variables are unchanged. Additions, grouped:
 
 ```dotenv
 # ─── Auth (§1.11) ────────────────────────────────────────────────────────────
-OIDC_ISSUER=http://authentik-server:9000/application/o/forgeops/
+OIDC_ISSUER="http://authentik-server:9000/application/o/forgeops/"   # quoted: `host:port/path` is not a credential
 OIDC_APP_AUDIENCE=forgeops-api            # DISTINCT from MCP_OIDC_AUDIENCE by design
 OIDC_CLIENT_ID=forgeops-frontend
 OIDC_CLIENT_SECRET=change-me-locally
@@ -3750,8 +3750,8 @@ DEVICE_CERT_RENEW_BEFORE_HOURS=6
 ENVELOPE_MAX_AGE_SECONDS=300
 ENVELOPE_CLOCK_SKEW_SECONDS=60
 ENVELOPE_PEPPER=change-me-locally         # HMAC pepper for code/token storage
-INTERNAL_CA_CERT_PEM=                     # populated by scripts/init-ca.sh; never committed
-INTERNAL_CA_KEY_PEM=
+INTERNAL_CA_CERT_PEM=""                   # populated by scripts/init-ca.sh; never committed
+INTERNAL_CA_KEY_PEM=""                    # explicit "" so a bare `KEY=` cannot match across the newline
 HEARTBEAT_INTERVAL_SECONDS=30
 HEARTBEAT_TIMEOUT_SECONDS=90
 
