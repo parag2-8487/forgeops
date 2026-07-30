@@ -85,3 +85,8 @@ Thumbs.db
 *.log
 tmp/
 .cache/
+# One-shot local scratch: `*.tmp` intermediates and `scripts/_*.py` helpers that
+# generate a committed artifact once and are not part of the build. A script that
+# CI or a Make target invokes never carries the `_` prefix.
+*.tmp
+scripts/_*.py
