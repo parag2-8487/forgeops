@@ -159,7 +159,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests injecting synthetic self-labelling credentials into validator output and asserting they never appear in captured logs.
     - _Design: §7.2, §10.7, §14.5; Deliverable: 1.8; Property: Q-24_
 
-  - [ ] 4.3 Replace `taskkill` with Windows Job Objects
+  - [x] 4.3 Replace `taskkill` with Windows Job Objects
     - Implement `setProcessGroup`/`terminateGroup` in `agent/internal/iac/procattr_windows.go` using `golang.org/x/sys/windows` `CreateJobObject`, `SetInformationJobObject` with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and `AssignProcessToJobObject`; terminate gracefully then close the job handle.
     - Keep the build cgo-free so §8.2's six-target matrix is unaffected.
     - Add an integration test that spawns a process which spawns a **detached grandchild** and asserts both are gone after termination — the case `taskkill /T` misses.

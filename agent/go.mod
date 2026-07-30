@@ -14,6 +14,7 @@ require (
 	github.com/spf13/cobra v1.8.1
 	go.uber.org/zap v1.27.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.47.0
 	k8s.io/client-go v0.31.4
 	pgregory.net/rapid v1.1.0
 )
@@ -85,7 +86,6 @@ require (
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.3.0 // indirect

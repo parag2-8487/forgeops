@@ -229,6 +229,13 @@ func (r *TofuRunner) run(ctx context.Context, binPath string, args []string, wor
 		return nil, nil, -1, fmt.Errorf("start command: %w", err)
 	}
 
+	// Immediately after Start, and nowhere later. On Windows this assigns the process
+	// to the Job Object created by setProcessGroup, and every descendant it creates
+	// from this point is contained automatically (D-37). A descendant created in the
+	// window between Start and here would escape, so the two calls stay adjacent. No-op
+	// on Unix, where Setpgid already took effect at exec.
+	attachProcessGroup(cmd)
+
 	// The child holds its own descriptors now. Dropping the parent's copies is
 	// what lets the read ends reach EOF when the child (and any descendant
 	// that inherited them) exits.
