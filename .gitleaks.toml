@@ -1,0 +1,89 @@
+# ForgeOps gitleaks configuration.
+#
+# This file exists for ONE reason: two placeholder shapes in commits already on the
+# `phase-1-implementation` branch make the `generic-api-key` heuristic fire. Neither is a
+# credential. The shapes themselves were fixed in the working tree first (see the commit
+# "shape .env.example so a credential heuristic cannot misread placeholders" and its
+# follow-up), so this allowlist covers HISTORY only — `gitleaks detect` scans commits, and
+# rewriting published history to silence a false positive is a worse trade than a narrow,
+# documented exception.
+#
+# Rules this file deliberately does NOT use, because each would widen the scan's blind spot
+# far beyond the two lines in question:
+#
+#   * `useDefault = false`  — would discard every built-in rule.
+#   * `stopwords`           — suppress a token everywhere it appears, in every file.
+#   * a global allowlist    — an allowlist with no `paths` and no `regexes` matches
+#                             everything.
+#   * disabling a rule      — removes the detection entirely rather than excepting a value.
+#
+# `scripts/check-gitleaks-config.sh` fails the build if any of those appear here, so the
+# narrowness is enforced rather than merely intended.
+#
+# Every entry below is scoped three ways at once: by rule (`targetRules`), by file
+# (`paths`), and by the exact value (`regexes`, anchored, matching the SECRET the rule
+# extracted). A finding has to satisfy all three to be excepted.
+
+[extend]
+# Every built-in rule stays on.
+useDefault = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+[[allowlists]]
+description = """
+OIDC_ISSUER's port and path, read as `key:secret` by a generic heuristic.
+
+WHAT THE VALUE IS
+  `9000/application/o/forgeops/` — the port and path of the Authentik OIDC discovery URL,
+  extracted from `authentik-server:9000/application/o/forgeops/` because the rule treats
+  the colon as an assignment.
+
+WHY IT IS NOT A CREDENTIAL
+  An OIDC issuer URL is public by specification: every client fetches
+  `<issuer>/.well-known/openid-configuration` before authenticating, and the value is
+  published in the frontend bundle. It grants nothing.
+
+WHY RECURRENCE IS PREVENTED
+  The shipped baseline now names `localhost` and records the Compose hostname in a trailing
+  comment, so no future commit reproduces this shape. Quoting was tried first and did not
+  stop the heuristic; the value change did. This entry therefore only covers the commits
+  that predate that fix.
+"""
+targetRules = ["generic-api-key"]
+paths = [
+  '''\.env\.example$''',
+  '''\.kiro/specs/phase-1-mvp-core/design\.md$''',
+]
+regexes = [
+  '''^9000/application/o/forgeops/$''',
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+[[allowlists]]
+description = """
+The line FOLLOWING an empty INTERNAL_CA_KEY_PEM, matched across the newline.
+
+WHAT THE VALUE IS
+  `HEARTBEAT_INTERVAL_SECONDS=30` — the next variable in the file. `INTERNAL_CA_KEY_PEM=`
+  had no value, so the rule's `key = value` pattern ran past the line break and reported
+  the following line as this key's secret.
+
+WHY IT IS NOT A CREDENTIAL
+  It is a heartbeat interval in seconds. INTERNAL_CA_KEY_PEM itself is empty in the
+  committed baseline by design: `scripts/init-ca.sh` writes the development CA into the
+  untracked `.env`, and key material is never committed (design 13.1, 14.2).
+
+WHY RECURRENCE IS PREVENTED
+  Both INTERNAL_CA_KEY_PEM and INTERNAL_CA_CERT_PEM now carry an explicit empty-string
+  literal, which terminates the match at the line. CERT_PEM had the identical shape and was
+  unflagged only by luck, so it was fixed in the same change. This entry covers only the
+  commits that predate it.
+"""
+targetRules = ["generic-api-key"]
+paths = [
+  '''\.env\.example$''',
+  '''\.kiro/specs/phase-1-mvp-core/design\.md$''',
+]
+regexes = [
+  '''^HEARTBEAT_INTERVAL_SECONDS=30$''',
+]

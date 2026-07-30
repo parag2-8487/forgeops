@@ -1,0 +1,23 @@
+# NEGATIVE fixture for scripts/check-gitleaks-config.sh.
+#
+# Every widening the check forbids, in one file, so a single run demonstrates all four
+# failure paths. Never used by gitleaks: it lives under backend/tests/meta/fixtures/ and is
+# passed to the check explicitly.
+
+[extend]
+# 1. Discards every built-in rule.
+useDefault = false
+
+# 2. Suppresses a token in every file, everywhere.
+[allowlist]
+stopwords = ["placeholder", "change-me"]
+
+# 3. No `paths`: applies to the whole repository.
+[[allowlists]]
+description = "unscoped by path"
+regexes = ['''^something$''']
+
+# 4. No `regexes`: applies to every value the rule finds.
+[[allowlists]]
+description = "unscoped by value"
+paths = ['''\.env\.example$''']

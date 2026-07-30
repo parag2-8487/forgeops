@@ -239,7 +239,7 @@ def test_the_new_regime_hooks_are_read_only() -> None:
     documented list, and this assertion is the evidence the exemption rests on.
     """
     config = _pre_commit_config()
-    expected = {"check-test-doubles", "check-ci-jobs", "check-no-latest"}
+    expected = {"check-test-doubles", "check-ci-jobs", "check-no-latest", "check-gitleaks-config"}
     hooks = {
         hook["id"]: hook for repo in config["repos"] for hook in repo.get("hooks", []) if hook.get("id") in expected
     }

@@ -344,6 +344,10 @@ jobs:
       # was the one dependency verified against nothing.
       - name: No floating tool versions anywhere
         run: bash scripts/check-no-latest.sh
+      # The secret scan's allowlist is the one control that can silently disable the
+      # scan itself, so it is checked in the same job that owns the other gates.
+      - name: The gitleaks allowlist must stay narrow
+        run: bash scripts/check-gitleaks-config.sh
       - name: go mod verify + govulncheck (pinned v1.1.4 via agent/tools)
         run: |
           cd agent && go mod verify && cd ..

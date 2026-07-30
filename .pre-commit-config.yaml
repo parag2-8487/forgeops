@@ -68,6 +68,16 @@ repos:
         language: system
         pass_filenames: false
         files: ^(\.github/.*|scripts/.*|.*Dockerfile|Makefile|docker-compose.*\.yml)$
+      # An allowlist is the cheapest way to make a secret scan green, and therefore
+      # the easiest thing to widen under pressure. This fails the build if an entry
+      # loses its `paths` or `regexes` scoping, if `stopwords` appear, or if the
+      # built-in rules are switched off.
+      - id: check-gitleaks-config
+        name: the gitleaks allowlist must stay narrow
+        entry: bash scripts/check-gitleaks-config.sh
+        language: system
+        pass_filenames: false
+        files: ^\.gitleaks\.toml$
 
   # ─── Agent: gofmt + go vet, scoped to agent/ (design §16.1) ────────────────
   - repo: local
