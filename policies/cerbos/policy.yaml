@@ -1,0 +1,26 @@
+# `policy` — §11.2's matrix row.
+#
+#   admin      create, read, update, delete
+#   developer  read
+#   viewer     read
+#
+# The narrowest row in the matrix, and deliberately so: a governance policy is the thing
+# that constrains every mutation, so a developer who could edit one could widen their own
+# authority without touching any code. §1.7's editor is an admin surface.
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: default
+  resource: policy
+  rules:
+    - actions: ["create", "read", "update", "delete"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      roles: ["developer", "viewer"]
+
+    - actions: ["create", "update", "delete"]
+      effect: EFFECT_DENY
+      roles: ["developer", "viewer"]

@@ -126,6 +126,8 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "SESSION_TTL_SECONDS",
         "REFRESH_TTL_SECONDS",
         "CERBOS_URL",
+        # Compose-only, like the other *_PORT keys: the sidecar's published port. Task 6.4.
+        "CERBOS_HTTP_PORT",
         "AUTHENTIK_SECRET_KEY",
         "AUTHENTIK_BOOTSTRAP_PASSWORD",
         "AUTHENTIK_BOOTSTRAP_TOKEN",

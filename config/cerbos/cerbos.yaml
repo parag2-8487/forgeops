@@ -1,0 +1,31 @@
+# Cerbos sidecar configuration (design.md §2.3, §11.2, §13.3; task 6.4).
+#
+# Disk storage, not the hosted Cerbos Hub: the policies are source, they are reviewed in
+# the same pull request as the code that depends on them, and a policy set that can change
+# without a commit is a policy set whose history cannot be reconstructed after an incident.
+#
+# `watchForChanges` is on so a developer editing a policy sees the effect without a
+# restart. In a container built from a read-only mount that costs nothing, and it is what
+# keeps the local edit loop short enough that people actually test policy changes.
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+  # No TLS here on purpose. Cerbos is a SIDECAR reached over the container network by one
+  # client, never published to a browser (§14.2), and terminating TLS between two
+  # processes in the same trust boundary would add a certificate to rotate for no
+  # attacker removed. §13.3 publishes the port on 127.0.0.1 only.
+  adminAPI:
+    enabled: false
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /policies
+    watchForChanges: true
+
+# Audit is deliberately OFF at the Cerbos layer. §1.9's audit log is the backend's
+# hash-chained, append-only table, and a second unchained log of authorisation decisions
+# would invite the question of which one is authoritative during an investigation. The
+# backend records the decision it acted on.
+audit:
+  enabled: false

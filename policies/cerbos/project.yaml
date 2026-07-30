@@ -1,0 +1,47 @@
+# `project` — §11.2's matrix row, verbatim.
+#
+#   admin      create, read, update, delete, pair
+#   developer  create, read, update (own/member)
+#   viewer     read
+#
+# The developer's `update` is the only row with a qualifier, and it is the reason the
+# derived roles exist: a developer may edit a project they own or belong to, and not one
+# they merely know the id of.
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: default
+  resource: project
+  importDerivedRoles:
+    - forgeops_common
+  rules:
+    - actions: ["create", "read", "update", "delete", "pair"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+
+    - actions: ["create", "read"]
+      effect: EFFECT_ALLOW
+      roles: ["developer"]
+
+    - actions: ["update"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["owner", "member"]
+
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      roles: ["viewer"]
+
+    # Explicit denies, and these are NOT decoration. The derived roles `owner` and
+    # `member` list all three coarse roles as parents, because §11.2 needs a *viewer* to
+    # be a member for "audit: read (own project)". That means the `update` rule above,
+    # keyed on derived roles alone, would hand a viewer who happens to own a project the
+    # update it must never have. Cerbos evaluates DENY ahead of ALLOW, so these two rules
+    # close that path at the only place it can be closed without splitting the derived
+    # roles in two.
+    - actions: ["update", "delete", "pair"]
+      effect: EFFECT_DENY
+      roles: ["viewer"]
+
+    - actions: ["delete", "pair"]
+      effect: EFFECT_DENY
+      roles: ["developer"]

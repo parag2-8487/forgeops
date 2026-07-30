@@ -1,0 +1,36 @@
+# `agent_device` — §11.2's matrix row.
+#
+#   admin      pair, revoke, read
+#   developer  pair, read
+#   viewer     read
+#
+# `revoke` is admin-only, and that asymmetry is the point: pairing adds a device that can
+# only act through the governance chokepoint, while revocation is the emergency brake
+# (§3.7, Q-16 — revocation is Redis-authoritative and checked per message so an open socket
+# dies too). An emergency brake that any developer can pull is also one any compromised
+# developer credential can pull.
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: default
+  resource: agent_device
+  rules:
+    - actions: ["pair", "revoke", "read"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+
+    - actions: ["pair", "read"]
+      effect: EFFECT_ALLOW
+      roles: ["developer"]
+
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      roles: ["viewer"]
+
+    - actions: ["revoke"]
+      effect: EFFECT_DENY
+      roles: ["developer", "viewer"]
+
+    - actions: ["pair"]
+      effect: EFFECT_DENY
+      roles: ["viewer"]

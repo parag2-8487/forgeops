@@ -1,0 +1,349 @@
+# The §11.2 matrix, asserted by Cerbos's own test runner (task 6.4).
+#
+# These run inside `cerbos compile`, which means the policy set is checked by the same
+# engine that will serve it, at the pinned version, with no Python in the loop. The backend
+# integration tests then prove that `require_permission` reaches this policy set and maps
+# its answer to the right HTTP status — a different question, and one that cannot
+# substitute for this.
+#
+# Every row of §11.2's table appears here, including the three rules that are easy to lose:
+# no role reads a secret VALUE, self-approval is barred for every role, and a viewer who
+# owns a project still cannot update it.
+---
+name: forgeops_rbac_matrix
+description: "The three roles against every resource kind Phase 1 defines (design.md 11.2)"
+
+principals:
+  admin:
+    id: "11111111-1111-1111-1111-111111111111"
+    roles: ["admin"]
+  developer:
+    id: "22222222-2222-2222-2222-222222222222"
+    roles: ["developer"]
+  viewer:
+    id: "33333333-3333-3333-3333-333333333333"
+    roles: ["viewer"]
+
+resources:
+  # Owned by the developer, with the viewer as a member. One resource covers both
+  # qualifiers in §11.2 and keeps the expectations below readable.
+  project_dev_owned:
+    kind: project
+    id: "project-1"
+    attr:
+      owner_id: "22222222-2222-2222-2222-222222222222"
+      member_ids:
+        - "22222222-2222-2222-2222-222222222222"
+        - "33333333-3333-3333-3333-333333333333"
+
+  project_foreign:
+    kind: project
+    id: "project-2"
+    attr:
+      owner_id: "99999999-9999-9999-9999-999999999999"
+      member_ids: ["99999999-9999-9999-9999-999999999999"]
+
+  change_set_by_developer:
+    kind: change_set
+    id: "cs-1"
+    attr:
+      created_by: "22222222-2222-2222-2222-222222222222"
+      self_approval_allowed: false
+
+  change_set_by_someone_else:
+    kind: change_set
+    id: "cs-2"
+    attr:
+      created_by: "99999999-9999-9999-9999-999999999999"
+      self_approval_allowed: false
+
+  change_set_self_approval_permitted:
+    kind: change_set
+    id: "cs-3"
+    attr:
+      created_by: "22222222-2222-2222-2222-222222222222"
+      self_approval_allowed: true
+
+  secret_row:
+    kind: secret
+    id: "secret-1"
+    attr:
+      project_id: "project-1"
+
+  policy_row:
+    kind: policy
+    id: "policy-1"
+    attr: {}
+
+  device_row:
+    kind: agent_device
+    id: "device-1"
+    attr:
+      project_id: "project-1"
+
+  audit_member_project:
+    kind: audit
+    id: "audit-1"
+    attr:
+      owner_id: "22222222-2222-2222-2222-222222222222"
+      member_ids:
+        - "22222222-2222-2222-2222-222222222222"
+        - "33333333-3333-3333-3333-333333333333"
+
+  audit_foreign_project:
+    kind: audit
+    id: "audit-2"
+    attr:
+      owner_id: "99999999-9999-9999-9999-999999999999"
+      member_ids: ["99999999-9999-9999-9999-999999999999"]
+
+tests:
+  - name: project — admin holds the whole row
+    input:
+      principals: ["admin"]
+      resources: ["project_foreign"]
+      actions: ["create", "read", "update", "delete", "pair"]
+    expected:
+      - principal: admin
+        resource: project_foreign
+        actions:
+          create: EFFECT_ALLOW
+          read: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+          pair: EFFECT_ALLOW
+
+  - name: project — a developer updates their own and not a foreign one
+    input:
+      principals: ["developer"]
+      resources: ["project_dev_owned", "project_foreign"]
+      actions: ["create", "read", "update", "delete", "pair"]
+    expected:
+      - principal: developer
+        resource: project_dev_owned
+        actions:
+          create: EFFECT_ALLOW
+          read: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+          delete: EFFECT_DENY
+          pair: EFFECT_DENY
+      - principal: developer
+        resource: project_foreign
+        actions:
+          create: EFFECT_ALLOW
+          read: EFFECT_ALLOW
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
+          pair: EFFECT_DENY
+
+  - name: project — a viewer who is a MEMBER still cannot update
+    input:
+      principals: ["viewer"]
+      resources: ["project_dev_owned"]
+      actions: ["read", "create", "update", "delete", "pair"]
+    expected:
+      - principal: viewer
+        resource: project_dev_owned
+        actions:
+          read: EFFECT_ALLOW
+          create: EFFECT_DENY
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
+          pair: EFFECT_DENY
+
+  - name: change_set — admin approves another's work but not its own
+    input:
+      principals: ["admin"]
+      resources: ["change_set_by_someone_else"]
+      actions: ["read", "approve", "reject", "apply", "revert", "create"]
+    expected:
+      - principal: admin
+        resource: change_set_by_someone_else
+        actions:
+          read: EFFECT_ALLOW
+          approve: EFFECT_ALLOW
+          reject: EFFECT_ALLOW
+          apply: EFFECT_ALLOW
+          revert: EFFECT_ALLOW
+          create: EFFECT_DENY
+
+  - name: change_set — self-approval is barred, and barred for admin too
+    input:
+      principals: ["developer", "admin"]
+      resources: ["change_set_by_developer"]
+      actions: ["approve"]
+    expected:
+      - principal: developer
+        resource: change_set_by_developer
+        actions:
+          approve: EFFECT_DENY
+      # The admin did NOT create this one, so the bar does not apply to them.
+      - principal: admin
+        resource: change_set_by_developer
+        actions:
+          approve: EFFECT_ALLOW
+
+  - name: change_set — the bar lifts when the project's policy permits it
+    input:
+      principals: ["developer"]
+      resources: ["change_set_self_approval_permitted"]
+      actions: ["approve"]
+    expected:
+      - principal: developer
+        resource: change_set_self_approval_permitted
+        actions:
+          approve: EFFECT_ALLOW
+
+  - name: change_set — a developer neither applies nor reverts
+    input:
+      principals: ["developer"]
+      resources: ["change_set_by_someone_else"]
+      actions: ["create", "read", "approve", "apply", "revert", "reject"]
+    expected:
+      - principal: developer
+        resource: change_set_by_someone_else
+        actions:
+          create: EFFECT_ALLOW
+          read: EFFECT_ALLOW
+          approve: EFFECT_ALLOW
+          apply: EFFECT_DENY
+          revert: EFFECT_DENY
+          reject: EFFECT_DENY
+
+  - name: change_set — a viewer mutates nothing
+    input:
+      principals: ["viewer"]
+      resources: ["change_set_by_someone_else"]
+      actions: ["read", "create", "approve", "reject", "apply", "revert"]
+    expected:
+      - principal: viewer
+        resource: change_set_by_someone_else
+        actions:
+          read: EFFECT_ALLOW
+          create: EFFECT_DENY
+          approve: EFFECT_DENY
+          reject: EFFECT_DENY
+          apply: EFFECT_DENY
+          revert: EFFECT_DENY
+
+  - name: secret — NO role reads a value, not even admin
+    input:
+      principals: ["admin", "developer", "viewer"]
+      resources: ["secret_row"]
+      actions: ["read_value"]
+    expected:
+      - principal: admin
+        resource: secret_row
+        actions: { read_value: EFFECT_DENY }
+      - principal: developer
+        resource: secret_row
+        actions: { read_value: EFFECT_DENY }
+      - principal: viewer
+        resource: secret_row
+        actions: { read_value: EFFECT_DENY }
+
+  - name: secret — the metadata row, per role
+    input:
+      principals: ["admin", "developer", "viewer"]
+      resources: ["secret_row"]
+      actions: ["create", "read_metadata", "update", "delete"]
+    expected:
+      - principal: admin
+        resource: secret_row
+        actions:
+          create: EFFECT_ALLOW
+          read_metadata: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+      - principal: developer
+        resource: secret_row
+        actions:
+          create: EFFECT_ALLOW
+          read_metadata: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+          delete: EFFECT_DENY
+      - principal: viewer
+        resource: secret_row
+        actions:
+          create: EFFECT_DENY
+          read_metadata: EFFECT_ALLOW
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
+
+  - name: policy — only an admin edits governance policy
+    input:
+      principals: ["admin", "developer", "viewer"]
+      resources: ["policy_row"]
+      actions: ["create", "read", "update", "delete"]
+    expected:
+      - principal: admin
+        resource: policy_row
+        actions:
+          create: EFFECT_ALLOW
+          read: EFFECT_ALLOW
+          update: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+      - principal: developer
+        resource: policy_row
+        actions:
+          create: EFFECT_DENY
+          read: EFFECT_ALLOW
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
+      - principal: viewer
+        resource: policy_row
+        actions:
+          create: EFFECT_DENY
+          read: EFFECT_ALLOW
+          update: EFFECT_DENY
+          delete: EFFECT_DENY
+
+  - name: agent_device — revocation is admin-only
+    input:
+      principals: ["admin", "developer", "viewer"]
+      resources: ["device_row"]
+      actions: ["pair", "revoke", "read"]
+    expected:
+      - principal: admin
+        resource: device_row
+        actions:
+          pair: EFFECT_ALLOW
+          revoke: EFFECT_ALLOW
+          read: EFFECT_ALLOW
+      - principal: developer
+        resource: device_row
+        actions:
+          pair: EFFECT_ALLOW
+          revoke: EFFECT_DENY
+          read: EFFECT_ALLOW
+      - principal: viewer
+        resource: device_row
+        actions:
+          pair: EFFECT_DENY
+          revoke: EFFECT_DENY
+          read: EFFECT_ALLOW
+
+  - name: audit — admin reads everything; others only their own projects
+    input:
+      principals: ["admin", "developer", "viewer"]
+      resources: ["audit_member_project", "audit_foreign_project"]
+      actions: ["read"]
+    expected:
+      - principal: admin
+        resource: audit_member_project
+        actions: { read: EFFECT_ALLOW }
+      - principal: admin
+        resource: audit_foreign_project
+        actions: { read: EFFECT_ALLOW }
+      - principal: developer
+        resource: audit_member_project
+        actions: { read: EFFECT_ALLOW }
+      - principal: developer
+        resource: audit_foreign_project
+        actions: { read: EFFECT_DENY }
+      - principal: viewer
+        resource: audit_member_project
+        actions: { read: EFFECT_ALLOW }
+      - principal: viewer
+        resource: audit_foreign_project
+        actions: { read: EFFECT_DENY }

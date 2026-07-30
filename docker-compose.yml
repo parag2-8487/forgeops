@@ -80,6 +80,31 @@ services:
       timeout: 3s
       retries: 5
 
+  # ── §1.11 (task 6.4): app RBAC sidecar (Tech-Stack §9, design §5.5) ─────────
+  # A sidecar, and NOT embeddable in the agent (Research §B7): the agent's half of policy
+  # evaluation is in-process Rego (D-30). This process answers one question — may this
+  # principal take this action on this resource — for the backend only.
+  #
+  # Unlike Authentik, Cerbos IS in /health/ready (task 6.4). The difference is real rather
+  # than a matter of taste: an IdP outage stops new logins while already-authenticated
+  # traffic keeps working, but an authorisation outage stops every non-public request,
+  # because deny-by-default means a request whose permission cannot be evaluated is
+  # refused. A replica that cannot reach Cerbos should be taken out of service.
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:0.54.0@sha256:211c261f6031675522a35c6055b13fd719c4aff13747307e4bcb6907326537ef
+    command: ["server", "--config=/config/cerbos.yaml"]
+    env_file: *service-env
+    volumes:
+      - ./policies/cerbos:/policies:ro
+      - ./config/cerbos:/config:ro
+    ports:
+      - "127.0.0.1:${CERBOS_HTTP_PORT:-3592}:3592"
+    healthcheck:
+      test: ["CMD", "/cerbos", "healthcheck", "--config=/config/cerbos.yaml"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
   # ── §1.11 (task 6.3): the identity provider, in the DEFAULT profile ─────────
   # Not optional, and §2.3 is explicit about why: under deny-by-default routing every
   # non-public route needs a verified principal, so an API with no IdP is an API that

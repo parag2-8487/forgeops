@@ -1,0 +1,71 @@
+# `change_set` — §11.2's matrix row, plus the self-approval clause.
+#
+#   admin      read, approve, reject, apply, revert
+#   developer  create, read, approve (unless policy forbids self-approval)
+#   viewer     read
+#
+# Two things here are load-bearing.
+#
+# **`create` is a developer verb and not an admin one**, exactly as the design's table has
+# it. That reads like an omission and is not: an admin can approve and apply, and letting
+# the same identity author and approve is the separation the approval gate exists to
+# create. An admin who wants to author a change-set can hold a developer identity.
+#
+# **Self-approval is barred by POLICY, not by code.** §11.2 says a developer may approve
+# "unless policy forbids self-approval", so the switch is an attribute of the change-set's
+# project and the decision is Cerbos's. Putting the rule in a handler would make it
+# unreviewable and unoverridable per project.
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: default
+  resource: change_set
+  importDerivedRoles:
+    - forgeops_common
+  rules:
+    - actions: ["read", "approve", "reject", "apply", "revert"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+
+    - actions: ["create", "read"]
+      effect: EFFECT_ALLOW
+      roles: ["developer"]
+
+    - actions: ["approve"]
+      effect: EFFECT_ALLOW
+      roles: ["developer"]
+
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      roles: ["viewer"]
+
+    # The self-approval bar. Applies to EVERY role including admin, because the property
+    # being protected is "two people saw this", and an admin approving their own
+    # change-set defeats it just as completely as a developer doing so.
+    #
+    # Fails CLOSED on a missing attribute: when `self_approval_allowed` is absent the
+    # expression treats it as false and the deny fires. A change-set that arrives without
+    # the flag is one whose project policy could not be read, and refusing to approve it
+    # is the safe answer.
+    - actions: ["approve"]
+      effect: EFFECT_DENY
+      roles: ["admin", "developer", "viewer"]
+      condition:
+        match:
+          expr: >-
+            has(request.resource.attr.created_by) &&
+            request.resource.attr.created_by == request.principal.id &&
+            (!has(request.resource.attr.self_approval_allowed) ||
+             request.resource.attr.self_approval_allowed != true)
+
+    - actions: ["create", "approve", "reject", "apply", "revert"]
+      effect: EFFECT_DENY
+      roles: ["viewer"]
+
+    # A developer may not apply or revert. Applying is what touches a real system, and
+    # §1.6's flow is author -> approve -> apply with the approval in between; a developer
+    # who could apply their own approved change-set would have collapsed those three steps
+    # into one identity.
+    - actions: ["apply", "revert", "reject"]
+      effect: EFFECT_DENY
+      roles: ["developer"]

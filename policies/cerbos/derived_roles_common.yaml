@@ -1,0 +1,31 @@
+# Derived roles — the "own/member" half of §11.2's matrix.
+#
+# §11.2 gives a developer "create, read, update (own/member)" on a project and "read (own
+# project)" on audit. Those qualifiers are not expressible as a role, which is the whole
+# reason Cerbos exists beside the three coarse roles: a role is static, membership is a
+# property of the resource. Keeping them here rather than repeating the same condition in
+# six resource policies means the definition of "member" has one place to be wrong.
+#
+# Both definitions fail CLOSED on a missing attribute. `has(...)` is checked before the
+# comparison, so a resource that arrives without `member_ids` yields "not a member" rather
+# than a Cerbos evaluation error — and an evaluation error would surface as a 500, which a
+# caller can retry, instead of a 403, which is the correct answer.
+---
+apiVersion: api.cerbos.dev/v1
+description: Project membership and ownership, derived from resource attributes
+derivedRoles:
+  name: forgeops_common
+  definitions:
+    - name: owner
+      parentRoles: ["admin", "developer", "viewer"]
+      condition:
+        match:
+          expr: has(request.resource.attr.owner_id) && request.resource.attr.owner_id == request.principal.id
+
+    - name: member
+      parentRoles: ["admin", "developer", "viewer"]
+      condition:
+        match:
+          expr: >-
+            has(request.resource.attr.member_ids) &&
+            request.principal.id in request.resource.attr.member_ids

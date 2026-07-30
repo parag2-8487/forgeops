@@ -23,9 +23,9 @@
 postgres
 redis
 opa
+cerbos
 authentik-server
 authentik-worker
 backend
 frontend
 
-# pending: cerbos            # task 6.4 (Cerbos sidecar, resource-scoped authorization)

@@ -77,15 +77,23 @@ class TestReadinessIgnoresTheIdentityProvider:
         response = await client.get("/health/ready")
         assert response.status_code == 200, response.text
 
-    async def test_the_probed_dependencies_are_exactly_postgres_and_redis(self, client: httpx.AsyncClient) -> None:
+    async def test_no_probed_dependency_is_the_identity_provider(self, client: httpx.AsyncClient) -> None:
         """Named explicitly so ADDING an IdP probe fails, not just a failing one.
 
         A test that only asserted the 200 would still pass if a future readiness handler
         probed the IdP and happened to tolerate its absence — and then the next person to
         make that probe blocking would take out readiness with no test objecting.
+
+        Written as "postgres and redis are present, and nothing IdP-shaped is" rather than
+        as an exact set, because task 6.4 legitimately ADDS Cerbos to readiness: an
+        authorisation sidecar outage really does block authenticated traffic, which is the
+        precise difference from an IdP outage. An exact set here would have forced 6.4 to
+        edit this test, and editing a §6.3 assertion to land §6.4 is indistinguishable
+        from weakening it.
         """
-        response = await client.get("/health/ready")
-        assert set(response.json()["checks"]) == {"postgres", "redis"}
+        checks = set((await client.get("/health/ready")).json()["checks"])
+        assert {"postgres", "redis"} <= checks, checks
+        assert not checks & {"authentik", "authentik-server", "idp", "oidc", "auth"}, checks
 
     async def test_liveness_is_unaffected(self, client: httpx.AsyncClient) -> None:
         assert (await client.get("/health")).status_code == 200
