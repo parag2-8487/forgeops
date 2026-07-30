@@ -35,12 +35,25 @@ def _get_default_services(compose_path: Path) -> list[str]:
 
 
 @pytest.mark.skipif(not COMPOSE_PATH.exists(), reason="docker-compose.yml not found")
-def test_unprofiled_compose_has_five_default_services():
-    """Unprofiled compose shows exactly 5 default services."""
-    defaults = _get_default_services(COMPOSE_PATH)
-    assert len(defaults) == 5, f"Expected 5 default services, got {len(defaults)}: {defaults}"
-    expected = sorted(["backend", "frontend", "opa", "postgres", "redis"])
-    assert defaults == expected
+def test_unprofiled_compose_matches_the_committed_default_service_list():
+    """The unprofiled set is exactly what `scripts/compose-default-services.txt` lists.
+
+    Was `len(defaults) == 5` plus a literal five-name list — the fourth copy of the same
+    data in this repository, alongside `check-compose-validate.py`,
+    `test_dockerfile_compose.py` and the data file itself. Task 6.3 promoted two services
+    and broke three of the four. Reading the one source means a promotion is a one-line
+    diff next to the task that makes it, which is what the data file's own header always
+    claimed.
+    """
+    listed = sorted(
+        line.strip()
+        for line in (COMPOSE_PATH.parent / "scripts" / "compose-default-services.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    assert listed, "the default-service list is empty; an empty expectation proves nothing"
+    assert _get_default_services(COMPOSE_PATH) == listed
 
 
 @pytest.mark.skipif(not COMPOSE_PATH.exists(), reason="docker-compose.yml not found")

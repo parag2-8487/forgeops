@@ -111,14 +111,27 @@ class TestComposeBackendService:
     def test_no_optional_profile_services(self) -> None:
         """Optional-profile services are present but ONLY under their profiles.
 
-        The five default-profile services (postgres, redis, opa, backend, frontend)
-        are started with `docker compose up`. Profiled services (infisical, agent-dev)
-        require explicit `--profile vault` or `--profile tools`.
+        The default-profile set is read from `scripts/compose-default-services.txt`, the
+        same source `scripts/check-compose-validate.py` uses. It was previously asserted
+        as the literal count 5, which was a third copy of the same data: promoting a
+        service in the data file left this test failing for a reason that had nothing to
+        do with what it checks. A count also proved less than it appeared to — five wrong
+        services would have satisfied it.
         """
+        root = Path(__file__).resolve().parents[3]
+        listed = {
+            line.strip()
+            for line in (root / "scripts" / "compose-default-services.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        assert listed, "the default-service list is empty; an empty expectation proves nothing"
+
         services = self.compose["services"]
-        # Default services (no profile key) should be exactly 5
-        default_services = [name for name, cfg in services.items() if "profiles" not in cfg]
-        assert len(default_services) == 5, f"Expected 5 default services, got: {default_services}"
+        default_services = {name for name, cfg in services.items() if "profiles" not in cfg}
+        assert default_services == listed, (
+            f"unprofiled services {sorted(default_services)} do not match the committed "
+            f"default set {sorted(listed)}"
+        )
 
         # Profiled services must have their profiles set correctly
         if "infisical" in services:

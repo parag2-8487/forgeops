@@ -77,6 +77,10 @@ markers = [
     # and also on an EMPTY selection — a selector that matches nothing would
     # otherwise pass silently.
     "mandatory: must actually execute in CI; a skip here fails the build",
+    # design.md §8.3: the heavy jobs select by capability marker, so a test that needs a
+    # real Authentik is selected by `-m 'mandatory and oidc'` rather than by path. Moving
+    # the file cannot drop it from the set the `auth` job runs.
+    "oidc: needs a real Authentik container; selected by the `auth` CI job",
 ]
 
 [tool.coverage.run]

@@ -23,9 +23,9 @@
 postgres
 redis
 opa
+authentik-server
+authentik-worker
 backend
 frontend
 
 # pending: cerbos            # task 6.4 (Cerbos sidecar, resource-scoped authorization)
-# pending: authentik-server  # task 6.3 (real OIDC IdP, default profile)
-# pending: authentik-worker  # task 6.3

@@ -80,6 +80,69 @@ services:
       timeout: 3s
       retries: 5
 
+  # ── §1.11 (task 6.3): the identity provider, in the DEFAULT profile ─────────
+  # Not optional, and §2.3 is explicit about why: under deny-by-default routing every
+  # non-public route needs a verified principal, so an API with no IdP is an API that
+  # can only serve /health. Putting Authentik behind a profile would make the default
+  # `docker compose up` produce a stack that looks healthy and cannot log anyone in.
+  #
+  # `2026.5.6` is the newest published patch of the `2026.5` line §16.4 names; the
+  # digest below was resolved from the registry, not written by hand.
+  #
+  # Deliberately NOT in /health/ready (§6.3): an IdP outage must degrade login, not the
+  # readiness of already-authenticated traffic. D-53 gives that degradation a
+  # distinguishable response instead of letting it look like a credential failure.
+  authentik-server: &authentik
+    image: ghcr.io/goauthentik/server:2026.5.6@sha256:ed120caf710ccf82ef0026f0bc74e51615bc95ebff228a7a2d6fc60c441c3868
+    command: server
+    env_file: *service-env
+    environment:
+      # Only the two TOPOLOGY facts live here; every other Authentik variable is
+      # delivered by env_file under Authentik's own name (see .env.example). Compose
+      # interpolation does not read env_file, so a `${VAR}` here would be EMPTY on a
+      # fresh clone with no `.env` — which is how a container ends up connecting to
+      # localhost and reporting an unhelpful DNS error.
+      #
+      # Authentik shares the Postgres SERVER, in its own DATABASE
+      # (`AUTHENTIK_POSTGRESQL__NAME`). §13.3 says "sharing the existing Postgres and
+      # Redis", and a separate database is what makes that safe: Authentik manages its
+      # own schema with its own migrations, so pointing it at `forgeops` would put ~90
+      # foreign tables next to the Alembic-managed ones, and
+      # `alembic revision --autogenerate` would then propose dropping every one of them
+      # (test_alembic_autogenerate_clean.py exists to catch exactly that drift).
+      # `scripts/postgres-init/20-authentik-database.sh` creates the database on first
+      # boot.
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_REDIS__HOST: redis
+    ports:
+      - "127.0.0.1:${AUTHENTIK_PORT:-9000}:9000"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      # Authentik runs its own migrations on first boot against an empty database, which
+      # is minutes rather than seconds. 30 retries at 10s is the ceiling that keeps
+      # `up -d --wait` from failing on a cold volume.
+      retries: 30
+
+  # Same image, different command. The worker runs Authentik's background tasks; without
+  # it the server accepts logins but never completes an outpost or e-mail task, which
+  # looks like an intermittent IdP rather than a missing container.
+  authentik-worker:
+    <<: *authentik
+    command: worker
+    # A worker publishes no port. Inheriting the server's `ports` would try to bind 9000
+    # twice and fail the whole stack.
+    ports: []
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
   frontend:
     build:
       context: ./frontend

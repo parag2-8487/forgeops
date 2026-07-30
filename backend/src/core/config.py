@@ -129,6 +129,20 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "AUTHENTIK_SECRET_KEY",
         "AUTHENTIK_BOOTSTRAP_PASSWORD",
         "AUTHENTIK_BOOTSTRAP_TOKEN",
+        # Task 6.3 added the SERVER side of Authentik to the default Compose profile, so
+        # `.env.example` now carries the variables the container itself reads. They are
+        # deliberately spelled with Authentik's own double underscores: Compose
+        # interpolation does not read `env_file`, so a renamed variable mapped in the
+        # compose `environment:` block would be empty on a fresh clone. They are listed
+        # here because the allowlist is exhaustive by design — the container needs them
+        # and `Settings` does not, which is exactly the case the allowlist exists to
+        # permit explicitly rather than by pattern.
+        "AUTHENTIK_BOOTSTRAP_EMAIL",
+        "AUTHENTIK_PORT",
+        "AUTHENTIK_POSTGRESQL__NAME",
+        "AUTHENTIK_POSTGRESQL__USER",
+        "AUTHENTIK_POSTGRESQL__PASSWORD",
+        "AUTHENTIK_REDIS__DB",
         # Agent pairing and envelopes (§1.1)
         "PAIRING_CODE_TTL_SECONDS",
         "PAIRING_CODE_MAX_ATTEMPTS",

@@ -38,6 +38,7 @@ Usage: check-compose-validate.py <docker-compose.yml>
 """
 from __future__ import annotations
 
+import pathlib
 import re
 import sys
 
@@ -47,16 +48,51 @@ except ImportError:  # pragma: no cover
     print("FAIL: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
     sys.exit(1)
 
-DEFAULT_SERVICES = {"postgres", "redis", "opa", "backend", "frontend"}
+#: The default set is READ from `scripts/compose-default-services.txt`, not restated
+#: here. That file's own header already claimed it was "Read by the `compose-smoke` CI
+#: job and by scripts/check-compose-validate.py" — and it was not: this module carried
+#: its own literal set, so the two could drift and the file documented a coupling it did
+#: not have. Task 6.3 made that concrete, because promoting the two Authentik rows in the
+#: data file changed nothing here. One source, parsed once.
+def _load_default_services() -> set[str]:
+    """Service names from the committed data file, ignoring comments and blanks.
+
+    A `# pending:` line is a service design §2.3 requires that has not landed yet; it is
+    a comment, so it is not in the set — which is the whole point of the marker.
+
+    A missing or empty file is a hard failure rather than an empty set: an empty expected
+    set would make the "unprofiled set must be exactly this" assertion pass for any
+    compose file at all, which is the vacuity this check exists to avoid.
+    """
+    path = pathlib.Path(__file__).resolve().parent / "compose-default-services.txt"
+    if not path.is_file():
+        raise SystemExit(f"FAIL: {path} is missing; it is the source of the default set")
+    names = {
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    if not names:
+        raise SystemExit(f"FAIL: {path} lists no services; an empty expected set proves nothing")
+    return names
+
+
+DEFAULT_SERVICES = _load_default_services()
 # Optional services and the profile each MUST be gated behind. They were absent
 # until their owning task landed (agent-dev in 9.5, infisical in 13.5); now the
 # invariant is that they stay out of the unprofiled default selection.
 OPTIONAL_SERVICE_PROFILES = {"infisical": "vault", "agent-dev": "tools"}
-IMAGE_SERVICES = {"postgres", "redis", "opa"}
 BUILD_SERVICES = {"backend", "frontend"}
-# design §13.3 gives postgres, redis, opa and backend healthchecks; the frontend
-# is gated by depends_on instead, so it is not required to declare one.
-HEALTHCHECK_SERVICES = {"postgres", "redis", "opa", "backend"}
+#: Derived, so a new default service is covered without editing a second list.
+IMAGE_SERVICES = DEFAULT_SERVICES - BUILD_SERVICES
+#: Every default service must declare a healthcheck. This was previously
+#: {postgres, redis, opa, backend}, excusing the frontend "because depends_on gates it" —
+#: but task 2.3 (debt D2) had already given the frontend a healthcheck precisely because
+#: `up -d --wait` waits only for *running* otherwise. The exemption was therefore already
+#: obsolete, and Authentik makes it actively wrong: its first boot runs its own migrations
+#: for minutes, so a stack that reports ready before `ak healthcheck` passes reports an
+#: IdP that cannot yet serve a login.
+HEALTHCHECK_SERVICES = set(DEFAULT_SERVICES)
 PUBLIC_BUILD_ARGS = {"NEXT_PUBLIC_API_BASE_URL", "NEXT_PUBLIC_APP_NAME"}
 
 INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}")

@@ -14,7 +14,6 @@ import base64
 import hashlib
 
 import pytest
-
 from src.auth.models import UserRole
 from src.auth.oidc import (
     DEFAULT_SCOPES,
@@ -29,6 +28,7 @@ from src.auth.oidc import (
 from src.auth.routes import _safe_next
 from src.auth.sessions import HMAC_DIGEST_SIZE, refresh_token_hmac
 from src.core.errors import PROBLEM_REGISTRY, ProblemException
+
 from tests.synthetic_secrets import SYNTHETIC_MARKER
 
 
