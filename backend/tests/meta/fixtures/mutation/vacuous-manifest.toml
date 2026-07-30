@@ -1,0 +1,17 @@
+# NEGATIVE fixture manifest for scripts/mutation-harness.py.
+#
+# Q-98's property never touches `step`, so removing the decrement cannot make it
+# fail. The harness must report VACUOUS and exit 1. This is P-09's situation in
+# miniature: real assertions that pass and say nothing about the behaviour the
+# control removes.
+
+[Q-98]
+runtime     = "python"
+property    = "backend/tests/meta/fixtures/mutation/test_vacuous_property.py"
+target      = "tests.meta.fixtures.mutation.subject.step"
+mutation    = "make step return its input without decrementing"
+description = "the property never calls step, so it cannot notice the mutation"
+patch = """
+from tests.meta.fixtures.mutation import subject
+subject.step = lambda remaining: remaining
+"""

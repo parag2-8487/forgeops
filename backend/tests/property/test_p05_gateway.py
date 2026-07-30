@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 from hypothesis import assume, given, settings
@@ -72,17 +72,22 @@ def _make_gateway(
     registry = McpServerRegistry({"test-server": server})
 
     # Auth
-    verifier = AsyncMock(spec=OidcTokenVerifier)
+    # create_autospec(..., spec_set=True) rather than AsyncMock(spec=...): `spec=`
+    # constrains attribute NAMES only, so a child called with the wrong keywords
+    # still passes. That is precisely how D-23 survived 419 green tests. autospec
+    # gives each child the real method's signature, and spec_set makes assigning
+    # over a child raise instead of silently discarding the enforcement.
+    verifier = create_autospec(OidcTokenVerifier, spec_set=True, instance=True)
     if auth_raises:
-        verifier.verify = AsyncMock(side_effect=auth_raises)
+        verifier.verify.side_effect = auth_raises
     else:
-        verifier.verify = AsyncMock(return_value=MagicMock(sub="user1", iss="https://issuer", aud="gateway", raw={}))
+        verifier.verify.return_value = MagicMock(sub="user1", iss="https://issuer", aud="gateway", raw={})
 
     # Router
     router = HeaderRouter(registry)
 
     # Policy
-    policy = AsyncMock(spec=OpaGatewayPolicy)
+    policy = create_autospec(OpaGatewayPolicy, spec_set=True, instance=True)
     if policy_denies:
         policy.authorise_call.side_effect = ProblemException(
             status=403,
@@ -96,14 +101,14 @@ def _make_gateway(
         policy.filter_tools.return_value = [{"name": "tool1"}]
 
     # Cache
-    cache = AsyncMock(spec=TtlToolCache)
+    cache = create_autospec(TtlToolCache, spec_set=True, instance=True)
     cache.get.return_value = None
     cache.put.return_value = True
 
     # Upstream
     from src.mcp.upstream import ToolListResult
 
-    upstream = AsyncMock(spec=McpUpstream)
+    upstream = create_autospec(McpUpstream, spec_set=True, instance=True)
     counter = upstream_counter or MagicMock()
     counter.call_count = 0
 

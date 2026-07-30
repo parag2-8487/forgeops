@@ -11,7 +11,7 @@ Proves:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -81,8 +81,13 @@ def _build_router_from_chain(
             protocol = EndpointProtocol.OPENAI_COMPATIBLE
             availability[eid] = EndpointAvailability(endpoint_id=eid, available=True)
 
-            # Create mock endpoint
-            mock_ep = AsyncMock(spec=OpenAICompatibleEndpoint)
+            # Create autospec'd endpoint. `spec=` alone constrains attribute NAMES
+            # but not child SIGNATURES, so `complete` could be called with any
+            # arguments at all - the D-23 hole. autospec closes it; spec_set makes
+            # assigning over a child raise. `endpoint_id`/`provider_kind` are
+            # class-level properties, so they are part of the spec and remain
+            # settable here.
+            mock_ep = create_autospec(OpenAICompatibleEndpoint, spec_set=True, instance=True)
             mock_ep.endpoint_id = eid
             mock_ep.provider_kind = "test"
 

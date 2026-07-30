@@ -1,0 +1,194 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+"""The mutation harness's own tests (design.md §0.4.5).
+
+Three properties of the harness are asserted, because all three are load-bearing
+and none is self-evident:
+
+1. a property that its control genuinely breaks is reported `OK`;
+2. a property the control cannot break is reported `VACUOUS` and fails the run —
+   this is P-09's situation, and catching it is the entire point;
+3. the harness works from a temp directory **outside** the repository and leaves
+   `git status --porcelain` empty.
+
+Clause 3 is the one the hard gate names explicitly. A harness that mutated a
+tracked file would leave the tree dirty for whatever ran next, and "the mutation
+was reverted afterwards" is a promise; an assertion is evidence.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+pytestmark = pytest.mark.mandatory
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = REPO_ROOT / "scripts" / "mutation-harness.py"
+FIXTURE_DIR = "backend/tests/meta/fixtures/mutation"
+
+#: Installs a `step` that never decrements. The healthy property must then fail.
+_NO_DECREMENT_PATCH = """
+from tests.meta.fixtures.mutation import subject
+subject.step = lambda remaining: remaining
+"""
+
+
+def _load() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("forgeops_mutation_harness", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+HARNESS = _load()
+
+
+def _manifest(tmp_path: Path, ident: str, property_file: str, patch: str) -> Path:
+    path = tmp_path / "mutations.toml"
+    path.write_text(
+        textwrap.dedent(
+            f"""\
+            [{ident}]
+            runtime     = "python"
+            property    = "{FIXTURE_DIR}/{property_file}"
+            target      = "tests.meta.fixtures.mutation.subject.step"
+            mutation    = "make step return its input without decrementing"
+            description = "removes the decrement that guarantees termination"
+            patch = '''
+{textwrap.indent(patch.strip(), "            ")}
+            '''
+            """
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _run(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+    )
+
+
+class TestAHealthyPropertyIsAccepted:
+    def test_a_property_its_control_breaks_is_reported_ok(self, tmp_path: Path) -> None:
+        # --skip-git-check because a developer's working tree is legitimately dirty
+        # mid-task. The clean-tree clause is asserted on its own below, as a
+        # before/after delta, so it stays proven without making every other meta
+        # test depend on the state of the checkout.
+        manifest = _manifest(tmp_path, "Q-99", "test_healthy_property.py", _NO_DECREMENT_PATCH)
+        result = _run("--manifest", str(manifest), "--all", "--skip-git-check")
+        combined = result.stdout + result.stderr
+        assert "VACUOUS" not in combined, combined
+        assert result.returncode == 0, combined
+        assert "FAIL      OK" in result.stdout, combined
+
+
+class TestAVacuousPropertyIsRejected:
+    def test_a_property_its_control_cannot_break_is_reported_vacuous(self, tmp_path: Path) -> None:
+        """The clause §0.4.5 exists for. P-09 in miniature."""
+        manifest = _manifest(tmp_path, "Q-98", "test_vacuous_property.py", _NO_DECREMENT_PATCH)
+        result = _run("--manifest", str(manifest), "--all", "--skip-git-check")
+        combined = result.stdout + result.stderr
+        assert result.returncode == 1, combined
+        assert "VACUOUS" in result.stdout, combined
+        assert "Q-98" in result.stdout, combined
+
+    def test_a_prose_only_control_is_refused_at_load_time(self, tmp_path: Path) -> None:
+        """A control with no executable patch is what made P-09 look tested."""
+        manifest = tmp_path / "mutations.toml"
+        manifest.write_text(
+            textwrap.dedent(
+                f"""\
+                [Q-97]
+                property    = "{FIXTURE_DIR}/test_healthy_property.py"
+                mutation    = "described in prose only"
+                description = "no patch, so nothing is actually mutated"
+                """
+            ),
+            encoding="utf-8",
+        )
+        result = _run("--manifest", str(manifest), "--all")
+        assert result.returncode != 0
+        assert "no `patch`" in result.stdout + result.stderr
+
+
+class TestTheHarnessLeavesNoTrace:
+    def test_the_temp_directory_is_outside_the_repository(self) -> None:
+        tmp = HARNESS.make_outside_tempdir()
+        try:
+            resolved = tmp.resolve()
+            assert REPO_ROOT.resolve() not in resolved.parents
+            assert resolved != REPO_ROOT.resolve()
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_a_tmpdir_inside_the_repository_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The temp location is caller-controlled, so it is verified, not trusted.
+
+        `tempfile.gettempdir()` caches its answer, so setting TMPDIR alone would
+        not change where `mkdtemp` writes. The cached value is what has to move.
+        """
+        import shutil
+        import tempfile
+
+        inside = REPO_ROOT / "backend" / ".mutation-tmp-probe"
+        inside.mkdir(parents=True, exist_ok=True)
+        try:
+            monkeypatch.setattr(tempfile, "tempdir", str(inside))
+            with pytest.raises(SystemExit) as excinfo:
+                HARNESS.make_outside_tempdir()
+            assert "inside the repository" in str(excinfo.value)
+        finally:
+            shutil.rmtree(inside, ignore_errors=True)
+
+    def test_the_working_tree_is_clean_after_a_run(self, tmp_path: Path) -> None:
+        manifest = _manifest(tmp_path, "Q-96", "test_healthy_property.py", _NO_DECREMENT_PATCH)
+        before = HARNESS.git_status_is_clean()
+        _run("--manifest", str(manifest), "--all")
+        after = HARNESS.git_status_is_clean()
+        assert after[0] == before[0], f"the harness changed the working tree: {after[1]}"
+
+
+class TestAppendixBCompleteness:
+    def test_the_authority_is_read_from_the_design_document(self) -> None:
+        """Restating the id list here would let the two drift silently."""
+        ids = HARNESS.appendix_b_ids()
+        assert len(ids) == 31, ids
+        assert ids[0] == "Q-01"
+        assert ids[-1] == "Q-31"
+
+    def test_a_missing_row_fails_the_real_manifest_run(self) -> None:
+        """Until every property lands, `--all` on the real manifest must fail."""
+        result = _run("--all", "--skip-git-check")
+        combined = result.stdout + result.stderr
+        assert result.returncode == 1, combined
+        assert "have no control" in combined, combined
+
+    def test_allow_incomplete_suppresses_only_that_clause(self) -> None:
+        result = _run("--all", "--allow-incomplete", "--skip-git-check")
+        combined = result.stdout + result.stderr
+        assert "INCOMPLETE (allowed)" in result.stdout, combined
+        # With no rows to run there is nothing vacuous, so this must pass; the
+        # flag must not be capable of hiding a VACUOUS row, which the test above
+        # demonstrates independently.
+        assert result.returncode == 0, combined
+
+    def test_the_clean_tree_clause_is_enabled_in_ci(self) -> None:
+        """`--skip-git-check` is a test affordance and must never reach CI."""
+        workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        assert "--skip-git-check" not in workflow

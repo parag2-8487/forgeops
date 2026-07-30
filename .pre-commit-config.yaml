@@ -41,6 +41,25 @@ repos:
       - id: ruff-format
         files: ^backend/.*\.py$
 
+  # ─── Test-integrity regime (design §0.4) ──────────────────────────────────
+  # These read and never rewrite. They exist because Phase 0 shipped 419 green
+  # backend tests over an MCP gateway that could not serve a request (D-23): the
+  # doubles reassigned a `spec=`'d child, so they implemented the caller's
+  # contract while the real collaborators implemented a different one.
+  - repo: local
+    hooks:
+      - id: check-test-doubles
+        name: test doubles must enforce signatures (FO-TD001..004)
+        entry: python scripts/check-test-doubles.py
+        language: system
+        files: ^backend/tests/.*\.py$
+      - id: check-ci-jobs
+        name: every CI job Appendix E cites must exist
+        entry: python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md
+        language: system
+        pass_filenames: false
+        files: ^(\.github/workflows/ci\.yml|\.kiro/specs/phase-1-mvp-core/design\.md)$
+
   # ─── Agent: gofmt + go vet, scoped to agent/ (design §16.1) ────────────────
   - repo: local
     hooks:

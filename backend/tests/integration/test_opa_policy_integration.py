@@ -73,7 +73,7 @@ def opa_url() -> str:
 
     docker = shutil.which("docker")
     if docker is None:
-        require_capability("no FORGEOPS_TEST_OPA_URL and no docker on PATH to start one")
+        require_capability("opa", "no FORGEOPS_TEST_OPA_URL and no docker on PATH to start one")
 
     name = f"forgeops-opa-test-{uuid.uuid4().hex[:8]}"
     started = subprocess.run(  # noqa: S603 - fixed argv, no shell
@@ -98,7 +98,7 @@ def opa_url() -> str:
         text=True,
     )
     if started.returncode != 0:
-        require_capability(f"could not start the OPA container: {started.stderr.strip()[:200]}")
+        require_capability("opa", f"could not start the OPA container: {started.stderr.strip()[:200]}")
 
     try:
         port = subprocess.run(  # noqa: S603
@@ -109,7 +109,7 @@ def opa_url() -> str:
         ).stdout.splitlines()[0]
         url = f"http://127.0.0.1:{port.rsplit(':', 1)[-1].strip()}"
         if not _wait_until_healthy(url):
-            require_capability("the OPA container never became healthy")
+            require_capability("opa", "the OPA container never became healthy")
         yield url
     finally:
         subprocess.run([docker, "rm", "-f", name], capture_output=True, check=False)  # noqa: S603

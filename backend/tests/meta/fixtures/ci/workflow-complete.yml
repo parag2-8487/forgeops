@@ -1,0 +1,19 @@
+# POSITIVE fixture for scripts/check-ci-jobs.py.
+#
+# Defines exactly the jobs the paired fixture design cites, so the check must pass.
+# Both fixtures are required: a check that failed unconditionally would also pass its
+# negative test, which would prove nothing.
+name: ci-positive-fixture
+
+on:
+  workflow_dispatch:
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo agent
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo backend

@@ -1,0 +1,3 @@
+{"$report_type": "TestReport", "nodeid": "tests/unit/test_fixture.py::test_passes", "when": "call", "outcome": "passed"}
+{"$report_type": "TestReport", "nodeid": "tests/integration/test_fixture.py::test_needs_postgres", "when": "setup", "outcome": "skipped", "longrepr": ["conftest.py", 41, "Skipped: capability 'postgres' unavailable"]}
+{"$report_type": "TestReport", "nodeid": "tests/integration/test_fixture.py::test_needs_postgres", "when": "teardown", "outcome": "passed"}

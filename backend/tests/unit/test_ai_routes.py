@@ -12,7 +12,7 @@ Tests:
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import jwt as pyjwt
 import pytest
@@ -184,25 +184,29 @@ def mock_breakers() -> dict[str, CircuitBreaker]:
 
 @pytest.fixture()
 def mock_model_router() -> AsyncMock:
-    """Mock model router that returns a successful result."""
-    router_mock = AsyncMock(spec=ModelRouter)
-    router_mock.complete = AsyncMock(
-        return_value=RoutingResult(
-            outcome=RoutingOutcome.OK,
-            endpoint_id="gpt-5.6-sol",
-            content="Hello, I can help with that!",
-            served_from="endpoint",
-            degraded=False,
-        )
+    """Autospec'd model router that returns a successful result.
+
+    create_autospec(..., spec_set=True) rather than AsyncMock(spec=...): `spec=`
+    restricts attribute names only, so `complete` could be called with any
+    signature at all. autospec copies the real signature onto the child and
+    spec_set makes assigning over it raise (design.md 0.4.3, D-23).
+    """
+    router_mock = create_autospec(ModelRouter, spec_set=True, instance=True)
+    router_mock.complete.return_value = RoutingResult(
+        outcome=RoutingOutcome.OK,
+        endpoint_id="gpt-5.6-sol",
+        content="Hello, I can help with that!",
+        served_from="endpoint",
+        degraded=False,
     )
     return router_mock
 
 
 @pytest.fixture()
 def mock_limiter() -> AsyncMock:
-    """Mock rate limiter — allows by default."""
-    limiter = AsyncMock(spec=RedisTokenBucketLimiter)
-    limiter.check = AsyncMock(return_value=RateLimitDecision(allowed=True, remaining=19))
+    """Autospec'd rate limiter - allows by default."""
+    limiter = create_autospec(RedisTokenBucketLimiter, spec_set=True, instance=True)
+    limiter.check.return_value = RateLimitDecision(allowed=True, remaining=19)
     return limiter
 
 

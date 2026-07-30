@@ -23,6 +23,12 @@ import pytest
 
 from .capability import require_capability
 
+# Re-exported so every integration test can request the app-factory-derived
+# fixture without importing the module (design.md §0.4.1). Defined in its own file
+# because that file carries the rule the fixture enforces: it may substitute a
+# transport, never a collaborator.
+from .production_app import composed_state_attributes, production_app  # noqa: F401
+
 TEST_DATABASE_URL_ENV = "FORGEOPS_TEST_DATABASE_URL"
 
 
@@ -30,9 +36,10 @@ def _require_database_url() -> str:
     url = os.environ.get(TEST_DATABASE_URL_ENV, "").strip()
     if not url:
         require_capability(
+            "postgres",
             f"{TEST_DATABASE_URL_ENV} is not set; these tests require a real "
             "PostgreSQL 17 with the pgvector extension available "
-            "(design.md §7.6)"
+            "(design.md §7.6)",
         )
     return url
 

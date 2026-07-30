@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+#
+# Negative controls for every correctness property (design.md §0.4.5, Appendix B).
+#
+# WHY THIS FILE EXISTS
+# `REVIEW-PHASE-0.md` Pass 8 emptied BOTH of P-09's redaction pattern lists and all
+# thirteen of its tests stayed green. The clause was decorative and nothing in CI
+# could tell. Every property in Phase 1 therefore ships with the specific mutation
+# that must make it fail, and `scripts/mutation-harness.py` runs them as a CI job.
+# A property that survives its own control is reported VACUOUS and fails the build.
+#
+# SCHEMA
+#   runtime     "python" (default) or "go"
+#   property    path to the property test file, from the repository root
+#   target      dotted path (python) or symbol (go) being mutated - documentation
+#   mutation    the control EXACTLY as Appendix B words it, so a reviewer can
+#               compare the two without reading code
+#   description why that mutation must break the property
+#   patch       [python] statements that install the mutation, executed by a
+#               generated pytest plugin in a temp dir OUTSIDE the repository
+#   original    [go] the tracked file the overlay replaces
+#   overlay     [go] the replacement file, applied via `go build -overlay`
+#   package     [go] package pattern to test
+#   test_run    [go] -run regex
+#
+# Both `mutation` and `patch` are required for a python row. A prose-only control is
+# precisely what made P-09 look tested.
+#
+# GROWTH
+# This file gains exactly one row per property leaf, and the harness checks it
+# against Appendix B's table read out of design.md - not against a list restated
+# here, so the two cannot drift. Until every property has landed, the `mutation` CI
+# job passes `--allow-incomplete`; task 19.2 removes that flag, at which point all
+# thirty-one rows must exist. `--allow-incomplete` never suppresses a VACUOUS row
+# or a dirty working tree.
+#
+# CURRENT STATE
+# No `Q-` row yet: the first property is Q-27, which lands with task 2.2. The
+# harness's own behaviour - that it reports VACUOUS, that its temp directory is
+# outside the tree, and that it leaves `git status --porcelain` empty - is proven by
+# `backend/tests/meta/test_mutation_harness.py` against fixture manifests, so this
+# file being empty of controls does not mean the mechanism is unproven.

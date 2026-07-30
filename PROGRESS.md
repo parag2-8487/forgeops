@@ -43,14 +43,14 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 
 | #     | Group                                                                                              | Task                                                                          | Status  |
 | :---- | :------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------ |
-| 1.1   | Establish the test-integrity regime before the components it polices                               | Add the app-factory-derived production fixture                                | pending |
-| 1.2   | Establish the test-integrity regime before the components it polices                               | Add the self-maintaining call-site inventory and signature-conformance test   | pending |
-| 1.3   | Establish the test-integrity regime before the components it polices                               | Implement the test-double AST lint with its own good/bad fixtures             | pending |
-| 1.4   | Establish the test-integrity regime before the components it polices                               | Add the Go interface-assertion completeness check                             | pending |
-| 1.5   | Establish the test-integrity regime before the components it polices                               | Extend the capability gate and add skip detection                             | pending |
-| 1.6   | Establish the test-integrity regime before the components it polices                               | Implement the mutation harness and the negative-control manifest              | pending |
-| 1.7   | Establish the test-integrity regime before the components it polices                               | Add the CI-job existence check that keeps Appendix E honest                   | pending |
-| 1.8   | Establish the test-integrity regime before the components it polices                               | Exercise the regime's own safeguards end to end                               | pending |
+| 1.1   | Establish the test-integrity regime before the components it polices                               | Add the app-factory-derived production fixture                                | done    |
+| 1.2   | Establish the test-integrity regime before the components it polices                               | Add the self-maintaining call-site inventory and signature-conformance test   | done    |
+| 1.3   | Establish the test-integrity regime before the components it polices                               | Implement the test-double AST lint with its own good/bad fixtures             | done    |
+| 1.4   | Establish the test-integrity regime before the components it polices                               | Add the Go interface-assertion completeness check                             | done    |
+| 1.5   | Establish the test-integrity regime before the components it polices                               | Extend the capability gate and add skip detection                             | done    |
+| 1.6   | Establish the test-integrity regime before the components it polices                               | Implement the mutation harness and the negative-control manifest              | done    |
+| 1.7   | Establish the test-integrity regime before the components it polices                               | Add the CI-job existence check that keeps Appendix E honest                   | done    |
+| 1.8   | Establish the test-integrity regime before the components it polices                               | Exercise the regime's own safeguards end to end                               | done    |
 | 2.1   | Close the inherited debt that all later work sits on                                               | Wire the model router from the shipped tier YAML in the app factory           | pending |
 | 2.2   | Close the inherited debt that all later work sits on                                               | Write property test Q-27 for tier-configuration provenance                    | pending |
 | 2.3   | Close the inherited debt that all later work sits on                                               | Make `compose-smoke` actually start the stack                                 | pending |

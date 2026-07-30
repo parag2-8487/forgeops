@@ -1,0 +1,2 @@
+{"$report_type": "TestReport", "nodeid": "tests/unit/test_fixture.py::test_passes", "when": "call", "outcome": "passed"}
+{"$report_type": "TestReport", "nodeid": "tests/unit/test_fixture.py::test_also_passes", "when": "call", "outcome": "passed"}

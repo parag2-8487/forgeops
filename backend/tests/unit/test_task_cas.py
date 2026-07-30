@@ -171,7 +171,7 @@ async def test_cas_holds_against_a_real_redis():
 
     url = _REDIS_URL_AT_IMPORT
     if not url:
-        require_capability("REDIS_URL is not set; the in-memory CAS tests above still apply")
+        require_capability("redis", "REDIS_URL is not set; the in-memory CAS tests above still apply")
 
     redis_asyncio = pytest.importorskip("redis.asyncio")
     client = redis_asyncio.from_url(url, decode_responses=True)
@@ -179,7 +179,7 @@ async def test_cas_holds_against_a_real_redis():
         await client.ping()
     except Exception:
         await client.aclose()
-        require_capability(f"no Redis reachable at {url}")
+        require_capability("redis", f"no Redis reachable at {url}")
 
     try:
         store = RedisTaskStore(client)

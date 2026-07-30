@@ -136,6 +136,18 @@ jobs:
         run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
       - name: Lint
         run: golangci-lint run ./...
+      # design.md §0.4.2 clause 2: a compile-time `var _ Iface = (*Impl)(nil)`
+      # assertion cannot rot, but it can be ABSENT — and an absent assertion is
+      # indistinguishable from a satisfied one until a signature changes and only
+      # the injection site breaks, at runtime. That is the Go shape of D-23. The
+      # checker is a standalone stdlib-only module, so it adds nothing to
+      # agent/go.mod. It also fails when the discovered interface set is empty.
+      - name: Interface-assertion completeness
+        working-directory: .
+        run: bash scripts/check-go-interface-assertions.sh
+      - name: Interface-assertion checker's own negative fixtures
+        working-directory: scripts/go/ifacecheck
+        run: go test ./... -count=1
       # PRD §9: -race and -shuffle=on. Linux runners have cgo, so -race works.
       - name: Test
         run: go test -race -shuffle=on ./... -count=1

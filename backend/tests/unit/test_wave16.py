@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from src.core.errors import ProblemException
@@ -70,7 +70,7 @@ class TestHandleToolsCall:
         # spec'd child mock, never by reassigning the attribute — reassigning
         # discards signature enforcement, which is how a broken gateway once
         # passed CI.
-        policy = AsyncMock(spec=OpaGatewayPolicy)
+        policy = create_autospec(OpaGatewayPolicy, spec_set=True, instance=True)
         if policy_allow:
             policy.authorise_call.return_value = None
         else:
@@ -82,11 +82,11 @@ class TestHandleToolsCall:
             )
 
         # Cache: consulted by local metadata resolution, never for dispatch.
-        cache = AsyncMock(spec=TtlToolCache)
+        cache = create_autospec(TtlToolCache, spec_set=True, instance=True)
         cache.get.return_value = None
 
         # Upstream
-        upstream = AsyncMock(spec=McpUpstream)
+        upstream = create_autospec(McpUpstream, spec_set=True, instance=True)
         upstream.call_tool.return_value = upstream_result or {"content": [{"type": "text", "text": "ok"}]}
 
         # Registry (not directly used but required)

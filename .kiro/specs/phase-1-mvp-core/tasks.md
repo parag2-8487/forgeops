@@ -25,51 +25,51 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
 ## Tasks
 
-- [ ] 1. Establish the test-integrity regime before the components it polices
-  - [ ] 1.1 Add the app-factory-derived production fixture
+- [x] 1. Establish the test-integrity regime before the components it polices
+  - [x] 1.1 Add the app-factory-derived production fixture
     - Create `backend/tests/integration/production_app.py` exposing a `production_app` fixture that builds the app through `create_app()` — the same callable uvicorn runs — under a lifespan manager.
     - Enforce the rule that makes it non-negotiable: the fixture may substitute a *transport* (`httpx.MockTransport`, a local fixture HTTP server, a container URL) and may never substitute a collaborator object.
     - Add `backend/tests/integration/test_wiring_coverage.py`, which enumerates `vars(app.state)` and fails if any composed attribute is not named by a `@wires(...)` declaration in some wiring test, so a newly composed component cannot arrive untested.
     - _Design: §0.4.1, §7.8, §11.1; Deliverable: 1.11_
 
-  - [ ] 1.2 Add the self-maintaining call-site inventory and signature-conformance test
+  - [x] 1.2 Add the self-maintaining call-site inventory and signature-conformance test
     - Implement `scripts/collect_call_sites.py`: walk `backend/src/**/*.py` with `ast`, find every `Call` whose function is an `Attribute` on a name bound from a constructor parameter or an `app.state` read, resolve the collaborator type from the annotation, and yield `(module, line, target_class, method, args, kwargs)`.
     - Add `backend/tests/unit/test_contract_conformance.py` parametrised over the collector, binding each site with `inspect.signature(...).bind()` against the real class.
     - Commit an `INVENTORY_FLOOR` integer that may only be raised, and assert the collector's output meets it, so a refactor cannot silently empty the inventory.
     - _Design: §0.4.2, §7.8; Deliverable: 1.11_
 
-  - [ ] 1.3 Implement the test-double AST lint with its own good/bad fixtures
+  - [x] 1.3 Implement the test-double AST lint with its own good/bad fixtures
     - Implement `scripts/check-test-doubles.py` with rules `FO-TD001` (assignment over a `spec=`'d child with a bare `Mock`/`AsyncMock`/`MagicMock`), `FO-TD002` (`spec=`/`create_autospec` without `spec_set=True`), `FO-TD003` (`patch`/`patch.object` without `autospec=True` on a project-owned target) and `FO-TD004` (any `Mock` under `tests/integration/**`).
     - Invocation `python scripts/check-test-doubles.py backend/tests`; input is every `.py` under `backend/tests/**` parsed with `ast` and never imported; failure is exit `1` with `path:line: FO-TD00N message`. Suppression requires `# noqa: FO-TD00N — <reason>`, and a reasonless suppression is itself `FO-TD001`.
     - Add `backend/tests/meta/fixtures/{bad_double.py,good_double.py}` and `backend/tests/meta/test_check_test_doubles.py` asserting the bad fixture is flagged and the good one is not; register the script as a `pre-commit` local hook scoped to `^backend/tests/.*\.py$`.
     - _Design: §0.4.3, §8.3; Deliverable: 1.11_
 
-  - [ ] 1.4 Add the Go interface-assertion completeness check
+  - [x] 1.4 Add the Go interface-assertion completeness check
     - Implement `scripts/check-go-interface-assertions.sh`: enumerate every exported interface under `agent/internal/**` and every type that structurally satisfies it, and fail if an implementation has no `var _ Iface = (*Impl)(nil)` assertion in a `contract_test.go`.
     - Failure is exit `1` naming the interface and the unasserted implementation; the check also fails when the discovered interface set is empty.
     - Add the check to the `agent` job's lint step and add a negative fixture package proving it detects a missing assertion.
     - _Design: §0.4.2, §8.3, §9; Deliverable: 1.1_
 
-  - [ ] 1.5 Extend the capability gate and add skip detection
+  - [x] 1.5 Extend the capability gate and add skip detection
     - Extend `backend/tests/integration/capability.py::require_capability` with the Phase 1 capability keys `opa`, `cerbos`, `oidc`, `kubernetes`, `trivy`, `infisical`, `agent_binary`, keeping the D-26 semantics: skip locally, **fail** when `FORGEOPS_REQUIRE_INTEGRATION=1`.
     - Implement `scripts/check-no-skips.py` consuming `pytest --report-log` JSONL and `go test -json` events; failure is exit `1` listing every `mandatory`-marked node whose outcome was `skipped`, and also exit `1` when the mandatory selection is empty.
     - Add a `mandatory` pytest marker to `pyproject.toml` and meta tests proving the script detects both a skip and an empty selection.
     - _Design: §0.4.4, §7.13, §17.1 D-26 lineage; Deliverable: 1.11_
 
-  - [ ] 1.6 Implement the mutation harness and the negative-control manifest
+  - [x] 1.6 Implement the mutation harness and the negative-control manifest
     - Implement `scripts/mutation-harness.py --all`: read `backend/tests/mutation/mutations.toml`, write one pytest plugin per row into a `tempfile.mkdtemp()` directory asserted to lie **outside** the repository, run `pytest <property file> -p <plugin>`, and require the run to **fail**.
     - Create `backend/tests/mutation/mutations.toml` with the schema `property`/`target`/`mutation`/`description` and seed rows for the properties that exist at this point; the file grows one row per property leaf.
     - Failure is exit `1` on any `VACUOUS` row, on a missing row for any `Q-` id defined in Appendix B, or if `git status --porcelain` is non-empty after the run; add the Go variant using a `go build -overlay` temp module so no tracked file is ever edited.
     - Add meta tests: a deliberately vacuous property must be reported `VACUOUS`, and the harness must leave the working tree clean.
     - _Design: §0.4.5, §8.3.3, Appendix B; Deliverable: 1.11_
 
-  - [ ] 1.7 Add the CI-job existence check that keeps Appendix E honest
+  - [x] 1.7 Add the CI-job existence check that keeps Appendix E honest
     - Implement `scripts/check-ci-jobs.py`: invocation `python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md`; input is the workflow's `jobs:` keys and every backtick-quoted job name inside Appendix E.
     - Failure is exit `1` naming any job Appendix E cites that the workflow does not define, and exit `1` when the extracted set is empty.
     - Register it in `pre-commit` and add a negative fixture workflow proving it detects a missing job. Phase 0's Appendix E cited `build`, `test` and `lint` jobs that never existed; this makes that a build failure.
     - _Design: §8.3, §15.10, Appendix E; Deliverable: 1.11_
 
-  - [ ] 1.8 Exercise the regime's own safeguards end to end
+  - [x] 1.8 Exercise the regime's own safeguards end to end
     - Run tasks 1.1–1.7's checks together against the current tree and prove each fails on its negative fixture and passes on the real tree.
     - Assert the four authoritative root documents remain outside every mutating hook while staying inside Gitleaks, and that no new script writes to the repository during a check run.
     - _Design: §0.4, §8.3, §8.4; Deliverable: 1.11_

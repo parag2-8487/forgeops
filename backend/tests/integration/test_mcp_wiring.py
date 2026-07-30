@@ -26,7 +26,10 @@ Design authority: §11.4, §11.5.
 from __future__ import annotations
 
 import json
+import threading
 import time
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import httpx
@@ -47,7 +50,12 @@ from src.mcp.routing import HeaderRouter
 from src.mcp.tasks import RedisTaskStore
 from src.mcp.upstream import McpUpstream
 
-ISSUER = "https://auth.forgeops.test"
+from .wiring import wires
+
+# The issuer is supplied per test run by the jwks_server fixture, which serves a
+# real JWKS document over loopback. Only the key id stays constant, because the
+# token header and the served JWK have to agree on it.
+KEY_ID = "wiring-key"
 AUDIENCE = "forgeops-mcp-gateway"
 UPSTREAM_URL = "http://agent.test:8900"
 
@@ -175,14 +183,61 @@ def keypair():
 
 
 @pytest.fixture()
-def bearer(keypair) -> str:
+def jwks_server(keypair) -> Iterator[str]:
+    """Serve a REAL JWKS document over loopback and yield the issuer URL.
+
+    Why a real server rather than a MagicMock JWKS client. `PyJWKClient` fetches
+    with `urllib`, not with the shared `httpx` client, so it cannot be routed
+    through `httpx.MockTransport` like every other outbound call in this file. The
+    previous version therefore built `MagicMock()` signing-key and JWKS-client
+    objects and poked them into `verifier._jwks_clients` — which substituted a
+    collaborator (banned by design.md 0.4.1, mechanically by
+    `scripts/check-test-doubles.py` FO-TD004), reached into a private attribute,
+    and skipped `_get_jwks_client` and the real signature verification entirely.
+
+    A local fixture HTTP server is explicitly the permitted substitution: it is a
+    transport, the verifier is unmodified, and the JWKS fetch, the `kid` lookup and
+    the RS256 signature check all run for real.
+    """
+    _, public_key = keypair
+    jwk = json.loads(pyjwt.algorithms.RSAAlgorithm.to_jwk(public_key))
+    jwk.update({"kid": KEY_ID, "use": "sig", "alg": "RS256"})
+    document = json.dumps({"keys": [jwk]}).encode("utf-8")
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - http.server API
+            if self.path != "/.well-known/jwks.json":
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(document)))
+            self.end_headers()
+            self.wfile.write(document)
+
+        def log_message(self, *args: object) -> None:
+            """Silence the default stderr access log."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture()
+def bearer(keypair, jwks_server: str) -> str:
     private_pem, _ = keypair
     now = int(time.time())
     token = pyjwt.encode(
-        {"iss": ISSUER, "sub": "user-42", "aud": AUDIENCE, "exp": now + 3600, "iat": now},
+        {"iss": jwks_server, "sub": "user-42", "aud": AUDIENCE, "exp": now + 3600, "iat": now},
         private_pem,
         algorithm="RS256",
-        headers={"kid": "wiring-key"},
+        headers={"kid": KEY_ID},
     )
     return f"Bearer {token}"
 
@@ -198,11 +253,8 @@ def redis() -> InMemoryRedis:
 
 
 @pytest.fixture()
-def client(keypair, network: StubNetwork, redis: InMemoryRedis):
+def client(keypair, network: StubNetwork, redis: InMemoryRedis, jwks_server: str):
     """Compose the graph exactly as src/main.py does, then mount the real router."""
-    from unittest.mock import MagicMock
-
-    _, public_key = keypair
     shared_http = httpx.AsyncClient(transport=httpx.MockTransport(network.handler), timeout=5.0)
 
     registry = McpServerRegistry.from_config(
@@ -216,13 +268,9 @@ def client(keypair, network: StubNetwork, redis: InMemoryRedis):
         ]
     )
 
-    verifier = OidcTokenVerifier(allowed_issuers=[ISSUER], audience=AUDIENCE, http=shared_http)
-    signing_key = MagicMock()
-    signing_key.key = public_key
-    jwks_client = MagicMock()
-    jwks_client.get_signing_key_from_jwt.return_value = signing_key
-    verifier._jwks_clients[ISSUER] = jwks_client
-    verifier._jwks_cache_times[ISSUER] = time.time()
+    # The real verifier against the real local JWKS document: no double, no private
+    # attribute assignment, and _get_jwks_client plus the RS256 check both run.
+    verifier = OidcTokenVerifier(allowed_issuers=[jwks_server], audience=AUDIENCE, http=shared_http)
 
     # The real collaborators — same construction shape as src/main.py:130-145.
     policy = OpaGatewayPolicy(opa_url="http://opa.test:8181", http=shared_http)
@@ -257,6 +305,7 @@ def _headers(bearer: str, method: str) -> dict[str, str]:
 # ── tools/list ───────────────────────────────────────────────────────────────
 
 
+@wires("mcp_gateway", "mcp_registry", "mcp_verifier", "shared_http")
 class TestToolsListThroughTheRealGraph:
     def test_returns_the_policy_filtered_tool_list(self, client, bearer, network):
         resp = client.post("/api/v1/mcp", headers=_headers(bearer, "tools/list"))
@@ -308,6 +357,7 @@ class TestToolsListThroughTheRealGraph:
 # ── tools/call ───────────────────────────────────────────────────────────────
 
 
+@wires("mcp_gateway", "mcp_app_registry")
 class TestToolsCallThroughTheRealGraph:
     def _call(self, client, bearer, tool: str):
         return client.post(
@@ -363,6 +413,7 @@ class TestToolsCallThroughTheRealGraph:
 # ── tasks lifecycle ──────────────────────────────────────────────────────────
 
 
+@wires("mcp_task_store")
 class TestTasksLifecycleThroughTheRealGraph:
     def _tasks(self, client, bearer, method: str, params: dict[str, Any]):
         return client.post(

@@ -1,0 +1,17 @@
+# NEGATIVE fixture for scripts/check-ci-jobs.py.
+#
+# This workflow deliberately omits jobs that the paired fixture design cites, so the
+# check must fail on it. It is never run by GitHub: it lives under
+# backend/tests/meta/fixtures/ and no `on:` trigger points at this repository's
+# events in a way Actions would pick up, because Actions only reads
+# .github/workflows/.
+name: ci-negative-fixture
+
+on:
+  workflow_dispatch:
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "the fixture design also cites a `backend` job, which is absent"

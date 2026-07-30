@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import jwt as pyjwt
 import pytest
@@ -125,7 +125,7 @@ def mock_upstream() -> AsyncMock:
     """Mock upstream that tracks call counts."""
     from src.mcp.upstream import ToolListResult
 
-    upstream = AsyncMock(spec=McpUpstream)
+    upstream = create_autospec(McpUpstream, spec_set=True, instance=True)
     upstream.list_tools.return_value = ToolListResult(
         tools=[
             {"name": "plan", "description": "Run terraform plan"},
@@ -141,7 +141,7 @@ def mock_upstream() -> AsyncMock:
 @pytest.fixture()
 def mock_policy() -> AsyncMock:
     """Mock OPA policy — allows everything by default."""
-    policy = AsyncMock(spec=OpaGatewayPolicy)
+    policy = create_autospec(OpaGatewayPolicy, spec_set=True, instance=True)
     # filter_tools: pass through all tools by default
     policy.filter_tools.side_effect = lambda **kwargs: kwargs.get("tools", [])
     # authorise_call: allows by default (no exception)
@@ -152,7 +152,7 @@ def mock_policy() -> AsyncMock:
 @pytest.fixture()
 def mock_cache() -> AsyncMock:
     """Mock TTL cache — miss by default."""
-    cache = AsyncMock(spec=TtlToolCache)
+    cache = create_autospec(TtlToolCache, spec_set=True, instance=True)
     cache.get.return_value = None
     cache.put.return_value = None
     return cache

@@ -16,8 +16,6 @@ Proves:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
 import httpx
 import pytest
 from src.ai.routing.breaker import CircuitBreaker
@@ -28,7 +26,7 @@ from src.ai.routing.endpoints import (
     EndpointRegistry,
     OpenAICompatibleEndpoint,
 )
-from src.ai.routing.keys import SecretValue
+from src.ai.routing.keys import KeyResolver, SecretValue
 from src.ai.routing.router import ModelRouter, RoutingOutcome
 from src.ai.routing.tiers import (
     EndpointDescriptor,
@@ -95,24 +93,73 @@ def _make_tier_config(
     )
 
 
-def _fake_redis() -> AsyncMock:
-    """Returns a mock Redis that always misses on get (no cache)."""
-    redis = AsyncMock()
-    redis.get = AsyncMock(return_value=None)
-    redis.set = AsyncMock(return_value=True)
-    return redis
+class _CacheMissRedis:
+    """A real in-memory stand-in for the Redis client, not a Mock.
+
+    design.md 0.4.1 lets an integration test substitute a *transport* — an
+    external-service client is one — but forbids substituting a collaborator
+    object, and `scripts/check-test-doubles.py` rule FO-TD004 makes that
+    mechanical by failing on any Mock under `tests/integration/**`. A Mock here
+    would also be signature-free: `redis.get = AsyncMock(...)` accepts any call at
+    all, which is the D-23 hole in miniature.
+
+    This class implements only what `TieredSemanticCache` actually calls, so a
+    cache that started calling something else fails loudly with AttributeError
+    instead of silently receiving a permissive Mock.
+    """
+
+    def __init__(self) -> None:
+        self.get_calls: list[str] = []
+        self.set_calls: list[tuple[str, str]] = []
+
+    async def get(self, key: str) -> str | None:
+        self.get_calls.append(key)
+        return None  # always a miss: these tests exercise routing, not caching
+
+    async def set(self, key: str, value: str, *args: object, **kwargs: object) -> bool:
+        self.set_calls.append((key, value))
+        return True
 
 
-def _fake_key_resolver(keys: dict[str, str] | None = None) -> MagicMock:
-    """Returns a key resolver that resolves from a dict."""
-    resolver = MagicMock()
-    keys = keys or {"openai": "sk-test-key-12345", "anthropic": "ak-test-key"}
+def _fake_redis() -> _CacheMissRedis:
+    """A Redis stand-in that always misses on get, so no cache short-circuits."""
+    return _CacheMissRedis()
 
-    def resolve(key_ref: str):
-        val = keys.get(key_ref)
-        return SecretValue(val) if val else None
 
-    resolver.resolve = resolve
+class _DictKeyResolver:
+    """A real `KeyResolver` implementation backed by a dict.
+
+    Explicitly conforms to the `KeyResolver` Protocol rather than being a
+    MagicMock, so the double cannot drift from the interface the router consumes.
+    The `isinstance` assertion below is the Python analogue of the Go
+    `var _ Iface = (*Impl)(nil)` assertion §0.4.2 requires.
+    """
+
+    def __init__(self, keys: dict[str, str]) -> None:
+        self._keys = dict(keys)
+
+    def resolve(self, key_ref: str) -> SecretValue | None:
+        value = self._keys.get(key_ref)
+        return SecretValue(value) if value else None
+
+
+def _fake_key_resolver(keys: dict[str, str] | None = None) -> _DictKeyResolver:
+    """A key resolver over a dict of synthetic, self-labelling values.
+
+    The values carry no provider-shaped prefix on purpose: a literal shaped like a
+    real vendor API key makes every secret scanner fire on this repository, and a
+    blocked scan everyone learns to wave through is worse than no scan
+    (.kiro/steering/secret-safety.md). The prefix is deliberately not spelled out
+    here either — a comment explaining the problem should not reproduce it.
+    """
+    resolver = _DictKeyResolver(
+        keys
+        or {
+            "openai": "test-only-not-a-real-secret-openai",
+            "anthropic": "test-only-not-a-real-secret-anthropic",
+        }
+    )
+    assert isinstance(resolver, KeyResolver), "_DictKeyResolver no longer satisfies KeyResolver"
     return resolver
 
 
@@ -347,7 +394,9 @@ class TestCrossProviderFallback:
             registry=registry,
             cache=cache,
             breakers={},
-            key_resolver=_fake_key_resolver({"openai": "sk-openai", "xai": "sk-xai"}),
+            key_resolver=_fake_key_resolver(
+                {"openai": "test-only-not-a-real-secret-openai", "xai": "test-only-not-a-real-secret-xai"}
+            ),
         )
 
         result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request())
@@ -437,7 +486,7 @@ class TestTraceHeaderInjection:
             registry=registry,
             cache=cache,
             breakers={},
-            key_resolver=_fake_key_resolver({"openai": "sk-secret-key"}),
+            key_resolver=_fake_key_resolver({"openai": "test-only-not-a-real-secret-hdr"}),
         )
 
         await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request())
@@ -445,7 +494,7 @@ class TestTraceHeaderInjection:
         # Verify request was made with Authorization header
         assert len(transport.requests) == 1
         req = transport.requests[0]
-        assert req.headers.get("authorization") == "Bearer sk-secret-key"
+        assert req.headers.get("authorization") == "Bearer test-only-not-a-real-secret-hdr"
         assert req.headers.get("content-type") == "application/json"
 
 
@@ -454,7 +503,7 @@ class TestErrorRedaction:
 
     async def test_no_api_key_in_error(self):
         """API keys and prompts are not exposed in error reasons."""
-        secret_key = "sk-super-secret-key-12345"
+        secret_key = "test-only-not-a-real-secret-redaction"
 
         def error_handler(request: httpx.Request) -> httpx.Response:
             # Simulate an error that might include the key in error text

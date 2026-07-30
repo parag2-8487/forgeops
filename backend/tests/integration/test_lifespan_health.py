@@ -166,8 +166,9 @@ class TestReadinessRecovery:
         )
         if not os.path.exists(redis_server) and shutil.which(redis_server) is None:
             require_capability(
+                "redis",
                 f"no real redis-server binary available at {redis_server}; this test must "
-                "start and stop its own Redis to observe the unavailable -> available transition"
+                "start and stop its own Redis to observe the unavailable -> available transition",
             )
 
         # The already-running test PostgreSQL is reachable; Redis is started on a

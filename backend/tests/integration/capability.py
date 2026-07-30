@@ -18,15 +18,51 @@ A skip that is invisible in a green run is indistinguishable from coverage. So:
 * in CI, `FORGEOPS_REQUIRE_INTEGRATION=1` turns that same skip into a failure.
 
 Use `require_capability` for every capability probe in the integration suite.
+
+Phase 1 additions (design.md §0.4.4)
+------------------------------------
+Every new capability is registered through **this function and no other**, with a
+named key drawn from `CAPABILITIES` below. The key matters for two reasons: it is
+what `scripts/check-no-skips.py` reports when a mandatory test skips, and a typo'd
+capability name would otherwise create a silent second gate — the exact D-26
+failure. `require_capability` therefore rejects an unregistered key outright,
+rather than accepting free-form text.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Final
 
 import pytest
 
 REQUIRE_ENV = "FORGEOPS_REQUIRE_INTEGRATION"
+
+#: Every capability an integration test may gate on, with where CI provides it.
+#: Adding a row here is the only way to add a gate; see the module docstring.
+CAPABILITIES: Final[dict[str, str]] = {
+    # Phase 0
+    "postgres": "backend job service (pgvector/pgvector:pg17)",
+    "redis": "backend job service (Redis Stack)",
+    "tofu": "agent job (opentofu/setup-opentofu)",
+    "docker": "a reachable Docker daemon on the runner",
+    # Phase 1 (design.md §0.4.4 table)
+    "opa": "backend job service (OPA, rootless)",
+    "cerbos": "backend job service (Cerbos sidecar)",
+    "oidc": "fixture issuer in the backend job; real Authentik in the auth job",
+    "kubernetes": "k8s job (kind cluster, D-28)",
+    "trivy": "agent job (pinned trivy in the agent-dev devtools image)",
+    "infisical": "secrets job (digest-pinned Infisical container)",
+    "agent_binary": "e2e job (the real forgeops-agent binary)",
+}
+
+
+class UnknownCapabilityError(LookupError):
+    """Raised when a test gates on a capability that is not registered.
+
+    This is deliberately an error rather than a skip. A misspelled capability that
+    silently skipped would be a second, invisible gate — D-26 all over again.
+    """
 
 
 def integration_is_mandatory() -> bool:
@@ -34,12 +70,29 @@ def integration_is_mandatory() -> bool:
     return os.environ.get(REQUIRE_ENV, "").strip().lower() in {"1", "true", "yes"}
 
 
-def require_capability(reason: str) -> None:
+def require_capability(capability: str, reason: str | None = None) -> None:
     """Skip locally, fail in CI.
 
     Call this instead of `pytest.skip` so an environment that promised the
     capability cannot silently drop the test.
+
+    Args:
+        capability: a key from `CAPABILITIES`.
+        reason: what specifically is missing, appended to the message. Optional,
+            because the capability key alone is often the whole story.
     """
+    if capability not in CAPABILITIES:
+        raise UnknownCapabilityError(
+            f"unregistered capability {capability!r}; add it to "
+            f"tests/integration/capability.py::CAPABILITIES with the CI job that "
+            f"provides it. Known: {sorted(CAPABILITIES)}"
+        )
+
+    detail = f"capability {capability!r} unavailable"
+    if reason:
+        detail += f": {reason}"
+    provided_by = CAPABILITIES[capability]
+
     if integration_is_mandatory():
-        pytest.fail(f"{REQUIRE_ENV} is set but this test cannot run: {reason}")
-    pytest.skip(reason)
+        pytest.fail(f"{REQUIRE_ENV} is set but {detail}. CI provides it via: {provided_by}")
+    pytest.skip(f"{detail} (CI provides it via: {provided_by})")

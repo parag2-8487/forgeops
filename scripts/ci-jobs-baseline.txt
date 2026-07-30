@@ -1,0 +1,23 @@
+# CI jobs Appendix E cites that the workflow does not define YET.
+#
+# Read by scripts/check-ci-jobs.py. Format: `job: owning task`.
+#
+# This is NOT a suppression list. Two rules keep it honest:
+#
+#   1. a job Appendix E cites that is neither defined nor listed here FAILS the
+#      check — which is the whole point, since Phase 0's Appendix E cited `build`,
+#      `test` and `lint` jobs that never existed (design.md §15.10);
+#   2. a job listed here that the workflow DOES now define also FAILS the check, so
+#      the entry cannot outlive its purpose. Adding the job forces deleting its line
+#      in the same commit.
+#
+# Task 19.3 assembles the full fifteen-job workflow, at which point every line below
+# is gone and this file is empty. If a line is still here when Phase 1 closes, that
+# is a real gap in the evidence chain, not a formatting detail.
+
+policy: task 9.1 (opa test policies/ -v, opa check --strict)
+secrets: task 10.4 (Infisical CRUD round trip against the container)
+k8s: task 14.9 (kind cluster, server-side dry-run, SPIRE attestation)
+templates: task 15.6 (8 x 5 template matrix through the real ValidationPipeline)
+e2e: task 18.3 (Playwright criterion-10 journey against built containers)
+mutation: task 19.2 (python scripts/mutation-harness.py --all)

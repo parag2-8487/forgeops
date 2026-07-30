@@ -34,7 +34,17 @@ dev = [
     "pytest==8.3.4",
     "pytest-asyncio==0.25.3",
     "pytest-cov==6.0.0",
+    # design.md §0.4.4: `--report-log` is what `scripts/check-no-skips.py` reads to
+    # prove the mandatory selection actually ran. It ships in this plugin, not in
+    # pytest core, so the gate depends on it explicitly rather than by accident.
+    "pytest-reportlog==0.4.0",
     "hypothesis==6.125.3",
+    # design.md §0.4.1: the `production_app` fixture drives the REAL app factory
+    # through the ASGI lifespan protocol, so the composition under test is the one
+    # uvicorn runs. asgi-lifespan is the ASGI-native way to do that; a hand-rolled
+    # send/receive loop would be a second, untested implementation of a protocol
+    # that already has one.
+    "asgi-lifespan==2.1.0",
     "ruff==0.9.7",
     "pip-audit==2.7.3",
     "pip-tools==7.6.0",
@@ -49,6 +59,12 @@ addopts = [
 ]
 markers = [
     "integration: marks integration tests (deselect with '-m not integration')",
+    # design.md §0.4.4: the mandatory selection is defined by MARKER, not by path,
+    # so moving a file cannot quietly drop it from the set CI must actually run.
+    # `scripts/check-no-skips.py` fails the build on any skip in this selection,
+    # and also on an EMPTY selection — a selector that matches nothing would
+    # otherwise pass silently.
+    "mandatory: must actually execute in CI; a skip here fails the build",
 ]
 
 [tool.coverage.run]
