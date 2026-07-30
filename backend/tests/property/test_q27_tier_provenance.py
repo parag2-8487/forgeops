@@ -99,42 +99,54 @@ def _app_tier_map(tier_yaml: Path) -> dict[str, str]:
 
     Synchronous on purpose: hypothesis drives this, and wrapping each example in
     `asyncio.run` keeps the strategy plumbing out of the property's statement.
+
+    The environment is rebuilt from the committed baseline on EVERY call rather than
+    once in an autouse fixture. Hypothesis reuses a function-scoped fixture across all
+    examples of one test, so a fixture-supplied environment is shared mutable state
+    spanning dozens of `create_app()` calls — and several suites in this repository
+    assign to `os.environ` directly rather than through monkeypatch. The result was a
+    property that passed in isolation and reported a hypothesis FlakyFailure inside the
+    full run. Building the environment per example removes the ordering dependency
+    rather than hiding it behind a retry.
     """
     from asgi_lifespan import LifespanManager
+    from src.core.config import load_project_dotenv
     from src.main import create_app
+
+    from ..integration.production_app import UNREACHABLE_DATABASE_URL, UNREACHABLE_REDIS_URL
+
+    environment = dict(load_project_dotenv((".env.example",)))
+    environment["DATABASE_URL"] = UNREACHABLE_DATABASE_URL
+    environment["REDIS_URL"] = UNREACHABLE_REDIS_URL
+    environment["APP_ENV"] = "test"
+    environment["MODEL_TIER_CONFIG_PATH"] = str(tier_yaml)
 
     async def _build() -> dict[str, str]:
         app = create_app()
         async with LifespanManager(app):
             return {tier.value: chain.primary for tier, chain in app.state.tier_config.tiers.items()}
 
-    previous = os.environ.get("MODEL_TIER_CONFIG_PATH")
-    os.environ["MODEL_TIER_CONFIG_PATH"] = str(tier_yaml)
+    saved = {key: os.environ.get(key) for key in environment}
+    os.environ.update(environment)
     try:
         return asyncio.run(_build())
     finally:
-        if previous is None:
-            os.environ.pop("MODEL_TIER_CONFIG_PATH", None)
-        else:
-            os.environ["MODEL_TIER_CONFIG_PATH"] = previous
+        for key, previous in saved.items():
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
 
 
 @pytest.fixture(autouse=True)
-def _baseline_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The committed baseline, plus DSNs pointing at a closed port.
+def _isolate_tier_config_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make sure no ambient `MODEL_TIER_CONFIG_PATH` leaks into an example.
 
-    Both are configuration substitutions, which §0.4.1 permits; no collaborator is
-    replaced, so what the property observes is the production composition.
+    The rest of the environment is built per example inside `_app_tier_map`; only this
+    one key needs clearing up front, because a value left behind by another suite would
+    be silently overwritten and then restored to the wrong thing.
     """
-    from src.core.config import load_project_dotenv
-
-    from ..integration.production_app import UNREACHABLE_DATABASE_URL, UNREACHABLE_REDIS_URL
-
-    for key, value in load_project_dotenv((".env.example",)).items():
-        monkeypatch.setenv(key, value)
-    monkeypatch.setenv("DATABASE_URL", UNREACHABLE_DATABASE_URL)
-    monkeypatch.setenv("REDIS_URL", UNREACHABLE_REDIS_URL)
-    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.delenv("MODEL_TIER_CONFIG_PATH", raising=False)
 
 
 class TestQ27TierConfigurationProvenance:

@@ -22,11 +22,23 @@ from src.core.config import (
 class TestProjectConfigKeys:
     """Verify the PROJECT_CONFIG_KEYS inventory."""
 
-    def test_inventory_has_74_keys(self):
-        """The .env.example has 74 declared keys (design.md §13.1)."""
-        assert len(PROJECT_CONFIG_KEYS) == 74, (
-            f"Expected 74 keys in PROJECT_CONFIG_KEYS, got {len(PROJECT_CONFIG_KEYS)}"
-        )
+    def test_inventory_matches_the_committed_baseline_exactly(self):
+        """The inventory and `.env.example` must agree, in both directions.
+
+        This asserted a literal `== 74` for the Phase 0 inventory. Phase 1 adds 66
+        keys (design §13.1), so a hard-coded count is a number to bump every phase and
+        proves nothing beyond arithmetic. Comparing the inventory against the committed
+        baseline instead is what the count was standing in for: a key in the inventory
+        but missing from the file is a value a fresh clone cannot supply, and a key in
+        the file but not the inventory is rejected by `load_project_dotenv`.
+        """
+        from src.core.config import load_project_dotenv
+
+        baseline = set(load_project_dotenv((".env.example",)))
+        assert baseline == set(PROJECT_CONFIG_KEYS), {
+            "in the file but not registered": sorted(baseline - set(PROJECT_CONFIG_KEYS)),
+            "registered but not in the file": sorted(set(PROJECT_CONFIG_KEYS) - baseline),
+        }
 
     def test_all_keys_are_uppercase(self):
         """All keys in the inventory should be uppercase."""
@@ -173,13 +185,26 @@ class TestSettingsProductionIssuer:
         assert settings.mcp_oidc_issuers == ""
 
     def test_production_with_issuers_succeeds(self):
-        """Non-empty MCP_OIDC_ISSUERS in production succeeds."""
+        """Non-empty MCP_OIDC_ISSUERS in production succeeds.
+
+        Phase 1 (task 3.1) adds a second production rule: the auth, envelope and
+        internal-CA credentials must all be non-empty when APP_ENV=production, so a
+        production boot cannot silently run without an issuer, an HMAC pepper or a CA.
+        They are supplied here as obvious placeholders; this test is about the issuer
+        clause, and `test_config_phase1.py` covers the credential clause directly.
+        """
         settings = get_settings(
             explicit={
                 "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
                 "REDIS_URL": "redis://localhost:6379/0",
                 "APP_ENV": "production",
                 "MCP_OIDC_ISSUERS": "https://auth.example.com/",
+                "OIDC_ISSUER": "https://auth.example.com/",
+                "OIDC_CLIENT_ID": "forgeops-frontend",
+                "OIDC_CLIENT_SECRET": "change-me-locally",
+                "ENVELOPE_PEPPER": "change-me-locally",
+                "INTERNAL_CA_CERT_PEM": "placeholder-not-a-real-certificate",
+                "INTERNAL_CA_KEY_PEM": "placeholder-not-a-real-key",
             }
         )
         assert settings.mcp_oidc_issuers == "https://auth.example.com/"

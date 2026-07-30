@@ -58,7 +58,7 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 | 2.5   | Close the inherited debt that all later work sits on                                               | Digest-pin every image and move OPA to the rootless variant                   | blocked |
 | 2.6   | Close the inherited debt that all later work sits on                                               | Restore lockfile diff visibility                                              | done    |
 | 2.7   | Close the inherited debt that all later work sits on                                               | Tighten P-07's shutdown-timeout assertion with a slow closer                  | done    |
-| 3.1   | Extend backend core primitives for Phase 1                                                         | Extend `Settings` with the Phase 1 configuration surface                      | pending |
+| 3.1   | Extend backend core primitives for Phase 1                                                         | Extend `Settings` with the Phase 1 configuration surface                      | done    |
 | 3.2   | Extend backend core primitives for Phase 1                                                         | Extend the RFC 9457 registry with the Phase 1 problem types                   | pending |
 | 3.3   | Extend backend core primitives for Phase 1                                                         | Fill middleware row 6 with tenant context and transaction-scoped tenancy      | pending |
 | 3.4   | Extend backend core primitives for Phase 1                                                         | Add `ArqDispatcher` behind the unchanged task seam                            | pending |

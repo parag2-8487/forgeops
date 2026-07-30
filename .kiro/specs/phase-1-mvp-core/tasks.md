@@ -115,7 +115,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - _Design: §0.5, §10.4; Deliverable: 1.1_
 
 - [ ] 3. Extend backend core primitives for Phase 1
-  - [ ] 3.1 Extend `Settings` with the Phase 1 configuration surface
+  - [x] 3.1 Extend `Settings` with the Phase 1 configuration surface
     - Add the auth, pairing, envelope, scanner, retrieval, generation, governance, secrets, tasks and pooling fields from §13.1 to `backend/src/core/config.py`, keeping `extra="forbid"` and the accumulate-all-errors contract.
     - Type `generation_max_iterations` as `Literal[3]` so the safety bound cannot be raised by an environment variable, and add the validator rejecting `CHUNK_OVERLAP_TOKENS >= CHUNK_TARGET_TOKENS`.
     - Add `MCP_AGENT_BLAST_RADIUS` rejection when `APP_ENV=production`, and update `.env.example` with the full §13.1 additions using placeholder-only secret values.

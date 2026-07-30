@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, field_validator
+from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # The complete Phase 0 .env.example key inventory (74 keys from design.md §13.1).
@@ -106,6 +106,83 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         # Frontend
         "NEXT_PUBLIC_API_BASE_URL",
         "NEXT_PUBLIC_APP_NAME",
+        # ─── Phase 1 additions (design §13.1) ────────────────────────────────
+        # Auth (§1.11)
+        "OIDC_ISSUER",
+        "OIDC_APP_AUDIENCE",
+        "OIDC_CLIENT_ID",
+        "OIDC_CLIENT_SECRET",
+        "OIDC_REDIRECT_URL",
+        "SESSION_COOKIE_NAME",
+        "SESSION_TTL_SECONDS",
+        "REFRESH_TTL_SECONDS",
+        "CERBOS_URL",
+        "AUTHENTIK_SECRET_KEY",
+        "AUTHENTIK_BOOTSTRAP_PASSWORD",
+        "AUTHENTIK_BOOTSTRAP_TOKEN",
+        # Agent pairing and envelopes (§1.1)
+        "PAIRING_CODE_TTL_SECONDS",
+        "PAIRING_CODE_MAX_ATTEMPTS",
+        "PAIRING_CODE_ALPHABET",
+        "PAIRING_RATE_LIMIT_PER_IP_PER_MINUTE",
+        "DEVICE_CERT_TTL_HOURS",
+        "DEVICE_CERT_RENEW_BEFORE_HOURS",
+        "ENVELOPE_MAX_AGE_SECONDS",
+        "ENVELOPE_CLOCK_SKEW_SECONDS",
+        "ENVELOPE_PEPPER",
+        "INTERNAL_CA_CERT_PEM",
+        "INTERNAL_CA_KEY_PEM",
+        "HEARTBEAT_INTERVAL_SECONDS",
+        "HEARTBEAT_TIMEOUT_SECONDS",
+        # Analysis and indexing (§1.3)
+        "SCAN_MAX_FILE_SIZE_BYTES",
+        "SCAN_WATCH_DEBOUNCE_MS",
+        "SCAN_PARSER_CONCURRENCY",
+        "CHUNK_TARGET_TOKENS",
+        "CHUNK_OVERLAP_TOKENS",
+        "SUMMARY_TARGET_TOKENS",
+        "EMBEDDING_BACKEND",
+        "EMBEDDING_MODEL_ID_LOCAL",
+        "EMBEDDING_DIMS_LOCAL",
+        "LLM_KEY_VOYAGE",
+        "VOYAGE_BASE_URL",
+        "RERANK_MODEL",
+        "RETRIEVAL_OVERFETCH_FACTOR",
+        "RETRIEVAL_TOP_K",
+        # Generation (§1.5)
+        "GENERATION_MAX_ITERATIONS",
+        "JUDGE_TIER",
+        "JUDGE_PROMPT_VERSION",
+        "TEMPLATE_LIBRARY_PATH",
+        # Governance, policy, audit (§1.7 §1.9 §1.10)
+        "GOVERNANCE_POLICY_PACKAGE",
+        "POLICY_BUNDLE_REFRESH_SECONDS",
+        "APPROVAL_TTL_SECONDS",
+        "AUDIT_ADVISORY_LOCK_KEY",
+        # Secrets (§1.8)
+        "SECRET_BACKEND",
+        "LOCAL_SECRET_SEAL_KEY",
+        # Tasks (§7.10)
+        "TASK_DISPATCHER",
+        "ARQ_QUEUE_NAME",
+        "ARQ_MAX_JOBS",
+        "ARQ_JOB_TIMEOUT_SECONDS",
+        # Database pooling (§6.7)
+        "DATABASE_POOLER_MODE",
+        "ALEMBIC_DATABASE_URL",
+        # Agent-side (§1.1 §1.3 §1.5)
+        "AGENT_STATE_DIR",
+        "AGENT_CREDENTIAL_STORE",
+        "AGENT_IDENTITY_PROVIDER",
+        "SPIFFE_ENDPOINT_SOCKET",
+        "AGENT_JOURNAL_MAX_BYTES",
+        "AGENT_JOURNAL_MAX_AGE_HOURS",
+        "AGENT_JOURNAL_DRAIN_BATCH",
+        "AGENT_TRIVY_BINARY",
+        "AGENT_VALIDATOR_TIMEOUT_SECONDS",
+        # Frontend (browser-visible; never a secret)
+        "NEXT_PUBLIC_OIDC_LOGIN_PATH",
+        "NEXT_PUBLIC_SSE_TIMEOUT_MS",
     }
 )
 
@@ -160,6 +237,114 @@ class Settings(BaseSettings):
     # CORS
     cors_allow_origins: str = Field(default="http://localhost:3000")
 
+    # ─── Phase 1 §1.11 auth ──────────────────────────────────────────────────
+    # The app API audience is DISTINCT from the MCP gateway audience, so a token
+    # minted for the gateway cannot be replayed against the product API (§7.1).
+    #
+    # Deviation from the §7.1 snippet, recorded deliberately: the snippet declares
+    # these with no default, which would make Settings unconstructable without a full
+    # environment and break every Phase 0 unit test that builds it from two DSNs. The
+    # file already has the right pattern for this — `mcp_oidc_issuers` defaults to
+    # empty and a validator refuses an empty value when APP_ENV=production — so the
+    # same shape is used here. Dev and test boot; production still fails fast, and it
+    # fails fast on ALL of them together rather than on the first (P-15).
+    #
+    # `internal_ca_cert_pem` in particular MUST tolerate empty: §13.1 ships it blank
+    # because scripts/init-ca.sh populates it locally and key material is never
+    # committed.
+    oidc_issuer: str = Field(default="")
+    oidc_app_audience: str = Field(default="forgeops-api")
+    oidc_client_id: str = Field(default="")
+    oidc_client_secret: SecretStr = Field(default=SecretStr(""))
+    oidc_redirect_url: str = Field(default="http://localhost:8000/api/v1/auth/callback")
+    session_cookie_name: str = Field(default="forgeops_session")
+    session_ttl_seconds: int = Field(default=3600, ge=60, le=86_400)
+    refresh_ttl_seconds: int = Field(default=1_209_600, ge=3600)
+    cerbos_url: AnyHttpUrl = Field(default="http://cerbos:3592")  # type: ignore[assignment]
+    authentik_secret_key: SecretStr = Field(default=SecretStr(""))
+    authentik_bootstrap_password: SecretStr = Field(default=SecretStr(""))
+    authentik_bootstrap_token: SecretStr = Field(default=SecretStr(""))
+
+    # ─── Phase 1 §1.1 pairing and envelope integrity ─────────────────────────
+    pairing_code_ttl_seconds: int = Field(default=300, ge=60, le=900)
+    pairing_code_max_attempts: int = Field(default=5, ge=1, le=10)
+    # Crockford base32: no I, L, O or U, so a spoken or retyped code cannot be
+    # ambiguous. Validated below rather than trusted.
+    pairing_code_alphabet: str = Field(default="0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+    pairing_rate_limit_per_ip_per_minute: int = Field(default=10, ge=1, le=120)
+    device_cert_ttl_hours: int = Field(default=24, ge=1, le=168)
+    device_cert_renew_before_hours: int = Field(default=6, ge=1, le=168)
+    envelope_max_age_seconds: int = Field(default=300, ge=30, le=900)
+    envelope_clock_skew_seconds: int = Field(default=60, ge=0, le=300)
+    envelope_pepper: SecretStr = Field(default=SecretStr(""))
+    internal_ca_cert_pem: SecretStr = Field(default=SecretStr(""))
+    internal_ca_key_pem: SecretStr = Field(default=SecretStr(""))
+    heartbeat_interval_seconds: int = Field(default=30, ge=5, le=300)
+    heartbeat_timeout_seconds: int = Field(default=90, ge=10, le=900)
+
+    # ─── Phase 1 §1.3 analysis and indexing ──────────────────────────────────
+    scan_max_file_size_bytes: int = Field(default=1_048_576, ge=1024)
+    scan_watch_debounce_ms: int = Field(default=250, ge=0, le=10_000)
+    # 0 means min(GOMAXPROCS, 8); the agent owns that resolution.
+    scan_parser_concurrency: int = Field(default=0, ge=0, le=64)
+    chunk_target_tokens: int = Field(default=512, ge=128, le=2048)
+    chunk_overlap_tokens: int = Field(default=128, ge=0, le=512)
+    summary_target_tokens: int = Field(default=1024, ge=256, le=4096)
+    # Selects WHICH vector table is written; the two must never be mixed (D-48).
+    embedding_backend: Literal["voyage", "bge_m3"] = "voyage"
+    embedding_model_id_local: str = Field(default="bge-m3")
+    embedding_dims_local: int = Field(default=1024, ge=1)
+    llm_key_voyage: SecretStr = Field(default=SecretStr(""))
+    voyage_base_url: str = Field(default="https://api.voyageai.com/v1")
+    rerank_model: str = Field(default="voyage-rerank-2")
+    retrieval_overfetch_factor: int = Field(default=3, ge=1, le=10)
+    retrieval_top_k: int = Field(default=12, ge=1, le=200)
+
+    # ─── Phase 1 §1.5 generation bounds ──────────────────────────────────────
+    # NOT an int. NFR-04 targets "under 3 iterations average" and phases.md §1.5 fixes
+    # the maximum at 3. Typed as int, an operator could set 10 and quietly move a
+    # safety-relevant bound that Q-08 exists to guarantee; typed as Literal[3] the
+    # configuration refuses to load. A different bound is a decision, not a variable.
+    generation_max_iterations: Literal[3] = 3
+    judge_tier: str = Field(default="medium_value")
+    judge_prompt_version: int = Field(default=1, ge=1)
+    template_library_path: str = Field(default="src/generation/templates")
+
+    # ─── Phase 1 §1.7 §1.9 §1.10 governance, policy, audit ───────────────────
+    governance_policy_package: str = Field(default="forgeops/governance")
+    policy_bundle_refresh_seconds: int = Field(default=300, ge=30)
+    approval_ttl_seconds: int = Field(default=604_800, ge=60)
+    audit_advisory_lock_key: str = Field(default="forgeops-audit")
+
+    # ─── Phase 1 §1.8 secrets ────────────────────────────────────────────────
+    secret_backend: Literal["infisical", "local"] = "infisical"
+    local_secret_seal_key: SecretStr = Field(default=SecretStr(""))
+
+    # ─── Phase 1 §7.10 tasks ─────────────────────────────────────────────────
+    task_dispatcher: Literal["arq", "inline"] = "arq"
+    arq_queue_name: str = Field(default="forgeops")
+    arq_max_jobs: int = Field(default=10, ge=1, le=1000)
+    arq_job_timeout_seconds: int = Field(default=900, ge=1)
+
+    # ─── Phase 1 §6.7 database pooling ───────────────────────────────────────
+    # `transaction` mode means a pooler hands out a different backend connection per
+    # transaction, so asyncpg's prepared-statement cache must be disabled (§7.12).
+    database_pooler_mode: Literal["session", "transaction"] = "session"
+    alembic_database_url: str = Field(default="")
+
+    # ─── Phase 1 agent-side keys ─────────────────────────────────────────────
+    # Present in the shared .env.example namespace so the Go agent and the backend
+    # validate one inventory; the backend does not consume most of them.
+    agent_state_dir: str = Field(default="")
+    agent_credential_store: Literal["auto", "keychain", "file"] = "auto"
+    agent_identity_provider: Literal["paired_device", "spiffe_workload"] = "paired_device"
+    spiffe_endpoint_socket: str = Field(default="")
+    agent_journal_max_bytes: int = Field(default=67_108_864, ge=0)
+    agent_journal_max_age_hours: int = Field(default=168, ge=1)
+    agent_journal_drain_batch: int = Field(default=64, ge=1, le=10_000)
+    agent_trivy_binary: str = Field(default="trivy")
+    agent_validator_timeout_seconds: int = Field(default=120, ge=1)
+
     @field_validator("mcp_oidc_issuers")
     @classmethod
     def _require_issuer_in_production(cls, v: str, info: Any) -> str:
@@ -167,6 +352,135 @@ class Settings(BaseSettings):
         if not v.strip() and info.data.get("app_env") == "production":
             raise ValueError("MCP_OIDC_ISSUERS must be non-empty when APP_ENV=production")
         return v
+
+    @field_validator("generation_max_iterations", mode="before")
+    @classmethod
+    def _coerce_iteration_bound(cls, v: Any) -> Any:
+        """Accept the string form an env var always arrives as, then let Literal judge.
+
+        `Literal[3]` does not coerce `"3"`, and every value from a dotenv or the
+        process environment is a string — so without this the committed baseline
+        cannot load at all. The coercion is deliberately narrow: only a decimal
+        integer literal is converted, and the conversion does not widen what is
+        ACCEPTED. `GENERATION_MAX_ITERATIONS=10` still becomes `10` here and is then
+        refused by `Literal[3]`, which is the guarantee Q-08 depends on.
+        """
+        if isinstance(v, str) and v.strip().lstrip("+").isdigit():
+            return int(v.strip())
+        return v
+
+    @field_validator("chunk_overlap_tokens")
+    @classmethod
+    def _overlap_below_target(cls, v: int, info: Any) -> int:
+        """Overlap >= target is not a tuning choice, it is a non-terminating chunker.
+
+        With overlap >= target every window re-emits its predecessor's whole content,
+        so chunk count grows without bound on a large file. Caught here rather than
+        as a mysterious memory profile in §10.8.3.
+        """
+        target = info.data.get("chunk_target_tokens", 512)
+        if v >= target:
+            raise ValueError(f"CHUNK_OVERLAP_TOKENS ({v}) must be smaller than CHUNK_TARGET_TOKENS ({target})")
+        return v
+
+    @field_validator("pairing_code_alphabet")
+    @classmethod
+    def _alphabet_is_unambiguous(cls, v: str) -> str:
+        """Crockford base32 excludes I, L, O and U for a reason.
+
+        A pairing code is read aloud or retyped from a terminal. `I`/`1`, `O`/`0` and
+        `U`/`V` confusions turn into an indistinguishable `pairing-code-invalid`
+        (§11.2), which is unhelpful precisely because the response is deliberately
+        opaque. Duplicates are also rejected: they silently skew the entropy the code
+        is assumed to carry.
+        """
+        if len(set(v)) != len(v):
+            raise ValueError("PAIRING_CODE_ALPHABET contains duplicate characters")
+        forbidden = set("ILOU") & set(v.upper())
+        if forbidden:
+            raise ValueError(
+                f"PAIRING_CODE_ALPHABET must exclude the ambiguous characters {sorted(forbidden)} (Crockford base32)"
+            )
+        if len(v) < 16:
+            raise ValueError("PAIRING_CODE_ALPHABET needs at least 16 symbols to carry enough entropy")
+        return v
+
+    @field_validator("device_cert_renew_before_hours")
+    @classmethod
+    def _renew_before_expiry(cls, v: int, info: Any) -> int:
+        """Renewing after expiry is not renewal; the session would already be dead."""
+        ttl = info.data.get("device_cert_ttl_hours", 24)
+        if v >= ttl:
+            raise ValueError(f"DEVICE_CERT_RENEW_BEFORE_HOURS ({v}) must be smaller than DEVICE_CERT_TTL_HOURS ({ttl})")
+        return v
+
+    @field_validator("heartbeat_timeout_seconds")
+    @classmethod
+    def _timeout_exceeds_interval(cls, v: int, info: Any) -> int:
+        """A timeout at or below the interval declares every healthy agent dead."""
+        interval = info.data.get("heartbeat_interval_seconds", 30)
+        if v <= interval:
+            raise ValueError(f"HEARTBEAT_TIMEOUT_SECONDS ({v}) must exceed HEARTBEAT_INTERVAL_SECONDS ({interval})")
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_blast_radius_override_in_production(cls, values: Any) -> Any:
+        """D-39: `MCP_AGENT_BLAST_RADIUS` is a development default only.
+
+        Phase 0 read the agent's blast radius from configuration because no agent
+        existed yet (OQ-20). Phase 1 derives it from the attested agent identity, so
+        the variable is demoted: it supplies a default when no identity is present,
+        and its PRESENCE in production is a startup error rather than a silently
+        honoured widening of authority.
+
+        Checked in `mode="before"` because that is the only place presence is
+        distinguishable from the default — after validation, an unset variable and an
+        explicit `read_only` are the same value, and refusing the value rather than
+        its presence would mean an operator could still widen authority to
+        `infrastructure` by setting it in a non-production environment name.
+        """
+        if not isinstance(values, dict):
+            return values
+
+        lowered = {str(k).lower(): v for k, v in values.items()}
+        if str(lowered.get("app_env", "")).strip().lower() != "production":
+            return values
+        if "mcp_agent_blast_radius" in lowered:
+            raise ValueError(
+                "MCP_AGENT_BLAST_RADIUS must not be set when APP_ENV=production: in "
+                "production the agent's blast radius is derived from its attested "
+                "identity, and this variable is a development default only (D-39). "
+                "Remove it from the environment."
+            )
+        return values
+
+    @model_validator(mode="after")
+    def _require_production_secrets(self) -> Settings:
+        """Every credential production needs, reported together (P-15).
+
+        One error per missing value would make bringing up a production environment a
+        sequence of restarts. The Phase 0 contract is that configuration problems are
+        accumulated into ONE report, so this collects them all before raising.
+        """
+        if self.app_env != "production":
+            return self
+
+        required: list[tuple[str, str]] = [
+            ("OIDC_ISSUER", self.oidc_issuer),
+            ("OIDC_CLIENT_ID", self.oidc_client_id),
+            ("OIDC_CLIENT_SECRET", self.oidc_client_secret.get_secret_value()),
+            ("ENVELOPE_PEPPER", self.envelope_pepper.get_secret_value()),
+            ("INTERNAL_CA_CERT_PEM", self.internal_ca_cert_pem.get_secret_value()),
+            ("INTERNAL_CA_KEY_PEM", self.internal_ca_key_pem.get_secret_value()),
+        ]
+        if self.secret_backend == "local":
+            required.append(("LOCAL_SECRET_SEAL_KEY", self.local_secret_seal_key.get_secret_value()))
+
+        missing = [name for name, value in required if not str(value).strip()]
+        if missing:
+            raise ValueError("the following must be non-empty when APP_ENV=production: " + ", ".join(sorted(missing)))
+        return self
 
     @property
     def mcp_oidc_issuer_list(self) -> list[str]:
