@@ -84,12 +84,62 @@ class TestAStaleAllowlistEntryIsReported:
         failures = CHECKER.check(f"{FIXTURES}:stale_allowlist_app")
         assert any("/api/v1/health" in failure for failure in failures), failures
 
-    def test_a_marked_entry_is_staged_rather_than_failed(self) -> None:
-        """The auth-flow paths arrive in task 6.2, so they must NOT be reported as
-        stale — otherwise committing §4.4's set whole would fail every run until 6.2
-        lands, and the pressure would be to delete the staleness rule."""
+    def test_a_marked_entry_is_staged_rather_than_failed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A marked entry is reported as staged; an unmarked one is a failure.
+
+        Both cases are driven from a SYNTHETIC `PUBLIC_ROUTES`, not from whichever
+        production entry happens to be unserved today. The earlier version of this test
+        used `/api/v1/auth/login` as its example, which broke the moment task 6.2 served
+        that route and removed its marker — the test was asserting the mechanism through
+        a fact that was designed to change. Installing a two-entry allowlist keeps it
+        asserting the mechanism itself, and keeps it non-vacuous once every production
+        marker is gone.
+        """
+        from src.auth import public_routes as public_routes_module
+
+        staged_path = "/api/v1/not-served-yet/staged"
+        stale_path = "/api/v1/not-served-yet/stale"
+        synthetic = (
+            public_routes_module.PublicRoute(
+                staged_path, frozenset({"GET"}), "arrives later", arrives_in="a later task"
+            ),
+            public_routes_module.PublicRoute(stale_path, frozenset({"GET"}), "no marker"),
+        )
+        monkeypatch.setattr(public_routes_module, "PUBLIC_ROUTES", synthetic)
+        monkeypatch.setattr(
+            public_routes_module,
+            "STAGED_PATHS",
+            frozenset({staged_path}),
+        )
+
         failures = CHECKER.check(f"{FIXTURES}:stale_allowlist_app")
-        assert not any("/api/v1/auth/login" in failure for failure in failures), failures
+
+        assert not any(staged_path in failure for failure in failures), failures
+        assert any(stale_path in failure for failure in failures), failures
+
+    def test_a_marked_entry_whose_route_is_served_fails_until_the_marker_goes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The marker is self-clearing, which is what stops it becoming permanent.
+
+        The fixture app serves `/api/v1/projects`; marking it `arrives_in` must
+        therefore be reported, so a stale marker cannot outlive the route's arrival.
+        """
+        from src.auth import public_routes as public_routes_module
+
+        synthetic = (
+            public_routes_module.PublicRoute(
+                "/api/v1/projects",
+                frozenset({"GET"}),
+                "served already",
+                arrives_in="a task that has already landed",
+            ),
+        )
+        monkeypatch.setattr(public_routes_module, "PUBLIC_ROUTES", synthetic)
+        monkeypatch.setattr(public_routes_module, "STAGED_PATHS", frozenset())
+
+        failures = CHECKER.check(f"{FIXTURES}:stale_allowlist_app")
+        assert any("Remove the" in failure and "arrives_in" in failure for failure in failures), failures
 
     def test_the_report_explains_why_it_matters(self) -> None:
         failures = CHECKER.check(f"{FIXTURES}:stale_allowlist_app")

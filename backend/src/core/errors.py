@@ -79,6 +79,12 @@ class ProblemSpec(NamedTuple):
 PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # ─── Authentication and authorization (§1.11) ────────────────────────────
     "unauthenticated": ProblemSpec(401, "Unauthenticated"),
+    # D-53: an IdP outage is not a credential failure. §6.3 keeps Authentik out of
+    # `/health/ready` so an outage "degrades login, not readiness" — which only means
+    # anything if login answers something a client can act on. 503 says retry with
+    # backoff and keep the session; 401 would say discard the credential and
+    # re-authenticate through the provider that is down.
+    "idp-unavailable": ProblemSpec(503, "Identity provider unavailable"),
     "forbidden": ProblemSpec(403, "Forbidden"),
     # ─── Pairing and devices (§1.1) ──────────────────────────────────────────
     "pairing-code-invalid": ProblemSpec(401, "Pairing code invalid"),

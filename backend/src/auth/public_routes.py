@@ -59,25 +59,21 @@ PUBLIC_ROUTES: Final[tuple[PublicRoute, ...]] = (
         "/api/v1/auth/login",
         frozenset({"GET", "POST"}),
         "The flow that creates a principal cannot require one",
-        arrives_in="task 6.2",
     ),
     PublicRoute(
         "/api/v1/auth/callback",
         frozenset({"GET", "POST"}),
         "The flow that creates a principal cannot require one",
-        arrives_in="task 6.2",
     ),
     PublicRoute(
         "/api/v1/auth/refresh",
         frozenset({"POST"}),
         "Presents a refresh token, not an access token",
-        arrives_in="task 6.2",
     ),
     PublicRoute(
         "/api/v1/auth/logout",
         frozenset({"GET", "POST"}),
         "Must succeed even when the access token has already expired",
-        arrives_in="task 6.2",
     ),
     PublicRoute(
         "/api/v1/agents/pair/exchange",

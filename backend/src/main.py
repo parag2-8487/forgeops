@@ -29,6 +29,8 @@ from .ai.routing.endpoints import EndpointRegistry
 from .ai.routing.keys import EnvKeyResolver
 from .ai.routing.router import ModelRouter
 from .ai.routing.tiers import load_tier_config
+from .auth.oidc import IdTokenVerifier, OidcClient
+from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
 from .core.config import get_settings
 from .core.db import create_db_engine, create_sessionmaker
@@ -167,6 +169,30 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         audience=settings.oidc_app_audience,
         jwks_ttl_seconds=settings.mcp_oidc_jwks_ttl_seconds,
         http=shared_http,
+    )
+    # ── The login flow (§3.5, §11.2, task 6.2) ───────────────────────────────
+    # Three collaborators, and the audiences are why they are three and not one. The
+    # ID token is audienced to the CLIENT ID and is a statement to this client about
+    # who logged in; the access token above is audienced to the app API. Verifying
+    # either with the other's audience would accept a token minted for a different
+    # purpose, so the verifiers are separate instances constructed with different
+    # audiences and are never shared.
+    app.state.id_token_verifier = IdTokenVerifier(
+        issuer=settings.oidc_issuer,
+        client_id=settings.oidc_client_id,
+        jwks_ttl_seconds=settings.mcp_oidc_jwks_ttl_seconds,
+        http=shared_http,
+    )
+    app.state.oidc_client = OidcClient(
+        issuer=settings.oidc_issuer,
+        client_id=settings.oidc_client_id,
+        client_secret=settings.oidc_client_secret.get_secret_value(),
+        redirect_url=settings.oidc_redirect_url,
+        http=shared_http,
+    )
+    app.state.session_service = SessionService(
+        pepper=settings.envelope_pepper.get_secret_value(),
+        refresh_ttl_seconds=settings.refresh_ttl_seconds,
     )
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()
@@ -307,6 +333,13 @@ def create_app() -> FastAPI:
     install_problem_handlers(app)
 
     # --- API Routers ---
+    # The auth flow (§3.5). Registered first because it is the only router whose routes
+    # are all public: `check-route-auth.py` reads the same `PUBLIC_ROUTES` set, so the
+    # four exemptions here are asserted against the real router rather than trusted.
+    from .auth.routes import router as auth_router
+
+    app.include_router(auth_router, prefix=settings.api_prefix)
+
     from .analysis.routes import router as analysis_router
 
     app.include_router(analysis_router)

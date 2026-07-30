@@ -251,7 +251,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Implement `scripts/check-route-auth.py`, which enumerates `create_app().routes` and fails when a route lacks the dependency and is not public, plus a negative fixture proving detection.
     - _Design: §4.4, §11.2, §14.1; Deliverable: 1.11; Criterion: 1; Property: Q-19, Q-30_
 
-  - [ ] 6.2 Implement the OIDC authorization-code + PKCE flow and session lifecycle
+  - [x] 6.2 Implement the OIDC authorization-code + PKCE flow and session lifecycle
     - Implement `/api/v1/auth/login`, `/callback`, `/refresh` and `/logout` over `httpx` + `pyjwt` with no new auth library; upsert `users` from the IdP subject and persist `sessions` with the refresh token stored as an HMAC.
     - Set an httpOnly `SameSite=Lax` session cookie and return the access token in the body; map IdP groups to exactly one of `admin`/`developer`/`viewer`.
     - Add integration tests against a fixture issuer whose signing key is generated per test run: successful exchange, replayed `state`, expired token, wrong audience, and refresh rotation.

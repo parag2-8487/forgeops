@@ -185,6 +185,14 @@ ignore = [
 "src/mcp/**/*.py" = ["TID251"]
 "src/analysis/**/*.py" = ["TID251"]
 "src/projects/**/*.py" = ["TID251"]
+# `src/auth` is exempted FILE BY FILE rather than by glob, which is the narrower form
+# of the rule above. Only `routes.py` composes the flow — it is the one module that must
+# name `auth.oidc` and `auth.sessions`, both of which the banned-api table forbids
+# elsewhere on purpose. Exempting `src/auth/**` instead would also have unbanned every
+# other domain from `verifier.py` and a future `devices.py`, which is precisely the
+# coupling §2.2.1 exists to prevent: a module that can construct a verifier or reach a
+# device's envelope key can forge authority.
+"src/auth/routes.py" = ["TID251"]
 # Alembic's env.py must import every domain's models to build target_metadata;
 # that is migration wiring, not runtime domain coupling.
 "alembic/env.py" = ["TID251"]

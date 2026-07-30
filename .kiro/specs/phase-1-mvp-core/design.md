@@ -4463,6 +4463,16 @@ Each entry is an architecture decision with its rationale preserved, because lat
 
 ---
 
+#### D-53 — Appendix C.1 registered no problem type for an identity-provider outage, which §6.3 requires to be distinguishable
+
+- **Status:** Accepted · **Date:** 2026-07-30 · **Extends:** Appendix C.1
+- **Context.** §6.3 is explicit that Authentik is kept out of `/health/ready` because "an IdP outage must degrade login, not readiness of authenticated traffic". Implementing §11.2's `/login` and `/refresh` (task 6.2) made the gap concrete: degrading *login* requires login to answer something a client can act on, and Appendix C.1 registers no type for it. Every registered candidate is wrong. `unauthenticated` (401) asserts a fact about the caller's credential that is not in evidence — the caller may hold a perfectly good refresh token and the server simply cannot reach the issuer — and a frontend that treats 401 as "log in again" would send the user into a redirect loop through the very IdP that is down. `not-ready` is not in the registry at all; it is hand-built by `/health/ready`, and reusing it would say the service is unready, which §6.3 specifically forbids. `secret-store-unavailable` and `validator-unavailable` name different subsystems. `core.errors.ProblemException` accepts an unregistered suffix without objecting, so the alternative to registering one was to invent a type at the raise site — which is the exact practice the registry exists to prevent, and which `test_errors_phase1.py` would have caught only if the type were also added to the registry.
+- **Decision.** Register `idp-unavailable` → 503. Raised at `/api/v1/auth/login`, `/callback` and `/refresh` when the discovery document cannot be read, is not an object, is missing an endpoint, or declares an issuer other than the configured one, and when the token endpoint is unreachable at transport level. A token-endpoint *rejection* (any 4xx) stays `unauthenticated`: that is a statement about the grant, not about availability. Readiness is untouched — Appendix C.1 gains one row and `/health/ready` still probes only Postgres and Redis.
+- **Rationale.** The premise that proved wrong is that Appendix C.1 was complete for Phase 1's error surface. It was assembled per subsystem — pairing, envelopes, policy, approval, generation, secrets, indexing, audit, validation, tenancy — and login was the one subsystem whose *unavailability* case was never given a row, because §11.2 describes the happy path and the 401s while the availability requirement lives in §6.3. Conflating an outage with a credential failure is the same category error as D-25's undefined-document handling: two conditions with different remedies collapsed into one response, so the client cannot pick the right one. The distinction is load-bearing for a caller — 503 means retry with backoff and keep the session, 401 means discard the credential and re-authenticate — which is precisely what makes it worth a type rather than a detail string.
+- **Consequences.** Appendix C.1, §11.2, §6.3, task 6.2. `PROBLEM_REGISTRY` gains one entry; `test_errors_phase1.py` parses Appendix C.1 from this document, so the row and the code cannot drift. Reversal cost is one registry line and three raise sites. No status of an existing type changes, so no client contract is broken.
+
+---
+
 ### 17.2 Open questions
 
 **Status: no open question blocks the start of implementation.** Each carries a recommendation this design already implements, so work can begin and the choice stays visible and reversible. Phase 0 questions falling due in this phase are dispositioned in the second table.
@@ -5022,6 +5032,7 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | Suffix | Status | When | `detail` guidance |
 |:---|:--:|:---|:---|
 | `unauthenticated` | 401 | No token, or verification failed, on a non-public route | Never says which check failed |
+| `idp-unavailable` | 503 | The identity provider cannot be reached, or its discovery document is unreadable or declares a different issuer, during login or refresh (**D-53**) | Names no URL, no upstream status and no provider error text |
 | `forbidden` | 403 | RBAC or Cerbos deny | Identical body whether or not the resource exists (§4.2) |
 | `pairing-code-invalid` | 401 | Unknown, expired, burned or already-consumed code | One message for all four cases; never echoes the code |
 | `pairing-rate-limited` | 429 | Per-IP or global exchange bucket exhausted | Integer `Retry-After` |
