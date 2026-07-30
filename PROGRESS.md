@@ -63,8 +63,8 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 | 3.3   | Extend backend core primitives for Phase 1                                                         | Fill middleware row 6 with tenant context and transaction-scoped tenancy      | done    |
 | 3.4   | Extend backend core primitives for Phase 1                                                         | Add `ArqDispatcher` behind the unchanged task seam                            | done    |
 | 3.5   | Extend backend core primitives for Phase 1                                                         | Add the shared JCS canonicalisation primitive                                 | done    |
-| 4.1   | Extend Go agent primitives before any session or executor work                                     | Extend the typed Go configuration loader                                      | pending |
-| 4.2   | Extend Go agent primitives before any session or executor work                                     | Make the redacting logger the only agent logger and redact validator output   | pending |
+| 4.1   | Extend Go agent primitives before any session or executor work                                     | Extend the typed Go configuration loader                                      | done    |
+| 4.2   | Extend Go agent primitives before any session or executor work                                     | Make the redacting logger the only agent logger and redact validator output   | blocked |
 | 4.3   | Extend Go agent primitives before any session or executor work                                     | Replace `taskkill` with Windows Job Objects                                   | pending |
 | 4.4   | Extend Go agent primitives before any session or executor work                                     | Add the identity seam and the paired-device provider                          | pending |
 | 4.5   | Extend Go agent primitives before any session or executor work                                     | Implement the credential store with a reported fallback                       | pending |

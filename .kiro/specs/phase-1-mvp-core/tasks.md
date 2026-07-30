@@ -148,7 +148,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - _Design: §7.6, §11.9, §16.2, Appendix A.2, A.8; Deliverable: 1.1, 1.9; Property: Q-14_
 
 - [ ] 4. Extend Go agent primitives before any session or executor work
-  - [ ] 4.1 Extend the typed Go configuration loader
+  - [x] 4.1 Extend the typed Go configuration loader
     - Add the pairing, session, journal, identity, scanner and validator fields from §13.1 to `agent/internal/config`, preserving the single joined error containing every problem and ignoring unrelated ambient keys.
     - Add table examples for defaults, combined failures, and invalid durations/enums/paths.
     - _Design: §7.1, §13.1; Deliverable: 1.1_

@@ -55,7 +55,18 @@ type namedCloser struct {
 
 // New constructs a fully-wired App from the validated config.
 func New(cfg *config.Config, bi BuildInfo) (*App, error) {
-	logger, err := logging.New(cfg.LogLevel, cfg.LogFormat)
+	// design §7.2, §14.5: the agent has exactly ONE logger constructor, and it
+	// redacts. `logging.New` produced an unfiltered logger, so any subsystem that
+	// logged a value it had not thought about — a git remote with a token in the URL,
+	// a validator echoing file content, an error wrapping a DSN — wrote it verbatim.
+	// Q-24 forbids that, and a "remember to use the redacting one" rule is not a
+	// mechanism. `app_wiring_test.go` asserts `logging.New` is unreachable from the
+	// agent's own packages.
+	//
+	// The secret set is assembled from configuration rather than discovered: these are
+	// the values the agent is GIVEN, so they are the ones it can name. Pattern-based
+	// detection of values it was never told about is secretscan's job (task 10.1).
+	logger, err := logging.NewRedacted(cfg.LogLevel, cfg.LogFormat, knownSecrets(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("logger: %w", err)
 	}

@@ -2,6 +2,8 @@
 package logging
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -131,9 +133,60 @@ func (c *redactCore) redactString(s string) string {
 	return s
 }
 
+// redactField scrubs every field kind that can carry a secret.
+//
+// This handled `StringType` only, which left the likeliest leak of all wide open: an
+// ERROR field. Transport libraries put the URL — with its embedded credential — into
+// the error message, so `zap.Error(err)` after a failed git push wrote the token
+// verbatim. That is precisely the defect D-27 repaired on the Python side, where
+// `JSONFormatter` scrubbed `record.msg` and then emitted unredacted `formatException`
+// output; the Go side had the same shape and no test had asked.
+//
+// The kinds below are the ones that carry caller-supplied text. `ReflectType` and
+// `AnyType` are handled by rendering and comparing: if the rendered form contains a
+// secret the field is replaced wholesale with a redacted string, because losing the
+// structure of one log field is unambiguously better than emitting a credential.
+// Numeric and boolean kinds are left alone — they cannot contain a substring.
 func (c *redactCore) redactField(f zapcore.Field) zapcore.Field {
-	if f.Type == zapcore.StringType {
+	switch f.Type {
+	case zapcore.StringType:
 		f.String = c.redactString(f.String)
+
+	case zapcore.ByteStringType:
+		if raw, ok := f.Interface.([]byte); ok {
+			f.Interface = []byte(c.redactString(string(raw)))
+		}
+
+	case zapcore.ErrorType:
+		if err, ok := f.Interface.(error); ok && err != nil {
+			if cleaned := c.redactString(err.Error()); cleaned != err.Error() {
+				// Replaced with a plain error carrying the scrubbed text. Keeping the
+				// original and hoping the encoder does not reach Error() would leave
+				// the leak one encoder change away.
+				f.Interface = errors.New(cleaned)
+			}
+		}
+
+	case zapcore.StringerType:
+		if s, ok := f.Interface.(fmt.Stringer); ok && s != nil {
+			if cleaned := c.redactString(s.String()); cleaned != s.String() {
+				f.Type = zapcore.StringType
+				f.Interface = nil
+				f.String = cleaned
+			}
+		}
+
+	case zapcore.ReflectType:
+		// Rendering an arbitrary value is not free, so it happens only when a secret is
+		// actually configured, and the field is rewritten only when one is present.
+		if len(c.secrets) > 0 && f.Interface != nil {
+			rendered := fmt.Sprint(f.Interface)
+			if cleaned := c.redactString(rendered); cleaned != rendered {
+				f.Type = zapcore.StringType
+				f.Interface = nil
+				f.String = cleaned
+			}
+		}
 	}
 	return f
 }
