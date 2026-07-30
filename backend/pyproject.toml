@@ -167,6 +167,23 @@ ignore = [
 "dramatiq".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
 "temporalio".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
 "inngest".msg = "Queue engine banned outside src/core/tasks.py (design.md §7.9)"
+# ─── §2.2.1 mechanism 2: the mutation chokepoint's private surface ────────────
+# The same mechanism as the queue-engine bans above, pointed at a different problem. Each
+# of these five names is enough on its own to forge authority or bypass a stage, so naming
+# one outside `governance/` is a build failure rather than a review conversation.
+#
+# `_MINT_SENTINEL` is the sharpest: `MutationAuthority.__post_init__` compares against it by
+# IDENTITY, so the only way to construct an authority is to be able to name the sentinel.
+# This entry is what makes "cannot be named" true, and `governance/` is exempted below.
+"src.governance.authority._MINT_SENTINEL".msg = "Only governance.chokepoint may mint authority (design §2.2.1)"
+"src.governance.envelope.sign_envelope".msg = "Envelope signing belongs to governance.chokepoint only (design §2.2.1)"
+"src.governance.envelope._SIGNING_KEY".msg = "The envelope signing key is owned by governance/ (design §2.2.1)"
+"src.websocket.hub.send_command".msg = "Commands reach the hub only from governance.chokepoint (design §2.2.1)"
+# A service that can fetch a device's signing key is a service that can forge a command
+# (§11.2). Banned at the SYMBOL rather than relying on the `src.auth.devices` module ban
+# above, so `governance/` — which legitimately imports that module — still cannot reach
+# this one function by name.
+"src.auth.devices.envelope_key".msg = "Only governance.chokepoint may fetch a device envelope key (design §2.2.1)"
 
 [tool.ruff.lint.per-file-ignores]
 # The two modules allowed to import ARQ. `core/tasks.py` owns the dispatcher and the
@@ -200,6 +217,18 @@ ignore = [
 # coupling §2.2.1 exists to prevent: a module that can construct a verifier or reach a
 # device's envelope key can forge authority.
 "src/auth/routes.py" = ["TID251"]
+# §2.2.1's five bans exist to keep the chokepoint's private surface private. `governance/`
+# is the one package that must reach it, and the exemption is FILE BY FILE rather than
+# `src/governance/**`, for the same reason `src/auth` is: a glob would also unban every
+# other name in the table for every future module in this package, and the whole point of
+# the five entries is that reaching any one of them is enough to forge authority.
+#
+# `authority.py` defines `_MINT_SENTINEL` and is the only legitimate reader of it;
+# `primitives.py` names nothing banned but is exempted alongside it so the pair reads as one
+# boundary. Any further file here that needs an exemption is a deliberate edit to this list,
+# which is exactly the review that addition deserves.
+"src/governance/authority.py" = ["TID251"]
+"src/governance/primitives.py" = ["TID251"]
 # Alembic's env.py must import every domain's models to build target_metadata;
 # that is migration wiring, not runtime domain coupling.
 "alembic/env.py" = ["TID251"]

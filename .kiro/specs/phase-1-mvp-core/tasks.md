@@ -286,7 +286,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - _Design: §11.2, §13.1, §17.1 D-39, Appendix B Q-30; Deliverable: 1.10, 1.11; Property: Q-30_
 
 - [ ] 7. Build the governance chokepoint and the mutation boundary before any mutating operation
-  - [ ] 7.1 Implement the mint-only capability type and the primitive marker
+  - [x] 7.1 Implement the mint-only capability type and the primitive marker
     - Implement `backend/src/governance/authority.py` with the module-private `_MINT_SENTINEL` and the frozen `MutationAuthority` whose `__post_init__` raises `TypeError` for any other sentinel.
     - Implement `@mutation_primitive` in `governance/primitives.py` and add the §2.2.1 Ruff banned-api entries for `_MINT_SENTINEL`, `sign_envelope`, `_SIGNING_KEY`, `hub.send_command` and `devices.envelope_key`.
     - Add unit tests proving construction outside `governance/` raises, and that the banned-api rule rejects each forbidden import.
