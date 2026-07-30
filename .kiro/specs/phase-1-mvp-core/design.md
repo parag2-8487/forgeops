@@ -3727,7 +3727,7 @@ Existing Phase 0 variables are unchanged. Additions, grouped:
 
 ```dotenv
 # ─── Auth (§1.11) ────────────────────────────────────────────────────────────
-OIDC_ISSUER="http://authentik-server:9000/application/o/forgeops/"   # quoted: `host:port/path` is not a credential
+OIDC_ISSUER="http://localhost:9000/application/o/forgeops/"   # Compose hostname: authentik-server, same port and path
 OIDC_APP_AUDIENCE=forgeops-api            # DISTINCT from MCP_OIDC_AUDIENCE by design
 OIDC_CLIENT_ID=forgeops-frontend
 OIDC_CLIENT_SECRET=change-me-locally
