@@ -244,7 +244,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Gate both under `require_capability("postgres")` so they fail rather than skip in CI.
     - _Design: §6.4, §6.5; Deliverable: 1.11; Criterion: 12_
 
-- [ ] 6. Implement authentication, authorization and the identity provider service
+- [x] 6. Implement authentication, authorization and the identity provider service
   - [x] 6.1 Implement token verification, principals and deny-by-default routing
     - Implement `AppTokenVerifier` extending Phase 0's JWKS verifier with a **distinct** app audience, and the frozen `Principal` carrying role, tenant, kind and identity-derived `blast_radius`.
     - Implement `require_principal`, `require_role` and the committed `PUBLIC_ROUTES` set containing exactly the seven §4.4 entries; attach the dependency **per route**, never globally.
@@ -279,7 +279,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row adding `read_value` to the viewer's Cerbos policy.
     - _Design: §4.2, §11.2, §11.8, Appendix B Q-20; Deliverable: 1.8, 1.11; Criterion: 8; Property: Q-20_
 
-  - [ ] 6.7 Write property test Q-30 for identity-derived blast radius
+  - [x] 6.7 Write property test Q-30 for identity-derived blast radius
     - Generate principals and environments; prove `blast_radius` is derived from the verified identity, that `MCP_AGENT_BLAST_RADIUS` cannot widen it for an authenticated caller, and that its presence with `APP_ENV=production` is a startup error.
     - Assert `policies/mcp/gateway.rego` is unchanged and its 27 tests still pass, as OQ-20 anticipated.
     - Add the `mutations.toml` row making the gateway read the env var when a principal is present.

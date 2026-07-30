@@ -284,3 +284,57 @@ assert _effect == "EFFECT_ALLOW", f"the mutated policy set did not take effect: 
 os.environ["FORGEOPS_TEST_CERBOS_URL"] = _url
 os.environ["FORGEOPS_REQUIRE_INTEGRATION"] = "1"
 """
+
+[Q-30]
+runtime     = "python"
+property    = "backend/tests/property/test_q30_blast_radius.py"
+target      = "src.auth.principal.blast_radius_for_role"
+mutation    = "Read the env var in the gateway when a principal is present"
+description = """
+Makes an authenticated caller's blast radius the WIDEST of its identity-derived radius and
+`MCP_AGENT_BLAST_RADIUS`, which is the Phase 0 behaviour D-39 removed: the authority of a
+request becomes a property of the server's configuration rather than of the caller, so
+widening it for one caller widens it for all. Q-30 must then fail on both non-widening
+clauses — the one that says the derived radius ignores the variable, and the sharp one where
+the variable is set wider than the identity permits.
+
+Appendix B words the control as "in the gateway". The patch installs it at
+`blast_radius_for_role`, because that is the single function through which an authenticated
+caller's radius could actually be widened — `Principal.for_user` has no `blast_radius`
+parameter, so there is no other route in. A gateway-only edit would leave every principal's
+radius correct and the property would rightly still pass, which would make the control a
+no-op rather than a stronger test. Wording left as Appendix B words it so the two can be
+compared without reading code.
+
+The patch asserts the env var is set and that the mutated function actually widens, so a
+control that installed itself and changed nothing cannot report the property healthy.
+"""
+patch = """
+import os
+
+import src.auth.principal as principal_module
+
+# The variable is a DEV default in D-39's design, so a run that did not set it would make
+# this control a no-op. Setting it here is what the mutation is *about*.
+os.environ["MCP_AGENT_BLAST_RADIUS"] = "infrastructure"
+
+_real_blast_radius_for_role = principal_module.blast_radius_for_role
+
+
+def _widened_by_the_environment(role):
+    identity = _real_blast_radius_for_role(role)
+    from_env = os.environ.get("MCP_AGENT_BLAST_RADIUS", "").strip()
+    if from_env not in principal_module.BLAST_RADIUS_ORDER:
+        return identity
+    return principal_module.widest(identity, from_env)
+
+
+principal_module.blast_radius_for_role = _widened_by_the_environment
+
+# The mutation must be observable, or the control proves nothing.
+from src.auth.models import UserRole  # noqa: E402
+
+assert principal_module.blast_radius_for_role(UserRole.VIEWER) == "infrastructure", (
+    "the mutation did not widen a viewer's radius; the control would be a no-op"
+)
+"""
