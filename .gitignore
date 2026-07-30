@@ -96,6 +96,7 @@ tmp/
 # CI or a Make target invokes never carries the `_` prefix.
 *.tmp
 scripts/_*.py
+scripts/_*.sh
 # Captured command output kept while working a task (check exit codes, test tails,
 # coverage numbers). Evidence belongs in PROGRESS.md, not in loose files, so this
 # directory is deliberately never committed.
