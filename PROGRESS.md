@@ -69,7 +69,7 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 | 4.4   | Extend Go agent primitives before any session or executor work                                     | Add the identity seam and the paired-device provider                          | pending |
 | 4.5   | Extend Go agent primitives before any session or executor work                                     | Implement the credential store with a reported fallback                       | pending |
 | 4.6   | Extend Go agent primitives before any session or executor work                                     | Implement the durable outbound journal                                        | pending |
-| 4.7   | Extend Go agent primitives before any session or executor work                                     | Split the `fileops` path blocklist by intent                                  | pending |
+| 4.7   | Extend Go agent primitives before any session or executor work                                     | Split the `fileops` path blocklist by intent                                  | done    |
 | 5.1   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0002_identity_and_devices`                                               | pending |
 | 5.2   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0003_codebase_index_extensions`                                          | pending |
 | 5.3   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0004_change_sets_and_approvals`                                          | pending |

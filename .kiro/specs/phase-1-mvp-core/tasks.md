@@ -184,7 +184,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests for bounded growth, corrupt-tail recovery, drain ordering (non-mutating records before intents), and wipe-on-revocation.
     - _Design: §10.3, §7.4, §17.1 D-41, Appendix C.2, Appendix D; Deliverable: 1.1; Criterion: 1; Property: Q-31_
 
-  - [ ] 4.7 Split the `fileops` path blocklist by intent
+  - [x] 4.7 Split the `fileops` path blocklist by intent
     - Implement `blockedForRead` (Phase 0 strictness unchanged) and `blockedForWrite` (identical plus exactly three permitted names: `.env.example`, `.env.sample`, `.env.template`) in `agent/internal/fileops/blocklist.go`.
     - Use a closed list of names, never a glob, so `.env.production.example.bak` stays blocked.
     - Add an enumerated matrix test over `.env`, `.env.local`, `.env.production`, `.env.example`, `.env.example.bak`, `.envrc` and `sub/.env` for both intents, and keep P-08's read clause passing.

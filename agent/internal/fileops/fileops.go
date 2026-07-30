@@ -228,33 +228,13 @@ func resolveAndValidate(root, relPath string) (string, error) {
 }
 
 // isBlocked checks PRD 2.2 blocklist: ~/.ssh, ~/.aws, .env, *.pem
+//
+// The implementation moved to blocklist.go as `blockedForRead` when task 4.7 split the
+// list by intent (§7.11(f), D-46). Kept as a one-line alias rather than rewriting every
+// call site, because `resolveAndValidate` is on the READ path and its strictness must
+// not change — P-08's read clause asserts exactly this behaviour.
 func isBlocked(absPath string) bool {
-	home, _ := os.UserHomeDir()
-
-	// Normalize paths for comparison
-	norm := filepath.Clean(absPath)
-
-	if home != "" {
-		sshDir := filepath.Clean(filepath.Join(home, ".ssh"))
-		awsDir := filepath.Clean(filepath.Join(home, ".aws"))
-
-		if strings.HasPrefix(norm, sshDir+string(filepath.Separator)) || norm == sshDir {
-			return true
-		}
-		if strings.HasPrefix(norm, awsDir+string(filepath.Separator)) || norm == awsDir {
-			return true
-		}
-	}
-
-	base := filepath.Base(norm)
-	if base == ".env" || strings.HasPrefix(base, ".env.") {
-		return true
-	}
-	if strings.HasSuffix(strings.ToLower(base), ".pem") {
-		return true
-	}
-
-	return false
+	return blockedForRead(absPath)
 }
 
 type backupInfo struct {
