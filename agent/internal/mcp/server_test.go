@@ -12,7 +12,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"go.uber.org/zap"
 
-	"github.com/parag8487/ForgeOps/agent/internal/fileops"
 	"github.com/parag8487/ForgeOps/agent/internal/iac"
 	"github.com/parag8487/ForgeOps/agent/internal/telemetry"
 )
@@ -36,11 +35,10 @@ func (f *fakeRunner) Plan(ctx context.Context, workdir string, opts iac.PlanOpti
 	return &iac.PlanResult{ExitCode: 2, HasChanges: true, PlanJSON: json.RawMessage(`{"changes":1}`)}, nil
 }
 
+// fakeOps satisfies fileops.Ops, which after D-45 has exactly one method and no write
+// path. That is the point: a double for this interface can no longer pretend to apply a
+// change-set, because the interface cannot express one.
 type fakeOps struct{}
-
-func (f *fakeOps) ApplyAtomic(ctx context.Context, root string, entries []fileops.WriteEntry) (*fileops.ApplyReport, error) {
-	return nil, nil
-}
 
 func (f *fakeOps) UnifiedDiff(before, after, label string) string { return "" }
 

@@ -3,6 +3,7 @@
 package fileops
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -247,19 +248,33 @@ func TestBlocklist_SensitiveDirectoriesAreRefusedInBothDirections(t *testing.T) 
 func TestBlocklist_ReadStrictnessIsUnchangedFromPhase0(t *testing.T) {
 	t.Parallel()
 
-	// `isBlocked` is what `resolveAndValidate` calls, and P-08's read clause asserts its
-	// behaviour. The split must not have moved it.
+	// Phase 0's `isBlocked` alias is gone: D-45 moved the write path out of this package,
+	// so the two intents now have exported resolvers of their own and there is no longer
+	// a single "the" blocklist to alias. The assertion is unchanged in substance — the
+	// READ path must consult `blockedForRead` and nothing else — and is now made against
+	// `ResolveForRead`, which is what callers actually use.
 	root := t.TempDir()
 	for _, name := range []string{".env", ".env.example", ".env.production", "server.pem"} {
 		abs := filepath.Join(root, name)
-		if isBlocked(abs) != blockedForRead(abs) {
-			t.Errorf("isBlocked and blockedForRead disagree on %q", name)
+		_, err := ResolveForRead(root, name)
+		refusedByResolver := errors.Is(err, ErrPathBlocked)
+		if refusedByResolver != blockedForRead(abs) {
+			t.Errorf("ResolveForRead and blockedForRead disagree on %q (resolver refused=%v)",
+				name, refusedByResolver)
 		}
 	}
 	// And specifically: reading an example file is still refused. The write exemption
 	// must not have leaked into the read path, because a readable `.env.example` in a
 	// project that (wrongly) put real values in it would reach a prompt.
-	if !isBlocked(filepath.Join(root, ".env.example")) {
+	if _, err := ResolveForRead(root, ".env.example"); !errors.Is(err, ErrPathBlocked) {
 		t.Error(".env.example became readable; the write exemption leaked into the read path")
+	}
+	// The counterpart, which is the whole reason D-46 split the list: the same name IS
+	// writable. Asserting both here means the pair cannot drift in one direction only.
+	if _, err := ResolveForWrite(root, ".env.example"); err != nil {
+		t.Errorf(".env.example must be writable (D-46, §1.5 lists it as a generated artifact): %v", err)
+	}
+	if _, err := ResolveForWrite(root, ".env"); !errors.Is(err, ErrPathBlocked) {
+		t.Error(".env must never be writable")
 	}
 }

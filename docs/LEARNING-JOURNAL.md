@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                        |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                               |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                   |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                           |
-| Leaves reflected       | **44 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 122 `pending`. Reconciled 2026-07-31; all three sources now agree on 44. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                  |
+| Field                  | Value                                                                                                                                                                       |
+| :--------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-07-31**                                                                                                                                                              |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                  |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                          |
+| Leaves reflected       | **45 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 121 `pending`. Reconciled 2026-07-31; all three sources agree. Group 7 in progress: 7.1 and 7.2 landed. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                 |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -1569,6 +1569,97 @@ D-59 is the next thing that has to happen in this phase.
 
 ---
 
+### D-59 — the verified envelope got its own package, because the obvious placement did not compile
+
+This one is worth reading even if you skip the rest of the chapter, because it is the
+clearest example in the project of a documentation conflict that had a **mechanical**
+answer rather than a matter of taste.
+
+Three parts of the design named the type that proves an envelope was verified, and they
+disagreed. §10.4 defined it inside a code block headed `// Package session`. §10.5 wrote
+every consumer's signature as `*session.Verified`, and the task plan restated that. §2.2.1's
+package tree said `*envelope.Verified`. Neither type existed yet, so nothing was broken —
+but group 7 could not start until the plan said which one it was.
+
+The tempting move is to pick the majority spelling. Two of three said `session`, so that
+looks like the answer. It is not, and the reason is a compile error. §10.1 draws
+`session → executor`, and §10.3's `Manager` holds a dispatcher, so `session` really does
+import `executor`. §10.1 also draws `executor → executor/internal/mutate`. If the mutation
+boundary takes a `session` type, the graph closes:
+
+```
+session → executor → executor/internal/mutate → session
+```
+
+Go rejects import cycles. So the majority spelling was not merely inconsistent with the
+minority one — **it could not be written down in working code**.
+
+The fix is a leaf package: `agent/internal/envelope`, importing nothing from `internal/**`.
+Nothing it might import can create a cycle with a consumer, and every consumer sits above
+it. The alternative worth naming is the one that looks equally good and is much worse:
+invert the dependency, let `executor` declare `Verified` as an **interface**, and have
+`session` satisfy it. That compiles. It also destroys the entire point of the type. The
+guarantee is "a `*Verified` in a signature means somebody checked the signature", and it
+holds because the fields are unexported and `Verify` is the only constructor. An interface
+can be implemented by anyone — including a test double whose `Operation()` returns whatever
+the test wanted. That trade is a compile error swapped for a silent hole, which is the
+Phase 0 defect wearing different clothes.
+
+Cost accepted: one more package, so §10.1's diagram, §2.4's tree and
+`scripts/check-structure.sh` each gained an entry, and §10.4's heading now describes code
+that lives elsewhere — which is why D-59 says so explicitly instead of leaving a reader to
+reconcile it. Reversal cost: moving the package is one import line per consumer. Reverting
+to the `session` placement is not available at any price, because it is the cycle.
+
+**Two things writing the tests taught us, both about encodings.** Go's
+`base64.RawURLEncoding` ignores the four trailing bits of a 43-character encoding, so four
+distinct strings decode to the same 32-byte MAC — "every single-byte mutation is rejected"
+was false as written until `DecodeSignature` started round-tripping and refusing
+non-canonical input. And RFC 8785 sorts object members by **UTF-16 code unit**, not by code
+point. Those agree inside the Basic Multilingual Plane and disagree above it: U+1F600 is
+the surrogate pair `D83D DE00`, which sorts _below_ U+E000 in UTF-16 and _above_ it in
+UTF-8. One emoji key beside a private-use key is enough to make the Go and Python
+canonicalisers produce different bytes, which would look exactly like a tampered envelope.
+
+### Leaf 7.2 — the write path became unreachable, by the compiler
+
+Phase 0 exported `fileops.Ops.ApplyAtomic`. D-45's sentence for why that had to change is
+the best one-line statement of the whole chokepoint idea: _an exported write function that
+any package can call is a bypass waiting to be written._
+
+So the write implementation moved to `agent/internal/executor/internal/mutate`. Go's
+nested-`internal` rule means only packages rooted at `agent/internal/executor/` can import
+it. A package elsewhere that tries **does not compile** — no lint, no review step, no
+discipline. `fileops` keeps the path rules and the diff renderer and now exports no write
+function at all, which a test asserts by name.
+
+**The algorithm is Phase 0's, unchanged.** Validate every path first, back up before
+mutating, write to a temp file in the same directory, fsync, chmod, rename, fsync the
+directory, roll every completed write back in reverse on any error. That mattered enough to
+move P-08 with it: a property that guards an algorithm has to live where the algorithm
+lives, or it quietly starts guarding the location. Phase 1's additions sit either side of
+the preserved sequence rather than inside it — a required pre-image hash per entry checked
+for _every_ entry before the first write, write-intent path rules, a `Delete` action, and a
+`BackupManifest` as the rollback handle.
+
+Two details worth carrying:
+
+**A negative test needs its positive twin.** The boundary is proved by building a fixture
+outside the subtree and asserting the build **fails**. On its own that is weak evidence: if
+`mutate` failed to compile for any unrelated reason the fixture would also fail, and the
+test would pass while proving nothing. So there is a second fixture _inside_ the subtree
+that must build, and the negative test additionally asserts the failure message names the
+internal rule. Only the pair is evidence.
+
+**A rule can be correct and unreachable.** Leaf 4.7 split the path blocklist by intent, and
+`blockedForWrite` — the half that permits `.env.example` — had **no caller at all** until
+this leaf. Phase 0's `ApplyAtomic` still resolved through the _read_ rule, so the write
+exemption was right, tested in isolation, and never consulted by anything that writes.
+That is not a defect in the usual sense; it is what a correctly-sequenced plan looks like
+mid-flight. It is worth noticing anyway, because "the rule exists and its unit test passes"
+and "the rule is on the path" are different claims, and only the second one protects a
+user.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -2020,14 +2111,14 @@ entry you are reading quoted all three literals, because quoting them felt like 
 teaching. A later session's mandated pre-push grep found five high-risk hits in
 `docs/LEARNING-JOURNAL.md` and correctly refused to push. `gitleaks` was clean, which is
 exactly the trap: `gitleaks` scores likelihood, and the rule in `secret-safety.md` is about
-*shape*, because a scanner cannot read intent and neither can a reviewer at a glance. This
+_shape_, because a scanner cannot read intent and neither can a reviewer at a glance. This
 repository already collected GitGuardian incident 35267706 for a placeholder that was equally
 harmless.
 
 The fix was to describe every shape instead of printing it, throughout this chapter. Two
 reasons, and the second is the important one. It reads no worse — "an unsigned JWT whose
 header declared the `none` algorithm" carries the lesson better than the base64, because the
-lesson *is* that the encoding alone is the problem. And granting a "prose is fine" exemption
+lesson _is_ that the encoding alone is the problem. And granting a "prose is fine" exemption
 would have put a human back in the loop for every future hit, which is a convention. The rule
 now has no exception to remember: no credential shape appears in this file, so the pre-push
 grep stays a mechanical gate rather than a judgement call.
@@ -2168,39 +2259,39 @@ future-phase behaviour exists in the tree beyond named seams.
 
 |                             |  Leaves |
 | :-------------------------- | ------: |
-| `done`, with cited evidence |  **44** |
+| `done`, with cited evidence |  **45** |
 | `blocked`                   |       0 |
-| `pending`                   |     122 |
+| `pending`                   |     121 |
 | **Total**                   | **166** |
 
 `PROGRESS.md` is the authority for this table. It was verified mechanically after the
-reconciliation: an `awk` pass over the Phase 1 section alone reports `done 44`,
-`pending 122`, `TOTAL 166`, and the evidence section carries exactly 44 rows.
+reconciliation: an `awk` pass over the Phase 1 section alone reports `done 45`,
+`pending 121`, `TOTAL 166`, and the evidence section carries one row per `done` leaf.
 
 ### By group
 
-| Group                                                                    | Leaves | State                                                                  |
-| :----------------------------------------------------------------------- | -----: | :--------------------------------------------------------------------- |
-| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                           |
-| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                           |
-| 3 · Extend backend core primitives                                       |      5 | **complete**                                                           |
-| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1          |
-| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated              |
-| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                       |
-| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1 done; **7.2 stopped on the D-59 conflict**; 7.3–7.11 blocked on it |
-| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                            |
-| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                            |
-| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                            |
-| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                            |
-| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                            |
-| 13 · AI generation pipeline                                              |     13 | not started                                                            |
-| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                            |
-| 15 · Safe Default Template Library                                       |      7 | not started                                                            |
-| 16 · Change Approval Center API                                          |      4 | not started                                                            |
-| 17 · Frontend feature surfaces                                           |     11 | not started                                                            |
-| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                            |
-| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                            |
-| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                            |
+| Group                                                                    | Leaves | State                                                              |
+| :----------------------------------------------------------------------- | -----: | :----------------------------------------------------------------- |
+| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                       |
+| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                       |
+| 3 · Extend backend core primitives                                       |      5 | **complete**                                                       |
+| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1      |
+| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated          |
+| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                   |
+| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1 and 7.2 done; D-59 resolved the type conflict that blocked 7.2 |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                        |
+| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                        |
+| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                        |
+| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                        |
+| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                        |
+| 13 · AI generation pipeline                                              |     13 | not started                                                        |
+| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                        |
+| 15 · Safe Default Template Library                                       |      7 | not started                                                        |
+| 16 · Change Approval Center API                                          |      4 | not started                                                        |
+| 17 · Frontend feature surfaces                                           |     11 | not started                                                        |
+| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                        |
+| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                        |
+| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                        |
 
 Note the ordering. The test-integrity regime came first, before any component it polices. Then
 inherited debt, before anything that sits on it. Then primitives on both sides. Then the

@@ -1,14 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
+
+// Package fileops holds the agent's path validation and diff rendering.
+//
+// It does NOT write files. It used to: Phase 0 exported `Ops.ApplyAtomic`, and D-45
+// supersedes it with `executor/internal/mutate.ApplyVerified` for one reason —
+// "an exported write function that any package can call is a bypass waiting to be
+// written". The write implementation moved into a nested-`internal` package importable
+// only from within `internal/executor/**`, so a mutation without a verified envelope is
+// a compile error rather than a review miss (§2.2.1, §10.5, D-45, D-59).
+//
+// What stays here, and why: the path rules are needed on BOTH intents. Reading a file
+// into a prompt is judged by `ResolveForRead`, writing one by `ResolveForWrite`, and
+// D-46 makes those two rules deliberately different. Keeping them in one package is
+// what makes "the write list is the read list plus exactly three names" a statement a
+// test can check, rather than two implementations that have to be compared by eye.
+//
+// `UnifiedDiff` stays because it renders a diff for a human to approve; it writes
+// nothing.
 package fileops
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 )
@@ -20,22 +35,13 @@ var (
 )
 
 // Ops is the file operations interface.
+//
+// One method. It carried `ApplyAtomic` in Phase 0; D-45 removed it, and the removal is
+// the point — a consumer holding an `Ops` can no longer write anything, so `app` and
+// `mcp` can keep their dependency without holding a write capability they must not have
+// (D-47: the agent's MCP server gains only non-mutating tools).
 type Ops interface {
-	ApplyAtomic(ctx context.Context, root string, entries []WriteEntry) (*ApplyReport, error)
 	UnifiedDiff(before, after, label string) string
-}
-
-// WriteEntry describes a single file to write.
-type WriteEntry struct {
-	RelPath string
-	Content []byte
-	Mode    os.FileMode
-}
-
-// ApplyReport records what was written and backed up.
-type ApplyReport struct {
-	Written []string
-	Backups []string
 }
 
 // FileOps implements Ops.
@@ -46,113 +52,10 @@ func New() *FileOps {
 	return &FileOps{}
 }
 
-// ApplyAtomic writes every entry or none. For each target it first writes a
-// timestamped backup, then writes to a temp file in the same directory,
-// fsyncs, and renames over the target. On any error it rolls back.
-func (f *FileOps) ApplyAtomic(_ context.Context, root string, entries []WriteEntry) (*ApplyReport, error) {
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("resolve root: %w", err)
-	}
-
-	// Phase 1: Full pre-validation
-	absPaths := make([]string, len(entries))
-	for i, e := range entries {
-		abs, err := resolveAndValidate(root, e.RelPath)
-		if err != nil {
-			return nil, err
-		}
-		absPaths[i] = abs
-	}
-
-	backups := make([]backupInfo, 0, len(entries))
-	written := make([]string, 0, len(entries))
-
-	// Phase 2: Write with backups
-	for i, e := range entries {
-		abs := absPaths[i]
-
-		// Ensure parent directory exists
-		dir := filepath.Dir(abs)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			rollback(written, backups)
-			return nil, fmt.Errorf("mkdir %s: %w", dir, err)
-		}
-
-		// Backup if exists
-		var bi backupInfo
-		if _, statErr := os.Stat(abs); statErr == nil {
-			backupPath := abs + ".backup." + time.Now().Format("20060102T150405Z")
-			if err := copyFile(abs, backupPath); err != nil {
-				rollback(written, backups)
-				return nil, fmt.Errorf("backup %s: %w", abs, err)
-			}
-			bi = backupInfo{path: backupPath, existed: true}
-		}
-		backups = append(backups, bi)
-
-		// Write to temp file in same directory
-		mode := e.Mode
-		if mode == 0 {
-			mode = 0o644
-		}
-		tmp, err := os.CreateTemp(dir, ".forgeops-*")
-		if err != nil {
-			rollback(written, backups)
-			return nil, fmt.Errorf("create temp for %s: %w", e.RelPath, err)
-		}
-		tmpName := tmp.Name()
-
-		if _, err := tmp.Write(e.Content); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-			rollback(written, backups)
-			return nil, fmt.Errorf("write %s: %w", e.RelPath, err)
-		}
-
-		// fsync the file
-		if err := tmp.Sync(); err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-			rollback(written, backups)
-			return nil, fmt.Errorf("fsync %s: %w", e.RelPath, err)
-		}
-		_ = tmp.Close()
-
-		if err := os.Chmod(tmpName, mode); err != nil {
-			_ = os.Remove(tmpName)
-			rollback(written, backups)
-			return nil, fmt.Errorf("chmod %s: %w", e.RelPath, err)
-		}
-
-		// Atomic rename
-		if err := os.Rename(tmpName, abs); err != nil {
-			_ = os.Remove(tmpName)
-			rollback(written, backups)
-			return nil, fmt.Errorf("rename %s: %w", e.RelPath, err)
-		}
-
-		// fsync the directory
-		fsyncDir(dir)
-
-		written = append(written, abs)
-	}
-
-	// Collect backup paths for report
-	var backupPaths []string
-	for _, b := range backups {
-		if b.existed {
-			backupPaths = append(backupPaths, b.path)
-		}
-	}
-
-	return &ApplyReport{
-		Written: written,
-		Backups: backupPaths,
-	}, nil
-}
-
 // UnifiedDiff produces a unified diff string using sergi/go-diff.
+//
+// Unchanged from Phase 0. Q-23 asserts that applying this diff to `before` yields
+// `after` and that the frontend renders the same hunk count the backend computed.
 func (f *FileOps) UnifiedDiff(before, after, label string) string {
 	dmp := diffmatchpatch.New()
 	a, b, c := dmp.DiffLinesToChars(before, after)
@@ -181,8 +84,39 @@ func (f *FileOps) UnifiedDiff(before, after, label string) string {
 	return sb.String()
 }
 
-// resolveAndValidate checks a path is within root and not blocklisted.
-func resolveAndValidate(root, relPath string) (string, error) {
+// ResolveForRead resolves relPath under root for READ intent.
+//
+// Phase 0's `resolveAndValidate`, exported and unchanged in behaviour. P-08's read clause
+// asserts exactly this strictness: `.env`, `.env.*` in any case, `*.pem`, `~/.ssh` and
+// `~/.aws` are all refused, with no exemptions of any kind. There is deliberately no
+// exemption list on this path — reading a real `.env` into an LLM prompt is the harm
+// D-46's read rule exists to prevent.
+func ResolveForRead(root, relPath string) (string, error) {
+	return resolve(root, relPath, blockedForRead)
+}
+
+// ResolveForWrite resolves relPath under root for WRITE intent.
+//
+// Identical to ResolveForRead except that D-46's three exact names — `.env.example`,
+// `.env.sample`, `.env.template` — are permitted, because §1.5 lists a generated
+// `.env.example` as one of the platform's own artifacts. Everything else, including a
+// case variant or a `.bak` of an exemption, stays refused.
+//
+// This is the function the mutation boundary calls. Until D-45's move it had NO caller:
+// leaf 4.7 split the blocklist by intent and Phase 0's `ApplyAtomic` still went through
+// the read path, so the write rule was correct and unreachable. Wiring it is part of
+// what leaf 7.2 is for.
+func ResolveForWrite(root, relPath string) (string, error) {
+	return resolve(root, relPath, blockedForWrite)
+}
+
+// resolve is Phase 0's `resolveAndValidate`, parameterised by the blocklist to consult.
+//
+// The containment logic is byte-for-byte the Phase 0 logic. Only the final blocklist call
+// is a parameter, so the two intents cannot drift in how they resolve symlinks or check
+// root containment — they differ in exactly one decision and are otherwise the same code
+// path.
+func resolve(root, relPath string, blocked func(string) bool) (string, error) {
 	// Clean the path
 	cleaned := filepath.Clean(relPath)
 	if filepath.IsAbs(cleaned) {
@@ -220,58 +154,20 @@ func resolveAndValidate(root, relPath string) (string, error) {
 	}
 
 	// Blocklist check
-	if isBlocked(joined) {
+	if blocked(joined) {
 		return "", fmt.Errorf("%w: %s", ErrPathBlocked, relPath)
 	}
 
 	return joined, nil
 }
 
-// isBlocked checks PRD 2.2 blocklist: ~/.ssh, ~/.aws, .env, *.pem
+// BlockedForRead reports whether reading absPath is refused.
 //
-// The implementation moved to blocklist.go as `blockedForRead` when task 4.7 split the
-// list by intent (§7.11(f), D-46). Kept as a one-line alias rather than rewriting every
-// call site, because `resolveAndValidate` is on the READ path and its strictness must
-// not change — P-08's read clause asserts exactly this behaviour.
-func isBlocked(absPath string) bool {
-	return blockedForRead(absPath)
-}
+// Exported so `mutate` and the secret scanner can consult the rule without each
+// reimplementing it, and so a test can assert the two intents differ on exactly three
+// names. The absolute path is the argument because the `~/.ssh` and `~/.aws` clauses are
+// about location, not about filename.
+func BlockedForRead(absPath string) bool { return blockedForRead(absPath) }
 
-type backupInfo struct {
-	path    string
-	existed bool
-}
-
-func rollback(written []string, backups []backupInfo) {
-	// Roll back in reverse order
-	for i := len(written) - 1; i >= 0; i-- {
-		if i < len(backups) && backups[i].existed {
-			// Restore from backup
-			_ = os.Rename(backups[i].path, written[i])
-		} else {
-			// Remove if it didn't exist before
-			_ = os.Remove(written[i])
-		}
-	}
-}
-
-func copyFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, info.Mode())
-}
-
-func fsyncDir(dir string) {
-	d, err := os.Open(dir)
-	if err != nil {
-		return
-	}
-	_ = d.Sync()
-	_ = d.Close()
-}
+// BlockedForWrite reports whether writing absPath is refused (D-46).
+func BlockedForWrite(absPath string) bool { return blockedForWrite(absPath) }
