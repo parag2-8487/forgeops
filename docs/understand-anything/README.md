@@ -4,14 +4,14 @@ An interactive map of this repository, generated with
 [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) pinned at **v2.9.0**
 (commit `f08763d11d0202a8a8f52b5dedda6d1b2e2ebac8`).
 
-| Field          | Value                                                                                                                           |
-| :------------- | :------------------------------------------------------------------------------------------------------------------------------ |
-| Generated      | **2026-07-31**, regenerated after group 6 completed and 7.1 landed                                                              |
-| Tool           | Understand-Anything v2.9.0, installed at user level (see below)                                                                 |
-| Files analysed | 463 of 467 in the inventory (4 excluded)                                                                                        |
-| Graph          | 2,070 nodes · 2,118 edges · 14 layers · 15 tour steps                                                                           |
-| Edges          | 1,607 `contains` (file to function/class) · 511 `imports` (resolved project-internal)                                           |
-| Validation     | 0 issues, 168 orphan warnings (documents, configs and scripts that no source file imports)                                      |
+| Field          | Value                                                                                      |
+| :------------- | :----------------------------------------------------------------------------------------- |
+| Generated      | **2026-07-31**, regenerated at group 7's close-out with all eleven of its leaves landed    |
+| Tool           | Understand-Anything v2.9.0, installed at user level (see below)                            |
+| Files analysed | 463 of 467 in the inventory (4 excluded)                                                   |
+| Graph          | 2,070 nodes · 2,118 edges · 14 layers · 15 tour steps                                      |
+| Edges          | 1,607 `contains` (file to function/class) · 511 `imports` (resolved project-internal)      |
+| Validation     | 0 issues, 168 orphan warnings (documents, configs and scripts that no source file imports) |
 
 ## Open it
 
@@ -136,7 +136,8 @@ phone home; the deterministic scripts used here make no network calls at all.
 
 ## Regeneration date log
 
-| Date       | Leaves    | Note             |
-| :--------- | :-------- | :--------------- |
-| 2026-07-31 | 38 of 166 | first generation |
-| 2026-07-31 | 44 of 166 | regenerated after group 6 completed and 7.1 landed |
+| Date       | Leaves    | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| :--------- | :-------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-31 | 38 of 166 | first generation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-07-31 | 44 of 166 | regenerated after group 6 completed and 7.1 landed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-31 | 54 of 166 | regenerated at group 7's close-out, all eleven of its leaves landed. 532 files scanned, 528 analysed, 2574 nodes, 2668 edges (622 imports), 14 layers, 15 tour steps, 182 orphan warnings. Two new `extract-import-map` warnings are expected and are evidence rather than noise: `backend/tests/mutation/overlays/q0{1,2}_*.go` have no ancestor `go.mod`, because Appendix B's Go negative controls are deliberately outside the module tree so `go build ./...` never compiles them and they are reachable only through the overlay JSON the mutation harness writes |

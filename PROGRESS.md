@@ -334,6 +334,30 @@ exit status of a single invocation each. The one skip in the whole run is
 
 ### Phase 1 findings recorded rather than hidden
 
+- **`make verify-chain` had never been run, and both of its outputs were unusable as evidence.**
+  Group 7's close-out ran it end to end against the real Compose stack for the first time.
+  Against a fresh stack it died with a forty-line SQLAlchemy traceback ending in
+  `UndefinedTableError: relation "audit_events" does not exist`, because nothing in Compose
+  applies migrations — deliberately, since §6.4 splits schema ownership from the application
+  role. Against a migrated but empty stack it printed
+  `verify-chain: OK - 0 row(s) of the untenanted chain reproduce their stored hashes` and exited
+  **0** — truthful, and worth nothing: a CI step gating on that exit code is green over an empty
+  table, which is §0.4.5's `VACUOUS` row arriving in a §13.4 operator command. `verify_cli.py`
+  shipped with leaf 7.6 carrying **no tests at all**, which is why neither was noticed.
+  Resolved by **D-69**: the command keeps its meaning, the caller states its expectation with
+  `--require-rows N`, a missing table is a named diagnostic naming `alembic upgrade head` and
+  exit 2, and `compose-smoke` gains four steps ending in `make verify-chain rows=1`. Observed
+  locally against the running stack: an unmigrated database gives the named ERROR and exit 2 with
+  **no traceback**; the empty untenanted chain gives `OK - 0 row(s)` exit 0 and, with
+  `--require-rows 1`, ERROR exit 1; a three-row tenant chain gives `OK - 3 row(s)` exit 0 with
+  `--require-rows 1` and ERROR exit 1 with `--require-rows 99`.
+  `scripts/audit-chain-smoke.py` reports `wrote 3 record(s) at seq [1, 2, 3]` /
+  `OK - 3 freshly written row(s) reproduce their hashes` /
+  **`CONTROL BITES - altering seq 2 is reported as hash at seq 2`** / `PASS - chain restored`.
+  That third line is the end-to-end claim: without it the step would prove the command runs, not
+  that it can tell. `tests/integration/test_audit_verify_cli.py` **9 passed**, the file the CLI
+  never had.
+
 - **`scripts/check-structure.sh` was failing with 42 violations** against a correct tree.
   Its Phase 0 lists still classed `backend/src/{auth,generation,policies,secrets,websocket}`
   and `agent/internal/{executor,policy,validator,devtools}` as structural-only, all nine of

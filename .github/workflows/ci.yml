@@ -532,6 +532,36 @@ jobs:
       # process table of the container that is actually running.
       - name: Assert the OPA container does not run as root
         run: bash scripts/check-container-nonroot.sh opa
+      # ── The audit chain, end to end through the running stack (D-69, §11.9, §13.4) ──
+      #
+      # Nothing applies migrations on start, deliberately — the backend does not own the
+      # schema (§6.4's two-role split). So `make verify-chain` against a fresh stack used to
+      # die on `relation "audit_events" does not exist` with a forty-line SQLAlchemy
+      # traceback. Migrating here is what makes the rest of this block possible, and it also
+      # exercises `alembic upgrade head` against the compose Postgres rather than against a
+      # test container.
+      - name: Migrate the compose database to head
+        run: docker compose run --rm backend alembic upgrade head
+      # The vacuity case, asserted rather than avoided. `verify-chain` over an empty chain is
+      # truthfully OK and worth nothing as evidence, so the guard that a gate needs is proved
+      # to work BEFORE it is relied on below.
+      - name: An empty chain must not satisfy --require-rows
+        run: |
+          docker compose run --rm backend python -m src.audit.verify_cli --require-rows 1 \
+            && { echo "an empty chain satisfied --require-rows 1"; exit 1; } || true
+      # Write records through the real AuditWriter, verify them, then TAMPER one row and require
+      # the verifier to object at exactly that seq. The tamper is the part that makes this
+      # end-to-end: without it the step proves the command runs, not that it can tell.
+      - name: Write, verify, tamper and restore the audit chain
+        run: docker compose run --rm -v "$PWD/scripts:/smoke:ro" backend python /smoke/audit-chain-smoke.py
+      # And the operator-facing command over the chain the step above left behind, with the
+      # non-vacuity guard on, so this job's green is a statement about a chain that exists.
+      - name: make verify-chain over a non-empty chain
+        run: |
+          tenant="$(docker compose exec -T postgres psql -U forgeops -d forgeops -t -A -c \
+            "SELECT tenant_id FROM audit_events WHERE tenant_id IS NOT NULL ORDER BY seq LIMIT 1")"
+          test -n "$tenant"
+          make verify-chain tenant="$tenant" rows=1
       # Optional-profile evidence. Each command lands with the task that owns the
       # service it starts, so this job never waits on a container that does not exist:
       #   - `vault` (infisical): task 10.4
