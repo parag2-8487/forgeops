@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                 |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                        |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                            |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                    |
-| Leaves reflected       | **47 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 119 `pending`. Reconciled 2026-07-31; all three sources agree. Group 7 in progress: 7.1, 7.2, 7.4 and 7.6 landed. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                           |
+| Field                  | Value                                                                                                                                                                                                              |
+| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                                                     |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                         |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                 |
+| Leaves reflected       | **48 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 118 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. Group 7 in progress: 7.1, 7.2, 7.4, 7.5 and 7.6 landed. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                        |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -1854,6 +1854,219 @@ the table it came from. Its output is deliberately ASCII — this leaf spent rea
 message that vanished because an em dash did not survive a Windows console redirect, and a
 diagnostic nobody can see is worse than no diagnostic.
 
+### D-62 — one pepper, two uses, and an AEAD bound to the row it lives in
+
+`agent_devices.envelope_key_enc` is the only secret in the schema that has to be _recoverable_.
+Every other credential is stored as an HMAC, because a database read should not be equivalent to a
+stolen token — but the backend has to **sign** command envelopes with the envelope key, so hashing
+it is not an option. §6.3 said "encrypted (AES-256-GCM under an app-level key from the secret
+store)" and stopped there: it named neither where that key comes from nor what the AEAD is bound
+to, and the chokepoint cannot mint an envelope without both answers.
+
+**The choice: derive, don't configure.** The key-encryption key is `HKDF-SHA256(ENVELOPE_PEPPER)`
+under the label `forgeops-envelope-key-v1`. No new environment variable, and domain-separated from
+the pepper's other job — the HMAC under which pairing codes and device tokens are stored. A test
+compares the derived KEK against the naive `HMAC-SHA256(pepper, label)` an implementation might
+reach for if the HKDF step were dropped, so "domain-separated" is a property of the bytes rather
+than a word in a docstring.
+
+The rejected option is the interesting one. A **dedicated KEK variable** looks more rigorous:
+separate secret, separate rotation. But rotating the pepper already invalidates every stored
+device-token and pairing-code HMAC, so the fleet has to re-pair regardless — the second variable
+would buy independent rotation of something that cannot rotate independently, at the cost of one
+more secret in §13.1 that an operator must get right. The other rejected option, leaving the column
+plaintext, fails on a simpler ground: the column name says `_enc`, and a column that lies about its
+contents is worse than one that is honestly named.
+
+**The addition that changes the threat model.** The device id is the AES-GCM _additional
+authenticated data_. Without it, an attacker holding nothing but `UPDATE` on `agent_devices` can
+take a ciphertext whose plaintext they know — from a device they own, say — write it into a victim
+device's row, and then sign envelopes that device will accept. They never learn the victim's key;
+they replace it. With the device id bound in, the transplant fails authentication. The test seals
+under one device id, fails to unseal under another, **and then opens the same bytes under the
+original**, so the refusal is attributable to the binding rather than to a corrupt ciphertext.
+
+**The nonce is asserted, not assumed.** A fresh 96-bit nonce per seal, from the OS CSPRNG, stored
+in front of the ciphertext in the same column. AES-GCM nonce reuse under one key leaks the
+authentication subkey outright, which makes "the nonce is random" too important to take on faith:
+512 seals of the _same_ plaintext under the _same_ key and the _same_ device id, and every nonce
+must differ. The API also simply does not let a caller supply a nonce, because the single most
+damaging mistake available here is reusing one.
+
+**Two costs, written down because both are real.** The derived KEK cannot rotate independently of
+the pepper, so rotating it means re-sealing every device row — and **Phase 1 does not implement
+that re-seal.** It is `OQ-33`, and the honest runbook answer for now is "rotate and re-pair", not
+"rotate". And if the pepper leaks, the envelope keys fall with it. The marginal loss is smaller
+than it first sounds — a leaked pepper already forges device-token and pairing-code HMACs, which is
+enough to impersonate a device _to_ the backend — so the coupling adds the ability to forge commands
+_to_ a device. That is still a widening, and saying so is better than implying the coupling is free.
+
+One smaller thing worth knowing, because it is the vacuity trap in a new place. §2.2.1's
+confinement of the key-fetching function is a Ruff `banned-api` entry naming
+`src.auth.devices.envelope_key`. That mechanism matches **imports**, so it can only ever bite a
+module-level name; §11.2 writes `envelope_key` as a `DeviceService` method, and a `banned-api` entry
+naming a method bans nothing while looking exactly like one that does. So the module-level function
+is the real, banned surface and the method delegates to it — with a test asserting the delegation,
+so the two cannot drift into being separate implementations.
+
+### D-63 — a state machine the database could not store
+
+Appendix A.3's transit has six outcomes. Three of them — `blocked`, `pending_approval`, `reverted`
+— could not be written to the database at all, and nothing in the suite could see it.
+
+`0004` generated `ck_change_sets_status_allowed` from `CHANGE_SET_STATUSES`, which is exactly the
+arrangement §6.5 asks for: the constraint the database enforces is generated from the tuple the
+application validates against, so a new state cannot be added to one without the other. What that
+arrangement does _not_ protect against is the tuple having been written from memory rather than from
+§3.6. It carried three names §3.6 does not define (`validated`, `awaiting_approval`, `failed`) and
+was missing six it does. Nine disagreements with the authority, in the one table whose legality
+Q-22 quantifies over.
+
+Revision `0010` sets the tuple to §3.6's thirteen states and swaps the constraint. Two details in
+it are worth the reading.
+
+**The two directions are deliberately asymmetric.** The upgrade _validates_ against existing rows
+and refuses if any status falls outside §3.6, because three of `0004`'s names are being removed and
+a row carrying one would become unreadable by the state machine. The downgrade restores the narrower
+list as **`NOT VALID`**. That is not laziness: the first version of this revision guarded both
+directions symmetrically, and the immediate consequence was that `alembic downgrade base` failed —
+which every §6.5 revision proof runs _before_ it migrates up, so the whole integration suite went
+red for a reason that had nothing to do with what it was testing. `NOT VALID` says the right thing
+anyway: the narrower vocabulary constrains every future write, and rows already written stay
+readable rather than being deleted. A downgrade must never destroy a lifecycle to satisfy a
+constraint.
+
+**The proof reads the design, not the code.** `test_0010_change_set_statuses.py` parses §3.6's
+mermaid block out of `design.md` and asserts the tuple equals the states it names. That is the
+assertion `0004`'s proof could not make, because it parametrised over the very tuple that was
+wrong — and it is the only shape that will catch the next divergence rather than the last one.
+
+The cost: a tenth revision beyond §6.5's stated eight, so §6.5's table and
+`test_alembic_linearity.py::EXPECTED_HEAD` both moved. That constant moving is the point — it is
+the reviewable signal that a revision outside the plan was added on purpose.
+
+### D-64 — what `approval_id` means when nobody approved anything
+
+§7.6 makes `approval_id` a required, signed member of every envelope. On the human path it is
+`approvals.id`. On the **auto-approved** path there is no approval row, because nobody approved it
+— and `approvals.approver_id` is `NOT NULL`, so there is no honest row to write.
+
+The answer is the `audit_events.id` of the record that recorded the auto-approval. That row is
+immutable by construction, it necessarily exists before the authority does — `MutationAuthority`
+refuses an `audit_seq` below 1 — and it is the only artifact that actually authorised the mutation.
+
+Both rejected options are instructive. A **fresh random UUID persisted nowhere** would be joinable
+to nothing: an operator holding a signed envelope could never find out what authorised it, which is
+an unjoinable identifier carrying a UUID's air of authority. Writing an **`approvals` row naming the
+submitter as approver** would record that a person approved their own change set when in fact the
+gate decided — and §11.2's self-approval rule exists precisely to keep that distinction.
+
+The cost is that `approval_id` now resolves in two tables depending on the path. Mitigated rather
+than hidden: the audit row's `action` distinguishes them, and the auto-approved envelope's
+`approval_id` is always findable as an `audit_events.id` for the same change set.
+
+### D-65 — a blast-radius analyser built for Terraform, pointed at file edits
+
+`SemanticPlanAnalyzer` was built in Phase 0 to read OpenTofu plan JSON: it classifies each resource
+type as stateful, network, IAM or compute and multiplies an action weight by that class's
+multiplier. Appendix A.3 names it for stage 4 of a chokepoint whose change sets are **file** edits,
+and says nothing about what `PlanFrom(cs)` produces.
+
+`plan_from_change_items` emits one resource change per item with a single synthetic type,
+`forgeops_file`, which `classify_resource` does not recognise — so every item lands in the `unknown`
+class. Blast radius for a file change set is therefore a function of how many files change and how
+destructively, which is exactly what a file change set has to offer. In practice: a create-only set
+of a few files auto-approves, one deletion needs a human, four deletions block.
+
+The tempting alternative was to map file paths onto cloud resource classes so that deleting
+something important would block. It invents a class the change set does not have, and the
+multipliers were calibrated for infrastructure — a `.tf` file edit is not an `aws_db_instance`
+deletion. A second analyser for file change sets is worse still: two blast-radius implementations
+is how the two come to disagree, and P-11's monotonicity property would then guard only one of them.
+
+The cost is stated and then **asserted**, so nobody later reads it as a bug: a file change set can
+never reach `stateful_deletions`, so a single deletion of a critical file is a `warn`, not a
+`block`. Protecting a specific path is the policy layer's job — `policies/agent/paths.rego`, "never
+edit `package.json`" — not the analyser's.
+
+### D-66 — a revert is a new change set, not a flag on the old one
+
+§11.6 says a revert "runs the full chokepoint again and mints its own authority". §3.6 gives exactly
+one edge out of a success state: `applied --> reverted : rollback handle used`. What §3.6 does _not_
+give is any in-flight state for a revert — no `applied → applying`, no `reverting`.
+
+So `revert(X)` compiles a **new** change set `Y` whose items are `X`'s inverted — create↔delete,
+update with its two contents swapped, in reverse ordinal order because the forward apply wrote them
+ascending — and runs the stages over `Y`. `Y` has an ordinary lifecycle and its own minted
+authority. `X` becomes `reverted` when `Y` has been applied and the handle consumed, which is
+precisely what §3.6's edge label says.
+
+Reverting _in place_ was the obvious alternative and it needs an `applied → applying` edge the
+design does not define, so Q-22 would have to be weakened to accept an edge §3.6 does not have.
+Marking `X` `reverted` at mint time is worse: it records a revert that has not happened, and if the
+apply fails the record says the change was undone while the disk still holds it.
+
+Three costs. Two change-set rows per revert, with the link from `Y` to `X` living in the audit
+record and the envelope's `args` rather than in a column. **`X`'s transition to `reverted` is
+written by the `command.result` handler, which arrives with the hub in group 8** — so in this wave a
+reverted original stays `applied` after its reverse set is minted, and that is a named gap rather
+than something the code pretends about. And the rollback handle is consumed at _authorisation_
+rather than at completion, so a revert whose delivery fails cannot be retried without a new handle;
+single-use is the property Q-02 asserts and re-use is the more dangerous failure, so the asymmetry
+is deliberate — but a denied or approval-pending revert leaves the handle untouched, and there is a
+test for each.
+
+### Leaf 7.5 — the six stages, and the four places the pseudocode had to be read against itself
+
+Appendix A.3 is 40 lines of pseudocode. Implementing it surfaced four places where the literal code
+and the stated postconditions disagree, and in every case the postcondition is what the design
+actually means.
+
+**The stage numbers are not the execution order, and that is correct.** A.3 numbers the stages 0–6
+but executes 3 (compile) and 4 (blast radius) _before_ 2 (approval gate). That is not a slip: the
+gate's input **is** the blast radius, and the blast radius is computed from the compiled change set.
+The executed order is admission → policy → compile → blast radius → gate → audit → handle, with the
+last five inside one transaction. The method is straight-line for the reason A.3 gives — "a loop
+here would be a place to skip a stage".
+
+**Every early return writes a record, including the three A.3's body forgets.** The pseudocode calls
+`AuditDenied` on two of its five early returns. Its postcondition says "every early return writes
+exactly one audit record", and §11.6 says "a denial is as auditable as an approval — an audit trail
+with only successes in it is a marketing artifact". So the unauthenticated, no-device and
+revoked-device paths write one too. There is a subtlety in making that true: `AuditWriter.append`
+joins the caller's transaction and never commits, so the refusal path has to **commit before it
+raises**. Raise first and the record rolls back, and the denial leaves no trace — the exact failure
+the clause exists to prevent.
+
+**The mint and the digest had to swap places.** A.3 writes `authority ← MintAuthority(...)` then
+`envelope ← SignCommand(authority, ...)`, but `MutationAuthority.envelope_digest` names the
+envelope, and the authority is frozen. So the envelope is composed first, digested, _then_ the
+authority is minted over that digest, and only then is anything signed. The stage ordering A.3
+cares about is untouched — the mint still follows all six stages — but the field now cannot lie
+about which bytes were signed.
+
+**Delivery is not a transit.** After the mint, the envelope goes to the hub and _then_ the change
+set advances to `applying`, in a second small transaction that writes no audit record. Two reasons.
+Q-04 counts one record per transit, and delivery is the transit's outcome leaving the building
+rather than a transit of its own. And advancing afterwards means a failed delivery leaves the set
+`approved` and retryable instead of stuck in `applying` with nothing in flight — which is exactly
+the state the rollback handle was reserved for, and there is a test that makes the sink fail and
+asserts the handle is already on disk.
+
+Two collaborators do not exist yet, and both defaults refuse rather than allow.
+`UnavailableGovernancePolicy` raises on every evaluation, which the chokepoint turns into a deny
+with an audit record; `UnavailableCommandSink` refuses delivery with `device-not-connected` instead
+of discarding the envelope. A backend at this wave therefore refuses every mutation and says why. A
+sink that silently dropped commands would let every transit report success while nothing ever ran.
+
+One structural assertion is worth more than its five lines suggest. §2.2's whole claim is that the
+stages cannot be skipped, and the thing that would falsify it is a _second_ mint. So an `ast` walk
+over `backend/src/**` asserts that `mint_authority`, `sign_envelope`, `signing_key_scope` and
+`auth.devices.envelope_key` each have exactly one call site, that it is `governance/chokepoint.py`,
+and that `_mint_and_sign` is the only method that reaches the mint. Leaf 7.7 generalises this into
+Q-03 over generated call graphs; these fixed assertions stay, because a property test over generated
+inputs still benefits from one example nobody can argue about.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -2254,6 +2467,43 @@ a control rather than a comment. The grep-level test matches the read expression
 appears in the comment above it and a reverted implementation with an intact comment would
 otherwise pass.
 
+**45. The change-set state vocabulary was written from memory, and its proof read the same
+memory.** `src/governance/models.py::CHANGE_SET_STATUSES` disagreed with design §3.6 in nine
+places: three states §3.6 does not define (`validated`, `awaiting_approval`, `failed`) and six it
+does but the tuple lacked (`rejected_by_policy`, `blocked`, `pending_approval`, `expired`,
+`conflicted`, `reverted`). Migration `0004` generates the database's CHECK constraint from that
+tuple — which is the good arrangement §6.5 asks for, and it faithfully propagated the error into
+the schema. The consequence was concrete rather than cosmetic: **three of the six outcomes
+Appendix A.3's chokepoint transit produces could not be stored at all.** A blast-radius block
+writes `blocked`; the approval gate writes `pending_approval`; a completed revert writes
+`reverted`.
+
+The Pattern F part is why nine migrations and a full revision proof went green over it.
+`test_0004_change_sets.py` asserts "the status check constraint rejects an unknown state" and
+parametrises the accepting half over `CHANGE_SET_STATUSES` itself. So the test's expectation and
+the implementation's tuple were the same object. It could confirm that the database agreed with
+the code and could never notice that the code disagreed with the design — the same shape as
+defects 23 and 36, one layer up: not a fixture built around the implementation, but an
+**expectation derived from the thing under test**.
+
+It was found by trying to write the code the design describes. The first `submit` that reached a
+blast-radius block raised a `23514` check violation, which is a fairly loud way to be told your
+vocabulary is wrong; the alternative history, where nobody implemented A.3 until much later, ends
+with someone quietly choosing `rejected` for a blast-radius block because that is what the schema
+accepts.
+
+Fixed by D-63 and revision `0010`, and the repair's test is the shape that matters:
+`test_0010_change_set_statuses.py::test_the_tuple_equals_the_states_named_by_the_diagram`
+**parses §3.6's mermaid block out of `design.md`** and compares. Two smaller assertions ride
+along — `CHANGE_SET_TRANSITIONS` and `TERMINAL_CHANGE_SET_STATUSES` are now data derived from the
+same section, so Q-22 has one source to quantify over, and a test asserts that the only edge
+leaving a terminal state is `applied → reverted`.
+
+The generalisable rule: **a test whose expected value comes from the code under test can only
+prove self-consistency.** When there is an authority — a specification, a protocol document, a
+state diagram — the test should read the authority, even when that means parsing a Markdown file.
+Parsing `design.md` in a test looked odd until it caught something.
+
 ### Pattern G — a second engine walked into a single-engine assumption
 
 **24. OPA refused to start once Cerbos policies landed.** Phase 0 mounted `./policies` and ran
@@ -2615,39 +2865,40 @@ future-phase behaviour exists in the tree beyond named seams.
 
 |                             |  Leaves |
 | :-------------------------- | ------: |
-| `done`, with cited evidence |  **45** |
+| `done`, with cited evidence |  **48** |
 | `blocked`                   |       0 |
-| `pending`                   |     121 |
+| `pending`                   |     118 |
 | **Total**                   | **166** |
 
-`PROGRESS.md` is the authority for this table. It was verified mechanically after the
-reconciliation: an `awk` pass over the Phase 1 section alone reports `done 45`,
-`pending 121`, `TOTAL 166`, and the evidence section carries one row per `done` leaf.
+`PROGRESS.md` is the authority for this table. It is verified mechanically after every leaf by
+`scripts/_state.sh`, which reports `done 48`, `pending 118`, `TOTAL 166` over the Phase 1 section
+alone, cross-checks those rows against `tasks.md`'s checkboxes **in both directions**, and lists
+any `done` row that carries no evidence row. All four lists are empty as of this snapshot.
 
 ### By group
 
-| Group                                                                    | Leaves | State                                                              |
-| :----------------------------------------------------------------------- | -----: | :----------------------------------------------------------------- |
-| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                       |
-| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                       |
-| 3 · Extend backend core primitives                                       |      5 | **complete**                                                       |
-| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1      |
-| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated          |
-| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                   |
-| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1 and 7.2 done; D-59 resolved the type conflict that blocked 7.2 |
-| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                        |
-| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                        |
-| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                        |
-| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                        |
-| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                        |
-| 13 · AI generation pipeline                                              |     13 | not started                                                        |
-| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                        |
-| 15 · Safe Default Template Library                                       |      7 | not started                                                        |
-| 16 · Change Approval Center API                                          |      4 | not started                                                        |
-| 17 · Frontend feature surfaces                                           |     11 | not started                                                        |
-| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                        |
-| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                        |
-| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                        |
+| Group                                                                    | Leaves | State                                                                                                             |
+| :----------------------------------------------------------------------- | -----: | :---------------------------------------------------------------------------------------------------------------- |
+| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                      |
+| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                      |
+| 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                      |
+| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1                                                     |
+| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63               |
+| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                  |
+| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1, 7.2, 7.4, 7.5, 7.6 done. 7.3 resequenced after 7.6 by its own vacuity rule; 7.7–7.11 are the property leaves |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                       |
+| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                       |
+| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                       |
+| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                       |
+| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                                                                       |
+| 13 · AI generation pipeline                                              |     13 | not started                                                                                                       |
+| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                                                                       |
+| 15 · Safe Default Template Library                                       |      7 | not started                                                                                                       |
+| 16 · Change Approval Center API                                          |      4 | not started                                                                                                       |
+| 17 · Frontend feature surfaces                                           |     11 | not started                                                                                                       |
+| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                                                                       |
+| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                                                                       |
+| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                                                                       |
 
 Note the ordering. The test-integrity regime came first, before any component it polices. Then
 inherited debt, before anything that sits on it. Then primitives on both sides. Then the

@@ -29,8 +29,11 @@ from .ai.routing.endpoints import EndpointRegistry
 from .ai.routing.keys import EnvKeyResolver
 from .ai.routing.router import ModelRouter
 from .ai.routing.tiers import load_tier_config
+from .analysis.plan_analyzer.approval import ThresholdApprovalGate
+from .analysis.plan_analyzer.semantic import SemanticPlanAnalyzer
 from .audit.writer import AuditWriter
 from .auth.cerbos import CerbosClient
+from .auth.devices import DeviceService
 from .auth.oidc import IdTokenVerifier, OidcClient
 from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
@@ -41,6 +44,9 @@ from .core.logging import configure_logging
 from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
 from .core.tenancy import TenantContextMiddleware
 from .core.trace import TraceContextMiddleware, current_trace_id
+from .governance.chokepoint import GovernanceChokepoint, UnavailableCommandSink
+from .governance.policy import UnavailableGovernancePolicy
+from .governance.sequencing import RedisEnvelopeSequencer
 from .mcp.apps import McpAppRegistry
 from .mcp.auth import OidcTokenVerifier
 from .mcp.cache import TtlToolCache
@@ -209,6 +215,37 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # startup and nothing to close at shutdown; it is composed rather than constructed lazily
     # only so §0.4.1's wiring test can see it on `app.state`.
     app.state.audit_writer = AuditWriter(advisory_lock_key=settings.audit_advisory_lock_key)
+    # ── The governance chokepoint (§2.2, §11.6, leaf 7.5) ─────────────────────
+    # Composed here rather than constructed per request, and composed with its collaborators
+    # named explicitly, because §2.2's claim is that the six stages "cannot be skipped and
+    # cannot be reordered". A chokepoint assembled at a call site would let one caller assemble
+    # it differently, and the assembly is where a stage would go missing.
+    #
+    # Two of the seven collaborators are deliberately fail-closed placeholders at this wave,
+    # and neither is silent about it:
+    #
+    #   * `UnavailableGovernancePolicy` raises on every evaluation, which the chokepoint turns
+    #     into a DENY with an audit record (§11.6: "an OPA outage denies"). Leaf 9.2 replaces it
+    #     with `OpaGovernancePolicy` once leaf 9.1 has authored the bundle to query.
+    #   * `UnavailableCommandSink` refuses delivery with `device-not-connected`. Leaf 8.4
+    #     replaces it with the real hub.
+    #
+    # A permissive default for either would let a mutation through on the strength of nothing
+    # objecting, which is precisely what §9's convention forbids.
+    app.state.governance_policy = UnavailableGovernancePolicy()
+    app.state.command_sink = UnavailableCommandSink()
+    app.state.envelope_sequencer = RedisEnvelopeSequencer(redis_client)
+    app.state.device_service = DeviceService(pepper=settings.envelope_pepper.get_secret_value())
+    app.state.governance_chokepoint = GovernanceChokepoint(
+        policy=app.state.governance_policy,
+        approval_gate=ThresholdApprovalGate(),
+        analyzer=SemanticPlanAnalyzer(),
+        audit_writer=app.state.audit_writer,
+        sequencer=app.state.envelope_sequencer,
+        sink=app.state.command_sink,
+        envelope_pepper=settings.envelope_pepper.get_secret_value(),
+        envelope_max_age_seconds=settings.envelope_max_age_seconds,
+    )
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()
     app.state.mcp_gateway = McpGateway(

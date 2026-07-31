@@ -38,7 +38,13 @@ pytestmark = pytest.mark.mandatory
 #:
 #: 2026-07-30: 19 sites — 12 in the MCP gateway/routing graph, 5 in the model
 #: router, 2 in the plan-analyzer pipeline.
-INVENTORY_FLOOR = 19
+#: 2026-07-31 (leaf 7.5): 27 sites. The eight new ones are the governance chokepoint's
+#: constructor-injected collaborators — the policy source, the audit writer, the approval
+#: gate and the plan analyser (twice each, from `submit` and `revert`), and the sequencer's
+#: two allocation calls. `CommandSink.send_command` is deliberately absent: the Protocol is
+#: declared in `chokepoint.py` itself, and the collector binds CROSS-component call sites,
+#: which a same-module Protocol is not.
+INVENTORY_FLOOR = 27
 
 _SITES = collect_call_sites()
 

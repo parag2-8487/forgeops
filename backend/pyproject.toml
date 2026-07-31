@@ -39,6 +39,17 @@ dependencies = [
     # tampered with. Wrapped by src/core/canonical.py, which additionally refuses
     # floats.
     "rfc8785==0.1.4",
+    # design.md §16.2: promoted from a transitive of `pyjwt[crypto]` to a direct pin
+    # because Phase 1 uses it directly — AES-256-GCM for `agent_devices.envelope_key_enc`
+    # (D-62, `src/auth/devices.py`) and X.509 issuance for the internal CA (§3.1, leaf
+    # 8.2). Importing a package the project does not declare is a supply-chain defect
+    # regardless of it working, which is the same reasoning §16.2 applies to `pyyaml`.
+    #
+    # Pinned at the version the committed lock already resolves, not at §16.2's stated
+    # `44.0.0`. §15.9's resolution is explicit that the committed lockfiles win and that
+    # Phase 1 must not downgrade any of them; `pyjwt[crypto]==2.13.0` already pulls
+    # 49.0.0, so pinning 44.0.0 here would either be unsatisfiable or a downgrade.
+    "cryptography==49.0.0",
 ]
 
 [project.optional-dependencies]
@@ -235,6 +246,14 @@ ignore = [
 # which is exactly the review that addition deserves.
 "src/governance/authority.py" = ["TID251"]
 "src/governance/primitives.py" = ["TID251"]
+# The third entry, added by leaf 7.5, and the one the whole table exists to permit exactly
+# once. `chokepoint.py` is the sole minter: it names `mint_authority`, `signing_key_scope`,
+# `sign_envelope` and `auth.devices.envelope_key`, which is four of the eight banned names and
+# every capability §2.2.1 confines. Exempting it file by file rather than by glob is what keeps
+# that list to one file — a `src/governance/**` glob would silently unban all eight for every
+# future module in this package, and §2.2.2's claim ("the control plane is the SOLE holder of
+# the per-device envelope signing key") would then be true of a directory rather than of a file.
+"src/governance/chokepoint.py" = ["TID251"]
 # Alembic's env.py must import every domain's models to build target_metadata;
 # that is migration wiring, not runtime domain coupling.
 "alembic/env.py" = ["TID251"]

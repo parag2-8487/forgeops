@@ -26,7 +26,12 @@ from .migration_support import BACKEND_DIR, alembic_ok, run_alembic
 pytestmark = pytest.mark.mandatory
 
 FIRST_REVISION = "0001"
-EXPECTED_HEAD = "0009"
+#: The current head, asserted rather than discovered so a stray revision file breaks the build.
+#:
+#: `0009` until leaf 7.5. Advanced to `0010` by D-63, which reconciles `change_sets.status` with
+#: design §3.6 — §6.5's revision plan stops at `0009`, so this constant moving is the reviewable
+#: signal that a revision beyond the plan was added deliberately rather than by accident.
+EXPECTED_HEAD = "0010"
 
 
 def _script_directory() -> ScriptDirectory:

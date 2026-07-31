@@ -360,12 +360,14 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Assert no envelope field is ever a float, and that the signing key is reachable only from `governance/`.
     - _Design: §7.6, §11.6, Appendix A.2; Deliverable: 1.1, 1.10; Property: Q-14_
 
-  - [ ] 7.5 Implement the six-stage chokepoint with authority mint
+  - [x] 7.5 Implement the six-stage chokepoint with authority mint
 
+    - **Three prerequisites landed in this leaf's commit, each recorded as a numbered decision.** **D-62** decides envelope-key custody (HKDF-SHA256 from `ENVELOPE_PEPPER`, AES-256-GCM sealed into `agent_devices.envelope_key_enc` with the device id as AAD) and creates `backend/src/auth/devices.py` with the custody half of `DeviceService`; pairing-code issue and exchange stay with leaf 8.1, the CA with 8.2. **D-63** adds revision `0010`, because `0004`'s `CHANGE_SET_STATUSES` disagreed with §3.6 in nine places and three of A.3's six outcomes — `blocked`, `pending_approval`, `reverted` — were unstorable. The **`seq` and nonce allocator** (`governance/sequencing.py`, Redis Lua CAS per §7.6) lands here too: leaf 8.4 lists it among the hub's bullets, but an envelope cannot be *minted* without a `seq`, so the allocator precedes the hub. Same disposition as leaves 2.5, 4.2, 7.3 and 7.6.
     - Implement `GovernanceChokepoint.submit`, `.approve` and `.revert` executing admission → policy → approval gate → change-set compilation → blast radius → audit → rollback handle in exactly that order, with `mint_authority` reachable only after all six.
     - Fail closed on an OPA outage, raise `governance-policy-undefined` (503) for an undefined document, refuse a `policy_stale` or revoked device, and write exactly one audit record on every early return.
     - Reserve the rollback handle **before** any envelope exists, use optimistic concurrency on `change_sets.version`, and make `revert` mint its own authority rather than reusing the original.
     - Add integration tests over `production_app` for deny, block, pending, auto-approve, approve, apply and revert, asserting envelope presence or absence per path.
+    - **`production_app` split, recorded.** That fixture points the app at unreachable Postgres and Redis by design (§0.4.1), so it can prove *composition* and cannot prove a *transaction*. `test_wiring_governance.py` drives the five new `app.state` names through the real factory and asserts both fail-closed defaults; `test_governance_chokepoint.py` drives the seven transits against `forgeops-test-pg` and `forgeops-test-redis`. The two collaborators substituted there — the policy source and the command sink — are the two whose production article does not exist yet (leaves 9.2 and 8.4), and both doubles are hand-written classes implementing the real Protocol, never a `Mock`, which `FO-TD004` forbids under `tests/integration/**`.
     - _Design: §2.2, §5.4, §11.6, Appendix A.3; Deliverable: 1.6, 1.10; Criterion: 5, 7; Property: Q-03, Q-04, Q-22_
 
   - [x] 7.6 Implement the append-only audit writer and chain verification
@@ -409,6 +411,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
   - [ ] 8.1 Implement pairing-code issue and single-use exchange
 
+    - **`backend/src/auth/devices.py` already exists.** Leaf 7.5 created it for D-62's envelope-key custody — `derive_key_encryption_key`, `seal_envelope_key`, `unseal_envelope_key`, the banned module-level `envelope_key`, and `DeviceService.{envelope_key,provision_envelope_key,active_device_for}`. This leaf **extends** that class; `exchange` must call `provision_envelope_key` rather than sealing a key itself, so there is one sealing path and D-62's AAD binding cannot be bypassed by a second one.
     - Implement `DeviceService.issue_pairing_code` and `.exchange`: a 6-character Crockford base32 code from a CSPRNG, storage of only its HMAC under `ENVELOPE_PEPPER`, one live code per project, and a Redis Lua consume script performing fetch, attempt increment, burn-on-exceed and delete-on-success atomically.
     - Add per-IP and global exchange rate limits, constant-time comparison, and one indistinguishable `pairing-code-invalid` response for unknown, expired, burned and consumed codes; write an audit record on failure that never contains the code.
     - Expose `POST /api/v1/agents/pairing-codes` (authorized) and `POST /api/v1/agents/pair/exchange` (the only new public route), plus `DELETE /api/v1/agents/{id}` for revocation.
@@ -433,6 +436,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
     - Implement `AgentHub.serve` at `/api/v1/ws/agent`: verify the client certificate against the internal CA and the device row, verify the bearer device token, run the handshake, and check the Redis revocation set **per message**.
     - Allocate `seq` via a Redis Lua compare-and-set, correlate `command.execute` → `command.result` by id, fan `command.progress` out to SSE, and deliver commands across replicas through a Redis stream keyed by device id.
+    - **The `seq` allocator already exists.** `governance/sequencing.py::RedisEnvelopeSequencer` landed with leaf 7.5, because an envelope cannot be minted without a `seq` and a nonce (§7.6). This leaf **consumes** it rather than reimplementing it; a second allocator would hand out duplicate sequence numbers, which the agent cannot distinguish from a replay.
     - Keep `send_command` callable only from `governance` (banned-api) and implement `broadcast_revocation` over pub/sub for prompt socket closure.
     - Add integration tests for handshake rejection paths, heartbeat timeout at 90 s, per-message revocation, and cross-replica delivery.
     - _Design: §3.1, §7.3, §11.10, §14.1; Deliverable: 1.1; Criterion: 1; Property: Q-16_

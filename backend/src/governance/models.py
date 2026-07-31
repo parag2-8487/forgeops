@@ -44,17 +44,65 @@ from sqlmodel import Field, SQLModel
 
 #: §3.6's state machine, as data. The check constraints below are generated from
 #: these tuples so the schema and the code cannot drift apart.
+#:
+#: **Corrected by D-63, revision `0010`.** This tuple originally read `draft`,
+#: `validating`, `validated`, `awaiting_approval`, `approved`, `rejected`, `applying`,
+#: `applied`, `failed`, `rolled_back` — six of §3.6's thirteen states were missing and
+#: three states §3.6 does not define had been invented. The database therefore could
+#: not store `blocked`, `pending_approval` or `reverted`, which are three of the six
+#: outcomes Appendix A.3's chokepoint transit produces, and Q-22 ("only edges in the
+#: §3.6 state machine are accepted") was unprovable against it. The list below is
+#: §3.6's, in lifecycle order, and nothing else.
 CHANGE_SET_STATUSES: tuple[str, ...] = (
     "draft",
     "validating",
-    "validated",
-    "awaiting_approval",
+    "rejected_by_policy",
+    "blocked",
+    "pending_approval",
     "approved",
     "rejected",
+    "expired",
     "applying",
     "applied",
-    "failed",
     "rolled_back",
+    "conflicted",
+    "reverted",
+)
+
+#: The states §3.6 marks terminal. Held separately because "terminal states are
+#: absorbing" is a rule about transitions, not about the vocabulary, and Q-22 asserts
+#: it: a transition **out of** any of these is illegal, including to itself.
+TERMINAL_CHANGE_SET_STATUSES: tuple[str, ...] = (
+    "rejected_by_policy",
+    "blocked",
+    "rejected",
+    "expired",
+    "applied",
+    "reverted",
+    "rolled_back",
+    "conflicted",
+)
+
+#: §3.6's edges, as data — the single source Q-22 quantifies over.
+#:
+#: `applied → reverted` is the only edge leaving a success state, and it is labelled
+#: "rollback handle used": the original set becomes `reverted` when the reverse change
+#: set compiled by `GovernanceChokepoint.revert` has been applied and its handle
+#: consumed (D-66), not when the revert is requested.
+CHANGE_SET_TRANSITIONS: tuple[tuple[str, str], ...] = (
+    ("draft", "validating"),
+    ("validating", "rejected_by_policy"),
+    ("validating", "blocked"),
+    ("validating", "pending_approval"),
+    ("validating", "approved"),
+    ("pending_approval", "approved"),
+    ("pending_approval", "rejected"),
+    ("pending_approval", "expired"),
+    ("approved", "applying"),
+    ("applying", "applied"),
+    ("applying", "rolled_back"),
+    ("applying", "conflicted"),
+    ("applied", "reverted"),
 )
 
 CHANGE_ITEM_ACTIONS: tuple[str, ...] = ("create", "update", "delete")

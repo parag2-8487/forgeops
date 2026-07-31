@@ -451,7 +451,9 @@ cryptography==49.0.0 \
     --hash=sha256:f78ff2c9ed8dc2d036b0f4d640e22522213d047c1b14e61205a7e55c80a494d4 \
     --hash=sha256:f89660a348f4f78a92366240a61404e337586ef7f5909a2fef59ca88ef505493 \
     --hash=sha256:fc1e275c2f1d97b1a6450b8b0ea3ebfa6e087a611c2b26cb2404d48588abab7b
-    # via pyjwt
+    # via
+    #   forgeops-backend (pyproject.toml)
+    #   pyjwt
 cyclonedx-python-lib==7.6.2 \
     --hash=sha256:31186c5725ac0cfcca433759a407b1424686cdc867b47cc86e6cf83691310903 \
     --hash=sha256:c42fab352cc0f7418d1b30def6751d9067ebcf0e8e4be210fc14d6e742a9edcc
