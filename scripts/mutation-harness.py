@@ -226,6 +226,28 @@ def _indent(text: str, spaces: int = 4) -> str:
     return "\n".join(pad + line[common:] if line.strip() else "" for line in lines)
 
 
+def _nothing_actually_ran(output: str) -> bool:
+    """Whether a zero-exit pytest run executed no test at all.
+
+    Reads the terminal summary rather than a `--report-log`, because the harness deliberately
+    invokes plain pytest and adding a log file would put a writable artifact inside the run it
+    asserts leaves the tree clean.
+
+    The counts are PARSED rather than substring-matched. A first version asked whether the word
+    "passed" appeared, which reads `1 skipped, 0 passed` as a healthy run — the one summary shape
+    that means the opposite.
+    """
+    lowered = output.lower()
+    if "no tests ran" in lowered:
+        return True
+    executed = 0
+    for outcome in ("passed", "xpassed", "failed", "xfailed", "error", "errors"):
+        for count in re.findall(rf"(\d+)\s+{outcome}\b", lowered):
+            executed += int(count)
+    skipped = sum(int(count) for count in re.findall(r"(\d+)\s+skipped\b", lowered))
+    return skipped > 0 and executed == 0
+
+
 def run_python_row(row: Row, tmp: Path) -> Result:
     property_file = REPO_ROOT / row.property_path
     if not property_file.is_file():
@@ -270,7 +292,24 @@ def run_python_row(row: Row, tmp: Path) -> Result:
     )
 
     if completed.returncode == 0:
-        tail = (completed.stdout or "").strip().splitlines()[-4:]
+        output = completed.stdout or ""
+        tail = output.strip().splitlines()[-4:]
+        # A run in which everything SKIPPED also exits 0, and reporting that as VACUOUS says
+        # "the property survived its own control" — which is false and sends a reader looking
+        # for a decorative property instead of a missing service. Observed directly while
+        # landing Q-04: the harness was invoked without `FORGEOPS_TEST_DATABASE_URL`, every
+        # database-backed clause skipped, and the row was reported VACUOUS.
+        #
+        # §0.4.4 already forbids silent skips in the mandatory selection; this is the same rule
+        # applied to the control's own run, because a control that never executed is an ERROR
+        # rather than a finding about the property.
+        if _nothing_actually_ran(output):
+            return Result(
+                row,
+                ERROR,
+                "the control's run executed no tests (all skipped or none collected), so the "
+                "property was never exercised: " + " | ".join(tail),
+            )
         return Result(row, VACUOUS, "the property PASSED under its own negative control: " + " | ".join(tail))
     if completed.returncode >= 4:
         # 4 = usage error, 5 = no tests collected. Either means the control never

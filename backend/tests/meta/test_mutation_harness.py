@@ -125,6 +125,43 @@ class TestAVacuousPropertyIsRejected:
         assert "no `patch`" in result.stdout + result.stderr
 
 
+class TestASkippedControlRunIsAnErrorNotAVacuousProperty:
+    """A run in which everything skipped also exits 0 (leaf 7.8).
+
+    Reporting that as `VACUOUS` says "the property survived its own control", which is false and
+    sends a reader looking for a decorative property instead of a missing service. It happened:
+    Q-04's row was reported VACUOUS because the harness had been invoked without
+    `FORGEOPS_TEST_DATABASE_URL`, so every database-backed clause skipped.
+
+    §0.4.4 forbids silent skips in the mandatory selection; this is the same rule applied to the
+    control's own run.
+    """
+
+    @pytest.mark.parametrize(
+        "output",
+        [
+            "ssssssss                                    [100%]\n8 skipped in 0.15s",
+            "s                                           [100%]\n1 skipped, 0 passed in 0.10s",
+            "no tests ran in 0.01s",
+            "collected 0 items\n\nno tests ran in 0.02s",
+        ],
+    )
+    def test_a_run_that_executed_nothing_is_detected(self, output: str) -> None:
+        assert HARNESS._nothing_actually_ran(output) is True, output  # noqa: SLF001 - the unit under test
+
+    @pytest.mark.parametrize(
+        "output",
+        [
+            "........                                    [100%]\n8 passed in 1.2s",
+            "..s.....                                    [100%]\n7 passed, 1 skipped in 1.2s",
+            "..x.....                                    [100%]\n7 passed, 1 xpassed in 1.2s",
+        ],
+    )
+    def test_a_run_that_executed_something_is_not_detected(self, output: str) -> None:
+        """The other direction, or the guard would turn every healthy pass into an ERROR."""
+        assert HARNESS._nothing_actually_ran(output) is False, output  # noqa: SLF001 - the unit under test
+
+
 class TestTheHarnessLeavesNoTrace:
     def test_the_temp_directory_is_outside_the_repository(self) -> None:
         tmp = HARNESS.make_outside_tempdir()
