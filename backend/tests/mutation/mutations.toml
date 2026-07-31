@@ -167,6 +167,105 @@ assert writer_module.AuditWriter.append is _append_and_commit_immediately, (
 assert writer_module.AuditWriter.append is not _real_append
 """
 
+[Q-05]
+runtime     = "python"
+property    = "backend/tests/property/test_q05_audit_immutability.py"
+target      = "src.audit.writer.AuditWriter.append + verify_chain hashing"
+mutation    = "Drop `prev_hash` from the hashed payload"
+description = """
+Removes the `|| prev_hash` concatenation from the digest on BOTH sides — the writer and the
+verifier — so each row's hash covers only its own semantic fields. The rows keep their
+`prev_hash` column and the chain still looks like a chain, but nothing links a row's hash to
+its predecessor (§6.4, A.8).
+
+Both sides are mutated together, and that is the point rather than a convenience. Mutating only
+the writer would make every row fail verification immediately, which is a *different* failure —
+"the writer and verifier disagree" — and would let the control pass for a property that never
+checked linkage at all. Mutating both leaves a self-consistent non-chain, which is exactly the
+artifact Appendix B's control describes.
+
+WHICH CLAUSE THIS BREAKS, and why the obvious answer is wrong. It does **not** break the
+`prev_hash` clause: D-61 added an explicit comparison of each row's stored `prev_hash` against
+its predecessor's `hash`, and that catches a rewritten column whatever the digest covers. The
+first version of Q-05 therefore PASSED under this control — observed directly — because every
+clause it had was still satisfied.
+
+What the concatenation is the only defence against is a **splice**: delete a middle row and
+re-link the next one to the row before it. Afterwards every `prev_hash` really does equal its
+new predecessor's `hash`, so the column comparison agrees; the sole remaining objection is that
+the surviving row's own hash was computed over `payload || hash(the row that is now gone)`.
+`TestASplicedChainIsDetected` is that clause, and it is the one that fails here — with
+`kind == "hash"`, not `"prev_hash"`, which is itself the evidence that the two comparisons are
+distinguishable.
+
+The patch asserts its own observability in both directions: a chain digest drops its 32-byte
+prev term, and a lock-key digest does not — because `_lock_key` also calls `sha256` and silently
+mutating the advisory lock would make the run fail for a reason Appendix B does not describe.
+"""
+patch = """
+import hashlib
+
+import src.audit.writer as writer_module
+
+_real_canonical_bytes = writer_module.canonical_bytes
+
+# Prove the concatenation matters before removing it, or this control could install itself over
+# an implementation that never used prev_hash and still report the property healthy.
+_probe = _real_canonical_bytes({"a": 1})
+assert hashlib.sha256(_probe + bytes(32)).digest() != hashlib.sha256(_probe).digest()
+
+
+def _is_a_chain_digest(data):
+    # The discriminator, and it has to be precise. `append` and `verify_chain` both compute
+    # sha256(canonical_bytes(payload) + prev), where the payload is a JSON object and `prev` is
+    # exactly 32 bytes. `_lock_key` ALSO calls sha256, on a tenant UUID string or the configured
+    # lock name — 36 and 14 bytes, never starting with `{`. Stripping a 32-byte suffix from those
+    # would change the advisory lock as well, which is a side effect Appendix B's control does not
+    # describe and would make the mutated run fail for the wrong reason.
+    return isinstance(data, bytes | bytearray) and len(data) > 32 and bytes(data[:1]) == b"{"
+
+
+class _PayloadOnlyDigest:
+    \"\"\"sha256 over the canonical payload alone, with the concatenated prev term dropped.\"\"\"
+
+    __slots__ = ("_payload",)
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def digest(self):
+        return hashlib.sha256(self._payload).digest()
+
+    def hexdigest(self):
+        return hashlib.sha256(self._payload).hexdigest()
+
+
+class _PatchedHashlib:
+    \"\"\"`hashlib`, except that a chain digest ignores its prev term. Everything else is real.\"\"\"
+
+    def __getattr__(self, name):
+        return getattr(hashlib, name)
+
+    @staticmethod
+    def sha256(data=b""):
+        if _is_a_chain_digest(data):
+            return _PayloadOnlyDigest(bytes(data[:-32]))
+        return hashlib.sha256(data)
+
+
+writer_module.hashlib = _PatchedHashlib()
+
+# Observability, both directions: a chain digest drops its suffix, and a lock key does not.
+_chain = _real_canonical_bytes({"reason": "x"}) + bytes(32)
+assert writer_module.hashlib.sha256(_chain).digest() == hashlib.sha256(_chain[:-32]).digest(), (
+    "the mutation did not install; the control would be a no-op"
+)
+_lock_input = b"00000000-0000-4000-8000-000000000000"
+assert writer_module.hashlib.sha256(_lock_input).digest() == hashlib.sha256(_lock_input).digest(), (
+    "the mutation leaked into the advisory lock key, which Appendix B's control does not describe"
+)
+"""
+
 [Q-19]
 runtime     = "python"
 property    = "backend/tests/property/test_q19_route_coverage.py"

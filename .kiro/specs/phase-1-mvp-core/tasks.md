@@ -397,11 +397,13 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - The transit fixtures moved to `tests/integration/chokepoint_support.py` so the property and the integration suite share one definition of what a transit is — two copies is how the property comes to quantify over a shape the integration tests never exercise.
     - _Design: §11.6, §11.9, Appendix A.3, Appendix B Q-04; Deliverable: 1.9, 1.10; Criterion: 9; Property: Q-04_
 
-  - [ ] 7.9 Write property test Q-05 for audit immutability and tamper evidence
+  - [x] 7.9 Write property test Q-05 for audit immutability and tamper evidence
 
     - Generate audit sequences and tamper attempts; prove UPDATE and DELETE raise, that recomputing the chain from any start point reproduces every stored hash, and that altering one row's semantic fields makes `verify_chain` report that row's `seq` as the first divergence.
     - Add the `mutations.toml` row dropping `prev_hash` from the hashed payload.
-    - _Design: §6.4, §11.9, Appendix A.8, Appendix B Q-05; Deliverable: 1.9; Criterion: 9; Property: Q-05_
+    - **The control forced a fifth clause into the property, and the reason is worth reading.** Dropping the concatenated `prev_hash` term does **not** break tamper detection for a rewritten `prev_hash` column: D-61 compares that column against its predecessor's `hash` directly, whatever the digest covers. The first version of Q-05 therefore passed under its own control. What the concatenation is the only defence against is a **splice** — delete a middle row and re-link the next one to the row before it, after which every `prev_hash` legitimately equals its new predecessor's `hash` and the sole remaining objection is that the surviving row's hash was computed over the predecessor that is now gone. `TestASplicedChainIsDetected` is that clause; it carries its own control asserting the re-link was done *correctly*, so the detection test cannot be passing because of a clumsy edit.
+    - The tamper matrix is guarded against no-ops: a variant equal to the honest value tampers with nothing, and the first run hit exactly that with `outcome="allowed"`. `test_no_tamper_value_matches_the_honest_row` closes it.
+    - _Design: §6.4, §11.9, Appendix A.8, Appendix B Q-05, §17.1 D-61; Deliverable: 1.9; Criterion: 9; Property: Q-05_
 
   - [ ] 7.10 Write property test Q-01 for atomic all-or-nothing application
 
