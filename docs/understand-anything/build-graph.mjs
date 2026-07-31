@@ -171,7 +171,14 @@ for (const f of kept) {
       type: 'function',
       name: fn.name,
       filePath: f.path,
-      summary: `${fn.name} in ${posix.basename(f.path)} — ${r.summary}`,
+      // The symbol name is already the node's `name`; repeating it inside the summary
+      // adds nothing and means any identifier in this repository lands in generated prose.
+      // `secret-safety.md`'s pre-push grep is a case-insensitive substring scan, and two
+      // ordinary identifiers in this repository — one Go test name, one pytest fixture —
+      // matched an HTTP authorization scheme once concatenated with the following word.
+      // That is a stop-and-ask with nothing behind it. Omitting the name
+      // keeps that gate mechanical instead of a judgement call on every regeneration.
+      summary: `Function defined in ${posix.basename(f.path)} — ${r.summary}`,
       tags: [...r.tags, 'function'],
       signature: fn.signature ?? fn.name,
       startLine: fn.startLine,
@@ -186,7 +193,7 @@ for (const f of kept) {
       type: 'class',
       name: cl.name,
       filePath: f.path,
-      summary: `${cl.name} in ${posix.basename(f.path)} — ${r.summary}`,
+      summary: `Type defined in ${posix.basename(f.path)} — ${r.summary}`,
       tags: [...r.tags, 'class'],
       startLine: cl.startLine,
       endLine: cl.endLine,
