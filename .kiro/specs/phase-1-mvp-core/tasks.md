@@ -388,10 +388,13 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - The property imports the **same** analysis module `scripts/check-chokepoint.sh` runs, so the gate and the property cannot come to disagree about what "reachable without authority" means — the Q-06/Q-14 lesson applied to a lint.
     - _Design: §2.2.1, §11.6, §17.1 D-67, Appendix B Q-03; Deliverable: 1.10; Property: Q-03_
 
-  - [ ] 7.8 Write property test Q-04 for audit completeness per transit
+  - [x] 7.8 Write property test Q-04 for audit completeness per transit
 
     - Generate chokepoint transits across allow, deny, block, pending, apply and revert; prove exactly one `audit_events` row per transit written in the same transaction as the state change, and that a rolled-back transaction leaves neither.
     - Add the `mutations.toml` row moving the audit write outside the transaction.
+    - **Transit kinds are generated as SEQUENCES, not one per test.** A per-kind example proves each kind writes one record and says nothing about ordering, where the interesting failures are: a refusal that writes two because a later stage re-audited, or one that writes none because the exception outran the commit. The property also checks the row *actions* in order, because "six rows for six transits" is satisfied by six copies of the wrong record.
+    - **`apply` is not a separate kind.** A.3's apply path *is* the auto-approved transit, whose record is `change_set_auto_approved`; counting it twice would double-count one transit.
+    - The transit fixtures moved to `tests/integration/chokepoint_support.py` so the property and the integration suite share one definition of what a transit is — two copies is how the property comes to quantify over a shape the integration tests never exercise.
     - _Design: §11.6, §11.9, Appendix A.3, Appendix B Q-04; Deliverable: 1.9, 1.10; Criterion: 9; Property: Q-04_
 
   - [ ] 7.9 Write property test Q-05 for audit immutability and tamper evidence

@@ -23,6 +23,12 @@ import pytest
 
 from .capability import require_capability
 
+# The chokepoint transit fixtures, re-exported for the same reason: a test module that
+# imported them by NAME would shadow its own methods' parameters of the same name, and
+# `sessions`, `redis_client` and `sink` appear in almost every signature in
+# `test_governance_chokepoint.py`. Through conftest they are discovered rather than imported.
+from .chokepoint_support import redis_client, redis_url, sessions, sink  # noqa: F401
+
 # Re-exported for the same reason: pytest only discovers fixtures from conftest or
 # from a plugin, and the §6.5 revision proofs (test_0002 … test_0009) all need the
 # same session-scoped "schema at head" and rolled-back-transaction fixtures. They

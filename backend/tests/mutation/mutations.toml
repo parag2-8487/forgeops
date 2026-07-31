@@ -120,6 +120,53 @@ assert _forged.blast_radius == "infrastructure", (
 )
 """
 
+[Q-04]
+runtime     = "python"
+property    = "backend/tests/property/test_q04_audit_completeness.py"
+target      = "src.audit.writer.AuditWriter.append"
+mutation    = "Move the audit write outside the transaction"
+description = """
+Makes `append` COMMIT as soon as it has written its record, instead of leaving the commit to
+the caller. That is the arrangement §11.9 exists to forbid: the audit row stops being atomic
+with the change-set state transition, so a transit that aborts after auditing leaves a record
+describing a state change that never happened, and a rolled-back transaction leaves the record
+behind.
+
+Q-04 must then fail on its rollback clause — the record and the state change both survive a
+`session.rollback()` the property requires to leave neither.
+
+Why committing rather than opening a second connection. The first version of this control built
+a detached `AsyncSession` from `session.get_bind()`, which returns the SYNC engine, so it raised
+`ArgumentError` and the property "failed" for a reason that had nothing to do with the mutation
+— a control that is broken rather than a control that bites. Committing early is the minimal
+edit that produces exactly the semantics Appendix B words: after `append` returns, the row is
+outside the caller's transaction and the caller can no longer undo it.
+
+Everything else about `append` is preserved: the chain arithmetic, the advisory lock, the flush
+that assigns `seq`.
+"""
+patch = """
+import src.audit.writer as writer_module
+
+_real_append = writer_module.AuditWriter.append
+
+
+async def _append_and_commit_immediately(self, session, draft):
+    event = await _real_append(self, session, draft)
+    # The mutation: the record leaves the caller's transaction here, so a later rollback in the
+    # caller cannot remove it and a failed state change no longer un-writes its audit row.
+    await session.commit()
+    return event
+
+
+writer_module.AuditWriter.append = _append_and_commit_immediately
+
+assert writer_module.AuditWriter.append is _append_and_commit_immediately, (
+    "the mutation did not install; the control would be a no-op"
+)
+assert writer_module.AuditWriter.append is not _real_append
+"""
+
 [Q-19]
 runtime     = "python"
 property    = "backend/tests/property/test_q19_route_coverage.py"
