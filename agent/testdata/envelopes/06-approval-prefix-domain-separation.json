@@ -1,0 +1,29 @@
+{
+  "fixture": "forgeops-envelope-fixture-v1",
+  "name": "06-approval-prefix-domain-separation",
+  "why": "The SAME envelope under the `forgeops-approval-v1` prefix. Canonical bytes are identical to what the command prefix would produce; the signing input and the signature are not. That is the whole of domain separation, and it is Q-14's negative control — remove the prefix on one side only and this fixture is the one that fails.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-approval-v1",
+  "envelope": {
+    "v": "1",
+    "command_id": "5e6f7081-92a3-4a8b-9c0d-1e2f3a4b5c63",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "changeset.apply",
+    "args": {
+      "approved": true,
+      "comment": "looks right"
+    },
+    "approval_id": "392817f0-1e2f-4a8b-9c0d-1e2f3a4b5c64",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "seq": 6,
+    "not_after": 1767225600
+  },
+  "canonical_hex": "7b22617070726f76616c5f6964223a2233393238313766302d316532662d346138622d396330642d316532663361346235633634222c2261726773223a7b22617070726f766564223a747275652c22636f6d6d656e74223a226c6f6f6b73207269676874227d2c22636f6d6d616e645f6964223a2235653666373038312d393261332d346138622d396330642d316532663361346235633633222c226465766963655f6964223a2234663361316534632d393166322d346131622d386434372d366332663062356139653131222c226e6f6e6365223a223066316532643363346235613639373838373936613562346333643265316630222c226e6f745f6166746572223a313736373232353630302c226f7065726174696f6e223a226368616e67657365742e6170706c79222c22706f6c6963795f636f6e74657874223a7b2262756e646c655f646967657374223a227368613235363a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c226465636973696f6e223a22616c6c6f77227d2c22736571223a362c2276223a2231227d",
+  "canonical_utf8": "{\"approval_id\":\"392817f0-1e2f-4a8b-9c0d-1e2f3a4b5c64\",\"args\":{\"approved\":true,\"comment\":\"looks right\"},\"command_id\":\"5e6f7081-92a3-4a8b-9c0d-1e2f3a4b5c63\",\"device_id\":\"4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11\",\"nonce\":\"0f1e2d3c4b5a69788796a5b4c3d2e1f0\",\"not_after\":1767225600,\"operation\":\"changeset.apply\",\"policy_context\":{\"bundle_digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"decision\":\"allow\"},\"seq\":6,\"v\":\"1\"}",
+  "signing_input_sha256": "fb9390f87e00a82379a9315f117f62595c098216eaa19d68537f717b80683934",
+  "signature": "yJSeUvArgAORytMQPuiqohl2MOdLZPhzGka9lR6LHwU"
+}

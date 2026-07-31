@@ -1,0 +1,32 @@
+{
+  "fixture": "forgeops-envelope-fixture-v1",
+  "name": "08-non-mutating-no-approval",
+  "why": "§7.7's read-only operations carry no approval_id. The member is still PRESENT and empty rather than absent, because canonicalisation is defined over the member set: an omitted member and an empty one produce different bytes.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-envelope-v1",
+  "envelope": {
+    "v": "1",
+    "command_id": "708192a3-b4c5-4a8b-9c0d-1e2f3a4b5c67",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "scan.full",
+    "args": {
+      "root": "/srv/app",
+      "empty_string": "",
+      "empty_object": {},
+      "empty_array": [],
+      "explicit_null": null
+    },
+    "approval_id": "",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "2e3d4c5b6a798071829384a5b6c7d8e9",
+    "seq": 8,
+    "not_after": 1767225600
+  },
+  "canonical_hex": "7b22617070726f76616c5f6964223a22222c2261726773223a7b22656d7074795f6172726179223a5b5d2c22656d7074795f6f626a656374223a7b7d2c22656d7074795f737472696e67223a22222c226578706c696369745f6e756c6c223a6e756c6c2c22726f6f74223a222f7372762f617070227d2c22636f6d6d616e645f6964223a2237303831393261332d623463352d346138622d396330642d316532663361346235633637222c226465766963655f6964223a2234663361316534632d393166322d346131622d386434372d366332663062356139653131222c226e6f6e6365223a223265336434633562366137393830373138323933383461356236633764386539222c226e6f745f6166746572223a313736373232353630302c226f7065726174696f6e223a227363616e2e66756c6c222c22706f6c6963795f636f6e74657874223a7b2262756e646c655f646967657374223a227368613235363a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c226465636973696f6e223a22616c6c6f77227d2c22736571223a382c2276223a2231227d",
+  "canonical_utf8": "{\"approval_id\":\"\",\"args\":{\"empty_array\":[],\"empty_object\":{},\"empty_string\":\"\",\"explicit_null\":null,\"root\":\"/srv/app\"},\"command_id\":\"708192a3-b4c5-4a8b-9c0d-1e2f3a4b5c67\",\"device_id\":\"4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11\",\"nonce\":\"2e3d4c5b6a798071829384a5b6c7d8e9\",\"not_after\":1767225600,\"operation\":\"scan.full\",\"policy_context\":{\"bundle_digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"decision\":\"allow\"},\"seq\":8,\"v\":\"1\"}",
+  "signing_input_sha256": "d75c4dba0eddd519f4a9bd66d1a3d7d35012569e46125c3528bd7f980074ec54",
+  "signature": "Yxb3hkHMloH4Dhpt1DFRQkT-A2TlpmEFtzosc1zIOSA"
+}

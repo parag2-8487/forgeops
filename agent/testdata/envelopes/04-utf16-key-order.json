@@ -1,0 +1,33 @@
+{
+  "fixture": "forgeops-envelope-fixture-v1",
+  "name": "04-utf16-key-order",
+  "why": "RFC 8785 sorts object members by UTF-16 code unit, not by code point. A supplementary character encodes as a surrogate pair beginning 0xD800–0xDBFF, which sorts BELOW U+E000–U+FFFF in UTF-16 and ABOVE it in UTF-8. So U+1D11E must precede U+E000 here. D-59 found this; this fixture is what keeps both runtimes honest about it.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-envelope-v1",
+  "envelope": {
+    "v": "1",
+    "command_id": "3c4d5e6f-7081-4a8b-9c0d-1e2f3a4b5c6f",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "changeset.apply",
+    "args": {
+      "a": 1,
+      "z": 2,
+      "": "private use U+E000, one UTF-16 code unit 0xE000",
+      "𝄞": "treble clef U+1D11E, surrogate pair 0xD834 0xDD1E",
+      "￿": "the last BMP code unit",
+      "􏿿": "the last code point, surrogate pair 0xDBFF 0xDFFF"
+    },
+    "approval_id": "5b4a3928-1e0f-4a9b-8c0d-1e2f3a4b5c60",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "00112233445566778899aabbccddeeff",
+    "seq": 4,
+    "not_after": 1767225600
+  },
+  "canonical_hex": "7b22617070726f76616c5f6964223a2235623461333932382d316530662d346139622d386330642d316532663361346235633630222c2261726773223a7b2261223a312c227a223a322c22f09d849e223a22747265626c6520636c656620552b31443131452c20737572726f6761746520706169722030784438333420307844443145222c22f48fbfbf223a22746865206c61737420636f646520706f696e742c20737572726f6761746520706169722030784442464620307844464646222c22ee8080223a22707269766174652075736520552b453030302c206f6e65205554462d313620636f646520756e697420307845303030222c22efbfbf223a22746865206c61737420424d5020636f646520756e6974227d2c22636f6d6d616e645f6964223a2233633464356536662d373038312d346138622d396330642d316532663361346235633666222c226465766963655f6964223a2234663361316534632d393166322d346131622d386434372d366332663062356139653131222c226e6f6e6365223a223030313132323333343435353636373738383939616162626363646465656666222c226e6f745f6166746572223a313736373232353630302c226f7065726174696f6e223a226368616e67657365742e6170706c79222c22706f6c6963795f636f6e74657874223a7b2262756e646c655f646967657374223a227368613235363a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c226465636973696f6e223a22616c6c6f77227d2c22736571223a342c2276223a2231227d",
+  "canonical_utf8": "{\"approval_id\":\"5b4a3928-1e0f-4a9b-8c0d-1e2f3a4b5c60\",\"args\":{\"a\":1,\"z\":2,\"𝄞\":\"treble clef U+1D11E, surrogate pair 0xD834 0xDD1E\",\"􏿿\":\"the last code point, surrogate pair 0xDBFF 0xDFFF\",\"\":\"private use U+E000, one UTF-16 code unit 0xE000\",\"￿\":\"the last BMP code unit\"},\"command_id\":\"3c4d5e6f-7081-4a8b-9c0d-1e2f3a4b5c6f\",\"device_id\":\"4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"not_after\":1767225600,\"operation\":\"changeset.apply\",\"policy_context\":{\"bundle_digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"decision\":\"allow\"},\"seq\":4,\"v\":\"1\"}",
+  "signing_input_sha256": "ddd6821c4f7592702320a2dbd0ad1e02234e05978877a103f366d05f837a1edc",
+  "signature": "8QjJ09gkY0DOmkDMhNCt_rCzFLFJGJBjooZ4z8AvBRQ"
+}

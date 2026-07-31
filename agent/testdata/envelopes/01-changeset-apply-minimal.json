@@ -1,0 +1,26 @@
+{
+  "fixture": "forgeops-envelope-fixture-v1",
+  "name": "01-changeset-apply-minimal",
+  "why": "The ordinary case. Members appear in JCS order rather than §7.6's listing order, and `args` is an empty object rather than null, because §7.7's operations all take an object and two spellings would give one logical envelope two canonical forms.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-envelope-v1",
+  "envelope": {
+    "v": "1",
+    "command_id": "0e9b1d2f-6a44-4c8e-9f31-2b7d5c1a8e40",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "changeset.apply",
+    "args": {},
+    "approval_id": "8c1f7b30-52d9-4e6a-b1c4-9a3e0f5d7268",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b",
+    "seq": 1,
+    "not_after": 1767225600
+  },
+  "canonical_hex": "7b22617070726f76616c5f6964223a2238633166376233302d353264392d346536612d623163342d396133653066356437323638222c2261726773223a7b7d2c22636f6d6d616e645f6964223a2230653962316432662d366134342d346338652d396633312d326237643563316138653430222c226465766963655f6964223a2234663361316534632d393166322d346131622d386434372d366332663062356139653131222c226e6f6e6365223a223966326334623661386430653166336135633762396431653366356137633962222c226e6f745f6166746572223a313736373232353630302c226f7065726174696f6e223a226368616e67657365742e6170706c79222c22706f6c6963795f636f6e74657874223a7b2262756e646c655f646967657374223a227368613235363a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c226465636973696f6e223a22616c6c6f77227d2c22736571223a312c2276223a2231227d",
+  "canonical_utf8": "{\"approval_id\":\"8c1f7b30-52d9-4e6a-b1c4-9a3e0f5d7268\",\"args\":{},\"command_id\":\"0e9b1d2f-6a44-4c8e-9f31-2b7d5c1a8e40\",\"device_id\":\"4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11\",\"nonce\":\"9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\",\"not_after\":1767225600,\"operation\":\"changeset.apply\",\"policy_context\":{\"bundle_digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"decision\":\"allow\"},\"seq\":1,\"v\":\"1\"}",
+  "signing_input_sha256": "1981ee737d41461c1aeb522b7adc4a32d12d2f3c5ac134b002f3126f6bccb00f",
+  "signature": "v0lJ_KzK-Rb9Hzbj8kNtmOY-r29xp8Ia5gfagi-_QMA"
+}

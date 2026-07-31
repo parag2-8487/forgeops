@@ -1,0 +1,35 @@
+{
+  "fixture": "forgeops-envelope-fixture-v1",
+  "name": "03-string-escaping",
+  "why": "RFC 8785 §3.2.2.2 minimal escaping. The two mandatory escapes, the five short forms, \\u00XX for the remaining control characters, and non-ASCII left ALONE — Go's encoding/json would escape U+2028, U+2029, <, > and &, none of which any other JCS implementation agrees with.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-envelope-v1",
+  "envelope": {
+    "v": "1",
+    "command_id": "2b3c4d5e-6f70-4a8b-9c0d-1e2f3a4b5c6e",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "changeset.apply",
+    "args": {
+      "quote": "a \"quoted\" value",
+      "backslash": "C:\\Program Files\\app",
+      "shorthands": "\b\f\n\r\t",
+      "control": "unit\u0001separator\u001f",
+      "latin": "café résumé",
+      "cjk": "配置ファイル",
+      "emoji": "🔒 locked",
+      "html_like": "<tag> & 'apos'  line  para"
+    },
+    "approval_id": "6c5b4a39-2e1f-4a0b-8c9d-0e1f2a3b4c5e",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "aabbccddeeff00112233445566778899",
+    "seq": 3,
+    "not_after": 1767225600
+  },
+  "canonical_hex": "7b22617070726f76616c5f6964223a2236633562346133392d326531662d346130622d386339642d306531663261336234633565222c2261726773223a7b226261636b736c617368223a22433a5c5c50726f6772616d2046696c65735c5c617070222c22636a6b223a22e9858de7bdaee38395e382a1e382a4e383ab222c22636f6e74726f6c223a22756e69745c7530303031736570617261746f725c7530303166222c22656d6f6a69223a22f09f9492206c6f636b6564222c2268746d6c5f6c696b65223a223c7461673e2026202761706f732720e280a86c696e6520e280a970617261222c226c6174696e223a22636166c3a92072c3a973756dc3a9222c2271756f7465223a2261205c2271756f7465645c222076616c7565222c2273686f727468616e6473223a225c625c665c6e5c725c74227d2c22636f6d6d616e645f6964223a2232623363346435652d366637302d346138622d396330642d316532663361346235633665222c226465766963655f6964223a2234663361316534632d393166322d346131622d386434372d366332663062356139653131222c226e6f6e6365223a226161626263636464656566663030313132323333343435353636373738383939222c226e6f745f6166746572223a313736373232353630302c226f7065726174696f6e223a226368616e67657365742e6170706c79222c22706f6c6963795f636f6e74657874223a7b2262756e646c655f646967657374223a227368613235363a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c226465636973696f6e223a22616c6c6f77227d2c22736571223a332c2276223a2231227d",
+  "canonical_utf8": "{\"approval_id\":\"6c5b4a39-2e1f-4a0b-8c9d-0e1f2a3b4c5e\",\"args\":{\"backslash\":\"C:\\\\Program Files\\\\app\",\"cjk\":\"配置ファイル\",\"control\":\"unit\\u0001separator\\u001f\",\"emoji\":\"🔒 locked\",\"html_like\":\"<tag> & 'apos'  line  para\",\"latin\":\"café résumé\",\"quote\":\"a \\\"quoted\\\" value\",\"shorthands\":\"\\b\\f\\n\\r\\t\"},\"command_id\":\"2b3c4d5e-6f70-4a8b-9c0d-1e2f3a4b5c6e\",\"device_id\":\"4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11\",\"nonce\":\"aabbccddeeff00112233445566778899\",\"not_after\":1767225600,\"operation\":\"changeset.apply\",\"policy_context\":{\"bundle_digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"decision\":\"allow\"},\"seq\":3,\"v\":\"1\"}",
+  "signing_input_sha256": "7ca723535e1095cc39bd9c5a0807067d284a22d156398aac7eb7743e53d3bbc6",
+  "signature": "qNZRwzKkQjKi3GzJOiVEhdMRA0M5KFkd7CoGrKEzbec"
+}

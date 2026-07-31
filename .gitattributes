@@ -19,6 +19,17 @@ Dockerfile      text eol=lf
 *.tf            text eol=lf
 *.hcl           text eol=lf
 
+# --- Must be LF: a byte-exact cross-runtime contract ------------------------
+#
+# `agent/testdata/envelopes/**` is the fixture corpus the Go agent and the Python backend
+# both read to prove they canonicalise and sign envelopes identically (design.md §7.6, Q-14,
+# leaf 7.4). Its whole purpose is that the bytes are the same everywhere, so letting a
+# checkout rewrite its line endings would make one file mean two things. The fixtures also
+# carry non-ASCII deliberately — fixtures 03 and 04 pin RFC 8785's minimal escaping and its
+# UTF-16 member ordering — and `text=auto` on a file full of multi-byte sequences is exactly
+# where a platform-dependent rewrite goes unnoticed.
+agent/testdata/envelopes/**/*.json text eol=lf
+
 # --- Windows-only helpers keep CRLF ----------------------------------------
 *.bat           text eol=crlf
 *.cmd           text eol=crlf

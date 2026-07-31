@@ -178,6 +178,12 @@ ignore = [
 "src.governance.authority._MINT_SENTINEL".msg = "Only governance.chokepoint may mint authority (design §2.2.1)"
 "src.governance.envelope.sign_envelope".msg = "Envelope signing belongs to governance.chokepoint only (design §2.2.1)"
 "src.governance.envelope._SIGNING_KEY".msg = "The envelope signing key is owned by governance/ (design §2.2.1)"
+# A SIXTH entry, beyond §2.2.1's five, added by D-60 because the fifth would otherwise be
+# bypassable in one specific way. `_SIGNING_KEY` is a ContextVar and `signing_key_scope` is the
+# only thing that sets it. Left unbanned, an outer caller could install a key of its choosing
+# and a governance path that forgot its own scope would sign with it instead of raising. Banning
+# the setter restores the property that matters: a missing scope ALWAYS raises.
+"src.governance.envelope.signing_key_scope".msg = "Only governance.chokepoint may install an envelope signing key (design §2.2.1, D-60)"
 "src.websocket.hub.send_command".msg = "Commands reach the hub only from governance.chokepoint (design §2.2.1)"
 # A service that can fetch a device's signing key is a service that can forge a command
 # (§11.2). Banned at the SYMBOL rather than relying on the `src.auth.devices` module ban

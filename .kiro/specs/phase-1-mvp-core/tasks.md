@@ -337,7 +337,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add unit tests proving construction outside `governance/` raises, and that the banned-api rule rejects each forbidden import.
     - _Design: §2.2.1, §5.4, §11.6; Deliverable: 1.10; Property: Q-03_
 
-  - [ ] 7.2 Move the agent's only write path behind a compiler-enforced boundary
+  - [x] 7.2 Move the agent's only write path behind a compiler-enforced boundary
 
     - Create `agent/internal/executor/internal/mutate` and move the Phase 0 atomic-apply implementation there unchanged in algorithm, exposing `ApplyVerified(ctx, *envelope.Verified, root, entries)` and `Revert(ctx, *envelope.Verified, manifest)`.
     - **Signature fixed by D-59.** This leaf originally wrote `*session.Verified`, which does not compile: `session` imports `executor` (§10.1, §10.3), so `mutate` taking a `session` type closes a cycle. D-59 creates the leaf package `agent/internal/envelope` and it lands in this leaf's commit, because the boundary cannot compile without it.
@@ -353,7 +353,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Wire it into the `agent` and `backend` jobs and `pre-commit`; add negative fixtures for both halves.
     - _Design: §2.2.1, §8.3, §11.6; Deliverable: 1.10; Property: Q-03_
 
-  - [ ] 7.4 Implement envelope canonicalisation, signing and the shared fixture corpus
+  - [x] 7.4 Implement envelope canonicalisation, signing and the shared fixture corpus
 
     - Implement `governance/envelope.py`: JCS canonicalisation of the envelope without `signature`, the `"forgeops-envelope-v1" || 0x00` domain-separation prefix, and `HMAC-SHA256` under the per-device envelope key; add the `"forgeops-approval-v1"` variant for `approval.response`.
     - Create `agent/testdata/envelopes/*.json` holding envelopes with expected canonical bytes and signatures under a **synthetic self-labelling** test key, read by both the Python and Go tests so a divergence fails both suites.
@@ -1163,6 +1163,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 - Task 2.1 (wiring `load_tier_config` into `create_app`) and task 2.2 (Q-27) are the gate for all of group 13. **No generation leaf appears before them**, because §1.5 sits entirely on six-tier routing and Phase 0 proved the shipped YAML was never what a running backend loaded.
 - Group 7 (`MutationAuthority`, the `executor/internal/mutate` boundary, `check-chokepoint.sh`) precedes group 8's mutating operations and group 16's apply surface, so no mutating path is ever written outside the boundary even transiently.
 - Group 10 (the redaction chokepoint and `RedactedPrompt`) precedes group 13, so the first prompt assembled from repository content cannot predate the type that makes redaction mandatory.
+- **Group 7's execution order is 7.1, 7.2, 7.4, 7.6, 7.5, 7.3, then 7.7–7.11**, and the Task Dependency Graph below already says so: wave 5 carries 7.1 and 7.2, wave 6 carries 7.3, 7.4 and 7.6, wave 7 carries 7.5 and 7.9, wave 8 carries 7.7, 7.8, 7.10 and 7.11. Two points are worth stating rather than leaving to be re-derived. **7.6 precedes 7.5** because stage 5 of the six-stage chokepoint *is* the audit write (Appendix A.3), so building 7.5 first would mean either calling a writer that does not exist or standing up a substitute collaborator — which §0.4.1 forbids by name. **7.3 runs last of the implementation leaves** for the reason written into the leaf itself: its own non-vacuity rule requires a non-empty `@mutation_primitive` set, and the first true primitives are created by 7.6 and 7.5.
 - **Resequencing applied during implementation.** Leaf 4.2 originally carried a bullet requiring `secretscan.Redact`, which leaf 10.1 creates. The wave graph put 4.2 in wave 2 and 10.1 in wave 12, so the bullet was unbuildable where it stood. It moved to 10.1 rather than dragging 4.2 ten waves later, because 4.2's other half — making `logging.NewRedacted` the only reachable agent logger — is a wave-2 prerequisite for every later agent subsystem. No wave-graph edge changed: removing the bullet removed the only forward dependency 4.2 had. The other direction was rejected: pushing 4.2 to wave 12 would have let eight agent subsystems land against an unfiltered logger first.
 - **Debt D5's OPA premise was false and is corrected by D-51.** Leaf 2.5 as written required `openpolicyagent/opa:1.4.2-rootless`, which OPA 1.x does not publish, while the already-pinned `1.4.2` image runs as `USER 1000:1000` on a Chainguard base. The leaf's second failure mode became "no service may override its image's runtime user back to root", and the non-root property is proved at runtime in `compose-smoke` instead of by a tag substring.
 - Property tasks map one-for-one onto Design Appendix B Q-01 … Q-31 and each carries its `mutations.toml` row and negative control. Cross-runtime properties are tested in one leaf against a shared fixture corpus.

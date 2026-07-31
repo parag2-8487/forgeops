@@ -123,7 +123,15 @@ def _app_tier_map(tier_yaml: Path) -> dict[str, str]:
 
     async def _build() -> dict[str, str]:
         app = create_app()
-        async with LifespanManager(app):
+        # The timeouts are stated rather than inherited. `LifespanManager`'s default is 5 s,
+        # and this lifespan deliberately starts against UNREACHABLE dependency URLs, so it
+        # spends most of that budget waiting for two connection attempts to give up. One app
+        # build per hypothesis example, on a machine also running the integration containers,
+        # was enough to exceed it — the test failed with a bare asyncio TimeoutError that says
+        # nothing about tier configuration, which is what it is actually asserting. A generous
+        # explicit bound removes a limit this test never chose; it does not hide a slow path,
+        # because the path being timed is the deliberate unreachable-dependency one.
+        async with LifespanManager(app, startup_timeout=60.0, shutdown_timeout=60.0):
             return {tier.value: chain.primary for tier, chain in app.state.tier_config.tiers.items()}
 
     saved = {key: os.environ.get(key) for key in environment}

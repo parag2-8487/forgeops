@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                       |
-| :--------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                              |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                  |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                          |
-| Leaves reflected       | **45 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 121 `pending`. Reconciled 2026-07-31; all three sources agree. Group 7 in progress: 7.1 and 7.2 landed. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                 |
+| Field                  | Value                                                                                                                                                                            |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                   |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                       |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                               |
+| Leaves reflected       | **46 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 120 `pending`. Reconciled 2026-07-31; all three sources agree. Group 7 in progress: 7.1, 7.2 and 7.4 landed. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                      |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -1677,6 +1677,85 @@ mid-flight. It is worth noticing anyway, because "the rule exists and its unit t
 and "the rule is on the path" are different claims, and only the second one protects a
 user.
 
+### D-60 — the envelope signing key arrives through a scoped `ContextVar`, not a parameter
+
+**What it decided.** `backend/src/governance/envelope.py` — the backend half of §7.6 — takes
+its per-device signing key from a module-private `ContextVar` named `_SIGNING_KEY`, installed
+by a `signing_key_scope(key)` context manager. `sign_envelope` reads it and refuses to sign at
+all when no scope is active.
+
+**Why the shape was forced.** §2.2.1's banned-api table names `src.governance.envelope._SIGNING_KEY`
+literally, as a module-level constant. Ruff's `banned-api` matches the written import path, so
+an entry naming a symbol that does not exist bans nothing while looking exactly like an entry
+that does — the vacuity trap §0.4.5 exists to close. The symbol therefore has to be real, and
+it has to be the thing that actually turns "a device row" into "key bytes".
+
+**What was rejected.** A module-level `dict` of device keys was the obvious realisation and was
+rejected because it is a process-wide cache that outlives a revocation, while Q-16 requires a
+revocation to take effect on the _next message_. A plain `key: bytes` parameter on
+`sign_envelope` was rejected for a narrower reason: it works, but it leaves `_SIGNING_KEY` with
+nothing to be, and a decorative entry in the enforcement table is worse than no entry because a
+reader cannot tell the difference.
+
+**A sixth banned entry, beyond §2.2.1's five.** `signing_key_scope` is the only thing that sets
+the ContextVar, so leaving it unbanned would let a module outside `governance/` install a key of
+its choosing; a governance path that forgot its own scope would then sign with that key instead
+of raising. Banning the setter restores the property that matters — **a missing scope always
+raises**. The design's table is a minimum, not a maximum, and this is the first addition to it.
+
+**Cost accepted.** The key is implicit at the call site, which is genuinely harder to follow
+than an argument. It is paid down two ways: `sign_envelope` raises
+`SigningKeyUnavailableError` naming the context manager, and the scope resets to its _previous_
+token rather than to `None`, so a nested scope restores its parent instead of clearing it.
+Nesting is not expected — but "not expected" is how a surrounding mint ends up signing with no
+key at all.
+
+### Leaf 7.4 — two implementations, one committed corpus, and a two-way lock
+
+The signed bytes are RFC 8785 JCS of the envelope with `signature` absent, prefixed
+`"forgeops-envelope-v1" || 0x00`. Two runtimes implement that: `agent/internal/envelope` in Go
+and `governance/envelope.py` in Python. §7.6 requires them to read the **same files**, and the
+reason is worth stating plainly: a one-byte disagreement is a rejected command that looks
+exactly like a tampered one, and an operator cannot tell those apart.
+
+**Why the corpus is generated by one side and verified by the other.** The expected values have
+to come from somewhere, and hand-computing an HMAC is not reviewable.
+`scripts/gen-envelope-fixtures.py` computes them with the Python implementation; the Go suite
+verifies them independently. That asymmetry is what makes the committed corpus a two-way lock —
+break Python and Python fails against the committed bytes; break Go and Go fails; regenerate
+after breaking Python and Go fails, which is the case the whole arrangement exists to catch. So
+**regenerating is a change to the contract, not a repair**, and the generator's docstring says
+so. A test runs `--check` for real, so the committed bytes provably come from the committed
+implementation rather than from an editor.
+
+**Eight fixtures, each pinning one thing.** The ordinary case; nested objects and arrays;
+RFC 8785's minimal string escaping including non-ASCII left alone; UTF-16 member ordering,
+which is D-59's finding made executable across runtimes; the exact-integer boundary; the
+approval prefix over an otherwise identical envelope; a revert; and a read-only operation with
+no approval. Plus six **invalid** fixtures, because a corpus of documents that must be accepted
+says nothing about whether the two runtimes refuse the same documents.
+
+**The corpus carries the canonical bytes twice** — as hex, which is authoritative and immune to
+an editor's encoding habits, and as UTF-8 text, which is what a reviewer reads. A test asserts
+the two agree, because editing one without the other leaves a fixture that looks right and
+tests something else. `.gitattributes` pins the directory to `eol=lf`: a byte-exact
+cross-runtime contract whose bytes depend on which platform checked it out is not one.
+
+**No skips, deliberately.** Two fixtures cannot reach the full six-check `Verify` path — the
+approval-prefixed one by construction, and the empty-`approval_id` one because of the
+over-strictness recorded in chapter 9. Both were initially `t.Skip`ped, which was wrong twice
+over: §0.4.4 says a skip inside a green run is indistinguishable from coverage, and
+`check-no-skips.py --go` treats every Go test as mandatory, so it would have turned the build
+red. They are now positive assertions — the approval-prefixed envelope must fail with
+`ErrSignature`, and the empty-`approval_id` one with `ErrSchema` naming the member — which is
+strictly better than a skip, because it pins the behaviour instead of stepping over it.
+
+**Cost accepted.** The corpus is a third artifact to maintain beside two implementations, and a
+deliberate contract change now means editing the generator, regenerating, and re-running both
+suites. That is the intended friction. The smaller cost is that the fixture floors (8 and 6) are
+committed integers in two languages; a test reads the Go constants out of the source and asserts
+they equal the Python ones, so the two cannot drift to different corpora.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -1696,6 +1775,11 @@ several collapse into one another depending on how you group them (the two `|| t
 one habit; the two logging holes are one hole seen twice), which is roughly how the design's own
 inherited-debt table counts them. Do not quote a number from this chapter as though it were
 authoritative.
+
+Leaf 7.4 added entries **38 through 43** and one new pattern, **P**, so the list now runs to
+forty-three across sixteen patterns. Pattern P is the first one that is not about a single
+implementation being wrong — it is about two implementations of one written contract agreeing
+where the document warns and diverging where it is silent.
 
 ### Pattern A — dead wiring: a registered surface whose composition was never assembled
 
@@ -1765,6 +1849,45 @@ returns 404; but "an empty tier map would leave `/api/v1/ai/complete` answering 
 tier while looking healthy, which is precisely the silent-degradation shape D1 exists to
 remove."
 
+### Pattern P — two implementations of one contract, agreeing where the spec looked
+
+This is the pattern the fixture corpus of leaf 7.4 exists to catch, and building the corpus
+found two instances of it immediately. Both halves of §7.6 had been written carefully against
+the same document. They agreed exactly on the case the document warns about, and diverged on the
+adjacent case it does not mention — which is the shape to expect, because a spec's warnings are
+where both authors looked.
+
+It is worse than a byte-level disagreement, and that is the part worth internalising. If two
+runtimes produce different bytes, both agree the document exists and one signature fails to
+verify. If they disagree about whether the document is **canonicalisable at all**, one side
+reports "malformed" and the other reports "signature invalid" for the same input, and nobody
+reading either log learns what happened.
+
+**38. Integers above 2⁵³−1 canonicalised on one side and raised on the other.** §7.6 says "no
+floats appear anywhere in an envelope, which sidesteps JCS's hardest corner entirely", and both
+implementations enforced exactly that. Neither enforced RFC 8785's _other_ numeric limit: the
+scheme defines numbers through ES6 `Number`, an IEEE-754 double, so `2**53` is already
+unrepresentable. The Python library refuses it — `rfc8785.dumps({"n": 2**53})` raises
+`IntegerDomainError: 9007199254740992 exceeds safe integer domain for JSON floats` — while the
+Go canonicaliser wrote the decimal digits verbatim and produced bytes happily. `seq` is an
+`int64` on the wire and a monotonic per-device counter, so this is a value the system can
+legitimately reach rather than a contrived one. Both sides now enforce `±(2**53 - 1)` explicitly,
+with the bound named in each and a `seq-beyond-safe-integer` fixture asserting the refusal from
+both. It was found by probing the library rather than by reading it, which is the only way this
+class of thing is found.
+
+**39. `args` had to be a JSON object, and only one side checked.** The Go `Envelope.Args` is
+`json.RawMessage` — deliberately, so that unmarshalling cannot turn integers into `float64` —
+and a `RawMessage` accepts an array, a string or a number without complaint. The canonicaliser
+then serialised it into perfectly valid bytes that mean nothing, while the Python side refused
+it because §7.7's operations all take an object. The Go comment beside the code even _said_ "§7.7's
+operations all take an object", one line above the branch that did not check. The type is now
+checked, and an `args-not-an-object` fixture asserts both runtimes refuse it.
+
+The general lesson for anything with two implementations: **enumerate the cases the spec does
+not discuss, and make a fixture out of each one.** Agreement on the documented corner is the
+weakest evidence available, because it is the corner both authors read about.
+
 ### Pattern B — the gate that could never fail
 
 **5. `scripts/check-route-auth.py` saw only the three health routes.** The script enumerates
@@ -1819,6 +1942,24 @@ The replacement is a `rapid` property over generated (timeout, closer-delay) pai
 **real** `App.Close`, with the negative control being `_ = ctx` in `App.Close` — which makes
 the case hang until the Go test timeout. Timing margins are deliberately generous (20×) with
 a stated reason: "a flaky property gets deleted, which would lose the clause a second time."
+
+**40. `TestJournalFile_IsOwnerOnly` accepted a world-writable journal.** The assertion was
+`perm != 0o600 && perm != 0o666`, with a comment saying "0666 only on Windows, where Go
+synthesises the mode" — but the tolerance was **unconditional**, so on Linux, where the mode bits
+are real, a journal at `0666` passed a test named `IsOwnerOnly`. The outbound journal holds
+queued intents, so its permissions are a security property rather than a tidiness one.
+
+The reason nobody noticed is the interesting half. Immediately above sat
+`if os.Getenv("GOOS") == "windows" { t.Skip("NTFS uses ACLs") }`. `GOOS` is a Go build constant,
+not an environment variable — it is not set at test time — so that guard **never fired**. A reader
+skimming the function saw a Windows skip and reasonably assumed the `0o666` branch below it was
+unreachable dead weight. Two mechanisms for one platform difference, one of them inert, is how a
+tolerance ends up applying everywhere.
+
+The fix keeps the test running on both platforms rather than reinstating the skip: on Windows the
+synthetic mode is asserted as a recognised value, and everywhere else the assertion is exactly
+`0o600`. Making the skip _work_ would have been the wrong repair — the test passes on Windows, so
+skipping it there loses coverage that exists.
 
 ### Pattern C — a reference to something that does not exist
 
@@ -1894,6 +2035,33 @@ worth without a mechanism (D-23)." `logging.New` is deliberately kept rather tha
 "removing an exported function to enforce a policy is a blunter instrument than asserting the
 policy" — and a second test guards against the first passing vacuously if the constructor is
 renamed.
+
+**41. Envelope verification requires `approval_id` for every operation; §7.7 says some need
+none.** `envelope.parse` refuses an empty `approval_id` unconditionally. §7.7's operation table
+marks the read-only half — `scan.full`, `validate.*`, `readiness.inventory`, `secretscan.run` —
+as requiring no approval, so a correct envelope for one of them carries the member present and
+empty, and the verifier rejects it. The rule is right for the operations that matter and wrong
+for a third of the catalogue.
+
+It has deliberately **not** been relaxed. "Empty is allowed" and "empty is allowed for
+non-mutating operations only" differ by exactly the operation catalogue, which `internal/envelope`
+cannot import — it is a leaf package by construction (D-59) — and which does not exist anywhere in
+the agent yet, because it arrives with the dispatcher in task group 8. Relaxing the check now
+would open a window in which nothing enforces that a _mutating_ envelope names an approval.
+Leaving it strict refuses some valid envelopes and accepts no invalid ones, which is the safe
+direction to be wrong in. The corpus asserts the current behaviour with a named reason rather
+than skipping past it, and the code comment says the same thing at the line that enforces it, so
+the reconciliation is a known cost rather than a rediscovery.
+
+**42. A comment's arithmetic was wrong while its conclusion was right.** `DecodeSignature`'s
+doc comment read "43 base64 characters carrying 258 bits, so the final character has four bits
+that decode to nothing… four distinct 43-character strings therefore decode to the same MAC."
+The conclusion is correct and the mechanism is not: 32 bytes is 256 bits, 43 base64url
+characters carry 258, so **two** bits are ignorable — and two free bits is what gives four
+spellings. Small, and worth fixing precisely because the sentence was persuasive: it had already
+been repeated verbatim into a session handover note, where "four trailing bits" would have sent
+the next reader looking for a bug that is not there. A wrong number inside a correct explanation
+propagates further than an obviously wrong claim.
 
 ### Pattern E — the skip that reads as coverage
 
@@ -2210,6 +2378,23 @@ under pattern F because it is the same file: its docstring said the fetch went "
 `IdTokenVerifier`'s own JWKS client", and the body used a bare `httpx.get`. So it proved a JWKS
 could be fetched from a URL the test itself supplied, which is true of any URL. The repaired
 version asserts the guessed path was never requested.
+
+**43. `Q-27` passed alone and failed under load, because it inherited a 5-second timeout it
+never chose.** The property builds the real app through `create_app()` once per hypothesis
+example, against deliberately unreachable `DATABASE_URL` and `REDIS_URL` so the lifespan
+exercises its degraded path. That path spends a few seconds letting two connection attempts give
+up — and `LifespanManager`'s default `startup_timeout` is 5 s. On a machine also running the five
+integration containers, some example exceeded it and the test failed with a bare
+`asyncio.TimeoutError` that says nothing whatsoever about tier configuration, which is what the
+property actually asserts. Run without the integration environment sourced it passed three for
+three.
+
+Two things worth copying. The attribution was cheap and was done before changing anything: the
+same test was run with the integration variables unset, which separated "my change broke it" from
+"this environment is slower" in one command. And the fix states the timeout instead of raising it
+— every other `LifespanManager` in the tree also inherits the default, and the one that builds an
+app dozens of times per test is the one that should be choosing its own bound rather than
+discovering it.
 
 ### Pattern O — the check frozen at a previous phase, so its findings are noise
 

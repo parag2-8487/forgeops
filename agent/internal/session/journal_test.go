@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -530,9 +531,12 @@ func TestStats_ReportsBacklogForDoctor(t *testing.T) {
 }
 
 func TestJournalFile_IsOwnerOnly(t *testing.T) {
-	if os.Getenv("GOOS") == "windows" {
-		t.Skip("NTFS uses ACLs")
-	}
+	// The guard that used to stand here read `os.Getenv("GOOS")`, which is not set at test
+	// time, so it never fired — and it did not need to, because the assertion below already
+	// handles Windows. What it DID hide is worse: the 0o666 tolerance was unconditional, so on
+	// Linux a genuinely world-writable journal passed a test named `IsOwnerOnly`. The
+	// tolerance is now confined to the platform that needs it, which is the only way this
+	// assertion can fail where it matters.
 	t.Parallel()
 
 	j := newTestJournal(t, 1<<20, time.Hour)
@@ -543,8 +547,17 @@ func TestJournalFile_IsOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 && perm != 0o666 {
-		// 0666 only on Windows, where Go synthesises the mode.
-		t.Errorf("mode = %#o, want 0600", perm)
+	perm := info.Mode().Perm()
+	if runtime.GOOS == "windows" {
+		// NTFS uses ACLs and Go synthesises a mode, so the bits carry no information here.
+		// Asserted as a recognised synthetic value rather than skipped, so the test still runs.
+		if perm != 0o600 && perm != 0o666 {
+			t.Errorf("mode = %#o, want Go's synthetic 0600 or 0666 on Windows", perm)
+		}
+		return
+	}
+	if perm != 0o600 {
+		t.Errorf("mode = %#o, want 0600: the journal holds queued intents and must not be readable "+
+			"or writable by anyone but its owner", perm)
 	}
 }

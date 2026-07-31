@@ -1,0 +1,47 @@
+{
+  "fixture": "forgeops-envelope-fixture-v1",
+  "name": "02-changeset-apply-nested-args",
+  "why": "Nested objects, an array of objects, integers, booleans and null. Proves the canonicaliser recurses and sorts at every level, not only at the top.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-envelope-v1",
+  "envelope": {
+    "v": "1",
+    "command_id": "1a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "changeset.apply",
+    "args": {
+      "root": "/srv/app",
+      "dry_run": false,
+      "entries": [
+        {
+          "rel_path": "Dockerfile",
+          "action": "update",
+          "expected_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "mode": 420
+        },
+        {
+          "rel_path": "deploy/k8s/deployment.yaml",
+          "action": "create",
+          "expected_hash": null,
+          "mode": 420
+        }
+      ],
+      "limits": {
+        "max_bytes": 1048576,
+        "max_entries": 64
+      }
+    },
+    "approval_id": "7d6c5b4a-3e2f-4a1b-8c9d-0e1f2a3b4c5d",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "11223344556677889900112233445566",
+    "seq": 2,
+    "not_after": 1767225600
+  },
+  "canonical_hex": "7b22617070726f76616c5f6964223a2237643663356234612d336532662d346131622d386339642d306531663261336234633564222c2261726773223a7b226472795f72756e223a66616c73652c22656e7472696573223a5b7b22616374696f6e223a22757064617465222c2265787065637465645f68617368223a2265336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535222c226d6f6465223a3432302c2272656c5f70617468223a22446f636b657266696c65227d2c7b22616374696f6e223a22637265617465222c2265787065637465645f68617368223a6e756c6c2c226d6f6465223a3432302c2272656c5f70617468223a226465706c6f792f6b38732f6465706c6f796d656e742e79616d6c227d5d2c226c696d697473223a7b226d61785f6279746573223a313034383537362c226d61785f656e7472696573223a36347d2c22726f6f74223a222f7372762f617070227d2c22636f6d6d616e645f6964223a2231613262336334642d356536662d346138622d396330642d316532663361346235633664222c226465766963655f6964223a2234663361316534632d393166322d346131622d386434372d366332663062356139653131222c226e6f6e6365223a223131323233333434353536363737383839393030313132323333343435353636222c226e6f745f6166746572223a313736373232353630302c226f7065726174696f6e223a226368616e67657365742e6170706c79222c22706f6c6963795f636f6e74657874223a7b2262756e646c655f646967657374223a227368613235363a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c226465636973696f6e223a22616c6c6f77227d2c22736571223a322c2276223a2231227d",
+  "canonical_utf8": "{\"approval_id\":\"7d6c5b4a-3e2f-4a1b-8c9d-0e1f2a3b4c5d\",\"args\":{\"dry_run\":false,\"entries\":[{\"action\":\"update\",\"expected_hash\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"mode\":420,\"rel_path\":\"Dockerfile\"},{\"action\":\"create\",\"expected_hash\":null,\"mode\":420,\"rel_path\":\"deploy/k8s/deployment.yaml\"}],\"limits\":{\"max_bytes\":1048576,\"max_entries\":64},\"root\":\"/srv/app\"},\"command_id\":\"1a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d\",\"device_id\":\"4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11\",\"nonce\":\"11223344556677889900112233445566\",\"not_after\":1767225600,\"operation\":\"changeset.apply\",\"policy_context\":{\"bundle_digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"decision\":\"allow\"},\"seq\":2,\"v\":\"1\"}",
+  "signing_input_sha256": "fec9af369f5b790ffd53a5eb82e9b9a135f6071f6dd55d07a210ae9e3b69ed3a",
+  "signature": "H_DkhAEOtkqIXqHYovc-gsrizsIgiFZA_qa85QYfb1w"
+}

@@ -44,6 +44,10 @@ BANNED_IMPORTS: tuple[tuple[str, str], ...] = (
     ("src.governance.authority", "_MINT_SENTINEL"),
     ("src.governance.envelope", "sign_envelope"),
     ("src.governance.envelope", "_SIGNING_KEY"),
+    # D-60's sixth entry. `_SIGNING_KEY` is a ContextVar and this is the only setter, so leaving
+    # it unbanned would let an outsider install a key that a governance path missing its own
+    # scope would then sign with — the ban is what keeps "no scope" and "raises" the same thing.
+    ("src.governance.envelope", "signing_key_scope"),
     ("src.websocket.hub", "send_command"),
     ("src.auth.devices", "envelope_key"),
 )

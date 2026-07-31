@@ -1,0 +1,41 @@
+{
+  "fixture": "forgeops-envelope-fixture-v1",
+  "name": "07-changeset-revert",
+  "why": "A revert is its own mutation with its own authority (§11.6), so it is its own envelope with its own approval_id — not a reuse of the apply that preceded it.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-envelope-v1",
+  "envelope": {
+    "v": "1",
+    "command_id": "6f708192-a3b4-4a8b-9c0d-1e2f3a4b5c65",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "changeset.revert",
+    "args": {
+      "rollback_handle_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "manifest": {
+        "created_at": "2026-01-01T00:00:00Z",
+        "entries": [
+          {
+            "rel_path": "Dockerfile",
+            "backup": "Dockerfile.forgeops-backup.1767225600"
+          },
+          {
+            "rel_path": "deploy/k8s/deployment.yaml",
+            "backup": null
+          }
+        ]
+      }
+    },
+    "approval_id": "2817f01e-2f3a-4a8b-9c0d-1e2f3a4b5c66",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "1f2e3d4c5b6a798071829384a5b6c7d8",
+    "seq": 7,
+    "not_after": 1767225600
+  },
+  "canonical_hex": "7b22617070726f76616c5f6964223a2232383137663031652d326633612d346138622d396330642d316532663361346235633636222c2261726773223a7b226d616e6966657374223a7b22637265617465645f6174223a22323032362d30312d30315430303a30303a30305a222c22656e7472696573223a5b7b226261636b7570223a22446f636b657266696c652e666f7267656f70732d6261636b75702e31373637323235363030222c2272656c5f70617468223a22446f636b657266696c65227d2c7b226261636b7570223a6e756c6c2c2272656c5f70617468223a226465706c6f792f6b38732f6465706c6f796d656e742e79616d6c227d5d7d2c22726f6c6c6261636b5f68616e646c655f6964223a2261316232633364342d653566362d346137622d386339642d306531663261336234633564227d2c22636f6d6d616e645f6964223a2236663730383139322d613362342d346138622d396330642d316532663361346235633635222c226465766963655f6964223a2234663361316534632d393166322d346131622d386434372d366332663062356139653131222c226e6f6e6365223a223166326533643463356236613739383037313832393338346135623663376438222c226e6f745f6166746572223a313736373232353630302c226f7065726174696f6e223a226368616e67657365742e726576657274222c22706f6c6963795f636f6e74657874223a7b2262756e646c655f646967657374223a227368613235363a61626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162222c226465636973696f6e223a22616c6c6f77227d2c22736571223a372c2276223a2231227d",
+  "canonical_utf8": "{\"approval_id\":\"2817f01e-2f3a-4a8b-9c0d-1e2f3a4b5c66\",\"args\":{\"manifest\":{\"created_at\":\"2026-01-01T00:00:00Z\",\"entries\":[{\"backup\":\"Dockerfile.forgeops-backup.1767225600\",\"rel_path\":\"Dockerfile\"},{\"backup\":null,\"rel_path\":\"deploy/k8s/deployment.yaml\"}]},\"rollback_handle_id\":\"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\"},\"command_id\":\"6f708192-a3b4-4a8b-9c0d-1e2f3a4b5c65\",\"device_id\":\"4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11\",\"nonce\":\"1f2e3d4c5b6a798071829384a5b6c7d8\",\"not_after\":1767225600,\"operation\":\"changeset.revert\",\"policy_context\":{\"bundle_digest\":\"sha256:abababababababababababababababababababababababababababababababab\",\"decision\":\"allow\"},\"seq\":7,\"v\":\"1\"}",
+  "signing_input_sha256": "9e5ad988be4b6c11784e7de10940e98204dddf6e7557b6efa8df67adf7ec3d78",
+  "signature": "D7kxIdln3R1HIe4CuKIZ26ncSazp9rSt_0CzAusnYH0"
+}

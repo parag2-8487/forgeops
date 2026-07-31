@@ -98,11 +98,24 @@ type Envelope struct {
 	Signature string `json:"signature,omitempty"`
 }
 
+// MaxSafeInteger is the largest integer RFC 8785 serialises exactly.
+//
+// The scheme defines numbers through ES6 `Number`, an IEEE-754 double, so 2^53 is already
+// unrepresentable. This bound exists here because the two runtimes disagreed without it, and
+// the disagreement was worse than a byte difference: `rfc8785` on the Python side raises
+// IntegerDomainError above it, while the serialiser below writes the decimal digits verbatim
+// and produces bytes happily. One side would report "malformed document" and the other
+// "signature invalid" for the same envelope, and an operator cannot tell those apart.
+//
+// Mirrors `backend/src/governance/envelope.py::MAX_SAFE_INTEGER`.
+const MaxSafeInteger int64 = 1<<53 - 1
+
 // Errors returned by this package. Each maps to an RFC 9457 suffix and an `agent.error`
 // code through Code() below (Appendix C.1, C.2).
 var (
 	ErrSchema        = errors.New("envelope: schema invalid")
 	ErrFloatValue    = errors.New("envelope: float values are not permitted")
+	ErrIntegerDomain = errors.New("envelope: integer is outside RFC 8785's exact domain")
 	ErrExpired       = errors.New("envelope: not_after has passed")
 	ErrTooFarFuture  = errors.New("envelope: not_after exceeds the maximum age")
 	ErrSignature     = errors.New("envelope: signature does not verify")
@@ -174,6 +187,15 @@ func canonicalBody(e Envelope) (map[string]any, error) {
 	if err := requireNoFloat(e.Args); err != nil {
 		return nil, err
 	}
+	// `seq` and `not_after` are int64 on the wire, so they can hold values RFC 8785 cannot
+	// serialise exactly. Checked here rather than in Verify, because canonicalisation is what
+	// the bound protects: an envelope whose seq is 2^53 has no agreed canonical form at all.
+	if err := requireSafeInteger("seq", e.Seq); err != nil {
+		return nil, err
+	}
+	if err := requireSafeInteger("not_after", e.NotAfter); err != nil {
+		return nil, err
+	}
 
 	var args any
 	if len(e.Args) == 0 {
@@ -186,6 +208,15 @@ func canonicalBody(e Envelope) (map[string]any, error) {
 		decoder.UseNumber()
 		if err := decoder.Decode(&args); err != nil {
 			return nil, fmt.Errorf("%w: args is not valid JSON: %v", ErrSchema, err)
+		}
+		// The type is checked rather than assumed. `Args` is json.RawMessage, so an array, a
+		// string or a number all unmarshal without complaint and canonicalise to perfectly
+		// valid bytes that mean nothing — while the Python side refuses them. Two runtimes
+		// that disagree about which documents exist is the failure this whole package is
+		// arranged to prevent.
+		if _, ok := args.(map[string]any); !ok {
+			return nil, fmt.Errorf("%w: args must be a JSON object (§7.7's operations all take "+
+				"one), got %T", ErrSchema, args)
 		}
 	}
 
@@ -242,6 +273,20 @@ func requireNoFloat(raw json.RawMessage) error {
 	return walkNoFloat(value, "args")
 }
 
+// requireSafeInteger refuses an integer RFC 8785 cannot serialise exactly.
+//
+// Kept separate from requireNoFloat so the two failure modes stay distinguishable: a float is
+// a document that should never have been built, whereas an out-of-domain integer is usually a
+// counter that grew past a limit nobody wrote down.
+func requireSafeInteger(path string, value int64) error {
+	if value > MaxSafeInteger || value < -MaxSafeInteger {
+		return fmt.Errorf("%w: %s=%d is outside ±%d; RFC 8785 defines numbers as IEEE-754 "+
+			"doubles, so a larger value cannot round-trip and the Python side refuses to "+
+			"canonicalise it at all", ErrIntegerDomain, path, value, MaxSafeInteger)
+	}
+	return nil
+}
+
 func walkNoFloat(value any, path string) error {
 	switch typed := value.(type) {
 	case json.Number:
@@ -250,6 +295,17 @@ func walkNoFloat(value any, path string) error {
 			return fmt.Errorf("%w: %s carries the non-integer number %s; design §7.6 forbids a float "+
 				"in an envelope because the shortest round-trip form of a double is where two runtimes "+
 				"disagree", ErrFloatValue, path, text)
+		}
+		// An integer literal inside `args` is subject to the same exact-domain bound as `seq`.
+		// Parsed rather than length-checked: "0000000000000000009" is nineteen characters and
+		// well inside the domain.
+		parsed, err := typed.Int64()
+		if err != nil {
+			return fmt.Errorf("%w: %s carries the integer %s, which does not fit in an int64: %v",
+				ErrIntegerDomain, path, text, err)
+		}
+		if err := requireSafeInteger(path, parsed); err != nil {
+			return err
 		}
 	case float64:
 		// Reached only if a caller decoded without UseNumber somewhere upstream.
@@ -418,12 +474,12 @@ func EncodeSignature(mac []byte) string {
 // asymmetry: a peer that pads is interoperable, and this side still has one spelling.
 //
 // It also rejects NON-CANONICAL base64, which is a sharp edge worth stating. A 32-byte
-// MAC encodes to 43 base64 characters carrying 258 bits, so the final character has four
+// MAC is 256 bits and 43 base64url characters carry 258, so the final character has TWO
 // bits that decode to nothing — and Go's decoder ignores them. Four distinct 43-character
-// strings therefore decode to the same MAC, so a signature would have four valid
-// spellings and "every single-byte mutation is rejected" would be false as written. The
-// round-trip check below makes the encoding canonical: re-encoding the decoded bytes must
-// reproduce the input.
+// strings therefore decode to the same MAC (two free bits, four combinations), so a
+// signature would have four valid spellings and "every single-byte mutation is rejected"
+// would be false as written. The round-trip check below makes the encoding canonical:
+// re-encoding the decoded bytes must reproduce the input.
 func DecodeSignature(encoded string) ([]byte, error) {
 	if encoded == "" {
 		return nil, fmt.Errorf("%w: signature is empty", ErrSchema)

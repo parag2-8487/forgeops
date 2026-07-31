@@ -1,0 +1,25 @@
+{
+  "fixture": "forgeops-envelope-invalid-fixture-v1",
+  "name": "float-seq",
+  "why": "`seq` is an integer. A float that happens to be integral is still a float, and both runtimes must refuse it at the parse step rather than coercing it.",
+  "key_utf8": "test-only-not-a-real-secret-envelope-key",
+  "domain_prefix": "forgeops-envelope-v1",
+  "reject": "seq-not-integer",
+  "envelope": {
+    "v": "1",
+    "command_id": "8192a3b4-c5d6-4a8b-9c0d-1e2f3a4b5c68",
+    "device_id": "4f3a1e4c-91f2-4a1b-8d47-6c2f0b5a9e11",
+    "operation": "changeset.apply",
+    "args": {
+      "root": "/srv/app"
+    },
+    "approval_id": "17f01e2f-3a4b-4a8b-9c0d-1e2f3a4b5c69",
+    "policy_context": {
+      "bundle_digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "decision": "allow"
+    },
+    "nonce": "3d4c5b6a798071829384a5b6c7d8e9fa",
+    "seq": 9.0,
+    "not_after": 1767225600
+  }
+}

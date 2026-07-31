@@ -195,6 +195,15 @@ func NewVerifier(
 // inversion.
 //
 // No failure path returns a non-nil *Verified, so no failure can reach the executor.
+//
+// One check from Appendix A.2 is NOT here, and its absence is deliberate rather than an
+// oversight: A.2's step 6 rejects an `operation` outside §7.7's closed catalogue. That
+// catalogue does not exist yet — it arrives with the named-operation dispatcher in task group
+// 8 — and this package is a leaf that cannot import `executor` (D-59), so the check lands
+// where the table does. Until then an unknown operation is rejected by dispatch rather than by
+// verification, which is a different place, not a missing one. Said out loud because a
+// docstring that lists six checks and renumbers A.2's would leave a reader believing
+// verification is complete.
 func (v *Verifier) Verify(ctx context.Context, raw []byte) (*Verified, error) {
 	env, err := v.parse(raw)
 	if err != nil {
@@ -241,9 +250,19 @@ func (v *Verifier) parse(raw []byte) (Envelope, error) {
 		return Envelope{}, fmt.Errorf("%w: v is %q, expected %q", ErrSchema, env.V, Version)
 	}
 	for name, value := range map[string]string{
-		"command_id":                   env.CommandID,
-		"device_id":                    env.DeviceID,
-		"operation":                    string(env.Operation),
+		"command_id": env.CommandID,
+		"device_id":  env.DeviceID,
+		"operation":  string(env.Operation),
+		// STRICTER THAN §7.7, knowingly. §7.7's table marks the read-only operations
+		// (`scan.full`, `validate.*`, `readiness.inventory`, `secretscan.run`, …) as
+		// requiring no `approval_id`, so a correct envelope for one of them carries the
+		// member empty — and this loop refuses it. Relaxing it here is not the fix, because
+		// "empty is allowed" and "empty is allowed for non-mutating operations only" differ by
+		// exactly the operation catalogue, which this leaf package cannot import (D-59) and
+		// which does not exist until task group 8. Reconciling the two belongs to the leaf
+		// that creates the catalogue; leaving the rule strict until then refuses some valid
+		// envelopes and accepts no invalid ones, which is the safe direction to be wrong in.
+		// Recorded in the journal's chapter 9 so it is a known cost rather than a surprise.
 		"approval_id":                  env.ApprovalID,
 		"nonce":                        env.Nonce,
 		"policy_context.bundle_digest": env.PolicyContext.BundleDigest,
@@ -366,7 +385,7 @@ func (v *Verifier) checkPolicyBinding(ctx context.Context, env Envelope) error {
 // (Appendix C.1, C.2), so a caller reports a diagnosis rather than a category.
 func Code(err error) string {
 	switch {
-	case errors.Is(err, ErrSchema), errors.Is(err, ErrFloatValue):
+	case errors.Is(err, ErrSchema), errors.Is(err, ErrFloatValue), errors.Is(err, ErrIntegerDomain):
 		return "envelope-malformed"
 	case errors.Is(err, ErrExpired), errors.Is(err, ErrTooFarFuture):
 		return "envelope-expired"
