@@ -57,10 +57,26 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Use DATABASE_URL from environment if available
-database_url = os.environ.get("DATABASE_URL")
+# Which URL Alembic connects with — and it is NOT `DATABASE_URL` when a migrator URL
+# is configured (design §6.4, §13.1).
+#
+# §6.4: "`DATABASE_URL` uses `forgeops_app`, which cannot UPDATE or DELETE audit rows;
+# `ALEMBIC_DATABASE_URL` uses `forgeops_migrator`, which owns the schema. A single-role
+# deployment silently defeats mechanism 3." This file previously read `DATABASE_URL`
+# only, so `alembic upgrade head` ran as the APPLICATION role: the app would then own
+# `audit_events` and could drop its own append-only triggers, which is exactly the
+# arrangement §6.4 says must not happen. `ALEMBIC_DATABASE_URL` was registered in
+# `core/config.py` and shipped in `.env.example`, and nothing read it.
+#
+# `ALEMBIC_DATABASE_URL` wins when set; `DATABASE_URL` remains the fallback so a
+# single-role development database keeps working. The choice is announced, because a
+# migration running as the wrong role is invisible otherwise.
+database_url = os.environ.get("ALEMBIC_DATABASE_URL") or os.environ.get("DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
+    _source = "ALEMBIC_DATABASE_URL" if os.environ.get("ALEMBIC_DATABASE_URL") else "DATABASE_URL"
+    # Credentials are never printed: only which variable was chosen.
+    print(f"alembic: connecting with {_source}", file=sys.stderr)
 
 target_metadata = SQLModel.metadata
 

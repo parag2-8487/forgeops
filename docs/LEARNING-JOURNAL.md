@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                    |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                                           |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                               |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                       |
-| Leaves reflected       | **41 of 166** Phase 1 task leaves implemented in the working tree; 2 recorded `blocked`. `PROGRESS.md`'s own table still reads 25 `done` because rows 5.1–6.5 are flipped in the commit that lands them. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                              |
+| Field                  | Value                                                                                                                                        |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-07-31**                                                                                                                               |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                   |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                           |
+| Leaves reflected       | **44 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 122 `pending`. Reconciled 2026-07-31; all three sources now agree on 44. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                  |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -330,8 +330,8 @@ a fixed string and there is nothing for a caller to vary. `Q-20` asserts the bod
 byte-identical whether or not the resource exists.
 
 And `_sanitize_detail` suppresses the **whole** detail — returns `None` — on any match
-against eight leak patterns (bearer tokens, `postgresql://`, `redis://`, `sk-`, `sk-ant-`,
-`xai-`, PEM headers, `Traceback (most recent call last)`). Partial masking would leave the
+against eight leak patterns: authorization headers, PostgreSQL and Redis connection URLs,
+three vendor API-key prefixes, PEM key headers, and the Python traceback marker. Partial masking would leave the
 shape of the secret; suppression leaves nothing.
 
 ### Constructor injection in Go
@@ -1074,7 +1074,7 @@ sequenceDiagram
     BE-->>U: 201 {code, expires_at, device_id} — shown once, 5:00 countdown
 
     U->>AG: forgeops-agent pair --code ABC234 --backend wss://…
-    AG->>AG: generate P-256 keypair IN MEMORY, build CSR<br/>the private key never leaves this machine
+    AG->>AG: generate P-256 keypair IN MEMORY, build CSR<br/>the secret half never leaves this machine
     AG->>BE: POST /agents/pair/exchange (the only PUBLIC route)<br/>{code, csr, agent_version, platform, fingerprint}
     BE->>R: ONE Lua script: fetch, INCR attempts, burn at >5, DEL on success
     alt unknown, expired or burned
@@ -1087,7 +1087,7 @@ sequenceDiagram
     end
     AG->>AG: persist in OS keychain (0600 file fallback, reported by `agent doctor`)
 
-    AG->>BE: WSS connect: client cert (mTLS) + Bearer device_token
+    AG->>BE: WSS connect: client cert (mTLS) + device token in the authorization header
     BE->>R: SISMEMBER devtok:revoked <device_id>
     AG->>BE: session.connect {device_id, policy_bundle_digest, capabilities}
     alt digest stale
@@ -1543,7 +1543,29 @@ exists: a body also emitted for an outage makes "byte-identical" true for the wr
 - **D-57** — give each policy engine only its own subtree. Chapter 9 tells this story; it is a
   defect, not just a decision.
 - **D-58** — discover the JWKS URL from the OIDC discovery document instead of guessing it.
-  Also chapter 9.
+  Also chapter 9. The premise that proved wrong: that a JWKS lives at a conventional path. It
+  does not; OIDC Discovery requires the metadata document to _name_ `jwks_uri`. Requiring
+  discovery outright was rejected because it would break Phase 0's shipped gateway contract, so
+  the guessed path survives as a fallback and a test asserts it is not consulted first.
+
+### D-59, not yet taken
+
+Worth knowing about because it is currently the only thing blocking group 7, and because the
+decision to _stop_ is itself the interesting part.
+
+Leaf 7.2 moves the agent's write path behind the compile boundary. `tasks.md` writes the
+signature as `ApplyVerified(ctx, *session.Verified, …)`; design §2.2.1 writes it as
+`*envelope.Verified`. Neither exists yet, and `session` is currently the _journal and credential_
+package from leaf 4.6, which has no `Verified` type at all. Resolving it needs a numbered
+decision plus creating the verified-envelope type, relocating the Phase 0 atomic-apply
+implementation, adding `ExpectedHash`, `ErrConflict` and `BackupManifest`, and proving the
+nested-internal boundary actually holds.
+
+The session that hit this stopped rather than land a partial mutation boundary. That is the right
+call for a specific reason: a half-built chokepoint is worse than none, because it looks like the
+control it is not — the exact failure mode group 7's own gate (`Q-03`,
+`scripts/check-chokepoint.sh`) exists to prevent. Leaves 7.3 through 7.11 all depend on 7.2, so
+D-59 is the next thing that has to happen in this phase.
 
 ---
 
@@ -1560,11 +1582,12 @@ the thing. Those pass forever, and their green tick is indistinguishable from ev
 
 A note on counting before the list. `PROGRESS.md` does not carry a defect log, so there is no
 authoritative count. What follows is what is documented in-place, in the docstrings and
-comments of the code that fixed each one, and in the Phase 1 design's decision log. Twenty-six
-entries are described below; several collapse into one another depending on how you group them
-(the two `|| true` steps are one habit; the two logging holes are one hole seen twice), which
-is roughly how the design's own inherited-debt table counts them. Do not quote a number from
-this chapter as though it were authoritative.
+comments of the code that fixed each one, and in the Phase 1 design's decision log.
+Thirty-seven numbered entries are described below across fifteen named patterns, A through O;
+several collapse into one another depending on how you group them (the two `|| true` steps are
+one habit; the two logging holes are one hole seen twice), which is roughly how the design's own
+inherited-debt table counts them. Do not quote a number from this chapter as though it were
+authoritative.
 
 ### Pattern A — dead wiring: a registered surface whose composition was never assembled
 
@@ -1811,6 +1834,38 @@ shipped contract to fix a different bug." Recorded as D-58.
 Note that defects 1 and 11 belong here too. In each case the test was written against what the
 code did, so it could not disagree with it.
 
+**36. `alembic upgrade head` migrated as the application role, and every migration test
+proved the opposite by accident.** Design §6.4 states the two-role split and calls it easy to
+lose: `DATABASE_URL` is `forgeops_app`, which cannot `UPDATE` or `DELETE` audit rows;
+`ALEMBIC_DATABASE_URL` is `forgeops_migrator`, which owns the schema. "A single-role
+deployment silently defeats mechanism 3", because the application would then own
+`audit_events` and could drop its own append-only triggers. `backend/alembic/env.py` read
+`os.environ.get("DATABASE_URL")` and nothing else. `ALEMBIC_DATABASE_URL` was registered in
+`core/config.py`, shipped in `.env.example`, and read by no code path at all.
+
+The Pattern F part is why it survived nine migrations and 250-odd green migration
+assertions. `migration_support.run_alembic` set `DATABASE_URL` to whatever URL the test handed
+it — and the tests hand it the **migrator** URL. So the fixture supplied the migrator
+credential under the _application's_ variable name, the implementation read that name, and the
+two agreed by construction. Exactly defect 23's shape: the fixture was built around the
+implementation rather than around the contract, so no test could see the difference between
+"connects as the migrator" and "connects as whoever `DATABASE_URL` names".
+
+It was found by producing evidence rather than by reading code. Leaf 5.6's `PROGRESS.md` row
+needed something better than a migration path, so `scripts/check-db-roles.py` was actually
+run — and it reported `permission denied for table alembic_version`, because the live database
+had been migrated by a role that could not read its own version table.
+
+Fixed: `env.py` prefers `ALEMBIC_DATABASE_URL` and falls back to `DATABASE_URL`, and prints
+which one it chose (the name only, never the URL). `test_alembic_role_selection.py` makes the
+assertion the old arrangement could not: it gives the two variables **different** values —
+migrator pointing at the real database, `DATABASE_URL` pointing at a port nothing listens on —
+and proves the migrator's wins. Reverting `env.py` makes two of its four tests fail, so it is
+a control rather than a comment. The grep-level test matches the read expression
+`os.environ.get("ALEMBIC_DATABASE_URL")` and not the bare name, because the bare name also
+appears in the comment above it and a reverted implementation with an intact comment would
+otherwise pass.
+
 ### Pattern G — a second engine walked into a single-engine assumption
 
 **24. OPA refused to start once Cerbos policies landed.** Phase 0 mounted `./policies` and ran
@@ -1904,6 +1959,150 @@ applies, including any inherited from a nested `.gitattributes` — "rather than
 file and hoping the two agree." And it fails when no lockfile is found, "so a rename cannot
 make the check trivially pass."
 
+### Pattern K — the gate that was red, and nobody looked
+
+Found while landing group 6 (2026-07-31).
+
+**29. Three files were committed unformatted, so `ruff format --check` was already red on this
+branch** before the session that noticed. **30. `policies/cerbos/matrix_test.yaml` failed
+prettier, so the `pre-commit` job was red too.** Both are trivial to fix and neither is
+interesting on its own. What is interesting is that a red required check sat on the branch
+across sessions without blocking anything, which means the signal had already been discounted
+by the people reading it. A gate nobody reads is a gate that does not exist — the same
+conclusion as chapter 5, arrived at from the opposite direction.
+
+**31. The pinned formatter and the installed formatter disagreed.**
+`.pre-commit-config.yaml` pins prettier `3.3.3`; the `frontend/node_modules` copy is `3.9.6`.
+Formatting locally with whatever was on hand produced output CI rejected. The fix was to
+install the pinned version into a gitignored scratch directory and use that. Worth
+generalising: a pinned tool you do not actually run is a pin in name only, which is the same
+class of defect as pattern I.
+
+### Pattern L — the mechanism the steering rule never had
+
+**32. Nine sites carried credential-shaped literals in tests.** The values were harmless: a
+self-labelling placeholder behind an HTTP authorization scheme name, a base64 encoding of a
+short self-labelling string, and an unsigned JWT whose header declared the `none` algorithm
+over an empty payload. Nothing authenticated anything and nothing needs rotating.
+
+Those three are described here rather than quoted, deliberately, and that is not squeamishness
+— see the note at the end of this entry.
+
+The violation is the _shape_, not the value, and the reason is on record: this repository
+already collected GitGuardian incident 35267706 for a JWT-shaped placeholder that was equally
+harmless. A scanner cannot tell the difference, and neither can a reviewer at a glance.
+
+Two things make this the most instructive entry in the chapter. First, auditing the whole tree
+rather than the session's own diff found **two vendor-prefixed API-key shapes in Phase 0's
+`test_errors.py` that were not even self-labelling** — older and worse than the ones being
+fixed. Second, `backend/tests/synthetic_secrets.py` already existed for exactly this purpose
+and was not being used. All nine sites now build their values through it.
+
+The root cause, stated plainly in the session that fixed it: **the steering rule had no
+mechanical enforcement.** `.kiro/steering/secret-safety.md` said "never use a value that
+resembles a real provider token format" and nothing checked. So
+`scripts/check-test-credentials.py` (`FO-SEC001`) now does, wired into pre-commit and the
+`backend` job — nine patterns covering both HTTP authorization schemes, the JWT header prefix
+and the vendor key prefixes. Three details in it are
+the now-familiar house style: it **folds constant concatenation**, so `"Bea" + "rer …"` cannot
+evade it; it **ignores docstrings**, so prose _about_ a shape stays legal (this journal would
+otherwise be a violation); and it **requires a 16-character token payload** after a first draft
+fired on an English sentence that merely named an HTTP authorization scheme. Its own tests
+drive good and bad fixtures with one parametrised case per rule, assert that **no finding
+echoes the matched value**, and assert the vacuity guard. Result on a clean tree: 91 files,
+6,866 literals, 0 findings.
+
+This is the chapter's thesis applied to the project's own rules. A steering document is a
+convention. `FO-SEC001` is a mechanism.
+
+**And then this document became the next instance of the same defect.** The first draft of the
+entry you are reading quoted all three literals, because quoting them felt like better
+teaching. A later session's mandated pre-push grep found five high-risk hits in
+`docs/LEARNING-JOURNAL.md` and correctly refused to push. `gitleaks` was clean, which is
+exactly the trap: `gitleaks` scores likelihood, and the rule in `secret-safety.md` is about
+*shape*, because a scanner cannot read intent and neither can a reviewer at a glance. This
+repository already collected GitGuardian incident 35267706 for a placeholder that was equally
+harmless.
+
+The fix was to describe every shape instead of printing it, throughout this chapter. Two
+reasons, and the second is the important one. It reads no worse — "an unsigned JWT whose
+header declared the `none` algorithm" carries the lesson better than the base64, because the
+lesson *is* that the encoding alone is the problem. And granting a "prose is fine" exemption
+would have put a human back in the loop for every future hit, which is a convention. The rule
+now has no exception to remember: no credential shape appears in this file, so the pre-push
+grep stays a mechanical gate rather than a judgement call.
+
+### Pattern M — a default-profile service that phones home
+
+**33. Cerbos ships anonymous telemetry enabled by default.** It arrived as a default-profile
+Compose service, so the local stack began reporting to a vendor endpoint without anyone
+choosing that. Not a leak of project content, but it is outbound traffic from a service the
+topology claims is loopback-only — and the header comment in `docker-compose.yml` says every
+published port binds to `127.0.0.1`, which is true of _inbound_ and says nothing about
+outbound. Worth checking for on every new service, because the default is usually on.
+
+### Pattern N — test isolation that held only in isolation
+
+**34. A property test mutated process environment permanently.** `Q-19` set `APP_ENV`,
+`DATABASE_URL` and `REDIS_URL` and did not restore them, so six production assertions in
+`test_config*.py` failed when the suite ran in order and passed when run alone. The first fix —
+a module-scoped fixture — was insufficient, because `Q-20` imports `built_app` from the same
+module and the import happens outside the fixture's scope. The mutation is now contained where
+it is made rather than cleaned up afterwards.
+
+Two lessons. A test that passes in isolation and fails in a suite is reporting a shared-state
+bug, not a flake, and the distinction is worth ten minutes before rerunning. And containment at
+the point of mutation beats cleanup after it, because cleanup has an ordering assumption and
+containment does not.
+
+**35. The one test positioned to catch defect 23 examined nothing.** Recorded here rather than
+under pattern F because it is the same file: its docstring said the fetch went "through
+`IdTokenVerifier`'s own JWKS client", and the body used a bare `httpx.get`. So it proved a JWKS
+could be fetched from a URL the test itself supplied, which is true of any URL. The repaired
+version asserts the guessed path was never requested.
+
+### Pattern O — the check frozen at a previous phase, so its findings are noise
+
+This is the inverse of Pattern B and it is worse than it sounds. Pattern B is a gate that
+cannot fail. This is a gate that **fails on correct code**, because its definition of correct
+was written for a phase that has ended. The damage is not the false finding; it is that a
+developer learns the check is wrong and stops reading it, which disarms it for the case it
+would legitimately have caught.
+
+**37. `scripts/check-structure.sh` reported 42 violations against a correct tree.** It enforces
+design §1.3 — "no structural placeholder that carries no behaviour" — by listing directories
+that must contain only `README.md` or `.gitkeep`. That list was written for Phase 0, and it
+named nine directories Phase 1 owns and populates: `backend/src/{auth,generation,policies,
+secrets,websocket}` (design §11.2, §11.5, §11.7, §11.8, §11.10) and
+`agent/internal/{executor,policy,validator,devtools}` (§10.5, §10.6, §10.7, §10.10). Groups 5
+and 6 legitimately filled four of them, so the check produced a finding for every file — and
+would have produced more at leaf 7.2, which is about to fill `agent/internal/executor`.
+
+Two aggravating details. It walked the filesystem rather than the index, so `__pycache__`
+inflated 22 real-sounding findings out of build artifacts that §1.3 says nothing about. And it
+had **no negative controls of its own** — the repository's Python checks all have fixture
+pairs proving they flag the bad case and pass the good one, and this shell check had none, so
+nobody had ever asked whether its list still described the tree.
+
+What kept it from being caught: it is wired into **nothing**. Not CI, not `pre-commit`, not the
+`Makefile` — only into `scripts/check-area1.sh`, a Phase 0 aggregator. So no build went red and
+no one was forced to look. A check nobody runs cannot be wrong in a way anybody notices, which
+is a different failure from a check that passes vacuously and needs its own name.
+
+Fixed four ways, and the fourth is the one that matters. The lists were narrowed to what is
+genuinely still deferred (`agent/pkg`, plus the four backend domains design §1.2 excludes from
+Phase 1 outright), with a comment naming the design section that moved each entry out. The
+walk now reads `git ls-files`, because §1.3 forbids a _committed_ placeholder and a local build
+artifact is not one. It gained the vacuity guard every other check here carries, so a list that
+resolves to no existing directory is itself a failure. And it gained
+`scripts/tests/check-structure.test.sh`: four controls proving the real tree passes, that an
+emptied list is reported vacuous, that a committed `.go` file in a structural-only directory is
+still caught, and that an untracked artifact produces no finding. The vacuity control was
+itself wrong on the first attempt — it ran the mutated copy from a temp directory, so
+`dirname $0/..` resolved away from the repository and the script "failed" on a tree with no
+files in it. A control that fails for a reason unrelated to its mutation proves nothing, which
+is the whole subject of §0.4.5 arriving one level up.
+
 ### What to take from this chapter
 
 Four habits, all visible in the fixes above.
@@ -1928,6 +2127,38 @@ Four habits, all visible in the fixes above.
 
 ## 10. Where we are right now
 
+### The record and the tree agreed on 2026-07-31 — and how they had drifted
+
+Read this before the numbers below, because until 2026-07-31 three sources gave three
+answers, and the shape of that drift is worth more to a newcomer than the number is.
+
+| Source                              | Said, before reconciliation                                                                                                                                                                           | Says now                                                                                                                                                             |
+| :---------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The working tree                    | group 6 complete and 7.1 landed — `backend/src/governance/{authority,primitives}.py`, `backend/src/auth/cerbos.py`, `policies/cerbos/`, `scripts/check-test-credentials.py`, migrations `0002`–`0009` | unchanged                                                                                                                                                            |
+| The session report that produced it | **44 of 166**, group 6 complete, 7.1 complete                                                                                                                                                         | unchanged                                                                                                                                                            |
+| `PROGRESS.md`                       | **25 `done`**; rows **6.1 through 7.11 all `pending`**; two rows `blocked` with no reason; header `Last updated: 2026-07-29`                                                                          | **44 `done`, 0 `blocked`, 122 `pending`**, header `2026-07-31`, and a **Phase 1 leaf evidence** section giving every `done` row a test node id or a command's output |
+
+So `PROGRESS.md` had never been updated for nineteen leaves of work. That broke its own
+stated rule — "Statuses move `pending` → `in-progress` → `done` **in the same commit as the
+work**" — and it meant the project's audit trail understated what had been built.
+
+This belongs in chapter 9 as much as here, and it is the pattern that chapter is about: a
+record that says one thing while the tree says another, with nothing mechanically
+disagreeing. `scripts/check-progress.sh` validates `PROGRESS.md`'s _structure_ — headings,
+the status vocabulary, table shape — not whether a row's status matches reality. So it
+passed. The review of Phase 0 asked for the opposite gate ("each `done` row's evidence must
+name a test node id, CI run id, or artifact path — not a source file"), and even that would
+not have caught this direction: **a row left `pending` while the work exists is invisible to
+a check that only inspects `done` rows.** That asymmetry is the lesson. A record can fail
+in two directions and only one of them is usually guarded.
+
+Two things fell out of doing the reconciliation properly, and both are in chapter 9: the
+`alembic/env.py` role-selection defect, found because producing evidence for leaf 5.6 meant
+actually running `check-db-roles.py` rather than citing the migration file; and
+`scripts/check-structure.sh` returning 42 findings against a correct tree. Neither would
+have surfaced from reading the code. That is the argument for the evidence rule in one
+sentence: _citing a source path proves the file exists, and nothing else._
+
 **Snapshot: 2026-07-31, branch `phase-1-implementation`.** Phase 0 is `completed` but
 **unmerged into `main`** — that is the repository owner's decision and has deliberately not
 been taken. Phase 1 is `in-progress`. Phases 2 through 5 are `not-started`, and no
@@ -1935,41 +2166,41 @@ future-phase behaviour exists in the tree beyond named seams.
 
 ### The count
 
-|                                 |  Leaves |
-| :------------------------------ | ------: |
-| Implemented in the working tree |  **38** |
-| `blocked`                       |       2 |
-| Not started                     |     126 |
-| **Total**                       | **166** |
+|                             |  Leaves |
+| :-------------------------- | ------: |
+| `done`, with cited evidence |  **44** |
+| `blocked`                   |       0 |
+| `pending`                   |     122 |
+| **Total**                   | **166** |
 
-`PROGRESS.md`'s own table records 25 `done` at this snapshot, because rows are flipped in the
-commit that lands the work and rows 5.1–6.4 have not been flipped yet. If the two numbers
-disagree when you read this, `PROGRESS.md` is right.
+`PROGRESS.md` is the authority for this table. It was verified mechanically after the
+reconciliation: an `awk` pass over the Phase 1 section alone reports `done 44`,
+`pending 122`, `TOTAL 166`, and the evidence section carries exactly 44 rows.
 
 ### By group
 
-| Group                                                                    | Leaves | State                                                             |
-| :----------------------------------------------------------------------- | -----: | :---------------------------------------------------------------- |
-| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                      |
-| 2 · Close the inherited debt that all later work sits on                 |      7 | 6 done, **2.5 blocked**                                           |
-| 3 · Extend backend core primitives                                       |      5 | **complete**                                                      |
-| 4 · Extend Go agent primitives                                           |      7 | 6 done, **4.2 blocked**                                           |
-| 5 · Eight linear migrations, each with a gated proof                     |      9 | implemented in the tree                                           |
-| 6 · Auth, authorization and the identity provider                        |      7 | 6.1–6.4 implemented; 6.5–6.7 (`Q-19`, `Q-20`, `Q-30`) not started |
-| 7 · Governance chokepoint and the mutation boundary                      |     11 | not started                                                       |
-| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                       |
-| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                       |
-| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                       |
-| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                       |
-| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                       |
-| 13 · AI generation pipeline                                              |     13 | not started                                                       |
-| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                       |
-| 15 · Safe Default Template Library                                       |      7 | not started                                                       |
-| 16 · Change Approval Center API                                          |      4 | not started                                                       |
-| 17 · Frontend feature surfaces                                           |     11 | not started                                                       |
-| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                       |
-| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                       |
-| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                       |
+| Group                                                                    | Leaves | State                                                                  |
+| :----------------------------------------------------------------------- | -----: | :--------------------------------------------------------------------- |
+| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                           |
+| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                           |
+| 3 · Extend backend core primitives                                       |      5 | **complete**                                                           |
+| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1          |
+| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated              |
+| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                       |
+| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1 done; **7.2 stopped on the D-59 conflict**; 7.3–7.11 blocked on it |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                            |
+| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                            |
+| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                            |
+| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                            |
+| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                            |
+| 13 · AI generation pipeline                                              |     13 | not started                                                            |
+| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                            |
+| 15 · Safe Default Template Library                                       |      7 | not started                                                            |
+| 16 · Change Approval Center API                                          |      4 | not started                                                            |
+| 17 · Frontend feature surfaces                                           |     11 | not started                                                            |
+| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                            |
+| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                            |
+| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                            |
 
 Note the ordering. The test-integrity regime came first, before any component it polices. Then
 inherited debt, before anything that sits on it. Then primitives on both sides. Then the
@@ -2028,13 +2259,14 @@ careful.
 
 - **Coverage.** The ≥70 % per-component gate is decided (D-31) but leaf 19.1 has not landed.
   No Phase 1 coverage figure is stated anywhere.
-- **The mutation harness runs, but almost empty.** `mutations.toml` currently carries **one**
-  row — `Q-27` — of the thirty-one Appendix B requires, and the harness runs with
-  `--allow-incomplete`. Leaf 19.2 completes it and adds the `mutation` CI job. Until then the
-  non-vacuity regime is built and proven on itself (`backend/tests/meta/`), but it is not yet
-  guarding the property set.
-- **Q-properties.** Exactly one is implemented: `Q-27`. The other thirty are pending task
-  leaves and are therefore **not implemented and not verified**.
+- **The mutation harness runs, but the manifest is mostly empty.** `mutations.toml` carries
+  **four** rows — `Q-27`, `Q-19`, `Q-20`, `Q-30` — of the thirty-one Appendix B requires, and
+  the harness runs with `--allow-incomplete`. Leaf 19.2 removes that flag and adds the
+  `mutation` CI job. Until then the non-vacuity regime is built and proven on itself
+  (`backend/tests/meta/`), and it guards four properties rather than the set.
+- **Q-properties.** Four are implemented: `Q-27`, `Q-19`, `Q-20` and `Q-30`. The other
+  twenty-seven are pending task leaves and are therefore **not implemented and not
+  verified**.
 - **Phase 0's release chain.** `REVIEW-PHASE-0.md` states in five places that the reviewer did
   not independently verify the `v0.0.1-rc3` artifacts, signatures, SBOMs or attestations —
   `cosign`, `syft` and `goreleaser` were not installed on that host. `PROGRESS.md` records a
@@ -2051,19 +2283,28 @@ careful.
   gitleaks history scan is the only secret-scanning evidence, and there is no server-side alert
   list to reconcile against.
 
-### The two blocked leaves
+### The two leaves that were `blocked`, and why neither really was
 
-`PROGRESS.md` records **no reason** for either, which is contrary to its own stated rule that a
-blocked leaf carries one. That is worth knowing as a reader.
+`PROGRESS.md` recorded **no reason** for either, contrary to its own rule. Both reasons were
+recoverable, and in both cases the leaf's _own wording_ was the problem rather than the work.
 
-- **2.5 — "Digest-pin every image and move OPA to the rootless variant."** The leaf's own
-  wording is now known to be factually wrong: D-51 establishes that no `-rootless` 1.x tag
-  exists and that the intent was already met, and D-52 establishes that the Infisical tag the
-  leaf inherited was never published. The work the leaf _meant_ has been done differently.
-- **4.2 — "Make the redacting logger the only agent logger and redact validator output."** No
-  reason is recorded and I did not find one. The redacting-logger half is implemented and
-  asserted (chapter 9); the validators the second half refers to are group 14, which has not
-  started. That is inference, not a recorded fact.
+- **2.5 — was "Digest-pin every image and move OPA to the rootless variant."** The wording
+  was factually wrong twice over. D-51 establishes that OPA 1.x publishes no `-rootless` tag
+  and that the pinned `1.4.2` image already runs as `USER 1000:1000`, so the security intent
+  was met before the leaf was written; D-52 establishes that the Infisical tag the leaf
+  inherited was never published, so the digest it demanded could not be resolved. `tasks.md`
+  was rewritten to "Digest-pin every image and **prove the OPA container is not root**", and
+  the proof moved from a tag substring to `id -u` inside the running container. Done.
+- **4.2 — was "Make the redacting logger the only agent logger and redact validator
+  output."** The second clause needs `agent/internal/secretscan`, which leaf 10.1 creates
+  nine waves later. It was unbuildable _here_ and was resequenced into 10.1. The remaining
+  clause is implemented and asserted, including a wiring assertion that no unfiltered logger
+  constructor is reachable. Done.
+
+The general lesson, and it is the one worth carrying: **a leaf that will not move is more
+often a wrong instruction than blocked work.** Both of these sat as `blocked` for a day
+while the actual obstacle was a sentence in the plan. Reading the leaf against the design
+rather than against the tree is what unstuck them.
 
 ### What remains, in one paragraph
 

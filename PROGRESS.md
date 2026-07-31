@@ -1,7 +1,7 @@
 # PROGRESS
 
 **Current phase:** Phase 1 — MVP Core: Analysis, Generation & Approval
-**Last updated:** 2026-07-29
+**Last updated:** 2026-07-31
 
 This file is the project's durable progress record (design §18). It is updated in the same
 commit as the work it describes, so a fresh clone answers "where are we?" without reading
@@ -41,6 +41,17 @@ leaves are mandatory. Statuses move `pending` → `in-progress` → `done` in th
 the work, and task 20.15 finalises this section from captured evidence. A leaf that cannot
 run for want of local tooling is recorded `blocked` with the reason, never `done`.
 
+**Reconciled 2026-07-31: 44 of 166 leaves are `done`, 0 `blocked`, 122 `pending`.** This
+section had drifted badly enough to be misleading: rows 5.1 through 7.1 read `pending` while
+their work was in the tree, and 2.5 and 4.2 read `blocked` with no reason, which this
+section's own rule forbids. Nineteen rows were flipped, both `blocked` rows were resolved
+against the rewritten `tasks.md` wording that `D-51`, `D-52` and the 4.2 resequencing
+produced, and every `done` row now carries evidence in **Phase 1 leaf evidence** below. Two
+defects were found while producing that evidence and are recorded there rather than fixed
+silently. `scripts/check-progress.sh` validates this file's _structure_, not whether a row's
+status matches the tree, which is why the drift was invisible — a row left `pending` while
+the work exists is not visible to any check that only inspects `done` rows.
+
 | #     | Group                                                                                              | Task                                                                          | Status  |
 | :---- | :------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------ |
 | 1.1   | Establish the test-integrity regime before the components it polices                               | Add the app-factory-derived production fixture                                | done    |
@@ -55,7 +66,7 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 | 2.2   | Close the inherited debt that all later work sits on                                               | Write property test Q-27 for tier-configuration provenance                    | done    |
 | 2.3   | Close the inherited debt that all later work sits on                                               | Make `compose-smoke` actually start the stack                                 | done    |
 | 2.4   | Close the inherited debt that all later work sits on                                               | Harden the supply chain and remove every floating tool version                | done    |
-| 2.5   | Close the inherited debt that all later work sits on                                               | Digest-pin every image and move OPA to the rootless variant                   | blocked |
+| 2.5   | Close the inherited debt that all later work sits on                                               | Digest-pin every image and prove the OPA container is not root                | done    |
 | 2.6   | Close the inherited debt that all later work sits on                                               | Restore lockfile diff visibility                                              | done    |
 | 2.7   | Close the inherited debt that all later work sits on                                               | Tighten P-07's shutdown-timeout assertion with a slow closer                  | done    |
 | 3.1   | Extend backend core primitives for Phase 1                                                         | Extend `Settings` with the Phase 1 configuration surface                      | done    |
@@ -64,29 +75,29 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 | 3.4   | Extend backend core primitives for Phase 1                                                         | Add `ArqDispatcher` behind the unchanged task seam                            | done    |
 | 3.5   | Extend backend core primitives for Phase 1                                                         | Add the shared JCS canonicalisation primitive                                 | done    |
 | 4.1   | Extend Go agent primitives before any session or executor work                                     | Extend the typed Go configuration loader                                      | done    |
-| 4.2   | Extend Go agent primitives before any session or executor work                                     | Make the redacting logger the only agent logger and redact validator output   | blocked |
+| 4.2   | Extend Go agent primitives before any session or executor work                                     | Make the redacting logger the only agent logger                               | done    |
 | 4.3   | Extend Go agent primitives before any session or executor work                                     | Replace `taskkill` with Windows Job Objects                                   | done    |
 | 4.4   | Extend Go agent primitives before any session or executor work                                     | Add the identity seam and the paired-device provider                          | done    |
 | 4.5   | Extend Go agent primitives before any session or executor work                                     | Implement the credential store with a reported fallback                       | done    |
 | 4.6   | Extend Go agent primitives before any session or executor work                                     | Implement the durable outbound journal                                        | done    |
 | 4.7   | Extend Go agent primitives before any session or executor work                                     | Split the `fileops` path blocklist by intent                                  | done    |
-| 5.1   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0002_identity_and_devices`                                               | pending |
-| 5.2   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0003_codebase_index_extensions`                                          | pending |
-| 5.3   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0004_change_sets_and_approvals`                                          | pending |
-| 5.4   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0005_policies_and_bundles`                                               | pending |
-| 5.5   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0006_secrets`                                                            | pending |
-| 5.6   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0007_audit_append_only` with database-enforced immutability              | pending |
-| 5.7   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0008_generation_runs`                                                    | pending |
-| 5.8   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0009_project_tags_and_settings`                                          | pending |
-| 5.9   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add the cross-cutting migration integrity tests                               | pending |
-| 6.1   | Implement authentication, authorization and the identity provider service                          | Implement token verification, principals and deny-by-default routing          | pending |
-| 6.2   | Implement authentication, authorization and the identity provider service                          | Implement the OIDC authorization-code + PKCE flow and session lifecycle       | pending |
-| 6.3   | Implement authentication, authorization and the identity provider service                          | Add the Authentik services and the real-IdP CI job                            | pending |
-| 6.4   | Implement authentication, authorization and the identity provider service                          | Add the Cerbos sidecar and resource-scoped authorization                      | pending |
-| 6.5   | Implement authentication, authorization and the identity provider service                          | Write property test Q-19 for deny-by-default route coverage                   | pending |
-| 6.6   | Implement authentication, authorization and the identity provider service                          | Write property test Q-20 for RBAC and secret-value confinement                | pending |
-| 6.7   | Implement authentication, authorization and the identity provider service                          | Write property test Q-30 for identity-derived blast radius                    | pending |
-| 7.1   | Build the governance chokepoint and the mutation boundary before any mutating operation            | Implement the mint-only capability type and the primitive marker              | pending |
+| 5.1   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0002_identity_and_devices`                                               | done    |
+| 5.2   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0003_codebase_index_extensions`                                          | done    |
+| 5.3   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0004_change_sets_and_approvals`                                          | done    |
+| 5.4   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0005_policies_and_bundles`                                               | done    |
+| 5.5   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0006_secrets`                                                            | done    |
+| 5.6   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0007_audit_append_only` with database-enforced immutability              | done    |
+| 5.7   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0008_generation_runs`                                                    | done    |
+| 5.8   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add `0009_project_tags_and_settings`                                          | done    |
+| 5.9   | Implement the Phase 1 schema as eight linear migrations, each with a gated proof                   | Add the cross-cutting migration integrity tests                               | done    |
+| 6.1   | Implement authentication, authorization and the identity provider service                          | Implement token verification, principals and deny-by-default routing          | done    |
+| 6.2   | Implement authentication, authorization and the identity provider service                          | Implement the OIDC authorization-code + PKCE flow and session lifecycle       | done    |
+| 6.3   | Implement authentication, authorization and the identity provider service                          | Add the Authentik services and the real-IdP CI job                            | done    |
+| 6.4   | Implement authentication, authorization and the identity provider service                          | Add the Cerbos sidecar and resource-scoped authorization                      | done    |
+| 6.5   | Implement authentication, authorization and the identity provider service                          | Write property test Q-19 for deny-by-default route coverage                   | done    |
+| 6.6   | Implement authentication, authorization and the identity provider service                          | Write property test Q-20 for RBAC and secret-value confinement                | done    |
+| 6.7   | Implement authentication, authorization and the identity provider service                          | Write property test Q-30 for identity-derived blast radius                    | done    |
+| 7.1   | Build the governance chokepoint and the mutation boundary before any mutating operation            | Implement the mint-only capability type and the primitive marker              | done    |
 | 7.2   | Build the governance chokepoint and the mutation boundary before any mutating operation            | Move the agent's only write path behind a compiler-enforced boundary          | pending |
 | 7.3   | Build the governance chokepoint and the mutation boundary before any mutating operation            | Implement the chokepoint reachability check and test it                       | pending |
 | 7.4   | Build the governance chokepoint and the mutation boundary before any mutating operation            | Implement envelope canonicalisation, signing and the shared fixture corpus    | pending |
@@ -209,6 +220,122 @@ run for want of local tooling is recorded `blocked` with the reason, never `done
 | 20.13 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 13 — SSE streaming                                           | pending |
 | 20.14 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 14 — Redis semantic caching                                  | pending |
 | 20.15 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Finalise documentation and `PROGRESS.md` from captured evidence               | pending |
+
+## Phase 1 leaf evidence
+
+Every `done` row above is answered here, and the rule is the one `REVIEW-PHASE-0.md` asked
+for: **evidence names a test node id, a CI run id, or the output of a command that was
+actually run — never a source-file path.** A row whose only evidence would be "the file
+exists" stays `pending`.
+
+**Where these citations come from.** One observed backend run on **2026-07-31**, from
+`backend/`: `python -m pytest tests -q -p no:randomly --report-log=../.evidence/task0.jsonl`
+→ exit `0`, **`1476 passed, 1 skipped, 13 warnings in 705.37s`**. The per-file counts below
+are read out of that run's report log, so they are outcomes rather than intentions. Agent
+citations come from `go build ./...` (exit 0), `go vet ./...` (exit 0) and `go test ./...`
+in `agent/` — 16 packages `ok`, none failed. Check-script citations are the final line and
+exit status of a single invocation each. The one skip in the whole run is
+`tests/unit/test_vault_profile.py::test_infisical_key_resolver_importable`, which is not
+`mandatory` and gates on the `vault` profile.
+
+| Leaf | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| :--- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.1  | `tests/integration/test_wiring_coverage.py` 3 passed, incl. `TestCompositionSurfaceIsDeclared::test_the_composed_surface_is_not_empty`; the `production_app` fixture is the one every integration citation below runs through                                                                                                                                                                                                                                  |
+| 1.2  | `tests/unit/test_contract_conformance.py` 21 passed, incl. `test_inventory_is_not_empty_and_grows_with_the_code` — the assertion that stops the inventory being silently emptied                                                                                                                                                                                                                                                                               |
+| 1.3  | `tests/meta/test_check_test_doubles.py` 12 passed, incl. `TestTheNegativeFixtureIsFlagged::test_the_bad_fixture_produces_findings`; `python scripts/check-test-doubles.py backend/tests` → exit 0, `check-test-doubles: 89 files, 0 findings`                                                                                                                                                                                                                  |
+| 1.4  | `bash scripts/check-go-interface-assertions.sh` → exit 0, `ifacecheck: every implementation carries its assertion`                                                                                                                                                                                                                                                                                                                                             |
+| 1.5  | `tests/meta/test_check_no_skips.py` 10 passed, incl. `TestASkipIsDetected::test_a_skipped_mandatory_node_fails_the_gate`                                                                                                                                                                                                                                                                                                                                       |
+| 1.6  | `tests/meta/test_mutation_harness.py` 10 passed, incl. `TestAHealthyPropertyIsAccepted::test_a_property_its_control_breaks_is_reported_ok`; fixture manifests under `tests/meta/fixtures/mutation/` prove both the healthy and the vacuous verdict                                                                                                                                                                                                             |
+| 1.7  | `tests/meta/test_check_ci_jobs.py` 10 passed, incl. `TestTheNegativeFixtureIsRejected::test_a_workflow_missing_a_cited_job_fails`; `python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md` → exit 0                                                                                                                                                                                                                  |
+| 1.8  | `tests/meta/test_regime_end_to_end.py` 16 passed, parametrised one case per clause — e.g. `test_every_check_passes_on_the_real_tree[1.2 call-site inventory]`                                                                                                                                                                                                                                                                                                  |
+| 2.1  | `tests/integration/test_wiring_tier_config.py` 12 passed, incl. `TestTheRunningAppLoadsTheConfiguredFile::test_the_committed_file_is_the_default_provenance` and `TestTheTiersRouteServesTheLoadedConfig::test_the_route_answers_from_the_loaded_tier_set`                                                                                                                                                                                                     |
+| 2.2  | `tests/property/test_q27_tier_provenance.py` 3 passed, incl. `TestQ27TierConfigurationProvenance::test_the_apps_tier_set_equals_the_parsed_document`; `mutations.toml` carries the `[Q-27]` row and the harness reports it non-vacuous                                                                                                                                                                                                                         |
+| 2.3  | `.github/workflows/ci.yml` `compose-smoke` builds both images, runs `docker compose up -d --wait`, then `bash scripts/check-compose-healthy.sh`, asserts liveness, readiness and the frontend shell, and runs `bash scripts/check-container-nonroot.sh opa`                                                                                                                                                                                                    |
+| 2.4  | `bash scripts/check-no-latest.sh` → exit 0, `check-no-latest: no floating version references`; `bash scripts/check-gitleaks-config.sh` → exit 0                                                                                                                                                                                                                                                                                                                |
+| 2.5  | `tests/meta/test_check_compose_validate.py` 23 passed, incl. `TestEachPinningFailureIsDetected::test_an_image_without_a_digest_is_rejected`; `python scripts/check-compose-validate.py docker-compose.yml` → exit 0; the runtime non-root proof is `check-container-nonroot.sh opa` in `compose-smoke`. See note 1                                                                                                                                             |
+| 2.6  | `bash scripts/check-lockfile-attrs.sh` → exit 0, `check-lockfile-attrs: 6 lockfile(s), all reviewable and marked generated`                                                                                                                                                                                                                                                                                                                                    |
+| 2.7  | `agent/internal/app/property_shutdown_deadline_test.go` — `go test ./internal/app` `ok`                                                                                                                                                                                                                                                                                                                                                                        |
+| 3.1  | `tests/unit/test_config_phase1.py` 44 passed, incl. `TestTheCommittedBaselineIsComplete::test_the_baseline_parses_and_declares_only_registered_keys`; `tests/unit/test_config.py` 13 passed                                                                                                                                                                                                                                                                    |
+| 3.2  | `tests/unit/test_errors_phase1.py` 124 passed, incl. `TestTheRegistryMatchesTheAuthority::test_the_appendix_was_actually_parsed` — the registry is checked against Appendix C.1 parsed out of `design.md`, so the two cannot drift                                                                                                                                                                                                                             |
+| 3.3  | `tests/integration/test_tenant_context.py` 10 passed, incl. `TestTransactionScopedTenancy::test_the_tenant_is_visible_inside_its_own_transaction` and its next-transaction counterpart, which is what proves `SET LOCAL` rather than `SET`                                                                                                                                                                                                                     |
+| 3.4  | `tests/unit/test_tasks_arq.py` 20 passed, incl. `TestThePhase0SurfaceIsUntouched::test_the_protocol_still_declares_exactly_one_method`                                                                                                                                                                                                                                                                                                                         |
+| 3.5  | `tests/unit/test_canonical.py` 41 passed, incl. `TestRfc8785Conformance::test_keys_are_sorted_by_utf16_code_unit_not_by_codepoint`                                                                                                                                                                                                                                                                                                                             |
+| 4.1  | `agent/internal/config/phase1_test.go` — `go test ./internal/config` `ok 1.270s`                                                                                                                                                                                                                                                                                                                                                                               |
+| 4.2  | `go test ./internal/logging` `ok`, covering `TestRedactCore_SecretInAStructuredField`, `_SecretInsideAWrappedError`, `_SecretEmbeddedInALongerString`, `_MultipleSecretsAreAllScrubbed`, `_UnrelatedTextIsUntouched`; `go test ./internal/app` `ok`, covering `TestWiring_NoUnfilteredLoggerIsReachable`. See note 2                                                                                                                                           |
+| 4.3  | `agent/internal/iac/procattr_windows_test.go` — `go test ./internal/iac` `ok 2.928s`                                                                                                                                                                                                                                                                                                                                                                           |
+| 4.4  | `go test ./internal/identity` `ok 0.408s`                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 4.5  | `agent/internal/session/store_test.go` — `go test ./internal/session` `ok 0.587s`                                                                                                                                                                                                                                                                                                                                                                              |
+| 4.6  | `agent/internal/session/journal_test.go` — `go test ./internal/session` `ok 0.587s`                                                                                                                                                                                                                                                                                                                                                                            |
+| 4.7  | `agent/internal/fileops/blocklist_test.go` — `go test ./internal/fileops` `ok 8.214s`, including the both-intents enumeration of `.env`, `.env.local`, `.env.production`, `.env.example`, `.env.example.bak`, `.envrc` and `sub/.env`                                                                                                                                                                                                                          |
+| 5.1  | `tests/integration/test_0002_identity.py` 31 passed, incl. `TestTheEnumsCarryValuesNotNames::test_user_role_values`                                                                                                                                                                                                                                                                                                                                            |
+| 5.2  | `tests/integration/test_0003_index.py` 36 passed, incl. `TestTheTwoVectorSpacesKeepTheirOwnDimensions::test_embeddings_is_still_1536`                                                                                                                                                                                                                                                                                                                          |
+| 5.3  | `tests/integration/test_0004_change_sets.py` 31 passed, incl. `TestTheStatusCheckConstraint::test_every_declared_state_is_accepted[draft]`                                                                                                                                                                                                                                                                                                                     |
+| 5.4  | `tests/integration/test_0005_policies.py` 20 passed, incl. `TestBundleDigestUniqueness::test_a_duplicate_digest_is_rejected`                                                                                                                                                                                                                                                                                                                                   |
+| 5.5  | `tests/integration/test_0006_secrets.py` 24 passed, incl. `TestUniquenessPerProjectEnvironmentKey::test_a_duplicate_triple_is_rejected`                                                                                                                                                                                                                                                                                                                        |
+| 5.6  | `tests/integration/test_0007_audit.py` 19 passed, incl. `TestInsertIsTheOnlyPermittedWrite::test_insert_succeeds`; `python scripts/check-db-roles.py` → exit 0 after `alembic upgrade head`, reporting `audit_events is owned by 'forgeops_migrator', not by the application role` and all three triggers present                                                                                                                                              |
+| 5.7  | `tests/integration/test_0008_generation_runs.py` 26 passed, incl. `TestTheIterationBoundIsInTheSchema::test_every_permitted_count_is_accepted[0]`                                                                                                                                                                                                                                                                                                              |
+| 5.8  | `tests/integration/test_0009_projects.py` 36 passed, incl. `TestTheSettingsValidator::test_an_unknown_embedding_backend_is_rejected`                                                                                                                                                                                                                                                                                                                           |
+| 5.9  | `tests/integration/test_alembic_linearity.py` 10 passed, incl. `TestTheGraphIsLinear::test_there_is_exactly_one_head`; `tests/integration/test_alembic_autogenerate_clean.py` 4 passed, incl. `TestAutogenerateIsClean::test_alembic_check_reports_no_pending_operations`; `tests/integration/test_alembic_role_selection.py` 4 passed. See note 3                                                                                                             |
+| 6.1  | `tests/unit/test_auth_verifier.py` 23 passed, incl. `TestASoundTokenResolvesAPrincipal::test_the_subject_and_role_come_from_the_token`; `tests/unit/test_auth_principal.py` 19 passed; `tests/integration/test_wiring_auth.py` 7 passed, incl. `TestTheTwoVerifiersAreDistinct::test_both_are_composed`; `python scripts/check-route-auth.py` → exit 0                                                                                                         |
+| 6.2  | `tests/unit/test_auth_oidc.py` 58 passed, incl. `TestPkce::test_the_challenge_is_the_s256_of_the_verifier`; `tests/integration/test_auth_oidc_flow.py` 16 passed, incl. `TestSuccessfulExchange::test_the_full_flow_opens_a_session_and_returns_an_access_token`; `tests/integration/test_jwks_discovery.py` 8 passed, incl. `TestTheDiscoveredJwksUriIsUsed::test_a_token_verifies_when_the_keys_are_not_at_the_guessed_path`                                 |
+| 6.3  | `tests/integration/test_authentik_real_idp.py` 20 passed against the running `forgeops-test-ak-server`, incl. `TestAuthentikIsProvisionableAsDesignAssumes::test_the_application_resolves_at_the_configured_issuer_path`; `tests/integration/test_readiness_excludes_idp.py` 7 passed, incl. `TestReadinessIgnoresTheIdentityProvider::test_readiness_is_ready_with_the_idp_unreachable`; the `auth` job is defined in `ci.yml` and `check-ci-jobs.py` exits 0 |
+| 6.4  | `tests/integration/test_cerbos_matrix.py` 86 passed against the digest-pinned sidecar, incl. `TestTheSidecarIsTheOnePinnedInCompose::test_health_answers`; `tests/unit/test_auth_cerbos.py` 31 passed, incl. `TestTheRequestIsWhatCerbosDocuments::test_the_payload_shape_matches_the_check_resources_api`                                                                                                                                                     |
+| 6.5  | `tests/property/test_q19_route_coverage.py` 11 passed, incl. `TestTheInventoryIsRealBeforeAnythingIsAsserted::test_routes_were_discovered_at_all`; `mutations.toml` `[Q-19]` row present                                                                                                                                                                                                                                                                       |
+| 6.6  | `tests/property/test_q20_rbac_confinement.py` 10 passed, incl. `TestTheVocabularyIsNotVacuous::test_the_action_vocabulary_contains_mutating_verbs`; `mutations.toml` `[Q-20]` row present, and its control starts a second Cerbos on a mutated policy copy outside the tree                                                                                                                                                                                    |
+| 6.7  | `tests/property/test_q30_blast_radius.py` 17 passed, incl. `TestTheRadiusIsDerivedAndCannotBePassed::test_for_user_has_no_blast_radius_parameter`; `mutations.toml` `[Q-30]` row present                                                                                                                                                                                                                                                                       |
+| 7.1  | `tests/unit/test_governance_authority.py` 31 passed, incl. `TestTheAuthorityCanOnlyBeMinted::test_mint_authority_produces_one` — construction outside `governance/` raises, asserted rather than read                                                                                                                                                                                                                                                          |
+
+### Notes on rows whose wording changed
+
+1. **2.5 was `blocked` with no reason recorded, and its own wording was wrong.** The leaf
+   read "move OPA to the rootless variant". **D-51** establishes that OPA 1.x publishes no
+   `-rootless` tag — `docker manifest inspect openpolicyagent/opa:1.4.2-rootless` returns
+   `no such manifest` — and that the already-pinned `1.4.2` image runs as `USER 1000:1000`
+   on a Chainguard base, so the security intent was met before the leaf was written.
+   **D-52** establishes that the Infisical tag the leaf inherited, `v0.91.1`, was never
+   published, so the digest it demanded could not be resolved. `tasks.md` 2.5 was rewritten
+   accordingly and is now "Digest-pin every image and prove the OPA container is not root";
+   this row carries the new wording and the evidence for it. A tag substring was never
+   evidence of a runtime user, which is why the proof moved to `id -u` on the running
+   container.
+2. **4.2 was `blocked` with no reason recorded, and one of its two clauses was
+   unbuildable.** The leaf read "…and redact validator output", which needs
+   `agent/internal/secretscan`, created by leaf 10.1 in wave 12 — nine waves after this
+   leaf. That clause was resequenced into 10.1 and `tasks.md` 4.2 is now "Make the
+   redacting logger the only agent logger". The remaining clause is implemented and
+   asserted by the tests cited above, including the wiring assertion that no unfiltered
+   logger constructor is reachable.
+3. **5.9 gained a test after the fact, because a defect was found while producing this
+   evidence.** `alembic/env.py` read `DATABASE_URL` and never `ALEMBIC_DATABASE_URL`, so
+   `alembic upgrade head` connected as `forgeops_app` — the single-role arrangement design
+   §6.4 says "silently defeats mechanism 3". The variable was registered in
+   `core/config.py` and shipped in `.env.example`; nothing read it. Every migration test
+   passed regardless, because `migration_support.run_alembic` set `DATABASE_URL` to
+   whichever URL the test supplied, so fixture and implementation used the same name and
+   agreed by construction. Fixed, and `test_alembic_role_selection.py` now gives the two
+   variables different values and proves the migrator's wins. Reverting the fix makes two
+   of its four tests fail, which is what makes it a control rather than a comment.
+
+### Phase 1 findings recorded rather than hidden
+
+- **`scripts/check-structure.sh` was failing with 42 violations** against a correct tree.
+  Its Phase 0 lists still classed `backend/src/{auth,generation,policies,secrets,websocket}`
+  and `agent/internal/{executor,policy,validator,devtools}` as structural-only, all nine of
+  which Phase 1 owns and populates. It also walked untracked files, so `__pycache__` inflated
+  the count. The check is not wired into CI or `pre-commit` — only into the Phase 0 aggregator
+  `scripts/check-area1.sh` — so nothing went red; a developer running it simply got 42
+  findings to ignore. Narrowed to what is still deferred, restricted to tracked files, given
+  the vacuity guard the repository's other checks carry, and given the negative controls it
+  never had in `scripts/tests/check-structure.test.sh` (4 controls, all pass).
+- **The `mutation` job's manifest is at 4 of 31 rows** — `Q-27`, `Q-19`, `Q-20`, `Q-30`. The
+  harness runs with `--allow-incomplete` until leaf 19.2. Every property leaf from here adds
+  its row in the same leaf, so the gap closes as the properties land rather than at 19.2.
+- **Six of the design's fifteen CI jobs do not exist yet** — `e2e`, `k8s`, `mutation`,
+  `policy`, `secrets`, `templates`. They are staged in `scripts/ci-jobs-baseline.txt` and
+  owned by leaf 19.3; `check-ci-jobs.py` passes because it distinguishes "defined" from
+  "explicitly staged".
+- **No Phase 1 coverage figure exists.** The ≥70 % per-component gate is decided (D-31) and
+  turned on by leaf 19.1. Nothing here claims a coverage number.
 
 ## Current phase task list — Phase 0
 

@@ -39,8 +39,21 @@ BACKEND_DIR = pathlib.Path(__file__).resolve().parents[2]
 
 
 def run_alembic(database_url: str, *args: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the real Alembic CLI in a child process."""
+    """Invoke the real Alembic CLI in a child process.
+
+    The URL is supplied as `ALEMBIC_DATABASE_URL` — the variable design §6.4 assigns to
+    `forgeops_migrator` — and `DATABASE_URL` is kept in step so a single-role local
+    database behaves identically.
+
+    Why both: this helper used to set `DATABASE_URL` only, which is the name §6.4 gives
+    to the *application* role. `alembic/env.py` read that same name, so the pair agreed
+    by construction and every migration test passed while the production invocation
+    migrated as the app role. The fixture was shaped around the implementation instead
+    of around the contract, so the one arrangement §6.4 calls easy to lose was invisible.
+    `test_alembic_role_selection.py` is the test that now distinguishes the two.
+    """
     env = dict(os.environ)
+    env["ALEMBIC_DATABASE_URL"] = database_url
     env["DATABASE_URL"] = database_url
     # The migration messages contain section signs; a cp1252 console would raise
     # UnicodeEncodeError on Windows and mask the actual result.

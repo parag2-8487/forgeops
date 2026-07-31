@@ -90,21 +90,33 @@ frontend/e2e
 frontend/load'
 
 # Structural-only directories (design §1.3): marker files only, never code.
-GO_STRUCTURAL_DIRS='agent/internal/executor
-agent/internal/validator
-agent/internal/policy
-agent/internal/devtools
-agent/pkg'
+# Structural-only directories, narrowed for Phase 1.
+#
+# This list is the set of directories that are STILL markers — a phase owns them and
+# that phase has not started. It shrank when Phase 1 began, and the shrinking is the
+# point: a directory whose phase has arrived must be allowed to hold code, or the
+# check reports a violation for doing exactly what the plan says.
+#
+# Moved out because Phase 1 owns and populates them:
+#   agent/internal/executor   design §10.5, tasks 7.2 / 8.7
+#   agent/internal/policy     design §10.6, tasks 9.4
+#   agent/internal/validator  design §10.7, tasks 14.1-14.6
+#   agent/internal/devtools   design §10.10, tasks 14.7
+#   backend/src/auth          design §11.2, tasks 6.1-6.4
+#   backend/src/generation    design §11.5, tasks 13.x
+#   backend/src/policies      design §11.7, tasks 9.5
+#   backend/src/secrets       design §11.8, tasks 10.4
+#   backend/src/websocket     design §11.10, tasks 8.4
+#
+# What stays: `agent/pkg` (no phase claims it) and the four backend domains
+# design §1.2 excludes from Phase 1 outright. `governance/`, `audit/`, `projects/`
+# and `analysis/` were never on this list and are Phase 1 domains.
+GO_STRUCTURAL_DIRS='agent/pkg'
 
-PY_STRUCTURAL_DIRS='backend/src/auth
-backend/src/generation
-backend/src/deployment
+PY_STRUCTURAL_DIRS='backend/src/deployment
 backend/src/monitoring
 backend/src/incidents
-backend/src/policies
-backend/src/secrets
-backend/src/notifications
-backend/src/websocket'
+backend/src/notifications'
 
 FE_STRUCTURAL_DIR='frontend/features'
 
@@ -158,13 +170,43 @@ else
 	fail 'the validated public env surface is missing: expected frontend/lib/env/ (design §2.3) or frontend/lib/env.ts (design §12.1)'
 fi
 
-echo 'Checking structural-only Go directories (design §1.3)...'printf '%s\n' "$GO_STRUCTURAL_DIRS" | {
+echo 'Checking structural-only Go directories (design §1.3)...'
+# Only TRACKED files are considered. §1.3 forbids a committed placeholder; a local
+# build artifact — __pycache__, a compiled object, an editor swap file — is not one,
+# and reporting it made this check produce findings a developer learns to ignore.
+tracked_in() {
+	git ls-files -- "$1" 2>/dev/null
+}
+
+STRUCTURAL_DIRS_SEEN=0
+# count_existing <newline-separated dirs> — how many exist. Computed with no external
+# command, and OUTSIDE the pipes below, because a variable set inside the right-hand
+# side of a pipe lives in that subshell: the guard would then read the outer value and
+# fire even when the list is fine. That is the vacuity trap arriving by a second route.
+count_existing() {
+	_n=0
+	for _d in $1; do
+		[ -d "$_d" ] && _n=$((_n + 1))
+	done
+	printf '%s' "$_n"
+}
+GO_DIRS_SEEN=$(count_existing "$GO_STRUCTURAL_DIRS")
+PY_DIRS_SEEN=$(count_existing "$PY_STRUCTURAL_DIRS")
+if [ "$GO_DIRS_SEEN" -eq 0 ]; then
+	fail 'no structural-only Go directory exists; GO_STRUCTURAL_DIRS resolves to nothing and the check is vacuous'
+fi
+if [ "$PY_DIRS_SEEN" -eq 0 ]; then
+	fail 'no deferred backend domain exists; PY_STRUCTURAL_DIRS resolves to nothing and the check is vacuous'
+fi
+
+printf '%s\n' "$GO_STRUCTURAL_DIRS" | {
 	while IFS= read -r dir; do
 		[ -n "$dir" ] || continue
 		[ -d "$dir" ] || continue
-		find "$dir" -type f -name '*.go' 2>/dev/null |
+		STRUCTURAL_DIRS_SEEN=1
+		tracked_in "$dir" | grep -E '\.go$' |
 			report_matches 'structural-only Go directory must contain no .go file (design §1.3)'
-		find "$dir" -type f ! -name 'README.md' ! -name '.gitkeep' 2>/dev/null |
+		tracked_in "$dir" | grep -vE '(^|/)(README\.md|\.gitkeep)$' |
 			report_matches 'structural-only Go directory may contain only README.md or .gitkeep (design §1.3)'
 	done
 }
@@ -174,9 +216,9 @@ printf '%s\n' "$PY_STRUCTURAL_DIRS" | {
 	while IFS= read -r dir; do
 		[ -n "$dir" ] || continue
 		[ -d "$dir" ] || continue
-		find "$dir" -type f -name '*.py' 2>/dev/null |
+		tracked_in "$dir" | grep -E '\.py$' |
 			report_matches 'deferred backend domain must contain no importable Python module (design §1.3)'
-		find "$dir" -type f ! -name 'README.md' ! -name '.gitkeep' 2>/dev/null |
+		tracked_in "$dir" | grep -vE '(^|/)(README\.md|\.gitkeep)$' |
 			report_matches 'deferred backend domain may contain only README.md or .gitkeep (design §1.3)'
 	done
 }
