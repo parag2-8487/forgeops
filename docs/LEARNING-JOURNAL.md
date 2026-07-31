@@ -1642,7 +1642,24 @@ the preserved sequence rather than inside it — a required pre-image hash per e
 for _every_ entry before the first write, write-intent path rules, a `Delete` action, and a
 `BackupManifest` as the rollback handle.
 
-Two details worth carrying:
+Three details worth carrying:
+
+**Single-use is a fact on disk, not a field on a struct.** The `BackupManifest` is the
+rollback handle, and Q-02 requires that a consumed handle cannot be reused. The obvious
+implementation — a `consumed bool` on the struct — cannot work, and noticing why is the
+useful part: the manifest is **serialised to the backend, persisted there, and handed back**
+when someone clicks revert. In-memory state does not survive that round trip, so a boolean
+would be `false` on every arrival and the handle would be infinitely reusable while looking
+guarded. Consumption is therefore recorded as a marker file under
+`<root>/.forgeops-rollback/`, written only after every restore has succeeded — marking first
+would make a partially failed revert unrepeatable, which is the worst of both behaviours.
+
+That also resolves what looks like a contradiction in Q-02's own wording, which asks for a
+revert that is _idempotent_ **and** a handle that _cannot be reused_. Both hold once you
+separate effect from authority: a second `Revert` returns `ErrHandleConsumed` and touches
+nothing, so the filesystem is unchanged (idempotent in effect) while the second attempt is
+refused (single-use in authority). A second revert that silently "succeeded" would restore
+from backups that no longer describe the current state, which is neither.
 
 **A negative test needs its positive twin.** The boundary is proved by building a fixture
 outside the subtree and asserting the build **fails**. On its own that is weak evidence: if
@@ -2122,6 +2139,48 @@ lesson _is_ that the encoding alone is the problem. And granting a "prose is fin
 would have put a human back in the loop for every future hit, which is a convention. The rule
 now has no exception to remember: no credential shape appears in this file, so the pre-push
 grep stays a mechanical gate rather than a judgement call.
+
+**35b. The grep was measuring the wrong unit, and that is the more useful finding.** Fixing
+the prose produced a clean tip, a clean cumulative diff and a clean `gitleaks` — and the push
+was still unsafe. Four commits were waiting to go out. The first had swept in the unfixed
+journal text; the third removed it. So the _net_ change published nothing, while the first
+commit's blob still carried all five shapes.
+
+That distinction matters because **GitHub secret scanning and GitGuardian read each pushed
+commit individually, not the range's net diff.** There is direct precedent in this
+repository: `REVIEW-PHASE-0.md` Pass 2 found GitGuardian red on a pull-request head because an
+earlier commit still carried a JWT-shaped literal the tip had already removed, and the review's
+recommendation was to squash so the offending blob never reached `main`.
+
+The gate therefore has three stages, and each catches something the others cannot:
+
+| Stage | Unit examined                          | Catches                                                           |
+| :---- | :------------------------------------- | :---------------------------------------------------------------- |
+| a     | added lines of the diff                | a shape being introduced now, localised to a line                 |
+| b     | full content of every file in the push | a shape sitting in a file's unchanged region, which no diff shows |
+| c     | **each commit's own added lines**      | a range whose net diff is clean while an intermediate blob is not |
+
+Stage (c) is the one that blocked, and stage (c) is why the four commits were rebuilt so that
+no commit ever contained a shape. Timing was the whole argument: rebuilding unpushed commits is
+trivial, and the same repair after a push is a force-push over published history. Deciding
+"fixed forward is good enough" would have been choosing the expensive version of the decision
+later. The safety proof was that `git diff <old tip> <new tip>` is **empty** — history changed,
+content did not.
+
+**Where this sits in the chapter.** It is **pattern B's mirror image.** Pattern B is a gate
+that examines nothing — an empty set, a substring, a document _about_ the thing. This was a
+gate that examined the _wrong unit_: a real check, on real content, aggregated at a level that
+could not see the problem. Both pass while the property they claim to guard is false, and the
+second is harder to notice because the output looks like work being done.
+
+Two smaller lessons came out of writing stage (c), and both are the same shape as everything
+else in this chapter. The baseline comparison used `git show <ref>:<path>`, which MSYS rewrites
+on Windows — the colon becomes a semicolon, git answers "ambiguous argument", the lookup
+returns **nothing**, and every pre-existing line is classified as new. It failed _safe_, so the
+gate was over-strict rather than permissive; that is still fatal in practice, because a gate
+that reports fifteen false positives gets switched off, which is pattern O arriving by another
+route. And the comparison needed line endings normalised, because `git show` emits the blob at
+LF while a Windows working copy is CRLF, so `grep -Fqx` matched nothing.
 
 ### Pattern M — a default-profile service that phones home
 

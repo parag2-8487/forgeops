@@ -163,6 +163,61 @@ four-document exclusion applies only to mutating hooks; Gitleaks still scans all
 Never commit real secrets: `.env.example` contains placeholder values only, and `.env` is
 git-ignored.
 
+### The pre-push gate — three stages, not two
+
+`.kiro/steering/secret-safety.md` mandates a scan before any push. Run **all three** stages;
+each catches something the others cannot, and stage 3 is the one that has actually blocked a
+push in this repository.
+
+1. **`gitleaks`** over the working tree and the staged change:
+
+   ```sh
+   gitleaks detect  --no-banner --redact
+   gitleaks protect --staged --no-banner --redact
+   ```
+
+   Use the pinned Docker image if the binary is absent; never skip the scan for want of a
+   binary. `gitleaks` scores **likelihood**. The rules below are about **shape**, which is a
+   different question, so a clean `gitleaks` is not a clearance.
+
+2. **High-risk pattern grep, applied to two units.** The pattern list is in
+   `secret-safety.md`. Grep (a) the **added** lines of the diff, and (b) the **full content**
+   of every file in the push. (b) matters because a shape sitting in a file's unchanged region
+   never appears in a diff and is still being published. Classify (b)'s hits against the file
+   as it exists on the remote: a line already on the remote is pre-existing, and a line that
+   is not is new and blocks.
+
+3. **Every commit in the push range, separately.** For each commit in
+   `origin/<branch>..HEAD`, grep that commit's own added lines.
+
+   ```sh
+   for c in $(git rev-list origin/<branch>..HEAD); do
+     git show "$c" --format= --unified=0 | grep -E '^\+' | grep -vE '^\+\+\+ ' | grep -niE "<patterns>"
+   done
+   ```
+
+   **Why this stage exists.** GitHub secret scanning and GitGuardian read each pushed commit
+   individually, not the range's net diff. A range whose cumulative diff is clean can still
+   contain an intermediate commit that introduced a shape and a later one that removed it —
+   and pushing the range publishes the intermediate blob. `REVIEW-PHASE-0.md` Pass 2 recorded
+   exactly that: GitGuardian went red on a pull-request head because an earlier commit still
+   carried a literal the tip had already removed.
+
+   If stage 3 blocks and the commits are **unpushed**, rebuild them so no commit ever
+   contained the shape, and prove it with `git diff <old-tip> <new-tip>` returning **empty** —
+   history changed, content did not. That repair is trivial before a push and becomes a
+   force-push over published history after one.
+
+Two implementation notes if you script this on Windows: export `MSYS_NO_PATHCONV=1`, because
+MSYS rewrites `git show <ref>:<path>` and the baseline lookup then silently returns nothing;
+and normalise line endings before comparing, because `git show` emits the blob at LF while the
+working copy is CRLF.
+
+If any stage reports a hit you did not introduce and cannot attribute, **stop and ask**. Do not
+grant yourself a "it is only prose" exemption — that puts a human in the loop for every future
+hit, which is a convention rather than a mechanism. See `docs/LEARNING-JOURNAL.md` chapter 9,
+pattern L.
+
 ## Documentation checks
 
 `scripts/check-docs.sh` validates the documentation set: the four `docs/` files exist, the
