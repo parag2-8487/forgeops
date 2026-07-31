@@ -293,7 +293,8 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - _Design: §2.2.1, §5.4, §11.6; Deliverable: 1.10; Property: Q-03_
 
   - [ ] 7.2 Move the agent's only write path behind a compiler-enforced boundary
-    - Create `agent/internal/executor/internal/mutate` and move the Phase 0 atomic-apply implementation there unchanged in algorithm, exposing `ApplyVerified(ctx, *session.Verified, root, entries)` and `Revert(ctx, *session.Verified, manifest)`.
+    - Create `agent/internal/executor/internal/mutate` and move the Phase 0 atomic-apply implementation there unchanged in algorithm, exposing `ApplyVerified(ctx, *envelope.Verified, root, entries)` and `Revert(ctx, *envelope.Verified, manifest)`.
+    - **Signature fixed by D-59.** This leaf originally wrote `*session.Verified`, which does not compile: `session` imports `executor` (§10.1, §10.3), so `mutate` taking a `session` type closes a cycle. D-59 creates the leaf package `agent/internal/envelope` and it lands in this leaf's commit, because the boundary cannot compile without it.
     - Require an `ExpectedHash` per entry and abort the whole set with `ErrConflict` before any write on mismatch; return a `BackupManifest` as the rollback handle; apply `blockedForWrite`.
     - Keep `fileops.UnifiedDiff` and the path helpers exported and unchanged so P-08 still guards them; prove that a package outside `internal/executor/**` importing `mutate` does not compile.
     - _Design: §2.2.1, §10.1, §10.5, §17.1 D-45, Appendix A.9; Deliverable: 1.6; Criterion: 6; Property: Q-01, Q-02, Q-03_
@@ -391,7 +392,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
   - [ ] 8.7 Implement the named-operation dispatch table
     - Implement `executor.Dispatcher` with the closed §7.7 catalogue, a single `handlerTable` as the only dispatch surface, per-operation timeouts and progress emission.
-    - Add no `exec`, no `shell`, no `run_command` and no operation taking a command string; route mutating operations only through `mutate` with a `*session.Verified`.
+    - Add no `exec`, no `shell`, no `run_command` and no operation taking a command string; route mutating operations only through `mutate` with a `*envelope.Verified`.
     - Add tests asserting every enum member has a handler, that no handler is referenced outside the table, and that mutating operations refuse to run without an `approval_id`.
     - _Design: §7.7, §10.5, §17.1 D-47; Deliverable: 1.1, 1.6; Criterion: 5, 6_
 

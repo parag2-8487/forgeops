@@ -727,8 +727,9 @@ Only additions are shown; everything else is inherited from Phase 0 §2.3 unchan
 agent/
 ├── internal/
 │   ├── session/                     # §1.1 [+] pairing, handshake, heartbeat, reconnect, dispatch
-│   │   ├── pairing.go  envelope.go  replay.go  reconnect.go  heartbeat.go
+│   │   ├── pairing.go  replay.go  reconnect.go  heartbeat.go
 │   │   └── journal.go               # §1.1 D-41 durable outbound journal (NFR-18)
+│   ├── envelope/                    # §7.6 §10.4 [+] LEAF: Envelope, Verified, CanonicalBytes, Verifier (D-59)
 │   ├── identity/                    # §1.10 [+] device cert or SPIFFE SVID behind one Provider seam
 │   ├── executor/                    # §1.1 §1.6 named-operation dispatch (was structural)
 │   │   └── internal/mutate/         # [+] compiler-enforced mutation boundary (D-45)
@@ -2253,10 +2254,13 @@ graph TD
     SESS --> CONN["internal/connection<br/>P0 Transport"]
     SESS --> IDENT
     SESS --> EXEC
+    SESS --> ENV["internal/envelope<br/>LEAF: Envelope, Verified,<br/>CanonicalBytes, Verifier"]
+    EXEC --> ENV
     EXEC --> POL
     EXEC --> VAL
     EXEC --> MUT["internal/executor/internal/mutate<br/>COMPILER-ENFORCED BOUNDARY"]
     EXEC --> GIT["internal/git<br/>P0"]
+    MUT --> ENV
     MUT --> FOPS["internal/fileops<br/>path validation + diff"]
     SCAN --> SEC["internal/secretscan"]
     SCAN --> AST["internal/scanner/ast<br/>wazero + embedded grammars"]
@@ -2441,7 +2445,11 @@ var (
 ### 10.4 Envelope verification and replay rejection
 
 ```go
-// Package session — envelope.go
+// Package envelope — envelope.go
+//
+// A LEAF package: it imports nothing from internal/**, which is what keeps it out of
+// the session → executor → mutate cycle. See D-59, which supersedes this block's
+// original `package session` placement and every `*session.Verified` below.
 //
 // Verified is a value that can only be produced by Verify. Every mutating code
 // path in the agent takes one, so "we forgot to check the signature" is not a
@@ -2489,7 +2497,7 @@ Ordering note that is easy to get wrong: signature verification happens **before
 type Dispatcher interface {
     // Execute runs one verified command. It emits progress through sink and returns
     // a Result that the session marshals into command.result.
-    Execute(ctx context.Context, v *session.Verified, sink ProgressSink) (Result, error)
+    Execute(ctx context.Context, v *envelope.Verified, sink ProgressSink) (Result, error)
 
     // Operations returns the closed catalogue, for agent.status and agent doctor.
     Operations() []OperationInfo
@@ -2515,7 +2523,7 @@ package mutate
 // the ARGUMENT, not the algorithm: the Phase 0 algorithm (validate every path,
 // back up before mutate, temp file + fsync + rename, roll back every write in
 // reverse on any error) is preserved exactly and P-08 continues to guard it. What
-// changes is that a caller must now present a *session.Verified, so a mutation
+// changes is that a caller must now present a *envelope.Verified, so a mutation
 // without a governance-signed envelope is a compile error rather than a review miss.
 //
 // Additional Phase 1 obligations:
@@ -2526,7 +2534,7 @@ package mutate
 //     is permitted while .env, *.pem, ~/.ssh and ~/.aws stay refused (D-46).
 func ApplyVerified(
     ctx context.Context,
-    v *session.Verified,
+    v *envelope.Verified,
     root string,
     entries []Entry,
 ) (*ApplyReport, error)
@@ -2548,7 +2556,7 @@ type ApplyReport struct {
 // Revert restores every file named by a manifest to its pre-image. It is itself a
 // mutation and therefore also requires a Verified envelope with its own approval —
 // a rollback is a change to the user's disk and gets the same scrutiny.
-func Revert(ctx context.Context, v *session.Verified, m BackupManifest) (*RevertReport, error)
+func Revert(ctx context.Context, v *envelope.Verified, m BackupManifest) (*RevertReport, error)
 ```
 
 ### 10.6 `internal/policy` — the agent half of double evaluation
@@ -4388,7 +4396,7 @@ Each entry is an architecture decision with its rationale preserved, because lat
 
 - **Status:** Accepted · **Date:** 2026-07-30 · **Supersedes:** Phase 0 §10.10's exported `fileops.Ops.ApplyAtomic`
 - **Context.** §1.10 requires that no agent mutation bypass the governance chokepoint. An exported write function that any package can call is a bypass waiting to be written.
-- **Decision.** Move the write implementation into `agent/internal/executor/internal/mutate`, importable only from within `internal/executor/**` by Go's nested-internal rule. The exported entry point becomes `ApplyVerified(ctx, *session.Verified, root, entries)`. `fileops.UnifiedDiff` and the path-validation helpers stay exported and unchanged.
+- **Decision.** Move the write implementation into `agent/internal/executor/internal/mutate`, importable only from within `internal/executor/**` by Go's nested-internal rule. The exported entry point becomes `ApplyVerified(ctx, *envelope.Verified, root, entries)` (spelling fixed by D-59). `fileops.UnifiedDiff` and the path-validation helpers stay exported and unchanged.
 - **Rationale.** The **algorithm is preserved exactly** — validate paths, back up before mutate, temp + fsync + rename, roll back in reverse on any error — so P-08 continues to guard it. What changes is the argument: a mutation without a verified envelope is now a compile error. Phase 1 additionally requires an expected pre-image hash per entry, so a stale change-set aborts with `ErrConflict` instead of overwriting newer work.
 - **Consequences.** §2.2.1, §10.1, §10.5, Q-01, Q-02, Q-03. Callers outside the executor subtree do not compile — the strongest available enforcement.
 
@@ -4408,7 +4416,7 @@ Each entry is an architecture decision with its rationale preserved, because lat
 
 - **Status:** Accepted · **Date:** 2026-07-30 · **Extends:** Phase 0 §10.8
 - **Decision.** Phase 1 adds `agent.scan.status`, `agent.validate.*` and `agent.readiness.inventory`. No mutating tool is added, in this phase or by this seam.
-- **Rationale.** MCP is a tool-access surface reached through the gateway; making it a mutation surface would create a second write path and defeat §1.10 in a single commit. Structurally it already cannot: the write path requires a `*session.Verified`, which only `session` can produce from a signed envelope.
+- **Rationale.** MCP is a tool-access surface reached through the gateway; making it a mutation surface would create a second write path and defeat §1.10 in a single commit. Structurally it already cannot: the write path requires a `*envelope.Verified`, which only `envelope.Verify` can produce from a signed envelope (D-59).
 - **Consequences.** §1.4 seam table, §7.3, §7.7.
 
 ---
@@ -4521,6 +4529,28 @@ Each entry is an architecture decision with its rationale preserved, because lat
 - **Consequences.** `src/core/security.py`, `src/auth/oidc.py` (inherited), `src/auth/verifier.py` (inherited), `test_authentik_real_idp.py`, the three `test_mcp_gateway.py` sites that patch `_get_jwks_client` and now pass `autospec=True` so the coroutine is awaited. One pre-existing wart is left as it is and named rather than silently widened: `PyJWKClient.get_signing_key_from_jwt` fetches with `urllib` and therefore still blocks the event loop, which predates this change; discovery uses the shared async client, so this decision adds no new blocking call. Reversal cost is one method.
 
 ---
+
+#### D-59 — The verified envelope is its own leaf package, `agent/internal/envelope`; `*envelope.Verified` is the parameter type everywhere
+
+- **Status:** Accepted · **Date:** 2026-07-31 · **Adopts:** §2.2.1's `*envelope.Verified` spelling · **Supersedes:** the `Verified` type's placement in `internal/session` (§10.4's code block header) and the `*session.Verified` parameter in §10.5's `Dispatcher.Execute`, `mutate.ApplyVerified` and `mutate.Revert`, plus the same spelling in §10.3's `Manager` narrative, §11.6's note and `tasks.md` leaf 7.2 · **Blocks, until decided:** task group 7 in full
+- **Context.** Three sections of this document name the type that proves an envelope was verified, and they do not agree. §10.4 defines it inside a block headed `// Package session — envelope.go`, so the type is `session.Verified`. §10.5 writes every consumer's signature as `*session.Verified` — `Dispatcher.Execute`, `ApplyVerified`, `Revert` — and `tasks.md` leaf 7.2 restates `ApplyVerified(ctx, *session.Verified, root, entries)`. §2.2.1's package tree says the opposite: `executor.go # named-operation dispatch; takes *envelope.Verified`. Neither type exists yet, so nothing was broken; but leaf 7.2 cannot be written until the plan says which one it is, and `internal/session` as built by leaf 4.6 contains a journal and a credential store and no `Verified` of any kind.
+- **The decisive fact is an import cycle, not a preference.** §10.1's graph draws `SESS --> EXEC`, and §10.3's `Manager` holds a `dispatcher` among its collaborators, so **`session` imports `executor`**. §10.1 also draws `EXEC --> MUT`, where `MUT` is `executor/internal/mutate`. If `mutate.ApplyVerified` takes a `*session.Verified` then `mutate` imports `session`, and the graph closes: `session → executor → executor/internal/mutate → session`. Go rejects that at compile time. The `*session.Verified` spelling is therefore not merely inconsistent with §2.2.1 — **it does not compile**, and no amount of care at the call sites changes that.
+- **Decision.** Create `agent/internal/envelope`, a **leaf** package that imports nothing from `internal/**`. It owns the envelope value type, the verified-envelope capability type, canonicalisation and verification:
+  - `Envelope` — the §7.6 wire shape: `v`, `command_id`, `device_id`, `operation`, `args`, `approval_id`, `policy_context`, `nonce`, `seq`, `not_after`, `signature`.
+  - `Verified` — unexported fields, no exported constructor, no settable field. The **only** way to obtain one is `(*Verifier).Verify`, exactly as §10.4 specifies; only the package it lives in changes.
+  - `CanonicalBytes(Envelope) ([]byte, error)` — exported for the cross-runtime fixture corpus, which is the reason §10.4 gives for exporting it and the reason Q-14 exists.
+  - `Verifier` and the typed errors whose `Code()` maps to an RFC 9457 suffix and an `agent.error` code.
+  §10.1's graph gains one node, `ENV["internal/envelope"]`, with `SESS → ENV`, `EXEC → ENV` and `MUT → ENV`. `session` keeps the journal, the credential store and the `Manager`; it gains no envelope type and loses nothing it has. `§2.2.1`, `§10.4`, `§10.5`, `§10.3`, `§11.6` and `tasks.md` 7.2 are corrected to `*envelope.Verified` in the same commit as this entry, so no two places disagree afterwards.
+- **Rationale.** The type's whole value is that it is unforgeable: a `*envelope.Verified` in a signature means "somebody checked the signature", and it means that because there is no other way to make one. That guarantee is a property of **package scope** — unexported fields plus a single constructor — so the question "which package owns it" is not cosmetic, it decides who can mint it. A leaf package is the smallest possible answer: `envelope` depends on nothing in `internal/**`, so nothing it might import can ever create a cycle with a consumer, and every consumer of the capability sits *above* it in the graph rather than beside it. It also puts canonicalisation, signing input and verification in one file next to the type they protect, which is what makes the Go half a peer of `backend/src/governance/envelope.py` rather than a fragment spread across two packages.
+- **Alternatives rejected, and why each is worse.**
+  - **(A) `Verified` in `session`, as §10.4, §10.5 and `tasks.md` 7.2 literally say.** Rejected because it does not compile: the cycle above. The only way to keep it would be to invert the dependency — `executor` declares an interface that `session` satisfies — and that is worse than the cycle it fixes. `Verified` would become an **interface**, and an interface can be implemented by any package that wants one, including by a test double with a `Verified()` method that checks nothing. The capability's unforgeability comes from having no other constructor; converting it to an interface deletes exactly that. This alternative trades a compile error for a silent hole, which is the trade §2.2.1 exists to refuse.
+  - **(B) `Verified` in `executor`, with `session` importing it.** No cycle, because `session → executor` is the direction §10.1 already draws. Rejected on two counts. First, it inverts responsibility: the `Verifier` performs HMAC verification, freshness and replay checks, so putting the type in `executor` either drags the cryptography into the dispatch package or splits one invariant across two packages — and §10.4's ordering note ("signature verification happens **before** the sequence and nonce updates") is exactly the kind of ordering that must live in one file. Second, `CanonicalBytes` must be exported for Q-14's fixture corpus; exporting it from `executor` means the backend-parity test, and anything else that ever needs canonical bytes, imports the command dispatcher to get them.
+  - **(C) A type alias: `package session; type Verified = envelope.Verified`, keeping both spellings compiling.** Rejected. It is the cheapest change and the most expensive to live with: two names for one type is precisely the ambiguity that produced this conflict, and a reader seeing `session.Verified` in one signature and `envelope.Verified` in another cannot tell whether they carry the same guarantee without checking. `scripts/check-chokepoint.sh` (leaf 7.3) would also have to know both spellings to find the boundary, and a checker that must know two names for one thing is one rename away from finding neither.
+  - **(D) `Verified` in `fileops`, beside the path validation it travels with.** Rejected. `fileops` is the exported path-validation and diff package that P-08 guards and that many packages may read; the authorisation capability has no business there, and putting it there would mean every caller of `UnifiedDiff` imports the envelope machinery. It also reads as though path validation were the thing being authorised, when the thing being authorised is the write.
+  - **(E) Leave the conflict open and write leaf 7.2 against whichever spelling compiles first.** Rejected explicitly, because that is how the conflict was created. A signature chosen by what compiled is a signature nobody decided, and group 7 is the trust boundary — the one place where "we will tidy the names later" produces a control that looks like a control.
+- **Costs accepted, stated plainly.** One more package in the agent graph, so §10.1's diagram, the §2.4 monorepo listing and `scripts/check-structure.sh`'s structural lists each gain an entry. §10.4's heading now describes code that lives elsewhere, which is why this entry names the supersession rather than leaving a reader to reconcile it. And a real ordering cost: `envelope` must land **before** leaf 7.2 can compile, so D-59's implementation is part of 7.2's commit rather than a later leaf — the package arrives with the type and the canonicalisation and signature verification the type depends on, because a `Verified` that can be obtained without checking a signature is worse than no type at all. The stateful half of §10.4's six-step order (per-device `seq` high-water mark, the bounded nonce set, the policy-bundle digest) is supplied through **required** constructor collaborators, so `NewVerifier` refuses a nil replay guard or a nil bundle source; leaf 8.6 replaces group 7's in-memory implementations with the real ones and adds Q-15. That is a smaller and more honest scope than shipping a `Verifier` with three checks stubbed out.
+- **Reversal cost.** Low, and lower than it looks. Reverting to alternative (B) is a package move plus one import line per consumer, because no call site mentions the package name in anything but its parameter type. Reverting to alternative (A) is not available at any price — it is the cycle. If the `envelope` package is ever felt to be too small, the cheap merge is `envelope` into `session` **only if** `session` first stops importing `executor`, which would mean re-drawing §10.1; recording that here means the next reader does not have to rediscover the cycle to find out why the package is separate.
+- **CI job that proves it.** `agent`: the package builds under `CGO_ENABLED=0` for all six targets, `contract_test.go` carries the interface assertions, and `TestBoundary_MutateHasNoImporterOutsideExecutor` plus `bash scripts/check-chokepoint.sh` (leaf 7.3, run in both the `agent` and `backend` jobs) assert the boundary from the outside. The negative control for the placement specifically is a compile failure rather than a test: `agent/internal/envelope/boundary_test.go` builds a throwaway package outside `executor/**` that imports `executor/internal/mutate` and asserts `go build` **fails**, and a `testdata` fixture that imports `internal/envelope` from outside `executor/**` and asserts it **succeeds** — so the boundary is proven to be in the right place and not merely present. **Q-03** is the property that quantifies the whole clause.
 
 ---
 
@@ -5048,8 +5078,8 @@ Fresh prefix **`Q-`**, so no collision with Phase 0's `P-01 … P-15`, which con
 | **Q-11** | ∀ raw watcher event sequences: the debounced/coalesced stream produces the same dirty set as the un-coalesced stream | `scanner` watch pipeline | rapid | Coalesce a delete followed by a create into a no-op |
 | **Q-12** ★ | ∀ chunk sets containing generated synthetic secrets: `assemble_prompt` accepts only redacted types, and no prompt reaching a `ModelEndpoint` contains a synthetic secret value | `generation/context`, `secrets/redaction` | hypothesis | Add a `str` overload to `assemble_prompt` |
 | **Q-13** ★ | ∀ prompts: every cache key is computed over a `RedactedPrompt`; no cached completion is retrievable using unredacted text; no cache entry's stored key material contains a synthetic secret | `ai/cache/tiered`, `generation/context` | hypothesis | Widen `lookup`/`store` back to `str` |
-| **Q-14** ★ | ∀ envelopes: `CanonicalBytes` is byte-identical in Go and Python for the same logical envelope; signature verification accepts exactly the correctly signed envelope and rejects every single-byte mutation | `session/envelope`, `governance/envelope` | rapid + hypothesis over a shared fixture corpus | Remove the domain-separation prefix on one side only |
-| **Q-15** ★ | ∀ envelope streams with replays, reorderings and expiries: a replayed nonce, a non-increasing `seq`, or an expired `not_after` is rejected, and no rejected envelope performs any mutation or advances any counter | `session/envelope` | rapid | Update `last_seq` before the signature check |
+| **Q-14** ★ | ∀ envelopes: `CanonicalBytes` is byte-identical in Go and Python for the same logical envelope; signature verification accepts exactly the correctly signed envelope and rejects every single-byte mutation | `envelope` (Go, D-59), `governance/envelope` | rapid + hypothesis over a shared fixture corpus | Remove the domain-separation prefix on one side only |
+| **Q-15** ★ | ∀ envelope streams with replays, reorderings and expiries: a replayed nonce, a non-increasing `seq`, or an expired `not_after` is rejected, and no rejected envelope performs any mutation or advances any counter | `envelope` (Go, D-59) | rapid | Update `last_seq` before the signature check |
 | **Q-16** ★ | ∀ revocation timings relative to an in-flight message stream: the first message after revocation is rejected and the socket closed; a replica that missed the pub/sub event still rejects | `auth/devices`, `websocket/hub` | hypothesis | Check revocation once per connection instead of per message |
 | **Q-17** ★ | ∀ concurrent exchange attempts on one pairing code: at most one succeeds; an expired, burned or unknown code is indistinguishable in the response; attempts beyond the cap always fail; the code value appears in no log, audit row or column | `auth/devices` | hypothesis (concurrent) | Make the consume script non-atomic (read then delete) |
 | **Q-18** ★ | ∀ inventories: the readiness score is deterministic, independent of file iteration order, and monotone (making an applicable failing check pass never lowers the score); `inventory_hash` identifies the inventory that produced a report | `analysis/readiness` | hypothesis | Replace the integer division in `Score`'s per-category term with float division |
@@ -5228,4 +5258,4 @@ The 14 criteria are reproduced **verbatim** from `phases.md` Phase 1 "Completion
 
 ---
 
-*End of Phase 1 design. Scope is bounded by §1; anything not listed in §1.1 is out of scope for this phase. Two owner decisions are recorded — **D-28** (kind-based Kubernetes CI job) and **D-29** (tree-sitter as WebAssembly under wazero, preserving `CGO_ENABLED=0`) — with the reversal cost of each stated in its entry. Twenty-three further decisions (D-30 … D-52) are design decisions open to owner override. Eleven open questions (OQ-22 … OQ-32) are recorded, none blocking, each with the recommendation this document already implements. Thirty-one correctness properties (Q-01 … Q-31) each carry an executable negative control, because a property that cannot fail is not a property.*
+*End of Phase 1 design. Scope is bounded by §1; anything not listed in §1.1 is out of scope for this phase. Two owner decisions are recorded — **D-28** (kind-based Kubernetes CI job) and **D-29** (tree-sitter as WebAssembly under wazero, preserving `CGO_ENABLED=0`) — with the reversal cost of each stated in its entry. Thirty further decisions (D-30 … D-59) are design decisions open to owner override. Eleven open questions (OQ-22 … OQ-32) are recorded, none blocking, each with the recommendation this document already implements. Thirty-one correctness properties (Q-01 … Q-31) each carry an executable negative control, because a property that cannot fail is not a property.*
