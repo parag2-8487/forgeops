@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                              |
-| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                                                     |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                         |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                 |
-| Leaves reflected       | **48 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 118 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. Group 7 in progress: 7.1, 7.2, 7.4, 7.5 and 7.6 landed. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                        |
+| Field                  | Value                                                                                                                                                                                                                                 |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                                                                        |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                            |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                    |
+| Leaves reflected       | **49 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 117 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. Group 7 in progress: 7.1–7.6 all landed; 7.7–7.11 are the property leaves. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                           |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -2067,6 +2067,76 @@ and that `_mint_and_sign` is the only method that reaches the mint. Leaf 7.7 gen
 Q-03 over generated call graphs; these fixed assertions stay, because a property test over generated
 inputs still benefits from one example nobody can argue about.
 
+### Leaf 7.3 and D-67 — the check that could not be written until there was something to check
+
+This leaf was resequenced twice before it was built, and the reason is worth understanding
+because it is the same reason the whole §0.4 regime exists.
+
+§2.2.1 requires `check-chokepoint.sh` to **exit 1 when the discovered primitive set is empty**.
+The set is discovered by scanning for the `@mutation_primitive` decorator, so after leaf 7.1 —
+which _created_ the decorator — the set had zero members and the check would have correctly
+refused to pass on a correct tree. Wiring it into CI at that point would have redded the build
+until 7.5 and 7.6 landed. The leaf's own non-vacuity rule made the leaf unbuildable in its own
+position, and the answer was to move the leaf, not to weaken the rule.
+
+**What the vacuity rule is for.** Without it, the check's happy path is indistinguishable from
+its broken path. Rename `mutation_primitive` to `state_changing` and the scan finds nothing, so
+"every call is authorised" is vacuously true and the gate goes green over a codebase with no
+enforcement at all. That is exactly the P-09 shape chapter 5 is about, and it is why the rule is
+`exit 1` rather than a warning.
+
+**D-67, gap 1: matching by name is unusable.** The first primitive to exist is
+`AuditWriter.append`. The first run of the checker reported five offenders — and four of them
+were `list.append`. A gate that flags `findings.append(...)` in a pipeline stage gets switched
+off within a week, which is pattern O's failure by another route. So an attribute call counts as
+a primitive call only when its **receiver resolves to the owning class**, by a deliberately
+shallow syntactic analysis: annotated parameters, attributes assigned anywhere in a class body
+from an annotated parameter, locals assigned from a constructor call, annotations, and literals.
+`clauses = ["..."]` types `clauses` as `list`, so `clauses.append(...)` is not a primitive call.
+
+The shallowness is a decision, not a limitation to apologise for. A full type checker would make
+the gate depend on an inference engine and a warm cache, for one question about one decorator.
+What matters is which way it fails: a receiver the analysis **cannot** type is a third verdict,
+`unresolved-receiver`, and it **blocks**, with a message telling the author to annotate it. A
+receiver that might be the primitive's owner is not something a mutation-path check may assume
+away.
+
+**D-67, gap 1b: "receives a MutationAuthority" is a name-binding question.** Accepting any
+argument merely _named_ `authority` would let a caller satisfy the gate with `authority=None` —
+which is precisely the "someone forgot to call `assert_authorized()`" failure §11.6 says the
+capability type replaces. So the analysis tracks which names hold an authority (a parameter
+annotated `MutationAuthority`, or a local assigned from `mint_authority(...)`) and asks whether
+the call passes one of _those_. The negative fixture has both spellings side by side, and the
+test asserts the untyped one is an offender while the annotated one is clean.
+
+**D-67, gap 2: the Go half's vacuity guard has two readings, and the naive one is wrong.**
+"Exit 1 if the discovered set is empty", applied to the _importer_ set, fails on a correct tree.
+Go's nested-`internal` rule means only packages rooted at `internal/executor/` may import
+`mutate`, and the only such package is `executor` itself — whose dispatcher arrives in leaf 8.7.
+Zero importers is today's correct answer. §2.2.1's own wording resolves it: the _enumerations_
+are "`go list -deps -json ./...` for the import graph, and an `ast` walk of `backend/src/**`",
+so the graph is what must be non-empty, and it must contain the boundary package as a node. An
+empty importer set is printed as a note that names when it will change, rather than passed
+silently.
+
+**Two Windows traps, both of which produced a check that failed with no output.** `go list -deps
+-json ./...` emits Go's standard-library package docs, which contain characters outside cp1252;
+`subprocess.run(..., text=True)` decoded with the platform codec, the reader thread died, and
+`run` returned `returncode 0` with `stdout is None`. Then the same class of bug hit the other
+direction: a section sign in a failure message made `print` raise, and the process exited **1
+with no output at all**. Leaf 7.6 met this wall once already with an em dash in
+`verify-chain`'s output. The remedy here is both belts: the subprocess decodes UTF-8 with
+`errors="replace"`, and `main` reconfigures `stdout`/`stderr` to UTF-8. The test is behavioural
+rather than a source grep — it runs the real entry point with `PYTHONIOENCODING=cp1252` and
+asserts the verdict came through — because the module's docstrings legitimately quote design
+sections and only what is _printed_ matters.
+
+**Where the analysis lives, and why that is not the script.** `scripts/chokepoint_graph.py`
+holds both halves; `scripts/check-chokepoint.sh` is a thin driver. Leaf 7.7's Q-03 quantifies
+over generated call graphs using the same module, so the property and the gate cannot come to
+disagree about what "reachable without authority" means — which is the Q-06/Q-14 lesson (one
+implementation, one fixture corpus) applied to a lint.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -2616,6 +2686,30 @@ install the pinned version into a gitignored scratch directory and use that. Wor
 generalising: a pinned tool you do not actually run is a pin in name only, which is the same
 class of defect as pattern I.
 
+**46. Defect 29 happened again, in this repository, one commit later — and the cause is that
+`pre-commit` is not installed locally.** Leaf 7.5's commit `6baaef2` landed three test files
+that `ruff format --check` rejects, and one of them carried a `# noqa: F811` on a line
+`ruff format` moves, so formatting it revealed a second finding underneath. Both were caught by
+leaf 7.3 running `ruff format --check` by hand and fixed forward in the same commit as the
+check that would have caught them.
+
+The instructive part is not the miss; it is _why_ it was possible. There is no
+`.git/hooks/pre-commit` in this working tree and no `pre_commit` module in the backend venv, so
+the entire hook set — ruff, ruff-format, prettier, gofmt, FO-SEC001, the four regime checks —
+runs **only in CI**. Every local commit is therefore made without the gate that polices it, and
+the author's substitute is remembering to run six commands. Defect 29's conclusion was "a gate
+nobody reads is a gate that does not exist"; this one adds the sharper version: **a gate nobody
+can run locally will be discovered in CI, one push too late.**
+
+The remedy taken here is not "remember harder". `scripts/_hyg.sh` reproduces the three
+file-hygiene hooks and `scripts/_prettier.sh` runs the _pinned_ prettier from
+`.evidence/tools/`, so the equivalents are one command each — and writing `_hyg.sh` immediately
+found a bug in itself worth recording separately: `grep -E '[ \t]+$'` does **not** match tabs,
+because `grep -E` does not expand `\t`. The pattern is the character class `{space, t}`, so the
+first run reported every line ending in the letter "t" — including `import pytest` — as trailing
+whitespace. `[[:blank:]]` is the correct spelling. A hygiene checker that reports false
+positives is a hygiene checker that gets ignored, which is this pattern all over again.
+
 ### Pattern L — the mechanism the steering rule never had
 
 **32. Nine sites carried credential-shaped literals in tests.** The values were harmless: a
@@ -2865,40 +2959,40 @@ future-phase behaviour exists in the tree beyond named seams.
 
 |                             |  Leaves |
 | :-------------------------- | ------: |
-| `done`, with cited evidence |  **48** |
+| `done`, with cited evidence |  **49** |
 | `blocked`                   |       0 |
-| `pending`                   |     118 |
+| `pending`                   |     117 |
 | **Total**                   | **166** |
 
 `PROGRESS.md` is the authority for this table. It is verified mechanically after every leaf by
-`scripts/_state.sh`, which reports `done 48`, `pending 118`, `TOTAL 166` over the Phase 1 section
+`scripts/_state.sh`, which reports `done 49`, `pending 117`, `TOTAL 166` over the Phase 1 section
 alone, cross-checks those rows against `tasks.md`'s checkboxes **in both directions**, and lists
 any `done` row that carries no evidence row. All four lists are empty as of this snapshot.
 
 ### By group
 
-| Group                                                                    | Leaves | State                                                                                                             |
-| :----------------------------------------------------------------------- | -----: | :---------------------------------------------------------------------------------------------------------------- |
-| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                      |
-| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                      |
-| 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                      |
-| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1                                                     |
-| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63               |
-| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                  |
-| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1, 7.2, 7.4, 7.5, 7.6 done. 7.3 resequenced after 7.6 by its own vacuity rule; 7.7–7.11 are the property leaves |
-| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                       |
-| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                       |
-| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                       |
-| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                       |
-| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                                                                       |
-| 13 · AI generation pipeline                                              |     13 | not started                                                                                                       |
-| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                                                                       |
-| 15 · Safe Default Template Library                                       |      7 | not started                                                                                                       |
-| 16 · Change Approval Center API                                          |      4 | not started                                                                                                       |
-| 17 · Frontend feature surfaces                                           |     11 | not started                                                                                                       |
-| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                                                                       |
-| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                                                                       |
-| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                                                                       |
+| Group                                                                    | Leaves | State                                                                                                                          |
+| :----------------------------------------------------------------------- | -----: | :----------------------------------------------------------------------------------------------------------------------------- |
+| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                                   |
+| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                                   |
+| 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                                   |
+| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1                                                                  |
+| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63                            |
+| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                               |
+| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1–7.6 done. 7.3 ran after 7.6, its own vacuity rule having forbidden its original position; 7.7–7.11 are the property leaves |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                                    |
+| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                                    |
+| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                                    |
+| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                                    |
+| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                                                                                    |
+| 13 · AI generation pipeline                                              |     13 | not started                                                                                                                    |
+| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                                                                                    |
+| 15 · Safe Default Template Library                                       |      7 | not started                                                                                                                    |
+| 16 · Change Approval Center API                                          |      4 | not started                                                                                                                    |
+| 17 · Frontend feature surfaces                                           |     11 | not started                                                                                                                    |
+| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                                                                                    |
+| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                                                                                    |
+| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                                                                                    |
 
 Note the ordering. The test-integrity regime came first, before any component it polices. Then
 inherited debt, before anything that sits on it. Then primitives on both sides. Then the

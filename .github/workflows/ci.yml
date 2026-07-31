@@ -156,6 +156,16 @@ jobs:
       - name: Interface-assertion checker's own negative fixtures
         working-directory: scripts/go/ifacecheck
         run: go test ./... -count=1
+      # design.md §2.2.1 mechanism 3. Go's nested-`internal` rule already makes an import of
+      # executor/internal/mutate from outside the subtree a COMPILE error, which is stronger
+      # than any lint — but it does not stop a refactor from moving a package INSIDE the
+      # subtree to reach the write path. This walks the real import graph from
+      # `go list -deps -json ./...` and fails if any package outside executor/** imports it.
+      # Run in both the `agent` and `backend` jobs on purpose: the check has two halves and
+      # each job has exactly one of the two toolchains it needs, so each job runs its own.
+      - name: Chokepoint reachability, Go half
+        working-directory: .
+        run: bash scripts/check-chokepoint.sh --go
       # PRD §9: -race and -shuffle=on. Linux runners have cgo, so -race works.
       - name: Test
         run: go test -race -shuffle=on ./... -count=1
@@ -284,6 +294,15 @@ jobs:
         # is that a new router can forget it; this is the check that pays that cost, and
         # it enumerates create_app().routes rather than a document about them.
         run: python scripts/check-route-auth.py
+      # design.md §2.2.1 mechanism 3, Python half. `MutationAuthority` cannot be constructed
+      # outside governance/, and the banned-api table stops the private surface being named —
+      # but neither notices a primitive that grows a caller. This AST-walks backend/src/** and
+      # requires every call to a @mutation_primitive function to be lexically inside
+      # src/governance/ or to receive a MutationAuthority, and it fails when the discovered
+      # primitive set is EMPTY so a renamed decorator cannot make it trivially pass.
+      - name: Chokepoint reachability, Python half
+        working-directory: .
+        run: bash scripts/check-chokepoint.sh --python
       - name: The application role must not be able to rewrite the audit log
         working-directory: .
         run: |

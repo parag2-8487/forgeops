@@ -90,6 +90,22 @@ repos:
         language: system
         pass_filenames: false
         files: ^\.gitleaks\.toml$
+      # design §2.2.1 mechanism 3. The nested-`internal` rule and the mint-only capability
+      # type are both stronger than a lint — one is a compile error, the other a TypeError —
+      # but neither survives a refactor that moves a package INSIDE the executor subtree, and
+      # neither notices a primitive that grows a caller. Both enumerations here are derived
+      # from the tree, so a newly marked primitive and a newly added package are covered
+      # without editing anything.
+      #
+      # `pass_filenames: false` and scoped to `^(agent|backend)/`: the check is a whole-graph
+      # question, so it cannot be answered file by file, but running it on a docs-only commit
+      # would spend a `go list` for nothing.
+      - id: check-chokepoint
+        name: the mutation chokepoint is unbypassable (design 2.2.1, Q-03)
+        entry: bash scripts/check-chokepoint.sh
+        language: system
+        pass_filenames: false
+        files: ^(agent|backend)/
 
   # ─── Agent: gofmt + go vet, scoped to agent/ (design §16.1) ────────────────
   - repo: local

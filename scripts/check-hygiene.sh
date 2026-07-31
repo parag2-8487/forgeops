@@ -224,6 +224,9 @@ if [ -f "$CONFIG" ]; then
 	#   check-ci-jobs    reads ci.yml and design.md, compares job names, never writes
 	#   check-no-latest  greps tracked workflows/scripts/Dockerfiles, never writes
 #   check-gitleaks-config  greps .gitleaks.toml for widened allowlists, never writes
+	#   check-chokepoint reachability over both runtimes: parses backend/src/** and
+	#                    queries `go list -deps -json`. A whole-graph question cannot be
+	#                    answered file by file, and it writes nothing (design 2.2.1)
 	#
 	# Both Phase 1 additions take fixed arguments rather than a filename list, so
 	# `pass_filenames: true` would append paths and break them. Their read-only
@@ -233,7 +236,7 @@ if [ -f "$CONFIG" ]; then
 	#
 	# Adding a name to this list without that evidence reopens the hole the rule
 	# closes, so the list is deliberately short and each entry is justified above.
-	NON_FILENAME_EXEMPT='gitleaks check-ci-jobs check-no-latest check-gitleaks-config'
+	NON_FILENAME_EXEMPT='gitleaks check-ci-jobs check-no-latest check-gitleaks-config check-chokepoint'
 	awk -F'\t' -v exempt=" $NON_FILENAME_EXEMPT " '
 		$1=="hook" && ($3=="always_run" || $3=="pass_filenames") && index(exempt, " " $2 " ")==0 {
 			if (($3=="always_run" && $4=="true") || ($3=="pass_filenames" && $4=="false"))

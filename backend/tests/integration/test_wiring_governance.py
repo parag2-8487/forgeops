@@ -58,7 +58,8 @@ class TestTheChokepointIsComposedFromTheRealCollaborators:
         assert chokepoint._sequencer is production_app.state.envelope_sequencer  # noqa: SLF001
 
     async def test_the_gate_and_analyzer_are_the_phase_zero_implementations(
-        self, production_app: FastAPI  # noqa: F811
+        self,
+        production_app: FastAPI,  # noqa: F811
     ) -> None:
         """§2.2: "every stage is an existing, tested component where one exists". A new gate or a
         new analyser here would mean the chokepoint had grown its own copy of P-11's monotonicity."""
@@ -94,7 +95,8 @@ class TestTheChokepointIsComposedFromTheRealCollaborators:
 @wires("governance_policy", "command_sink")
 class TestTheDefaultsFailClosed:
     async def test_the_composed_policy_source_refuses_rather_than_allowing(
-        self, production_app: FastAPI  # noqa: F811
+        self,
+        production_app: FastAPI,  # noqa: F811
     ) -> None:
         from src.governance.policy import PolicySourceUnavailableError, UnavailableGovernancePolicy
 

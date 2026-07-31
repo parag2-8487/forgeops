@@ -233,13 +233,23 @@ def test_gitleaks_still_scans_them() -> None:
 def test_the_new_regime_hooks_are_read_only() -> None:
     """Every §0.4 / §8.4 hook reads; none passes a rewriting flag.
 
-    These three take fixed arguments rather than a filename list, so they run with
+    These take fixed arguments rather than a filename list, so they run with
     `pass_filenames: false` — which means the top-level four-document exclusion does
     not apply to them. `scripts/check-hygiene.sh` grants that exemption only to a
     documented list, and this assertion is the evidence the exemption rests on.
+
+    `check-chokepoint` joined the list with leaf 7.3. Reachability is a property of the
+    whole import and call graph, so it cannot be answered from a filename list at all;
+    it parses `backend/src/**` and runs `go list -deps -json`, and writes nothing.
     """
     config = _pre_commit_config()
-    expected = {"check-test-doubles", "check-ci-jobs", "check-no-latest", "check-gitleaks-config"}
+    expected = {
+        "check-test-doubles",
+        "check-ci-jobs",
+        "check-no-latest",
+        "check-gitleaks-config",
+        "check-chokepoint",
+    }
     hooks = {
         hook["id"]: hook for repo in config["repos"] for hook in repo.get("hooks", []) if hook.get("id") in expected
     }

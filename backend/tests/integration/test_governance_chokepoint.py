@@ -435,7 +435,9 @@ class TestTheAutoApprovedTransit:
                 principal=fixture.principal,
             )
             rows = await session.execute(
-                text("SELECT file_path, action, old_hash, new_hash, ordinal FROM change_items WHERE change_set_id = :cs"),
+                text(
+                    "SELECT file_path, action, old_hash, new_hash, ordinal FROM change_items WHERE change_set_id = :cs"
+                ),
                 {"cs": result.change_set_id},
             )
             item = rows.mappings().one()
@@ -757,9 +759,7 @@ class TestTheApproveTransit:
             )
             async with sessions() as session:
                 try:
-                    await chokepoint.approve(
-                        session, change_set_id=pending.change_set_id, principal=fixture.principal
-                    )
+                    await chokepoint.approve(session, change_set_id=pending.change_set_id, principal=fixture.principal)
                     return "won"
                 except ProblemException as exc:
                     return exc.problem.type.rsplit("/", 1)[-1]
@@ -786,9 +786,7 @@ class TestTheApproveTransit:
             )
             assert applied.change_set_id is not None
             with pytest.raises(ProblemException) as raised:
-                await chokepoint.approve(
-                    session, change_set_id=applied.change_set_id, principal=fixture.principal
-                )
+                await chokepoint.approve(session, change_set_id=applied.change_set_id, principal=fixture.principal)
             assert raised.value.problem.type.endswith("/change-set-conflict")
 
     async def test_a_revoked_device_stops_a_pending_approval(
@@ -810,9 +808,7 @@ class TestTheApproveTransit:
             await session.commit()
             assert pending.change_set_id is not None
             with pytest.raises(ProblemException) as raised:
-                await chokepoint.approve(
-                    session, change_set_id=pending.change_set_id, principal=fixture.principal
-                )
+                await chokepoint.approve(session, change_set_id=pending.change_set_id, principal=fixture.principal)
             assert raised.value.problem.type.endswith("/device-revoked")
             assert not sink.sent
 
@@ -868,9 +864,7 @@ class TestTheRevertTransit:
             )
             await session.commit()
             sent_before = len(sink.sent)
-            result = await chokepoint.revert(
-                session, change_set_id=created.change_set_id, principal=fixture.principal
-            )
+            result = await chokepoint.revert(session, change_set_id=created.change_set_id, principal=fixture.principal)
             assert result.outcome == "approval-required"
             assert result.command is None
             assert len(sink.sent) == sent_before, "no envelope for a revert that still needs a human"
@@ -1024,9 +1018,7 @@ class TestTheAuditChainCoversEveryTransit:
                 principal=fixture.principal,
             )
             assert pending.change_set_id is not None
-            await allow_point.approve(
-                session, change_set_id=pending.change_set_id, principal=fixture.principal
-            )
+            await allow_point.approve(session, change_set_id=pending.change_set_id, principal=fixture.principal)
 
             rows = await audit_rows(session, fixture.project_id)
             assert [row["action"] for row in rows] == [

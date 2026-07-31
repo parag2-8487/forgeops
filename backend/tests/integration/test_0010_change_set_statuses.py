@@ -116,8 +116,10 @@ class TestTheDatabaseEnforcesTheNewVocabulary:
         await self._insert(conn, project_id, status)
 
     @pytest.mark.parametrize("status", [*REMOVED_BY_0010, "in_progress", "APPROVED", ""])
-    async def test_a_status_outside_the_vocabulary_is_rejected(  # noqa: F811
-        self, conn: AsyncConnection, status: str
+    async def test_a_status_outside_the_vocabulary_is_rejected(
+        self,
+        conn: AsyncConnection,  # noqa: F811 - the re-exported fixture, not a redefinition
+        status: str,
     ) -> None:
         """Including the three names `0004` used to permit: the narrowing is real, not cosmetic."""
         project_id = await make_project(conn, "status")
@@ -144,10 +146,7 @@ class TestTheDatabaseEnforcesTheNewVocabulary:
         from sqlalchemy import text
 
         result = await conn.execute(
-            text(
-                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                "WHERE conname = 'ck_change_sets_status_allowed'"
-            )
+            text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_change_sets_status_allowed'")
         )
         definition = str(result.scalar())
         for status in CHANGE_SET_STATUSES:

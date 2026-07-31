@@ -13,7 +13,7 @@ PIP_TOOLS_VERSION := 7.6.0
 .PHONY: help bootstrap init-env clean
 .PHONY: build build-agent build-backend build-frontend
 .PHONY: test test-agent test-backend test-frontend
-.PHONY: lint lint-agent lint-backend lint-frontend
+.PHONY: lint lint-agent lint-backend lint-frontend lint-chokepoint
 
 help: ## List the available targets
 	@printf 'ForgeOps — Phase 0 make targets\n\n'
@@ -43,7 +43,11 @@ test-backend: ## Run Python backend tests
 	@cd backend && .venv/Scripts/python -m pytest tests/ -q
 
 # ─── Lint targets ───────────────────────────────────────────────────────────
-lint: lint-agent lint-backend lint-frontend ## Lint all components
+lint: lint-agent lint-backend lint-frontend lint-chokepoint ## Lint all components
+
+lint-chokepoint: ## Assert the mutation chokepoint is unbypassable (design §2.2.1, Q-03)
+	@printf '==> lint-chokepoint: reachability over both runtimes\n'
+	@bash scripts/check-chokepoint.sh
 
 lint-agent: ## Lint Go agent with golangci-lint
 	@printf '==> lint-agent: golangci-lint v1.62.2 from agent/tools (checksum-verified)\n'
