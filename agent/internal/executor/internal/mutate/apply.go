@@ -429,22 +429,11 @@ func Revert(ctx context.Context, v *envelope.Verified, m BackupManifest) (*Rever
 
 	report := &RevertReport{}
 	for i := len(m.Entries) - 1; i >= 0; i-- {
-		entry := m.Entries[i]
-		if entry.NoPrevious() {
-			// The apply created this file, so reverting means removing it. This is the
-			// clause Q-02's negative control deletes.
-			if err := os.Remove(entry.AbsPath); err != nil && !os.IsNotExist(err) {
-				return nil, fmt.Errorf("remove %s: %w", entry.RelPath, err)
-			}
-			fsyncDir(filepath.Dir(entry.AbsPath))
-			report.Removed = append(report.Removed, entry.RelPath)
-			continue
+		// One step per entry, in `revert_entry.go`. Extracted so Q-02's negative control is a
+		// three-line overlay rather than a copy of this file; see the note there.
+		if err := revertOne(m.Entries[i], report); err != nil {
+			return nil, err
 		}
-		if err := copyFile(entry.BackupPath, entry.AbsPath); err != nil {
-			return nil, fmt.Errorf("restore %s: %w", entry.RelPath, err)
-		}
-		fsyncDir(filepath.Dir(entry.AbsPath))
-		report.Restored = append(report.Restored, entry.RelPath)
 	}
 
 	// Mark consumed only after every restore succeeded. Marking first would make a

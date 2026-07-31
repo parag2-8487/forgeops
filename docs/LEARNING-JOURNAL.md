@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                               |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                                                      |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                          |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                  |
-| Leaves reflected       | **53 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 113 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. Group 7 in progress: 7.1–7.10 landed; only 7.11 remains. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                         |
+| Field                  | Value                                                                                                                                                                                                                                                                |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                                                                                                       |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                           |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                   |
+| Leaves reflected       | **54 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 112 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. **Group 7's eleven implementation and property leaves are all landed** (7.1–7.11); its close-out remains. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                          |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -896,6 +896,80 @@ deleting a file leaves dangling edges in the index, and the property must catch 
 That control is well chosen because it is the term a reasonable engineer would omit. The
 first three terms are about _change_; the fourth is about _absence_, and absence is the case
 people forget.
+
+### Worked example 4 — `Q-02`, and the difference between a strong property and a strong generator
+
+Q-02 says: for every apply-then-revert sequence, `Revert` restores every file byte-for-byte to
+its pre-image **including deleting files that did not previously exist**, revert is idempotent,
+and a consumed handle cannot be reused. Its negative control is "make `Revert` skip entries
+marked `NO_PREVIOUS`".
+
+The property is easy to state and easy to test weakly, and the three things that make it strong
+are all in the **generator**, not in the assertions.
+
+**Content is arbitrary bytes.** Q-01's generator draws from `[a-zA-Z0-9 ]`. A restore that
+round-tripped the file through a Go `string` would pass every one of its examples. Q-02 draws
+`rapid.SliceOfN(rapid.Byte(), 0, 40)`, so NUL, `0xFF` and invalid UTF-8 reach the pre-image and
+"byte-for-byte" becomes a claim rather than a phrase. This costs nothing and is the single
+cheapest strengthening available to a property about bytes.
+
+**The action mix includes `Delete`.** Phase 0 had no delete, so Phase 0's property could not
+have one. A delete is the only action whose target is **absent** between the apply and the
+revert: there is nothing on disk for a partial implementation to leave behind and look correct
+with. Every other action leaves a file that a wrong implementation might coincidentally get
+right.
+
+**The whole tree is compared, not the targets.** Each clause hashes every file under `root`
+before the apply and compares the entire set after the revert, **in both directions**. Comparing
+only what the manifest names would miss a revert that restored its targets perfectly and left
+something else behind — which is precisely what the negative control produces. The one-direction
+version of this check is the more common mistake: "everything I expected is there" passes while
+something extra sits next to it.
+
+**Two artifacts are excluded, and the exclusion is part of the claim.** Backup files are not
+removed by a revert — `Revert` restores _from_ them and is not specified to delete them — and
+`root/.forgeops-rollback/` is where the single-use marker is supposed to appear. Asserting their
+absence would assert behaviour the design does not promise, which is how a property starts
+failing for reasons its own statement does not cover.
+
+**A third leftover is named and not asserted.** A revert removes the FILES an apply created but
+not the DIRECTORIES it created on the way: revert a change-set whose only entry was
+`d0/d1/x.txt` and `root/d0/d1` remains, empty. Appendix B words Q-02 over files, so a file-level
+snapshot is faithful to the property **as specified** — and the gap is real. It is written into
+the test file's header rather than quietly satisfied by a lenient assertion, because the
+difference between "the property does not cover this" and "the property covers this and it
+passes" is the whole value of chapter 5's lesson.
+
+**Where "idempotent" actually lives.** The tempting reading is that a second `Revert` succeeds
+and does the same thing again. It does not: the second call is **refused** with
+`ErrHandleConsumed`, and the refusal is what makes the effect idempotent — a second success would
+restore from backups that no longer describe the current state. So the clause asserts both halves
+together, because either alone is satisfiable by the wrong implementation. A `Revert` that always
+errored would pass the refusal check. One that re-restored identical bytes would pass the
+filesystem check. Only the conjunction pins the behaviour.
+
+And single-use had to be pinned to a **place**, not just to a fact. Two reuse attempts are
+generated that a weaker implementation would let through: one with a **fresh authority mint**
+(the revert is authorised by its own envelope, so "already reverted" cannot be a property of the
+authority), and one with a **reconstructed manifest value** carrying the same `HandleID` (the
+manifest is serialised to the backend and handed back, so in-memory state would not survive the
+round trip). Both are refused, which locates single-use on the on-disk marker. The reverse
+assertion is there too — a _different_ handle must **not** be refused — because without it
+"single-use" could quietly become "one revert per root", which would break the second apply of
+the same change-set.
+
+**Why the control needed a guaranteed create.** `AFileThatDidNotExistIsDeleted` seeds a create on
+top of the generated set instead of waiting for the generator to draw one. The generated sets do
+contain creates most of the time, and the whole-tree clause does object on those examples — but a
+control whose bite depends on the draw is one a future reader cannot trust, and rapid's shrinker
+reports the first failing example, not the tenth. Seeding it makes the control fail on example
+zero, every run.
+
+**And the overlay deliberately still lies.** The mutated `revertOne` skips the filesystem removal
+but **still appends the path to `report.Removed`**. That forces the property to fail on ground
+truth — a `stat` of the path — rather than on a report that conveniently confesses. Had the
+control also stopped reporting, the weaker of the two assertions would have caught it and the
+on-disk assertion would never have been shown to do any work.
 
 ---
 
@@ -2369,8 +2443,9 @@ one habit; the two logging holes are one hole seen twice), which is roughly how 
 inherited-debt table counts them. Do not quote a number from this chapter as though it were
 authoritative.
 
-Leaf 7.4 added entries **38 through 43** and one new pattern, **P**; leaf 7.6 added **44**. The
-list now runs to forty-four across sixteen patterns. Pattern P is the first one that is not about a
+Leaf 7.4 added entries **38 through 43** and one new pattern, **P**; leaf 7.6 added **44**; leaves
+7.5, 7.7, 7.8 and 7.10 added **45 through 48**, one of them a second new pattern, **O**; leaf 7.11
+added **49**. Pattern P is the first one that is not about a
 single implementation being wrong — it is about two implementations of one written contract agreeing
 where the document warns and diverging where it is silent.
 
@@ -2837,6 +2912,42 @@ exactly this' assertion pass for any compose file at all."
 `== 74`: "a hard-coded count is a number to bump every phase and proves nothing beyond
 arithmetic." It now compares the inventory against `.env.example` in **both** directions.
 
+**49. Three records restated a total they did not own, and all three understated the tree —
+found in leaf 7.11, in the records this project calls its sources of truth.** `PROGRESS.md`'s
+reconciliation paragraph read "**47 of 166** leaves are `done` … 44 at the reconciliation
+described below, plus 7.2, 7.4 and 7.6 since". By leaf 7.11 the Status column said 54. The
+sentence had been wrong for six consecutive leaves — 7.5, 7.3, 7.7, 7.8, 7.9, 7.10 — each of
+which flipped its row, added its evidence and ran `scripts/_state.sh`, which compares
+`PROGRESS.md`'s **column** against `tasks.md`'s **checkboxes** and never reads the prose. The
+same file's "what is explicitly not verified" section said "the `mutation` job's manifest is at
+**4 of 31** rows — `Q-27`, `Q-19`, `Q-20`, `Q-30`" after five further rows had landed. And
+`mutations.toml`'s own `CURRENT STATE` header read "One `Q-` row: Q-27, landed with
+task 2.2. The remaining thirty arrive with their own property leaves", written when that was
+true and still there after Q-01, Q-03, Q-04 and Q-05 had landed. The harness prints the live
+figure on every single run — "Appendix B defines 31 properties; mutations.toml carries 9 rows" —
+directly above a comment block claiming there was one.
+
+None is dangerous on its own. Together they are the finding, because of **why** they rotted:
+every one of those sentences was **derivable** from data in the same file, and every one was
+**restated** instead.
+That is exactly entry 25's lesson and exactly entry 26's, arriving a third time in the documents
+whose job is to keep this project honest. The fix is not to update the numbers — the next leaf
+would rot them again. All three now say where the figure is counted from and refuse to hold a
+copy: `PROGRESS.md` points at its own Status column and at the harness's output, and
+`mutations.toml` points at the harness's output. The historical `44` is kept, because it
+describes a dated event rather than a live state.
+
+**The cost.** A reader who wants the total now has to count a column or run a script instead of
+reading a sentence, and `PROGRESS.md`'s opening is slightly less quotable. That is the right
+trade: a number that is one edit from being a lie is worse than no number, and a document that
+tells you where to look cannot be stale about where to look.
+
+**Why no check catches this class.** `scripts/check-progress.sh` validates structure;
+`scripts/_state.sh` reconciles the column against the checkboxes. Neither reads prose, and
+writing one that did would mean parsing English out of a teaching document — the cure being
+worse than the disease. The durable fix is the one applied: remove the derived copy, so there is
+nothing to drift.
+
 ### Pattern I — the tool that gates the build, verified against nothing
 
 **27. `govulncheck` came from `@latest`.** It "resolves at run time to whatever the proxy
@@ -3215,40 +3326,40 @@ future-phase behaviour exists in the tree beyond named seams.
 
 |                             |  Leaves |
 | :-------------------------- | ------: |
-| `done`, with cited evidence |  **53** |
+| `done`, with cited evidence |  **54** |
 | `blocked`                   |       0 |
-| `pending`                   |     113 |
+| `pending`                   |     112 |
 | **Total**                   | **166** |
 
 `PROGRESS.md` is the authority for this table. It is verified mechanically after every leaf by
-`scripts/_state.sh`, which reports `done 53`, `pending 113`, `TOTAL 166` over the Phase 1 section
+`scripts/_state.sh`, which reports `done 54`, `pending 112`, `TOTAL 166` over the Phase 1 section
 alone, cross-checks those rows against `tasks.md`'s checkboxes **in both directions**, and lists
 any `done` row that carries no evidence row. All four lists are empty as of this snapshot.
 
 ### By group
 
-| Group                                                                    | Leaves | State                                                                                                                                                                                                                                                    |
-| :----------------------------------------------------------------------- | -----: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                                                                                                                                                             |
-| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                                                                                                                                                             |
-| 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                                                                                                                                                             |
-| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1                                                                                                                                                                                            |
-| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63                                                                                                                                                      |
-| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                                                                                                                                                         |
-| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1–7.10 done, only 7.11 left. 7.3 ran after 7.6, its own vacuity rule having forbidden its original position; Q-01, Q-03, Q-04 and Q-05 have `mutations.toml` rows — Q-01 is the first `go` row and building it found two gates that had never been run |
-| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                                                                                                                                                              |
-| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                                                                                                                                                              |
-| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                                                                                                                                                              |
-| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                                                                                                                                                              |
-| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                                                                                                                                                                                                              |
-| 13 · AI generation pipeline                                              |     13 | not started                                                                                                                                                                                                                                              |
-| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                                                                                                                                                                                                              |
-| 15 · Safe Default Template Library                                       |      7 | not started                                                                                                                                                                                                                                              |
-| 16 · Change Approval Center API                                          |      4 | not started                                                                                                                                                                                                                                              |
-| 17 · Frontend feature surfaces                                           |     11 | not started                                                                                                                                                                                                                                              |
-| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                                                                                                                                                                                                              |
-| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                                                                                                                                                                                                              |
-| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                                                                                                                                                                                                              |
+| Group                                                                    | Leaves | State                                                                                                                                                                                                                                                                                                                                                             |
+| :----------------------------------------------------------------------- | -----: | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                                                                                                                                                                                                                                                                      |
+| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                                                                                                                                                                                                                                                                      |
+| 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                                                                                                                                                                                                                                                                      |
+| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1                                                                                                                                                                                                                                                                                                     |
+| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63                                                                                                                                                                                                                                                               |
+| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                                                                                                                                                                                                                                                                  |
+| 7 · Governance chokepoint and the mutation boundary                      |     11 | **all eleven done**; the group's close-out (end-to-end `verify-chain`, regenerated comprehension artifact) remains. 7.3 ran after 7.6, its own vacuity rule having forbidden its original position; Q-01, Q-02, Q-03, Q-04 and Q-05 have `mutations.toml` rows — Q-01 and Q-02 are the first `go` rows, and building them found two gates that had never been run |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 13 · AI generation pipeline                                              |     13 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 15 · Safe Default Template Library                                       |      7 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 16 · Change Approval Center API                                          |      4 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 17 · Frontend feature surfaces                                           |     11 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                                                                                                                                                                                                                                                                                                                       |
+| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                                                                                                                                                                                                                                                                                                                       |
 
 Note the ordering. The test-integrity regime came first, before any component it polices. Then
 inherited debt, before anything that sits on it. Then primitives on both sides. Then the

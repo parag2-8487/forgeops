@@ -35,8 +35,11 @@
 # or a dirty working tree.
 #
 # CURRENT STATE
-# One `Q-` row: Q-27, landed with task 2.2. The remaining thirty arrive with their own
-# property leaves. The harness's own behaviour - that it reports VACUOUS, that its temp
+# Not restated here as a number, because it rotted: this block said "one `Q-` row: Q-27"
+# for four leaves after Q-01, Q-03, Q-04 and Q-05 had landed, and nothing could tell.
+# `scripts/mutation-harness.py` prints the live figure on every run - "Appendix B defines
+# N properties; mutations.toml carries M rows" - and names every id that has no control.
+# Read it from there. The harness's own behaviour - that it reports VACUOUS, that its temp
 # directory is outside the tree, and that it leaves `git status --porcelain` empty - is
 # proven by `backend/tests/meta/test_mutation_harness.py` against fixture manifests.
 
@@ -102,6 +105,52 @@ ceasing to mutate anything.
 The harness passes `-rapid.nofailfile`, because a failing rapid property writes a
 reproduction file under `testdata/rapid/` and every Go row here is EXPECTED to fail — left on,
 the harness would dirty the tree it asserts is clean, for a reason unrelated to the mutation.
+"""
+
+[Q-02]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/executor/internal/mutate"
+test_run    = "TestProperty_Q02|TestRevert_"
+original    = "agent/internal/executor/internal/mutate/revert_entry.go"
+overlay     = "backend/tests/mutation/overlays/q02_norevert_noprevious.go"
+property    = "agent/internal/executor/internal/mutate/q02_property_test.go"
+mutation    = "Make `Revert` skip entries marked `NO_PREVIOUS`"
+description = """
+Replaces `revert_entry.go` with a version whose `NoPrevious()` branch removes nothing. `Revert`
+still walks every entry, still restores every pre-image, still writes the consumption marker and
+still returns success — but every file the apply CREATED survives the revert. The user's tree is
+then neither the pre-image nor the post-image, which is exactly what Appendix B's
+"including deleting files that did not previously exist" clause forbids.
+
+`TestProperty_Q02_AFileThatDidNotExistIsDeleted` must then fail. It seeds a GUARANTEED create on
+top of the generated set rather than waiting for the generator to draw one, so the control bites
+on the first example instead of on whichever example happens to contain a create — a control
+whose bite depends on the draw is one a future reader cannot trust.
+`TestProperty_Q02_RevertRestoresEveryFileByteForByte` objects independently, because it compares
+the WHOLE tree before the apply against the whole tree after the revert and the surviving file is
+a path that did not exist in the first snapshot.
+
+`TestRevert_` is in `test_run` too. Those five example tests in `apply_test.go` are Phase 1's
+hand-written cases, and two of them assert the same removal from a fixed change-set
+(`TestRevert_RestoresPreImagesByteForByte`'s `fresh.txt`, and all three files in
+`TestRevert_RestoresInReverseOrder`). Including them means the row proves the control is visible
+to an example test as well as to a generated one — the same arrangement Q-01 has with P-08.
+
+WHY `revertOne` LIVES IN ITS OWN FILE. `go build -overlay` replaces a whole file. With the
+per-entry step inline in `Revert`, the overlay would have carried a copy of nearly six hundred
+lines of `apply.go`, rotting on the first unrelated edit and making the mutation unreadable.
+Extracting it keeps the reviewable diff to three lines, and the overlay keeps `revertOne`'s
+signature identical so a change to it stops the mutated build compiling rather than silently
+ceasing to mutate anything.
+
+WHY THE OVERLAY STILL APPENDS TO `report.Removed`. The skip is of the filesystem effect only, so
+the mutated `Revert` still CLAIMS to have removed the file. The property therefore has to fail on
+ground truth — a `stat` of the path — rather than on a report that conveniently confesses. A
+control that also stopped reporting would be caught by the weaker of the two assertions and would
+not prove the on-disk one was doing any work.
+
+The harness passes `-rapid.nofailfile` for the reason recorded in Q-01's row.
 """
 
 [Q-03]
