@@ -42,11 +42,31 @@ if [ -n "$GO_FILES" ]; then
 fi
 
 # 5. No forbidden placeholder packages (structural dirs should have no .go files)
-for dir in executor validator policy devtools; do
-  FOUND=$(find "$AGENT_DIR/internal/$dir" -name '*.go' 2>/dev/null || true)
-  if [ -n "$FOUND" ]; then
-    err "Forbidden .go file(s) in structural directory internal/$dir: $FOUND"
-  fi
+#
+# The list is PHASE-SCOPED and must shrink as directories are populated, or this rule becomes
+# pattern O — a check frozen at a previous phase whose findings are noise. It read
+# `executor validator policy devtools` until leaf 7.10, and `internal/executor` has held real code
+# since leaf 7.2 put the mutation boundary under it (design §2.2.1 mechanism 3, D-45). The check
+# had therefore been failing since then, and nothing noticed because it is wired into neither CI
+# nor pre-commit nor `make lint` — a stale check that nobody runs.
+#
+# `validator` arrives with group 14, `policy` with 9.4, `devtools` later; each must leave this list
+# in the leaf that populates it. `internal/envelope` (D-59) and `internal/session` were never here.
+for dir in validator policy devtools; do
+	FOUND=$(find "$AGENT_DIR/internal/$dir" -name '*.go' 2>/dev/null || true)
+	if [ -n "$FOUND" ]; then
+		err "Forbidden .go file(s) in structural directory internal/$dir: $FOUND"
+	fi
+done
+
+# 5b. And the other direction, which is what stops 5 rotting again: a directory that has LEFT the
+# structural list must actually hold code. Without this, removing a name from the loop above would
+# be indistinguishable from deleting the rule.
+for dir in executor envelope session; do
+	FOUND=$(find "$AGENT_DIR/internal/$dir" -name '*.go' 2>/dev/null || true)
+	if [ -z "$FOUND" ]; then
+		err "internal/$dir is no longer treated as structural but holds no .go file"
+	fi
 done
 
 # 6. tree-sitter absent from go.mod AND go.sum (decision D-1)

@@ -162,6 +162,48 @@ class TestASkippedControlRunIsAnErrorNotAVacuousProperty:
         assert HARNESS._nothing_actually_ran(output) is False, output  # noqa: SLF001 - the unit under test
 
 
+class TestTheGoArgvOrderIsLoadBearing:
+    """`-rapid.nofailfile` must follow the package pattern (leaf 7.10).
+
+    It is a flag of the TEST BINARY, not of `go test`. Placed before the package, `go test` stops
+    parsing its own flags at the first one it does not recognise and treats the rest as a package
+    list — so the pattern was consumed as a flag value, the command resolved to `.`, and the run
+    died with `no Go files in <module>` / `FAIL . [setup failed]`. The harness read that non-zero
+    exit as "failed as required" and reported the row healthy, so the control had never run.
+
+    Q-01 was the first Go row in `mutations.toml`, which is why nothing had noticed.
+    """
+
+    def test_the_source_places_the_binary_flag_after_the_package(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        append_package = source.index('argv.append(row.package or "./...")')
+        append_flag = source.index('argv.append("-rapid.nofailfile")')
+        assert append_package < append_flag, (
+            "-rapid.nofailfile must be appended AFTER the package pattern, or go test consumes "
+            "the pattern as a flag value and the mutated build never runs"
+        )
+
+    def test_the_nofailfile_flag_is_not_in_the_go_test_flag_list(self) -> None:
+        """Asserted on the constructed list rather than by reading the comment above it."""
+        source = SCRIPT.read_text(encoding="utf-8")
+        construction = source[source.index('argv = ["go", "test"') :]
+        first_line = construction.splitlines()[0]
+        assert "rapid.nofailfile" not in first_line, first_line
+
+    @pytest.mark.parametrize(
+        "shape",
+        ["build failed", "cannot find", "syntax error", "setup failed", "no Go files in"],
+    )
+    def test_every_build_failure_shape_is_reported_as_an_error(self, shape: str) -> None:
+        """A mutated build that did not run must never be reported as a healthy failure.
+
+        `setup failed` and `no Go files in` were both produced by the argv defect above, and
+        neither was in the guard — which is how the broken run reported OK.
+        """
+        source = SCRIPT.read_text(encoding="utf-8")
+        assert f'"{shape}"' in source, f"{shape!r} is not among the shapes the Go guard reports as ERROR"
+
+
 class TestTheHarnessLeavesNoTrace:
     def test_the_temp_directory_is_outside_the_repository(self) -> None:
         tmp = HARNESS.make_outside_tempdir()

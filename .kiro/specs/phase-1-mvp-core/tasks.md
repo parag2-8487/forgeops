@@ -405,11 +405,14 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - The tamper matrix is guarded against no-ops: a variant equal to the honest value tampers with nothing, and the first run hit exactly that with `outcome="allowed"`. `test_no_tamper_value_matches_the_honest_row` closes it.
     - _Design: §6.4, §11.9, Appendix A.8, Appendix B Q-05, §17.1 D-61; Deliverable: 1.9; Criterion: 9; Property: Q-05_
 
-  - [ ] 7.10 Write property test Q-01 for atomic all-or-nothing application
+  - [x] 7.10 Write property test Q-01 for atomic all-or-nothing application
 
     - Generate change-sets and injected failure points; prove either every target holds its new content with a backup per pre-existing target, or every target byte-equals its pre-image; prove no path outside `root` is written, `blockedForWrite` paths are refused, and `.env.example` is writable while `.env` is not.
     - Add the `mutations.toml` row removing the rollback loop from the `CATCH` branch.
-    - _Design: §10.5, §7.11(f), Appendix A.9, Appendix B Q-01; Deliverable: 1.6; Criterion: 6; Property: Q-01_
+    - **The failure injection is cross-platform, deliberately.** The existing example test uses a `0555` directory and is skipped on Windows, which is the "gate that can never pass locally" shape D-51 rejects. Q-01 injects by **ordering** instead: one entry creates a plain file `collide`, a later entry targets `collide/child.txt`, and `MkdirAll` refuses because the parent is a regular file. Both survive pre-validation, the failure position is generated, and it is deterministic everywhere.
+    - **`rollback` was extracted into `rollback.go`** so the `go build -overlay` control replaces four lines rather than a copy of nearly six hundred. The overlay keeps `backupInfo` and the signature identical, so a change to either stops the mutated build compiling instead of silently ceasing to mutate anything.
+    - **Two defects found in the tooling, both recorded in chapter 9.** The harness's Go argv put `-rapid.nofailfile` **before** the package pattern, so `go test` consumed the pattern as a flag value, the run died with `no Go files in <module>`, and the harness read that non-zero exit as "failed as required" — Q-01 was the first Go row, so nothing had exercised that path. And `scripts/check-go-module.sh` still listed `internal/executor` as a structural directory, so it had been failing since leaf 7.2 populated it; it is wired into neither CI nor pre-commit nor `make lint`, which is why nobody noticed.
+    - _Design: §10.5, §7.11(f), Appendix A.9, Appendix B Q-01, §17.1 D-46; Deliverable: 1.6; Criterion: 6; Property: Q-01_
 
   - [ ] 7.11 Write property test Q-02 for byte-exact revert
     - Generate apply-then-revert sequences; prove `Revert(manifest)` restores every file byte-for-byte including deleting files that did not previously exist, that revert is idempotent, and that a consumed handle cannot be reused.

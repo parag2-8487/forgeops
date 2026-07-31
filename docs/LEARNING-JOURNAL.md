@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                                 |
-| :--------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                                                        |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                            |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                    |
-| Leaves reflected       | **52 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 114 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. Group 7 in progress: 7.1–7.9 landed; 7.10 and 7.11 remain. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                           |
+| Field                  | Value                                                                                                                                                                                                               |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                                                      |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                          |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                  |
+| Leaves reflected       | **53 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 113 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. Group 7 in progress: 7.1–7.10 landed; only 7.11 remains. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                         |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -2283,6 +2283,72 @@ is right. And a `pytest.skip` inside a generated clause (for the case where the 
 first, whose `prev_hash` is genesis) was replaced by arithmetic that always selects a successor: a
 skip inside a property is the silent-skip shape §0.4.4 forbids, and here it was avoidable.
 
+### Leaf 7.10 — Q-01, and two gates that had never been run
+
+Q-01 is the agent's side of the trust moat: after `ApplyVerified`, either every target holds its
+new content and every pre-existing target has a backup, or every target byte-equals its pre-image.
+Nothing outside `root` is written, the write blocklist is honoured, and `.env.example` is writable
+while `.env` is not.
+
+**What Q-01 adds that P-08 did not have: a generated failure point.** P-08 (relocated with the
+algorithm by D-45) quantifies the same disjunction, and it is kept. But "either all or nothing" is
+trivially satisfied by a change-set that always succeeds, so the interesting quantification is over
+_where_ the apply breaks — and the only way to observe the `CATCH` branch is to make it run.
+
+The existing example test injects a failure with a `0555` directory and is **skipped on Windows**,
+which is the "gate that can never pass locally" shape D-51 rejects. Q-01 injects by **ordering**
+instead: one entry creates a plain file `collide`, a later entry targets `collide/child.txt`, and
+`MkdirAll` refuses because the parent is a regular file. Both survive pre-validation — neither path
+exists when it runs — the failure position is generated so rollback is exercised with 0..n
+completed writes, and it is deterministic on every platform. It is also a change-set shape a real
+caller could produce, which a permission trick is not.
+
+**Two generator bugs that looked like product bugs, worth recording because they are the common
+kind.** The confinement generator built traversal candidates with `filepath.Join`, which _cleans_:
+`Join("nested", "../canary.txt")` is `"canary.txt"`, a perfectly legitimate in-root path. The
+property failed on a candidate that had stopped being an escape. And the same test asserted that
+every suspicious path is _refused_, which is not what the design promises: on Windows
+`\canary.txt` is drive-relative rather than absolute, so it is joined onto root and lands safely
+inside it, while on Linux the same string is absolute and is refused. The clause is now the
+disjunction the design actually makes — either refused, or every written path is inside root — and
+the canary outside root is checked either way.
+
+The blocklist clause was a guess and had to be corrected against the code: §7.11(f) and D-46 define
+exactly three rules (the `.env` family, `*.pem`, and anything under `~/.ssh` or `~/.aws`), not the
+wider set of credential filenames one might assume. The generator now produces those rules
+including **case variants**, because `blocklist.go`'s own comment records that the `.env`
+comparison was once case-sensitive — so `.ENV.PRODUCTION` was unblocked, and on Windows and macOS
+that is the same file.
+
+**`rollback` moved into its own file, for the control's sake.** `go build -overlay` replaces a
+whole file. With `rollback` inside `apply.go` the negative control would have carried a copy of
+nearly six hundred lines, rotting on the first unrelated edit. Extracted, the overlay is a
+four-line diff — and it keeps `backupInfo` and the signature identical, so a change to either stops
+the mutated build compiling rather than silently ceasing to mutate anything.
+
+**Then the harness's Go path turned out never to have worked.** Q-01 is the first `go` row in
+`mutations.toml`, and the harness assembled its argv as
+`go test -overlay=… -count=1 -rapid.nofailfile -run … <package>`. `-rapid.nofailfile` is a flag of
+the **test binary**, not of `go test`: placed before the package, `go test` stops parsing its own
+flags at the first one it does not recognise and treats everything after as a package list. The
+pattern was consumed as a flag value, the command resolved to `.`, and the run died with
+`no Go files in <module>` / `FAIL . [setup failed]`. The harness's guard listed `build failed`,
+`cannot find` and `syntax error` — not those two — so it read the non-zero exit as **"failed as
+required"** and reported the row healthy.
+
+That is the Q-04 lesson in the other runtime, and it is now guarded twice: the two shapes are in
+the ERROR list, three meta tests pin the argv order, and the verdict was verified with a
+**control-of-the-control** — swapping the overlay for a byte-copy of the real `rollback.go` makes
+the harness report `VACUOUS`. So the OK verdict is attributable to the mutation rather than to the
+mechanism, which is the only form of evidence worth having about a negative control.
+
+**And a second stale gate.** `scripts/check-go-module.sh` still listed `internal/executor` among
+the _structural_ directories that must contain no `.go` files — a Phase 0 fact that leaf 7.2
+falsified when it put the mutation boundary there. The check had been failing since, and nothing
+noticed because it is wired into neither CI, nor `pre-commit`, nor `make lint`. Its list is now
+phase-scoped, with a second rule asserting the other direction: a directory removed from the list
+must actually hold code, so deleting the rule is not indistinguishable from satisfying it.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -2790,6 +2856,30 @@ One incidental fact recovered on the way, worth keeping: `golangci-lint` must be
 source here because "the prebuilt binaries are compiled with an older toolchain and refuse to
 analyse a go1.26 module."
 
+**47. The mutation harness's Go path had never been run, and reported a healthy row for a build
+that never happened.** `mutations.toml` carried only Python rows until leaf 7.10 added Q-01, so the
+`run_go_row` branch had never executed against a real overlay. Its argv was
+`go test -overlay=… -count=1 -rapid.nofailfile -run … <package>`, and `-rapid.nofailfile` is a flag
+of the **test binary** rather than of `go test`: placed before the package, `go test` stops parsing
+its own flags at the first unrecognised one and treats the rest as a package list. The pattern was
+consumed as a flag value, the command resolved to `.`, and the run died with `no Go files in
+<module>` / `FAIL . [setup failed]`.
+
+The harness's build-failure guard listed `build failed`, `cannot find` and `syntax error`. Neither
+of those two shapes was in it, so the non-zero exit fell through to **"failed as required"** and the
+row was reported healthy. A control that never ran had certified a property.
+
+This is pattern I in its purest form — the tool that gates the build, verified against nothing — and
+it is also defect 44's shape one level up: the harness exists to catch decorative properties, and
+its own Go half was decorative. Fixed by moving the flag after the package, adding both shapes to
+the guard, and pinning the order with three meta tests. The verdict is now backed by a
+**control-of-the-control**: swapping the overlay for a byte-copy of the real file makes the harness
+report `VACUOUS`, so an `OK` is attributable to the mutation rather than to the mechanism.
+
+The generalisable rule: **a branch of a gate that has never had a real input is not a gate.** The
+Python half had four rows and worked; the Go half had none and did not, and the only thing that
+distinguished them was whether anything had ever asked.
+
 ### Pattern J — review integrity: the change nobody could see
 
 **28. `.gitattributes` marked all four lockfiles `-diff`.** `linguist-generated` collapses a
@@ -3040,6 +3130,26 @@ itself wrong on the first attempt — it ran the mutated copy from a temp direct
 files in it. A control that fails for a reason unrelated to its mutation proves nothing, which
 is the whole subject of §0.4.5 arriving one level up.
 
+**48. `check-go-module.sh` had the same defect as `check-structure.sh`, in a script nothing runs.**
+Its rule 5 lists the agent's _structural_ directories — the ones that must contain no `.go` file —
+as `executor validator policy devtools`. Leaf 7.2 put the mutation boundary under
+`internal/executor` (design §2.2.1 mechanism 3, D-45), so the check has been failing since then. It
+went unnoticed for a reason worth stating plainly: **the script is wired into nothing.** Not the
+`agent` CI job, not `pre-commit`, not `make lint`. It is run by hand or not at all, and it had not
+been run.
+
+Two things came out of the repair. The list is now phase-scoped, with a note naming the leaf each
+remaining entry leaves in (`validator` with group 14, `policy` with 9.4). And it gained the
+assertion that stops it rotting the same way again — the **other direction**: a directory removed
+from the structural list must actually hold `.go` files. Without that, deleting the rule and
+satisfying it look identical from the outside, which is the failure defect 47 shows in the mutation
+harness and defect 24's vacuity guard was added to prevent.
+
+Worth noticing that this and defect 47 were both found by the same act: adding the first Go row to
+`mutations.toml` and then running the checks around it because the row's evidence needed them. Neither
+was found by reading code. Producing evidence finds things that inspection does not, which is the
+same conclusion defect 36 reached from the database side.
+
 ### What to take from this chapter
 
 Four habits, all visible in the fixes above.
@@ -3105,40 +3215,40 @@ future-phase behaviour exists in the tree beyond named seams.
 
 |                             |  Leaves |
 | :-------------------------- | ------: |
-| `done`, with cited evidence |  **52** |
+| `done`, with cited evidence |  **53** |
 | `blocked`                   |       0 |
-| `pending`                   |     114 |
+| `pending`                   |     113 |
 | **Total**                   | **166** |
 
 `PROGRESS.md` is the authority for this table. It is verified mechanically after every leaf by
-`scripts/_state.sh`, which reports `done 52`, `pending 114`, `TOTAL 166` over the Phase 1 section
+`scripts/_state.sh`, which reports `done 53`, `pending 113`, `TOTAL 166` over the Phase 1 section
 alone, cross-checks those rows against `tasks.md`'s checkboxes **in both directions**, and lists
 any `done` row that carries no evidence row. All four lists are empty as of this snapshot.
 
 ### By group
 
-| Group                                                                    | Leaves | State                                                                                                                                                                   |
-| :----------------------------------------------------------------------- | -----: | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                                                                            |
-| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                                                                            |
-| 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                                                                            |
-| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1                                                                                                           |
-| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63                                                                     |
-| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                                                                        |
-| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1–7.9 done. 7.3 ran after 7.6, its own vacuity rule having forbidden its original position; Q-03, Q-04 and Q-05 have `mutations.toml` rows and 7.10–7.11 add two more |
-| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                                                                             |
-| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                                                                             |
-| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                                                                             |
-| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                                                                             |
-| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                                                                                                                             |
-| 13 · AI generation pipeline                                              |     13 | not started                                                                                                                                                             |
-| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                                                                                                                             |
-| 15 · Safe Default Template Library                                       |      7 | not started                                                                                                                                                             |
-| 16 · Change Approval Center API                                          |      4 | not started                                                                                                                                                             |
-| 17 · Frontend feature surfaces                                           |     11 | not started                                                                                                                                                             |
-| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                                                                                                                             |
-| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                                                                                                                             |
-| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                                                                                                                             |
+| Group                                                                    | Leaves | State                                                                                                                                                                                                                                                    |
+| :----------------------------------------------------------------------- | -----: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                                                                                                                                                             |
+| 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                                                                                                                                                             |
+| 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                                                                                                                                                             |
+| 4 · Extend Go agent primitives                                           |      7 | **complete** — 4.2's unbuildable clause resequenced into 10.1                                                                                                                                                                                            |
+| 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63                                                                                                                                                      |
+| 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                                                                                                                                                         |
+| 7 · Governance chokepoint and the mutation boundary                      |     11 | 7.1–7.10 done, only 7.11 left. 7.3 ran after 7.6, its own vacuity rule having forbidden its original position; Q-01, Q-03, Q-04 and Q-05 have `mutations.toml` rows — Q-01 is the first `go` row and building it found two gates that had never been run |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                                                                                                                                                              |
+| 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                                                                                                                                                              |
+| 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                                                                                                                                                              |
+| 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                                                                                                                                                              |
+| 12 · Multi-project workspace and readiness analysis                      |      5 | not started                                                                                                                                                                                                                                              |
+| 13 · AI generation pipeline                                              |     13 | not started                                                                                                                                                                                                                                              |
+| 14 · Agent validators and the Kubernetes harness                         |      9 | not started                                                                                                                                                                                                                                              |
+| 15 · Safe Default Template Library                                       |      7 | not started                                                                                                                                                                                                                                              |
+| 16 · Change Approval Center API                                          |      4 | not started                                                                                                                                                                                                                                              |
+| 17 · Frontend feature surfaces                                           |     11 | not started                                                                                                                                                                                                                                              |
+| 18 · End-to-end journey and the `e2e` job                                |      4 | not started                                                                                                                                                                                                                                              |
+| 19 · Coverage gates, negative controls, workflow assembly                |      3 | not started                                                                                                                                                                                                                                              |
+| 20 · Verify all fourteen criteria, then finalise records                 |     15 | not started                                                                                                                                                                                                                                              |
 
 Note the ordering. The test-integrity regime came first, before any component it polices. Then
 inherited debt, before anything that sits on it. Then primitives on both sides. Then the

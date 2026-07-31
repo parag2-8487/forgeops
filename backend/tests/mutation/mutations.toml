@@ -69,6 +69,41 @@ def _ignores_the_configured_path(path, env=None):
 main_module.load_tier_config = _ignores_the_configured_path
 """
 
+[Q-01]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/executor/internal/mutate"
+test_run    = "TestProperty_Q01|TestProperty_P08"
+original    = "agent/internal/executor/internal/mutate/rollback.go"
+overlay     = "backend/tests/mutation/overlays/q01_rollback_removed.go"
+property    = "agent/internal/executor/internal/mutate/q01_property_test.go"
+mutation    = "Remove the rollback loop from the `CATCH` branch"
+description = """
+Replaces `rollback.go` with a version whose loop is gone. `ApplyVerified` still calls
+`rollback` on every error path and the call now does nothing, so a change-set that fails
+part-way stays half-applied — some targets holding new content, others their pre-image, and
+backups left orphaned. That is precisely the state Appendix A.9's `CATCH` branch exists to
+prevent and the state Q-01's disjunction forbids.
+
+`TestProperty_Q01_AnInjectedFailureLeavesEveryTargetAtItsPreImage` must then fail: it
+generates a change-set, injects a failure at a generated position (an entry creates a plain
+file `collide`, a later entry targets `collide/child.txt`, and `MkdirAll` refuses because the
+parent is a regular file) and asserts every target is back at its pre-image. P-08's relocated
+`TestProperty_P08_AtomicChangeSets` is in `test_run` too, because it asserts the same
+disjunction from Phase 0 and should also object.
+
+WHY `rollback` LIVES IN ITS OWN FILE. `go build -overlay` replaces a whole file. With this
+function inside `apply.go` the overlay would have carried a copy of nearly six hundred lines,
+rotting on the first unrelated edit and making the mutation unreadable. Extracting it is what
+keeps the reviewable diff to four lines, and the overlay keeps `backupInfo` and the signature
+identical so a change to either stops the mutated build compiling rather than silently
+ceasing to mutate anything.
+
+The harness passes `-rapid.nofailfile`, because a failing rapid property writes a
+reproduction file under `testdata/rapid/` and every Go row here is EXPECTED to fail — left on,
+the harness would dirty the tree it asserts is clean, for a reason unrelated to the mutation.
+"""
+
 [Q-03]
 runtime     = "python"
 property    = "backend/tests/property/test_q03_chokepoint_unbypassable.py"

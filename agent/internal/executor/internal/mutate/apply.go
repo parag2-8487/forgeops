@@ -491,30 +491,6 @@ func validateEntryShape(e Entry) error {
 	return nil
 }
 
-type backupInfo struct {
-	path    string
-	existed bool
-}
-
-// rollback undoes completed writes in reverse order.
-//
-// Phase 0's function, unchanged. It is the clause Q-01's negative control removes, and the
-// reason it ignores its own errors is that it runs on an error path: there is nothing
-// useful to do with a failure to restore beyond leaving the backup file in place, which it
-// does by not removing it.
-func rollback(written []string, backups []backupInfo) {
-	// Roll back in reverse order
-	for i := len(written) - 1; i >= 0; i-- {
-		if i < len(backups) && backups[i].existed {
-			// Restore from backup
-			_ = os.Rename(backups[i].path, written[i])
-		} else {
-			// Remove if it didn't exist before
-			_ = os.Remove(written[i])
-		}
-	}
-}
-
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {

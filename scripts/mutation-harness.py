@@ -352,14 +352,25 @@ def run_go_row(row: Row, tmp: Path) -> Result:
         encoding="utf-8",
     )
 
-    # `-rapid.nofailfile` because a failing rapid property writes a reproduction
-    # file under `testdata/rapid/`, and every Go row here is EXPECTED to fail. Left
-    # on, the harness would dirty the tree it asserts is clean, for a reason
-    # unrelated to the mutation.
-    argv = ["go", "test", f"-overlay={overlay_json}", "-count=1", "-rapid.nofailfile"]
+    # Argument ORDER is load-bearing and was wrong until leaf 7.10 added the first Go row.
+    #
+    # `-rapid.nofailfile` is a flag of the TEST BINARY, not of `go test`. Placed before the
+    # package pattern, `go test` stops parsing its own flags at the first one it does not
+    # recognise and treats everything after it as a package list — so the pattern was consumed as
+    # a flag value and the command resolved to `.`, producing `no Go files in <module>` and
+    # `FAIL . [setup failed]`. The harness read that non-zero exit as "failed as required" and
+    # reported the row healthy, which means the control had never run at all. Exactly the Q-04
+    # lesson in the other runtime: a control that CRASHES is indistinguishable from one that bites
+    # if you only read the exit code.
+    #
+    # `-rapid.nofailfile` itself is needed because a failing rapid property writes a reproduction
+    # file under `testdata/rapid/`, and every Go row here is EXPECTED to fail. Left on, the harness
+    # would dirty the tree it asserts is clean, for a reason unrelated to the mutation.
+    argv = ["go", "test", f"-overlay={overlay_json}", "-count=1"]
     if row.test_run:
         argv += ["-run", row.test_run]
     argv.append(row.package or "./...")
+    argv.append("-rapid.nofailfile")
 
     completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
         argv,
@@ -371,8 +382,18 @@ def run_go_row(row: Row, tmp: Path) -> Result:
     if completed.returncode == 0:
         return Result(row, VACUOUS, "the Go property PASSED under its own negative control")
     combined = (completed.stdout or "") + (completed.stderr or "")
-    if "build failed" in combined or "cannot find" in combined or "syntax error" in combined:
-        return Result(row, ERROR, "the overlay did not compile, so the control never ran: " + combined.strip()[-300:])
+    # A Go build or setup failure also exits non-zero, and reporting it as "failed as required"
+    # is the same dishonesty the Python side's skipped-run guard closes: the control never ran.
+    # `setup failed` and `no Go files in` were both produced while verifying Q-01 by hand — the
+    # first from a mis-ordered `-run`/package argv, the second from a package pattern the module
+    # could not resolve.
+    for shape in ("build failed", "cannot find", "syntax error", "setup failed", "no Go files in"):
+        if shape in combined:
+            return Result(
+                row,
+                ERROR,
+                f"the mutated build did not run ({shape}), so the control never ran: " + combined.strip()[-300:],
+            )
     return Result(row, OK, f"failed as required (exit {completed.returncode})")
 
 
