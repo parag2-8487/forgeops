@@ -350,6 +350,47 @@ exit status of a single invocation each. The one skip in the whole run is
   after Q-01 through Q-05's rows had landed (finding 49). The
   harness runs with `--allow-incomplete` until leaf 19.2. Every property leaf from here adds
   its row in the same leaf, so the gap closes as the properties land rather than at 19.2.
+- **No CI run has observed any Phase 1 commit.** `.github/workflows/ci.yml` triggers on
+  `push` to `main` and on `pull_request`; `phase-1-implementation` is neither, and
+  `gh pr list --state all` shows one pull request, the merged Phase 0 one.
+  `gh run list --branch phase-1-implementation` returns `[]`. So every statement in this file
+  about a Phase 1 CI job is a statement about what the workflow **would** do, verified by
+  reading it and by running the same commands locally — not an observed result. Two
+  consequences are already known and recorded below: the `pre-commit` job would have been red
+  since leaf 7.5 over an unformatted migration, and the `agent` job's skip gate did not exist.
+  Opening a pull request is the repository owner's decision and is not taken here.
+- **`check-no-skips.py --go` was invoked nowhere, and nine Go tests were skipping.** Design
+  §0.4.4 and criterion 11 both say the `agent` job runs it; the only invocation in `ci.yml` was
+  the backend `auth` job's, so the Go side's zero-skip claim rested on nothing. Running it by
+  hand found nine skips. **Three were a defect, not a platform limit:**
+  `agent/internal/iac/env_test.go` set process-global `PATH=/usr/bin` with no restore, so
+  `exec.LookPath("powershell.exe")` failed for every later test in that binary and three
+  `TestTerminateGroup_*` tests skipped — they passed under `-run` and skipped in the full suite
+  (finding 50). **Six are genuine:** POSIX mode bits, symlinks and a `0555` directory refusing
+  a write, none of which Windows can express, so §0.4.4's remedy "provide the capability in CI"
+  cannot be carried out and the gate could never pass locally — the shape D-51 rejects.
+  Resolved by **D-68**: the defect fixed with `t.Setenv`, the gate wired into the `agent` job
+  over a `go test -json -tags=integration` report, and a test permitted to declare the platform
+  it needs in its own skip message from a closed vocabulary. An undeclared skip still fails; so
+  does a vocabulary typo; and so does a declaration the reporting platform **satisfies**, which
+  is what stops the tag being a blanket exemption. On Linux every `posix` declaration is
+  satisfied, so CI's guarantee is unchanged. No allowlist of test names exists — the declaration
+  lives beside the guard, so it cannot outlive it. Observed locally:
+  `check-no-skips.py --go` exits 0 on Windows listing six `PERMITTED` nodes; the **identical
+  report** judged `--os linux` exits 1 with "declares 'posix', which linux SATISFIES"; an
+  untagged skip exits 1 on windows, linux and darwin; a `posixx` typo exits 1;
+  `--os` without `--go` exits 2. `tests/meta/test_check_no_skips.py` **23 passed**, up from 10.
+- **A third file was committed unformatted, and the hand-equivalent's scope is why.**
+  `backend/alembic/versions/0010_change_set_status_vocabulary.py` landed in leaf 7.5 with a line
+  `ruff format` splits, and stayed that way through leaves 7.3, 7.7, 7.8, 7.9, 7.10 and 7.11.
+  `.pre-commit-config.yaml`'s `ruff-format` hook matches `^backend/.*\.py$` and the
+  `pre-commit` job runs `--all-files`, so that job would have been **red for six consecutive
+  pushes** — unobserved, because no CI run has happened on this branch. The backend job's own
+  `ruff format --check src/ tests/` does not reach `alembic/`, and neither did the local
+  hand-equivalent, which is why leaf 7.3's forward fix of finding 46 missed it: the substitute
+  had a narrower reach than the thing it substitutes for. The file is formatted, the local
+  substitute now checks all of `backend/` and prints both scopes for comparison, and
+  `ruff format --check .` reports **206 files already formatted** (finding 52).
 - **Six of the design's fifteen CI jobs do not exist yet** — `e2e`, `k8s`, `mutation`,
   `policy`, `secrets`, `templates`. They are staged in `scripts/ci-jobs-baseline.txt` and
   owned by leaf 19.3; `check-ci-jobs.py` passes because it distinguishes "defined" from

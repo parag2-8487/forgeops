@@ -52,7 +52,7 @@ func TestResolve_RejectsAbsolutePaths(t *testing.T) {
 
 func TestResolve_RejectsASymlinkEscape(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("symlink test requires Unix")
+		t.Skip("platform-only: posix - symlink creation and traversal semantics differ on Windows (D-68)")
 	}
 	root := t.TempDir()
 	outside := t.TempDir()

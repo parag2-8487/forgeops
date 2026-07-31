@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                                                                                |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                                                                                                       |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                           |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                   |
-| Leaves reflected       | **54 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 112 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. **Group 7's eleven implementation and property leaves are all landed** (7.1–7.11); its close-out remains. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                          |
+| Field                  | Value                                                                                                                                                                                                                                                                                           |
+| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                                                                                                                                  |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                      |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                              |
+| Leaves reflected       | **54 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 112 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. **Group 7's eleven implementation and property leaves are all landed** (7.1–7.11); its close-out remains. Decisions run to **D-68**. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                     |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -2423,6 +2423,59 @@ noticed because it is wired into neither CI, nor `pre-commit`, nor `make lint`. 
 phase-scoped, with a second rule asserting the other direction: a directory removed from the list
 must actually hold code, so deleting the rule is not indistinguishable from satisfying it.
 
+### D-68 — when a gate cannot pass locally, and both available answers are wrong
+
+This one is worth reading as a method rather than as a rule, because the decision sat between two
+of this project's own principles pointing in opposite directions.
+
+**The situation.** `check-no-skips.py --go` reported nine skipped Go tests on a Windows machine.
+§0.4.4's position is absolute and well earned: a skip inside a green run is indistinguishable from
+coverage, and Phase 0 proved it by paying for a real Postgres service beside seven tests that never
+executed. Its remedy is "provide the capability in CI". But six of the nine assert POSIX file
+semantics — symlink escape, a `0555` directory refusing a write, owner-only mode bits under NTFS
+ACLs — and you cannot provide POSIX mode bits to Windows. So the gate could not pass on a
+developer's machine, ever, which is exactly the shape **D-51** rejects, and the pressure that
+creates is not "fix the tests" but "stop running the gate".
+
+**The first move was not to decide.** It was to stop treating "nine platform skips" as one thing.
+Reading them individually, one group behaved oddly: the three `TestTerminateGroup_*` tests skipped
+with "powershell.exe is not available" on a machine where powershell is plainly available. Running
+one alone made it pass. Three of the nine were a sibling test's unrestored `os.Setenv("PATH", …)`
+(finding 50) — a defect, not a platform limit, and one that both of the tempting decisions below
+would have permanently concealed. **Roughly a third of the population the decision was about did
+not belong in it.** That is the transferable move: before choosing between two ways to tolerate a
+set of exceptions, check that every member is actually an exception.
+
+**Then the two obvious answers, and why both are wrong.** An **allowlist of exempt test names,
+with an expiry date** is the conventional answer, and it restates data away from the guard that
+causes the skip — rename the test and the entry is dead weight; delete the guard and the entry
+keeps exempting a name that no longer skips. That is finding 49's rot in a new place, three days
+after finding 49. And an expiry date asks you to re-approve on a calendar rather than when reality
+changes. **Leaving it strict and telling developers not to run it** is D-51's failure by name, and
+it would have hidden finding 50 forever, because the only reason that defect surfaced is that
+someone ran the failing gate and read the output.
+
+**What was chosen.** The test declares the platform it needs, in its own skip message, from a
+closed vocabulary: `t.Skip("platform-only: posix - NTFS uses ACLs …")`. The declaration travels
+with the guard, so it cannot outlive it. Three clauses keep it from becoming a blanket pass: an
+undeclared skip fails, a vocabulary typo fails, and — the load-bearing one — **a declaration whose
+requirement the reporting platform SATISFIES fails**. On Linux, where CI runs, `posix` is
+satisfied, so all six of those tests must execute and the guarantee is precisely what it was
+before. The same report judged `--os linux` exits 1; that is the control, and it is a test.
+
+**The cost, stated rather than implied.** The tag is self-declared, so an author can write
+`platform-only: posix` into a capability skip and be believed on Windows. Three things contain it
+and none of them is a proof: the lie fails in CI, the permitted set is printed on every run
+including when it is empty, and the declaration is a source edit a reviewer sees. It is not
+airtight. Saying so is the difference between a documented limitation and a false claim, and this
+chapter exists because of the second kind.
+
+**The part that had nothing to do with the decision.** The gate was invoked nowhere for Go
+(finding 51). Design §0.4.4 gives the exact command and criterion 11 says the `agent` job runs it;
+`ci.yml` did not. So all of the above would have been a well-reasoned improvement to something
+that never executed. The wiring is the fix; the reasoning is the interesting part, and the order in
+which they matter is the reverse of the order in which they were done.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -2445,7 +2498,9 @@ authoritative.
 
 Leaf 7.4 added entries **38 through 43** and one new pattern, **P**; leaf 7.6 added **44**; leaves
 7.5, 7.7, 7.8 and 7.10 added **45 through 48**, one of them a second new pattern, **O**; leaf 7.11
-added **49**. Pattern P is the first one that is not about a
+added **49**; and resolving the Go skip gate afterwards added **50, 51 and 52** — none of them a
+new pattern, which is itself the point: they are N, I and K recurring, in a repository that had
+already written all three down. Pattern P is the first one that is not about a
 single implementation being wrong — it is about two implementations of one written contract agreeing
 where the document warns and diverging where it is silent.
 
@@ -2991,6 +3046,35 @@ The generalisable rule: **a branch of a gate that has never had a real input is 
 Python half had four rows and worked; the Go half had none and did not, and the only thing that
 distinguished them was whether anything had ever asked.
 
+**51. The skip gate's Go half was invoked nowhere, and the design said twice that it was.**
+`scripts/check-no-skips.py` has had a `--go` mode since leaf 1.5. Design §0.4.4 gives its exact
+invocation — `go test -json -tags=integration ./... > agent.jsonl` then
+`check-no-skips.py --go agent.jsonl` — and criterion 11 says "**`backend`**/**`agent`** run
+`check-no-skips.py`". The only invocation in `ci.yml` was the backend `auth` job's, over a pytest
+report. Nine Go tests were skipping.
+
+Two things make this worse than defect 47 rather than the same as it. First, the `--go` path was
+not merely unexercised, it was **tested** — `tests/meta/test_check_no_skips.py` had a
+`TestGoOutputIsUnderstood` class proving the parser understood `go test -json` events, so the
+component was demonstrably correct and simply never called. A working part that nothing invokes
+looks exactly like a working feature from inside its own test file. Second, the evidence row for
+leaf 7.4 says the corpus tests "add **zero** skips … which matters because `check-no-skips.py
+--go` treats every Go test as mandatory" — a true statement about the script, written in a place
+that implies the script runs. Nobody was careless; the claim was checked against the wrong thing.
+
+And the parser had a defect that would have blunted the gate even once wired. It collected the
+output lines containing "skip", which matches the `--- SKIP: TestX (0.00s)` **banner** and not the
+`x_test.go:176: <reason>` line above it. So the gate whose entire purpose is reporting skips could
+not report why any of them skipped — visible in its own output as
+`TestApplyVerified_SymlinkEscape - --- SKIP: TestApplyVerified_SymlinkEscape (0.00s)`, a reason
+field containing the test's own name. It had a meta test asserting the reason was captured, and
+that test passed, because its fixture put the word "SKIP" inside the reason line. **A fixture that
+satisfies the parser's filter is not a sample of real input.**
+
+The rule worth carrying: for every gate the design names, ask _which file invokes it_ and read
+that file. "The script exists, is tested, and is documented" answers a different question, and
+three yeses to it are not one yes to this.
+
 ### Pattern J — review integrity: the change nobody could see
 
 **28. `.gitattributes` marked all four lockfiles `-diff`.** `linguist-generated` collapses a
@@ -3056,6 +3140,35 @@ because `grep -E` does not expand `\t`. The pattern is the character class `{spa
 first run reported every line ending in the letter "t" — including `import pytest` — as trailing
 whitespace. `[[:blank:]]` is the correct spelling. A hygiene checker that reports false
 positives is a hygiene checker that gets ignored, which is this pattern all over again.
+
+**52. Defect 46's remedy had a narrower scope than the hook it replaced, so defect 29 happened a
+third time.** `backend/alembic/versions/0010_change_set_status_vocabulary.py` landed in leaf 7.5
+carrying a line `ruff format` splits, and survived leaves 7.3, 7.7, 7.8, 7.9, 7.10 and 7.11 — six
+pushes, including the one whose whole point was fixing defect 46 forward.
+
+The cause is a scope mismatch, and it is worth more than the file. `.pre-commit-config.yaml`'s
+`ruff-format` hook matches `^backend/.*\.py$` — every Python file under `backend/`. The backend CI
+job runs `ruff format --check src/ tests/`. And `scripts/_belint.sh`, the local hand-equivalent
+written as defect 46's remedy, ran `ruff format --check src tests` — copied from the CI job rather
+than from the hook. So the substitute for the gate had a smaller reach than the gate, and `194
+files already formatted` looked identical to clean while `206 files` was the real question. Leaf
+7.3 ran the substitute, saw green, and fixed the three files it could see.
+
+The general form: **a hand-written stand-in for a gate must be derived from the gate's own
+configuration, not from another gate that happens to run something similar.** Two invocations that
+differ only in scope are indistinguishable in their output — both print a count and the word
+"formatted" — so the mismatch cannot be noticed by reading either one. `_belint.sh` now checks
+`.`, and prints the narrower CI-job scope beside it so the two numbers being different is visible
+rather than latent.
+
+There is a second half, and it is the reason this went six pushes rather than one. The
+`pre-commit` CI job runs `--all-files`, so it **would** have been red from `6baaef2` onward — but
+`.github/workflows/ci.yml` triggers on `push` to `main` and on `pull_request`, and
+`phase-1-implementation` is neither. `gh run list --branch phase-1-implementation` returns `[]`.
+So this is pattern K's title taken literally: not a gate that was red and nobody looked, but a
+gate that was red and **nobody could look**, because it never ran. Every CI claim about Phase 1 in
+`PROGRESS.md` is a claim about what the workflow would do, and that file now says so where a
+reader will meet it.
 
 ### Pattern L — the mechanism the steering rule never had
 
@@ -3198,6 +3311,41 @@ same test was run with the integration variables unset, which separated "my chan
 — every other `LifespanManager` in the tree also inherits the default, and the one that builds an
 app dozens of times per test is the one that should be choosing its own bound rather than
 discovering it.
+
+**50. A test set `PATH` for the whole binary, and three other tests reported it as a platform
+limitation.** `agent/internal/iac/env_test.go`'s `TestBuildEnv_AllowlistOnly` called
+`os.Setenv("PATH", "/usr/bin")` with no restore. Every test that ran afterwards in that package
+saw a one-entry PATH, so `exec.LookPath("powershell.exe")` failed and the three
+`TestTerminateGroup_*` tests in `procattr_windows_test.go` skipped with "powershell.exe is not
+available". They **passed** when run with `-run TestTerminateGroup` and **skipped** in the full
+package run.
+
+This is entry 34's shape, and the reason it is worth a second entry is what the skip LOOKED like.
+Entry 34's victim failed, and a failure demands attribution. This one's victims skipped, with a
+message that reads as a true statement about the machine — and `procattr_windows_test.go` is a
+Windows-only file, so "a Windows thing that Windows cannot do" is exactly plausible enough to
+stop looking. It was found only because `check-no-skips.py --go` was run by hand, its nine skips
+were read individually instead of being dismissed as platform noise, and one of them was checked
+in isolation. The three-minute version of that check is the whole finding: **run the skipping
+test alone.** If it passes, the skip is a lie about the platform and the truth is in a sibling.
+
+`defer os.Unsetenv(...)` — which the other three tests in that file used — is not the fix, and
+that is the second lesson. `Unsetenv` DELETES the name. For a variable that did not exist
+beforehand the two are the same; for one that did, and `PATH` always does, "restoring" by
+deleting leaves the process in a state neither the test nor anything after it asked for. The
+correct primitive is `t.Setenv`, which records the previous value including "was absent", restores
+it in a cleanup, and panics if the test also calls `t.Parallel` — so the isolation cannot be
+quietly undone by concurrency later. The same defect sat in `property_test.go` with a **random**
+trigger: its generator draws names matching `[A-Z_][A-Z0-9_]{2,20}`, which matches `PATH`, `HOME`
+and `TMP`, so on some seeds it would have deleted one of them. `t.Setenv` is unusable inside a
+rapid closure — its cleanup is scoped to the whole test, not to one example — so that one
+snapshots and restores by hand, per example.
+
+Two tests now assert the class rather than the instance: no `_test.go` file in that package calls
+`os.Setenv` outside the one save-and-restore shape, and none restores a variable by deleting it.
+Both scans first flagged the _comment paragraphs explaining the defect_, because those quote the
+offending call — a source scan that cannot tell code from prose reports its own documentation as
+a violation, and the tempting fix is the wrong one.
 
 ### Pattern O — the check frozen at a previous phase, so its findings are noise
 

@@ -126,6 +126,5 @@ def downgrade() -> None:
         )
     op.drop_constraint(CONSTRAINT, "change_sets", type_="check")
     op.execute(
-        f"ALTER TABLE change_sets ADD CONSTRAINT {CONSTRAINT} "
-        f"CHECK ({in_list('status', PREVIOUS_STATUSES)}) NOT VALID"
+        f"ALTER TABLE change_sets ADD CONSTRAINT {CONSTRAINT} CHECK ({in_list('status', PREVIOUS_STATUSES)}) NOT VALID"
     )

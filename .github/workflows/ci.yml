@@ -126,6 +126,17 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
+      # This job had no Python, because nothing in it invoked the interpreter directly —
+      # `check-chokepoint.sh` finds one itself, falling back to `python3`. The skip gate below
+      # is the first direct `python` use here, and Ubuntu ships `python3` without aliasing
+      # `python`, so without this the gate would have failed on the interpreter rather than on
+      # its subject. Pinned to PYTHON_VERSION like the other four jobs rather than taking the
+      # runner's default, so the script runs on the same interpreter everywhere. No
+      # dependencies are installed: `check-no-skips.py` is stdlib-only, deliberately, so a gate
+      # here never adds a lock file to keep fresh.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       # internal/iac/integration_test.go calls t.Skip("tofu not found") without a
       # binary, so the four real-OpenTofu tests behind deliverable 0.8 — readonly
       # init, validate, plan and the plan-sample fixture — silently did not run.
@@ -169,6 +180,28 @@ jobs:
       # PRD §9: -race and -shuffle=on. Linux runners have cgo, so -race works.
       - name: Test
         run: go test -race -shuffle=on ./... -count=1
+      # design.md §0.4.4 and criterion 11 both say the AGENT job runs `check-no-skips.py`.
+      # It did not: the only invocation in this workflow was the backend `auth` job's, so the
+      # Go side's "the mandatory selection recorded zero skips" was asserted by the design and
+      # observed by nothing. Wired here (D-68).
+      #
+      # A SECOND run rather than reusing the step above, because `-json` and `-race
+      # -shuffle=on` answer different questions and combining them would weaken one: the step
+      # above is the race and ordering check, this one is the record of what executed. It also
+      # adds `-tags=integration`, so the four real-OpenTofu tests are in the record.
+      #
+      # No `|| true`. That habit is recorded twice in the journal's chapter 9 as a way a step
+      # stops meaning anything: `-tags=integration` widens the selection beyond the step above,
+      # so a failure here is a failure nothing else would have caught.
+      - name: Record what actually ran
+        run: go test -json -tags=integration ./... > ../agent.jsonl
+      - name: The Go selection recorded zero skips
+        working-directory: .
+        # No `--os`: the script reads `go env GOOS` and prints it, so the platform the verdict
+        # was computed for is in the log rather than assumed. On linux every `platform-only:
+        # posix` declaration is SATISFIED, so all six of those tests must run and a skip among
+        # them fails.
+        run: python scripts/check-no-skips.py --go agent.jsonl
       - name: Build
         run: go build ./...
 

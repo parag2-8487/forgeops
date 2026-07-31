@@ -27,10 +27,28 @@ func TestProperty_P12_EnvIsolation(t *testing.T) {
 			extraAllow[i] = rapid.StringMatching(`[A-Z_][A-Z0-9_]{2,10}`).Draw(rt, "extra")
 		}
 
-		// Set parent env
+		// Set parent env.
+		//
+		// Restored to its PREVIOUS VALUE rather than unset, and the difference is not
+		// theoretical here: the generator's own pattern `[A-Z_][A-Z0-9_]{2,20}` matches `PATH`,
+		// `HOME` and `TMP`, so `defer os.Unsetenv(k)` could delete a variable the rest of the
+		// test binary needs — probabilistically, on some seeds and not others. That is the same
+		// defect `env_test.go` records, with a random trigger instead of a fixed one. `t.Setenv`
+		// is not usable inside a rapid closure (its cleanup is scoped to the whole test, not to
+		// one example, and it would accumulate one restore per generated variable per example),
+		// so the snapshot is taken by hand and the restore is per-example.
 		for k, v := range parentVars {
-			os.Setenv(k, v)
-			defer os.Unsetenv(k)
+			previous, existed := os.LookupEnv(k)
+			if err := os.Setenv(k, v); err != nil {
+				rt.Fatalf("Setenv %s: %v", k, err)
+			}
+			defer func(name, value string, wasSet bool) {
+				if wasSet {
+					_ = os.Setenv(name, value)
+					return
+				}
+				_ = os.Unsetenv(name)
+			}(k, previous, existed)
 		}
 
 		cfg := TofuConfig{

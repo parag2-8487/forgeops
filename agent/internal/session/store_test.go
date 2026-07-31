@@ -259,7 +259,8 @@ func TestStore_WipeIsIdempotent(t *testing.T) {
 
 func TestFileStore_WritesOwnerOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("NTFS uses ACLs; Go reports a synthetic mode, so a permission-bit assertion is meaningless")
+		t.Skip("platform-only: posix - NTFS uses ACLs; Go reports a synthetic mode, so a " +
+			"permission-bit assertion is meaningless (D-68)")
 	}
 	t.Parallel()
 
@@ -283,7 +284,7 @@ func TestFileStore_WritesOwnerOnly(t *testing.T) {
 
 func TestFileStore_RefusesAWorldReadableFileOnEveryLoad(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("NTFS uses ACLs; see assertOwnerOnly")
+		t.Skip("platform-only: posix - NTFS uses ACLs; see assertOwnerOnly (D-68)")
 	}
 	t.Parallel()
 
@@ -310,7 +311,7 @@ func TestFileStore_RefusesAWorldReadableFileOnEveryLoad(t *testing.T) {
 
 func TestAssertOwnerOnly_Matrix(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("NTFS uses ACLs; see assertOwnerOnly")
+		t.Skip("platform-only: posix - NTFS uses ACLs; see assertOwnerOnly (D-68)")
 	}
 	t.Parallel()
 

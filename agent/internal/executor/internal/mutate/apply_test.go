@@ -173,7 +173,7 @@ func TestApplyVerified_AbsolutePathRejected(t *testing.T) {
 
 func TestApplyVerified_SymlinkEscape(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("symlink test requires Unix")
+		t.Skip("platform-only: posix - symlink creation and traversal semantics differ on Windows (D-68)")
 	}
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -214,7 +214,9 @@ func TestApplyVerified_BlockedPaths(t *testing.T) {
 
 func TestApplyVerified_RollbackOnFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("read-only directory enforcement differs on Windows")
+		t.Skip("platform-only: posix - a 0555 directory does not refuse a write on Windows (D-68). " +
+			"The CATCH branch is covered on every platform by TestProperty_Q01_" +
+			"AnInjectedFailureLeavesEveryTargetAtItsPreImage, which injects by ordering instead")
 	}
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "first.txt"), []byte("original-first"))
