@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                            |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                   |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                       |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                               |
-| Leaves reflected       | **46 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 120 `pending`. Reconciled 2026-07-31; all three sources agree. Group 7 in progress: 7.1, 7.2 and 7.4 landed. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                      |
+| Field                  | Value                                                                                                                                                                                 |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                        |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                            |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                    |
+| Leaves reflected       | **47 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 119 `pending`. Reconciled 2026-07-31; all three sources agree. Group 7 in progress: 7.1, 7.2, 7.4 and 7.6 landed. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                           |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -1756,6 +1756,104 @@ suites. That is the intended friction. The smaller cost is that the fixture floo
 committed integers in two languages; a test reads the Go constants out of the source and asserts
 they equal the Python ones, so the two cannot drift to different corpora.
 
+### D-61 — the chain verifier reads the `prev_hash` column, not just the previous row's hash
+
+**What it decided.** `verify_chain` compares each row's stored `prev_hash` against its
+predecessor's stored `hash`, before recomputing the row's own hash, and reports that as a distinct
+kind of divergence.
+
+**Why.** Appendix A.8 excludes `prev_hash` from the hashed payload — correctly, because it enters
+the digest through the `|| prev_hash` concatenation and hashing it twice would make the chain's
+structure depend on which list a field happened to appear in. But the verifier as specified walks
+forward carrying `prev = row.hash` and never reads the `prev_hash` column at all. So an actor with
+database write access can rewrite one row's `prev_hash`, recompute that row's hash from the new
+value, recompute every later hash, and produce a chain that verifies. It is arithmetically sound
+and it no longer describes the history it came from, which is the one thing tamper evidence exists
+to rule out.
+
+**What was rejected.** Putting `prev_hash` back into the payload — that breaks the correspondence
+between Q-05's negative control ("drop `prev_hash` from the hashed payload") and a single clause.
+Relying on `seq` gaps — a gap catches deletion, and this attack deletes nothing.
+
+**Cost.** One 32-byte comparison per row, and a third value in the reported divergence kind, which
+is why the API returns it as a string rather than an enum.
+
+### Leaf 7.6 — the audit writer, and the four things that had to be true of the transaction
+
+The chain arithmetic is the easy part. Everything that makes this writer trustworthy is a property
+of the **transaction**, and each one is asserted against a real PostgreSQL rather than in memory.
+
+**It joins the caller's transaction and never commits.** That single choice is what makes Q-04's
+"exactly one record per transit" provable instead of probable: the change-set transition and its
+audit record commit or roll back together, so there is no window in which one exists without the
+other, and a failed audit write aborts the mutation because the exception propagates into the
+caller's transaction. The writer therefore holds no session and no connection — every method takes
+the caller's `AsyncSession`. A writer with its own session could not have this property at all.
+
+**The timestamp comes from the database's clock.** `clock_timestamp()`, fetched in the same
+round-trip as the advisory lock, rather than `datetime.now()`. Two API replicas with drifting
+clocks would otherwise disagree about the order of their own records, and `created_at` is inside
+the hash, so a caller-supplied time would be a caller-chosen digest. `clock_timestamp()` rather
+than `now()` because `now()` is transaction start time and two records in one transit would then
+share a value — asserted, because it is exactly the kind of thing that looks fine until someone
+needs to order two records.
+
+**Appends serialise on a transaction-scoped advisory lock, keyed by tenant.** Per tenant, because
+the chain is per tenant and one lock for everybody would make one noisy tenant everybody's
+problem. Transaction-scoped, because a session-scoped lock outlives a rollback and a pooled
+connection hands that session to the next request. The lock key is derived from SHA-256 rather
+than Python's `hash()`, which is randomised per process — two workers would take _different_ locks
+and fork the chain under precisely the concurrency the lock exists to prevent. Eight concurrent
+transactions on eight connections prove it holds.
+
+**`tenant_id IS NOT DISTINCT FROM :tenant`, never `=`.** `tenant_id` is nullable in Phase 1 (D-35
+defers `NOT NULL` to Phase 2) and `tenant_id = NULL` matches no row, so a plain equality would
+restart the untenanted chain at genesis on every append and every row in it would verify against
+the wrong predecessor. This is the sort of bug that passes every test written by the person who
+wrote the bug, because the writer and the verifier make the same mistake — so the test asserts
+the second untenanted record's `prev_hash` equals the first's `hash`, which is a fact about the
+data rather than about the code path.
+
+**How tampering is tested, and why that shape is the honest one.** Migration `0007`'s trigger
+refuses UPDATE for _every_ role, including the migrator. So the tamper test disables the trigger
+as the table's owner, edits one row, and re-enables it. That is deliberately the threat model
+tamper evidence exists for — an actor already inside the database — and it is what lets the test
+assert the real thing: `verify_chain` reports that exact `seq`. Simulating the tamper in the
+verifier's _input_ instead, which is what leaf 5.6 had to do before a writer existed, proves the
+comparison and leaves the interesting question unasked.
+
+**What the field set costs, and the test that keeps it honest.** `SEMANTIC_FIELDS` is data, and a
+unit test derives the column set from `AuditEvent.__table__` and fails if any column other than
+`seq`, `hash` and `prev_hash` is missing from it. Without that, a column added in a later migration
+would sit outside the chain and be editable without breaking anything — a hole that no chain test
+would notice, because the chain would still verify.
+
+**Two closed vocabularies, and why closing them is worth the friction.** `ACTOR_KINDS` and
+`OUTCOMES` are tuples, validated on every draft. An open `actor_kind` makes "show me everything a
+device did" stop working the first time a writer spells it `device`; an open `outcome` makes the
+log unfilterable. Extending either is a one-line edit here rather than a new string at a call
+site. The API's query parameters are `Literal` over the same tuples, so the surface and the writer
+cannot disagree — a retyped list would be one edit away from accepting a value the writer refuses,
+and the filter would then return an empty page instead of an error.
+
+**The read surface is two GETs and no POST.** A route that could post an audit record would be a
+route that could forge one, and a test asserts the whole `/api/v1/audit` prefix exposes nothing but
+`get`. `GET /verify` is admin-only — not because a hash comparison is sensitive, but because an
+unbounded recomputation available to any authenticated caller is a cheap way to make the database
+everybody's problem, which is why `since_seq` exists. A divergence returns **200 with `ok: false`**:
+5xx would make "the chain is broken" indistinguishable from "the verifier is broken", and those
+need different responses. Tenant scope comes from the principal and never from a parameter, because
+D-35 leaves the column nullable with no RLS policy behind it in Phase 1.
+
+**`make verify-chain` exists as well as the route, for one reason.** An integrity check obtainable
+only from the service whose integrity is in question is not much of a check. The CLI runs after a
+restore, during an incident, or when the answer must not come from the audited process. It prints
+the divergent `seq` and nothing about the row's content: the job is to say where to look, and
+dumping tampered audit content into a CI log moves it somewhere with weaker access control than
+the table it came from. Its output is deliberately ASCII — this leaf spent real minutes on a
+message that vanished because an em dash did not survive a Windows console redirect, and a
+diagnostic nobody can see is worse than no diagnostic.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -1776,9 +1874,9 @@ one habit; the two logging holes are one hole seen twice), which is roughly how 
 inherited-debt table counts them. Do not quote a number from this chapter as though it were
 authoritative.
 
-Leaf 7.4 added entries **38 through 43** and one new pattern, **P**, so the list now runs to
-forty-three across sixteen patterns. Pattern P is the first one that is not about a single
-implementation being wrong — it is about two implementations of one written contract agreeing
+Leaf 7.4 added entries **38 through 43** and one new pattern, **P**; leaf 7.6 added **44**. The
+list now runs to forty-four across sixteen patterns. Pattern P is the first one that is not about a
+single implementation being wrong — it is about two implementations of one written contract agreeing
 where the document warns and diverging where it is silent.
 
 ### Pattern A — dead wiring: a registered surface whose composition was never assembled
@@ -2062,6 +2160,20 @@ spellings. Small, and worth fixing precisely because the sentence was persuasive
 been repeated verbatim into a session handover note, where "four trailing bits" would have sent
 the next reader looking for a bug that is not there. A wrong number inside a correct explanation
 propagates further than an obviously wrong claim.
+
+**44. `core/canonical.py` claimed to own the concatenation order and supported only one of the two
+orders it named.** Its `canonical_hash` docstring says the prefix is passed in "rather than
+concatenating at the call site" so "the audit chain and the envelope signer cannot end up hashing
+`payload || prefix` and `prefix || payload`" — and the function had a `prefix` parameter only. The
+envelope needs `prefix || payload` (§7.6) and the audit chain needs `payload || prev_hash`
+(Appendix A.8): genuinely opposite, both correct, and one of them unrepresentable. So the module as
+written forced exactly the outcome its docstring existed to prevent — the audit writer would have
+had to concatenate for itself, and the second call site would be the one nobody compared against
+the first. Fixed by adding `suffix`, which is three characters of behaviour and one paragraph of
+explanation, because the explanation is the part that stops it drifting back.
+
+Worth noting as a pattern-D case rather than a trivial gap: the rule was right, the reasoning was
+right, and it was written before the second consumer existed. That is the normal way this happens.
 
 ### Pattern E — the skip that reads as coverage
 

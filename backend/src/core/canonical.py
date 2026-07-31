@@ -99,15 +99,22 @@ def canonical_json(payload: Any) -> str:
     return canonical_bytes(payload).decode("utf-8")
 
 
-def canonical_hash(payload: Any, *, prefix: bytes = b"") -> bytes:
-    """`sha256(prefix || canonical_bytes(payload))`.
+def canonical_hash(payload: Any, *, prefix: bytes = b"", suffix: bytes = b"") -> bytes:
+    """`sha256(prefix || canonical_bytes(payload) || suffix)`.
 
-    `prefix` carries a domain separator, so bytes signed for one purpose cannot be
-    replayed as another (§7.6's `"forgeops-envelope-v1" || 0x00`). Passing it here
-    rather than concatenating at the call site means the concatenation order is fixed in
-    one place — the audit chain and the envelope signer cannot end up hashing
-    `payload || prefix` and `prefix || payload`.
+    Both positions exist because the two subsystems genuinely need different ones, and
+    keeping both here is what stops a second concatenation site appearing.
+
+    `prefix` carries a domain separator, so bytes signed for one purpose cannot be replayed
+    as another (§7.6's `"forgeops-envelope-v1" || 0x00`).
+
+    `suffix` carries the audit chain's previous hash, because Appendix A.8 fixes that order
+    as `SHA256(payload ‖ prev_hash)` — the opposite way round from the envelope. Passing
+    both here rather than concatenating at each call site means the order is fixed in one
+    place: the audit chain and the envelope signer cannot end up disagreeing about which
+    side the extra bytes go on, which is a difference no test would notice until the two
+    were compared.
     """
     import hashlib
 
-    return hashlib.sha256(prefix + canonical_bytes(payload)).digest()
+    return hashlib.sha256(prefix + canonical_bytes(payload) + suffix).digest()

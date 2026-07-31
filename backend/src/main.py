@@ -29,6 +29,7 @@ from .ai.routing.endpoints import EndpointRegistry
 from .ai.routing.keys import EnvKeyResolver
 from .ai.routing.router import ModelRouter
 from .ai.routing.tiers import load_tier_config
+from .audit.writer import AuditWriter
 from .auth.cerbos import CerbosClient
 from .auth.oidc import IdTokenVerifier, OidcClient
 from .auth.sessions import SessionService
@@ -202,6 +203,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # the runtime image to make one JSON POST. Non-destructive like every other
     # collaborator here — an unreachable Cerbos changes readiness, not liveness.
     app.state.cerbos = CerbosClient(str(settings.cerbos_url), http=shared_http)
+    # The audit writer (§11.9). Holds no session and opens no connection — every method takes
+    # the caller's `AsyncSession`, which is what lets the audit row and the change-set
+    # transition commit or roll back together (Q-04). So there is nothing here to fail at
+    # startup and nothing to close at shutdown; it is composed rather than constructed lazily
+    # only so §0.4.1's wiring test can see it on `app.state`.
+    app.state.audit_writer = AuditWriter(advisory_lock_key=settings.audit_advisory_lock_key)
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()
     app.state.mcp_gateway = McpGateway(
@@ -355,6 +362,13 @@ def create_app() -> FastAPI:
     from .ai.routes import router as ai_router
 
     app.include_router(ai_router)
+
+    # The audit read surface (§11.9, criterion 9). Registered here rather than behind a feature
+    # flag: `GET /verify` is what makes tamper evidence a product feature, and a feature nobody
+    # can reach is a claim rather than a control.
+    from .audit.routes import router as audit_router
+
+    app.include_router(audit_router)
 
     # MCP Gateway ingress, registry introspection and App hosting (§5.2).
     from .mcp.routes import router as mcp_router

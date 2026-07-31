@@ -368,8 +368,9 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add integration tests over `production_app` for deny, block, pending, auto-approve, approve, apply and revert, asserting envelope presence or absence per path.
     - _Design: §2.2, §5.4, §11.6, Appendix A.3; Deliverable: 1.6, 1.10; Criterion: 5, 7; Property: Q-03, Q-04, Q-22_
 
-  - [ ] 7.6 Implement the append-only audit writer and chain verification
+  - [x] 7.6 Implement the append-only audit writer and chain verification
 
+    - **One bullet resequenced.** "write agent-side records from the hub with `actor_kind="agent"`" needs `backend/src/websocket/hub.py`, which does not exist — `backend/src/websocket/` holds only its `README.md` until group 8 builds the session protocol. The writer half of that clause is implemented and asserted here: `actor_kind="agent"` is a member of the closed `ACTOR_KINDS` vocabulary and a draft carrying it is **required** to name `actor_device_id`, proved by `test_an_agent_actor_must_name_the_device`. Wiring the call site lands with the hub, in the leaf that creates it. Same disposition as leaves 2.5, 4.2 and 7.3: the leaf's wording reached one wave forward, not its work.
     - Implement `AuditWriter.append` joining the caller's transaction, taking a transaction-scoped advisory lock keyed by tenant, and computing `hash = sha256(JCS(semantic fields) || prev_hash)`.
     - Require all six NFR-14 fields including a non-empty `reason`; implement `verify_chain` reporting the first divergent `seq` and expose it as admin-only `GET /api/v1/audit/verify` plus `make verify-chain`.
     - Add the query API with filtering and cursor pagination, and write agent-side records from the hub with `actor_kind="agent"` so agent operations are covered without giving the agent database access.
