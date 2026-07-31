@@ -656,6 +656,20 @@ def go_import_graph(agent_root: Path) -> dict[str, list[str]]:
     return graph
 
 
+def _inside_executor_subtree(importer: str) -> bool:
+    """Whether `importer` is the executor package or a package beneath it.
+
+    A bare `startswith(GO_EXECUTOR_PREFIX)` is WRONG and Q-03's generated graphs caught it:
+    `.../agent/internal/executorish` shares the prefix as a string, is a different package, and
+    would have been reported as permitted. Go itself would refuse to compile that import, so the
+    check was more lenient than the compiler — a check that disagrees with the mechanism it
+    exists to police in the LENIENT direction.
+
+    The path separator is the boundary, so it has to be part of the test.
+    """
+    return importer == GO_EXECUTOR_PREFIX or importer.startswith(GO_EXECUTOR_PREFIX + "/")
+
+
 def classify_importers(graph: dict[str, list[str]]) -> tuple[list[GoImport], list[str]]:
     """Classify every importer of the boundary in `graph`. Pure, so it is testable.
 
@@ -681,7 +695,7 @@ def classify_importers(graph: dict[str, list[str]]) -> tuple[list[GoImport], lis
     for importer, imports in sorted(graph.items()):
         if GO_MUTATE_PACKAGE not in imports:
             continue
-        permitted = importer.startswith(GO_EXECUTOR_PREFIX)
+        permitted = _inside_executor_subtree(importer)
         importers.append(GoImport(importer=importer, permitted=permitted))
         if not permitted:
             offenders.append(f"package {importer} imports executor/internal/mutate")

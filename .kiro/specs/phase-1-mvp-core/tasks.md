@@ -380,11 +380,13 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the query API with filtering and cursor pagination, and write agent-side records from the hub with `actor_kind="agent"` so agent operations are covered without giving the agent database access.
     - _Design: §6.3, §6.4, §11.9, Appendix A.8; Deliverable: 1.9; Criterion: 9; Property: Q-04, Q-05_
 
-  - [ ] 7.7 Write property test Q-03 for chokepoint unbypassability
+  - [x] 7.7 Write property test Q-03 for chokepoint unbypassability
 
     - Generate call graphs over `backend/src/**` and package graphs over `agent/internal/**`; prove no `@mutation_primitive` is reachable without a `MutationAuthority`, that the type cannot be constructed outside `governance/`, and that `mutate` has no importer outside `executor/**`.
     - Add the `mutations.toml` row deleting the `_MINT_SENTINEL` check in `__post_init__`.
-    - _Design: §2.2.1, §11.6, Appendix B Q-03; Deliverable: 1.10; Property: Q-03_
+    - **The generated graphs found a defect in the gate leaf 7.3 had just landed.** `classify_importers` tested the executor prefix with a bare `startswith`, so `agent/internal/executorish` — a different package that merely shares the prefix as a string — was reported as **permitted**. Go itself refuses to compile that import, so the check was more lenient than the mechanism it polices. Fixed by making the path separator part of the test; the generator keeps `executorish` in its sample set so the property notices if it ever regresses.
+    - The property imports the **same** analysis module `scripts/check-chokepoint.sh` runs, so the gate and the property cannot come to disagree about what "reachable without authority" means — the Q-06/Q-14 lesson applied to a lint.
+    - _Design: §2.2.1, §11.6, §17.1 D-67, Appendix B Q-03; Deliverable: 1.10; Property: Q-03_
 
   - [ ] 7.8 Write property test Q-04 for audit completeness per transit
 

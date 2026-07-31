@@ -69,6 +69,57 @@ def _ignores_the_configured_path(path, env=None):
 main_module.load_tier_config = _ignores_the_configured_path
 """
 
+[Q-03]
+runtime     = "python"
+property    = "backend/tests/property/test_q03_chokepoint_unbypassable.py"
+target      = "src.governance.authority.MutationAuthority.__post_init__"
+mutation    = "Delete the `_MINT_SENTINEL` check in `__post_init__`"
+description = """
+Removes the identity comparison that makes `MutationAuthority` unforgeable, so any caller
+anywhere can construct one and every mutation primitive's capability argument becomes a
+formality. This is §2.2.1 mechanism 1 switched off, and it is the mechanism the other two
+rest on: the banned-api rule exists to stop the sentinel being NAMED, and the reachability
+check accepts a call that "receives a MutationAuthority" — both are worthless if anybody can
+produce one.
+
+Q-03's clause B quantifies construction over every value hypothesis can produce — None,
+booleans, integers, text, bytes, a fresh `object()`, containers — so no single replacement
+sentinel can satisfy it and the property must fail on the first generated example.
+
+The patch replaces `__post_init__` with a no-op rather than editing the tracked file, and
+asserts the mutation is OBSERVABLE before the property runs: it constructs an authority with
+a plain `object()` sentinel, which the real class refuses. A control that installed itself
+and changed nothing would report the property healthy, which is what this whole file exists
+to prevent.
+"""
+patch = """
+import uuid
+
+import src.governance.authority as authority_module
+
+
+def _no_sentinel_check(self, _sentinel):
+    return None
+
+
+authority_module.MutationAuthority.__post_init__ = _no_sentinel_check
+
+# The mutation must be observable, or the control proves nothing.
+_forged = authority_module.MutationAuthority(
+    change_set_id=uuid.uuid4(),
+    approval_id=uuid.uuid4(),
+    policy_bundle_digest="sha256:" + "00" * 32,
+    blast_radius="infrastructure",
+    audit_seq=1,
+    envelope_digest="d" * 64,
+    _sentinel=object(),
+)
+assert _forged.blast_radius == "infrastructure", (
+    "the mutation did not take effect; MutationAuthority still refuses a foreign sentinel and "
+    "the control would be a no-op"
+)
+"""
+
 [Q-19]
 runtime     = "python"
 property    = "backend/tests/property/test_q19_route_coverage.py"
