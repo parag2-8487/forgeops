@@ -80,7 +80,6 @@ PUBLIC_ROUTES: Final[tuple[PublicRoute, ...]] = (
         frozenset({"POST"}),
         "The agent has no credential yet; protected by single-use codes, a 5-attempt "
         "cap, per-IP and global rate limits, and 5-minute expiry (§10.3)",
-        arrives_in="task 8.1",
     ),
 )
 

@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                                                                                                                                                                  |
-| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                                                                                                                                                                                         |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                             |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                     |
-| Leaves reflected       | **54 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 112 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end against the running stack, comprehension artifact regenerated). Decisions run to **D-69**. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                            |
+| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Snapshot date          | **2026-07-31**                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                        |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                |
+| Leaves reflected       | **55 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 111 `pending`. Reconciled 2026-07-31; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end against the running stack, comprehension artifact regenerated). **Group 8 is in progress**: leaf 8.1 (pairing-code issue and single-use exchange) is done. Decisions run to **D-72**. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -2521,6 +2521,102 @@ to **fire** on an empty chain in the job that depends on it, before that job rel
 caller can forget is weaker than a command that refuses, and the containment for that is to prove the
 flag works where it matters.
 
+### D-70 — the audit log has two shapes of row, and the second one cannot pretend to be the first
+
+Leaf 8.1 needed to write an audit record from `backend/src/auth/devices.py`, and could not.
+`AuditWriter.append` carries `@mutation_primitive`, so the chokepoint checker demands that every
+caller be lexically inside `src/governance/` or hold a `MutationAuthority`. A pairing exchange can
+hold neither: minting an authority requires a change set, an approval id, a blast radius and the
+sequence number of an already-written audit row, and a pairing has none of those. It is genuinely not
+a mutation that traversed the chokepoint. Appendix A.1 nonetheless requires a record on issue, on
+failure and on success — a device pairing that leaves no trace is exactly the invisible action §1.9
+exists to prevent.
+
+The obvious fix is to move the write into `governance/`, and it is the wrong one. Position is what
+the checker looks at, so a governance-positioned helper taking an ordinary `AuditDraft` passes — and
+becomes a second door onto the **entire** audit vocabulary. That matters because of what Q-04 can
+see. Q-04 asserts "exactly one `audit_events` row per chokepoint transit", and it does so by driving
+transits itself and counting the rows they produced. It has no view of rows written by anything else.
+So a second unrestricted writer would leave Q-04 green forever while the property it names quietly
+became false. That is chapter 5's lesson in a new location: not a wrong answer, an answer that can no
+longer be wrong.
+
+So the confinement is on the **shape**. `audit/device_log.py` defines `DeviceAuditEvent` with four
+actions asserted disjoint from `GovernanceAction`, `resource_kind` as a module constant rather than a
+field, no `before_state` and no `after_state`, and a `details` mapping whose **keys** are a closed
+set. Each of those closes a specific route: a device record cannot carry a transit's action, cannot
+name `change_set`, cannot carry the transit's evidence pair, and — because there is no `code` key and
+no catch-all — cannot carry a pairing code, which is how Q-17's "the code appears in no audit row"
+stops being a review obligation and becomes a construction. The write itself lives in
+`governance/device_audit.py`, because positional authorisation is the only kind §2.2.1 offers, and
+`DeviceService` reaches it through a `DeviceAuditRecorder` Protocol declared in `audit/` so the
+import direction stays `governance → auth` rather than becoming a cycle.
+
+What was rejected: giving `DeviceService` an authority (unbuildable); a non-primitive
+`append_operational(draft)` on the writer (the same vacuity, plus it needs the chain logic shared
+through an undecorated private core that anything could import); a governance helper taking
+`AuditDraft` (the vacuity, relocated); importing `governance` from `auth/devices.py` (no rule forbids
+it, but it inverts a layering the chokepoint already depends on); and a free `Mapping[str, str]` for
+`details`.
+
+The cost is a sentence people quote becoming narrower. "Every row in `audit_events` came through the
+chokepoint" is no longer true; "every transit-shaped row did" is. That is a real loss of a simple
+claim, and it is the price of Appendix A.1 wanting a pairing to be auditable. The compensation is
+that the new claim is mechanical — `tests/meta/test_device_audit_shape.py` parametrises over every
+`GovernanceAction` member, so a transit action added next year is covered the day it is added. The
+second cost is subtler: `governance/` now contains a module that mints nothing, so "everything in
+`governance/` is authority" stops being a safe reading. That is answered in the file's own docstring,
+which is the place a reader looks first.
+
+### D-71 — three problem types the exchange can reach that Appendix C.1 had no row for
+
+`core/errors.py`'s registry is asserted **equal** to Appendix C.1, parsed out of `design.md`, so an
+unregistered type fails the build. That is the mechanism working rather than an obstacle: adding a
+type is a design edit with a numbered decision, not a string invented at a raise site. Leaf 8.1
+needed three.
+
+`pairing-unavailable` (503) is the one that matters. Redis holds both §14.6 rate-limit buckets **and**
+the single-use consume script, so a Redis outage refuses the exchange whichever half is reached
+first. Without a type it arrives as an unhandled 500 — a status a client must not retry — or, if
+someone reaches for the nearest existing type, as 429, which tells the client a rate was measured
+when none was. That is precisely D-56's mistake one layer along, and D-56 is in this same log.
+`csr-invalid` (400) is distinguishable from `pairing-code-invalid` on purpose, and it is safe to
+distinguish because of D-72's ordering: the CSR is checked before the code is consumed, so the
+answer reveals nothing about whether the code exists. Folding it into the 401 would leave an agent
+author debugging a credential problem they do not have. `device-not-found` (404) is a plain 404 rather
+than the non-disclosing `forbidden` body, because the revocation route is admin-only and an admin may
+already read every device; §4.2's enumeration rule constrains the 403 body, not an admin-scoped 404.
+
+The cost is three more URIs in a vocabulary that, once published, must never change meaning — and a
+backend build that now depends on three table rows in `design.md`. That coupling is the point.
+
+### D-72 — the CSR is checked before the code is spent, and `fingerprint` was given a definition
+
+Appendix A.1 orders the exchange as consume-then-sign. Read literally, an agent holding a valid code
+and sending a malformed CSR spends the code's single use and gets nothing back: the consume script
+has already deleted it. Since validating a CSR is pure and cheap, every request-shaped check moved in
+front of the `EVAL` — it parses as PEM, its self-signature verifies, and its key is EC P-256 as §3.1
+fixes. The CA call stays where A.1 puts it, after the consume, because it is the one step that
+genuinely cannot precede consumption.
+
+The self-signature check is the one with security content. Without it, an attacker who intercepted a
+CSR could pair a device whose private key it does not hold, and every later mTLS handshake would be
+made by someone else.
+
+Separately, §3.1's request body lists a `fingerprint` member and defines neither what it fingerprints
+nor what the server does with it. It is now the SHA-256 of the CSR's SubjectPublicKeyInfo DER in
+lowercase hex, and `exchange` compares it against the CSR with `compare_digest`. A field the server
+accepts and ignores is worse than no field: it reads like a bound and is not one, which is exactly
+the shape the non-vacuity regime exists to remove. Making it optional-and-checked-when-present was
+considered and rejected for the same reason.
+
+Two costs. The reordering is a **documented deviation from A.1's pseudocode**, so a reader comparing
+the two finds a difference; `exchange`'s docstring states it and why. And the 5-attempt burn branch
+gets harder to reach, because the failures that could plausibly increment a live code's counter now
+happen before the counter is touched. It remains reachable by repeated presentation of one digest
+inside the window, and the test drives that state directly — with a control below the cap beside it,
+so the burn clause cannot be passing for a service that refuses everything.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -2550,7 +2646,10 @@ added **49**; resolving the Go skip gate afterwards added **50, 51 and 52** — 
 new pattern, which is itself the point: they are N, I and K recurring, in a repository that had
 already written all three down. **53** is leaf 7.7's unnumbered finding, given a number and a
 seventeenth pattern, **R**, at group 7's close-out; **54** is that close-out's own, and it is
-entry 51 with the roles swapped. Pattern P is the first one that is not about a
+entry 51 with the roles swapped. Leaf 8.1 added **55**, which is pattern **I** again and the most
+expensive instance of it so far: a per-file lint ignore that switched off four of the five bans
+making the chokepoint unbypassable, defended by a comment asserting the enforcement it removed.
+Pattern P is the first one that is not about a
 single implementation being wrong — it is about two implementations of one written contract agreeing
 where the document warns and diverging where it is silent. Pattern R is the asymmetric version of
 that: a check and the mechanism it polices, where only one of the two is authoritative.
@@ -3144,6 +3243,50 @@ answer yes to one for a long time while the other is no.
 The cheapest generalisation available: **a target in a Makefile is a claim, and a claim nobody has
 typed is an untested one.**
 
+**55. A per-file lint ignore switched off four of the five bans that make the chokepoint
+unbypassable — and the comment above it said the opposite.** §2.2.1's mechanism 2 is a Ruff
+`banned-api` table naming the five private symbols a caller would need in order to forge authority:
+`_MINT_SENTINEL`, `sign_envelope`, `_SIGNING_KEY`, `signing_key_scope`, `send_command`, plus
+`auth.devices.envelope_key`. Separately, `pyproject.toml` exempts four domains from that table with
+`"src/ai/**/*.py" = ["TID251"]` and three siblings, because a domain must be able to import itself and
+the ban is module-shaped. The comment above those globs read: _"the ban still catches the case that
+matters, e.g. src/ai reaching into src/mcp."_
+
+It does not. `per-file-ignores` suppresses a **rule**, not an entry, so each of those globs unbans
+every row in the table for that domain — cross-domain imports and the private surface alike. Measured
+rather than reasoned: `ruff check --select TID251 --stdin-filename src/ai/_probe.py` over
+`from ..mcp.gateway import McpGateway` reports **zero** diagnostics, and so does the same file
+importing `..governance.authority._MINT_SENTINEL`. The comment's own example is precisely what is not
+caught. `src/mcp`, `src/analysis` and `src/projects` carry the same glob; `src/main.py`,
+`src/core/tasks.py`, `src/worker.py`, `alembic/**` and `tests/**` carry the same ignore for their own
+reasons.
+
+The consequence is worth stating plainly, because it is larger than a wrong comment. A module in
+`src/ai` could name `_MINT_SENTINEL`, construct a `MutationAuthority`, and hand it to a mutation
+primitive — and `check-chokepoint.sh` would have classified that call as `authority` and passed it,
+because passing an authority is exactly what the checker looks for. Four of the backend's domains were
+outside mechanism 2 entirely.
+
+One name survived, and **why** it survived is the lesson. `_MINT_SENTINEL` was genuinely confined,
+not because Ruff banned it but because Q-03's clause B re-asserted it by **parsing the tree** —
+`test_the_sentinel_is_not_importable_by_name_anywhere_but_its_own_module`, written with the comment
+"a banned-api entry is a lint, and a lint that was not run is not a boundary". That instinct was
+right and was applied to one name out of six. Leaf 8.1 generalised it: `CONFINED_NAMES` in
+`scripts/chokepoint_graph.py` carries all six with their permitted modules, the Python half of
+`check-chokepoint.sh` enforces it by parse, and a further test reads `pyproject.toml` and fails if
+the lint confines a symbol the parse does not. The control of the control is a synthetic tree with one
+offender: exit 1 naming `src/ai/forge.py:1`, exit 0 with the offender removed.
+
+This is pattern I in its purest form — a tool that gates the build, whose scope nobody measured —
+with a twist worth naming separately: **the false claim was in a comment defending the very line that
+broke it.** The author who wrote the exemption knew it needed justifying, wrote the justification, and
+did not test it. A comment asserting an enforcement is not weaker evidence than no comment; it is
+worse, because it stops the next reader asking.
+
+The residual is recorded rather than implied: the **cross-domain module** bans are still Ruff-only,
+so `src/ai` importing `src/mcp` remains uncaught. Narrowing those four globs to file-by-file entries,
+as `src/auth` and `src/governance` already are, is the fix, and it is larger than one leaf.
+
 ### Pattern J — review integrity: the change nobody could see
 
 **28. `.gitattributes` marked all four lockfiles `-diff`.** `linguist-generated` collapses a
@@ -3590,20 +3733,20 @@ future-phase behaviour exists in the tree beyond named seams.
 
 |                             |  Leaves |
 | :-------------------------- | ------: |
-| `done`, with cited evidence |  **54** |
+| `done`, with cited evidence |  **55** |
 | `blocked`                   |       0 |
-| `pending`                   |     112 |
+| `pending`                   |     111 |
 | **Total**                   | **166** |
 
 `PROGRESS.md` is the authority for this table. It is verified mechanically after every leaf by
-`scripts/_state.sh`, which reports `done 54`, `pending 112`, `TOTAL 166` over the Phase 1 section
+`scripts/_state.sh`, which reports `done 55`, `pending 111`, `TOTAL 166` over the Phase 1 section
 alone, cross-checks those rows against `tasks.md`'s checkboxes **in both directions**, and lists
 any `done` row that carries no evidence row. All four lists are empty as of this snapshot.
 
 ### By group
 
 | Group                                                                    | Leaves | State                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| :----------------------------------------------------------------------- | -----: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| :----------------------------------------------------------------------- | -----: | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
 | 1 · Establish the test-integrity regime before the components it polices |      8 | **complete**                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 2 · Close the inherited debt that all later work sits on                 |      7 | **complete** — 2.5 resolved by D-51 and D-52                                                                                                                                                                                                                                                                                                                                                                                          |
 | 3 · Extend backend core primitives                                       |      5 | **complete**                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -3611,7 +3754,7 @@ any `done` row that carries no evidence row. All four lists are empty as of this
 | 5 · Eight linear migrations, each with a gated proof                     |      9 | **complete** — nine migrations, `0001`–`0009`, each gated; a tenth (`0010`) arrived later with D-63                                                                                                                                                                                                                                                                                                                                   |
 | 6 · Auth, authorization and the identity provider                        |      7 | **complete** — `Q-19`, `Q-20`, `Q-30` all landed                                                                                                                                                                                                                                                                                                                                                                                      |
 | 7 · Governance chokepoint and the mutation boundary                      |     11 | **complete, including its close-out** — `verify-chain` proved end to end against the running Compose stack, tamper control included (D-69), and the comprehension artifact regenerated. 7.3 ran after 7.6, its own vacuity rule having forbidden its original position; Q-01, Q-02, Q-03, Q-04 and Q-05 have `mutations.toml` rows — Q-01 and Q-02 are the first `go` rows, and building them found two gates that had never been run |
-| 8 · Pairing, session protocol, named-operation executor                  |     12 | not started                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 8 · Pairing, session protocol, named-operation executor                  |     12 | **1 of 12** — 8.1 done: pairing-code issue and single-use exchange, with D-70 settling where a non-transit audit write may live, D-71's three problem types, D-72's check-before-consume ordering, and finding 55 (a lint ignore that had disabled four of §2.2.1's five bans). The exchange issues no certificate yet — that is 8.2 — and revocation is durable-only until 8.4 adds the per-message Redis check                      |     |
 | 9 · Policy engine and double-evaluation agreement                        |      7 | not started                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 10 · Secret handling and the redaction chokepoint                        |      9 | not started                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | 11 · Codebase analysis engine and incremental index                      |     13 | not started                                                                                                                                                                                                                                                                                                                                                                                                                           |

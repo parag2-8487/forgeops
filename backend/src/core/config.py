@@ -150,6 +150,7 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "PAIRING_CODE_MAX_ATTEMPTS",
         "PAIRING_CODE_ALPHABET",
         "PAIRING_RATE_LIMIT_PER_IP_PER_MINUTE",
+        "PAIRING_RATE_LIMIT_GLOBAL_PER_WINDOW",
         "DEVICE_CERT_TTL_HOURS",
         "DEVICE_CERT_RENEW_BEFORE_HOURS",
         "ENVELOPE_MAX_AGE_SECONDS",
@@ -297,6 +298,13 @@ class Settings(BaseSettings):
     # ambiguous. Validated below rather than trusted.
     pairing_code_alphabet: str = Field(default="0123456789ABCDEFGHJKMNPQRSTVWXYZ")
     pairing_rate_limit_per_ip_per_minute: int = Field(default=10, ge=1, le=120)
+    # §14.6's second bound, and the one that binds a DISTRIBUTED attacker. The per-IP
+    # cap says nothing about many IPs; §14.6 computes P ≈ 5.6 × 10⁻⁶ from "total
+    # attempts across the window cannot exceed 600", and this is that 600. The window
+    # is PAIRING_CODE_TTL_SECONDS — a code's own lifetime — so the arithmetic stays
+    # true when the TTL is changed rather than silently referring to five minutes that
+    # are no longer five minutes.
+    pairing_rate_limit_global_per_window: int = Field(default=600, ge=1, le=100_000)
     device_cert_ttl_hours: int = Field(default=24, ge=1, le=168)
     device_cert_renew_before_hours: int = Field(default=6, ge=1, le=168)
     envelope_max_age_seconds: int = Field(default=300, ge=30, le=900)

@@ -281,10 +281,18 @@ class TestClauseAReachabilityOverGeneratedCallGraphs:
         assert not offenders, offenders
 
     def test_the_real_tree_reaches_the_primitive_from_governance_only(self) -> None:
-        """`AuditWriter.append` is called from exactly one place, and it is the chokepoint."""
+        """`AuditWriter.append` is called only from inside `governance/`.
+
+        Two call sites since leaf 8.1: the chokepoint's transit record, and D-70's
+        device-lifecycle recorder. The assertion is on the **package**, not on a file list — a
+        file list would have to be edited by every leaf that adds a governance module, and an
+        assertion people edit routinely stops being read.
+        """
         _, calls = ANALYSIS.analyse(BACKEND_SRC)
-        assert [call.path for call in calls] == ["src/governance/chokepoint.py"]
-        assert calls[0].verdict == "governance"
+        assert calls, "nothing reaches the primitive; the clause would be vacuous"
+        for call in calls:
+            assert call.path.startswith("src/governance/"), call.render()
+            assert call.verdict == "governance", call.render()
 
 
 def _expected_verdict(site: CallSite, package: str) -> str | None:
@@ -397,21 +405,97 @@ class TestClauseBTheCapabilityTypeCannotBeForged:
         """Mechanism 2. The identity check is only unforgeable while the name is unreachable.
 
         Asserted over the real tree by parsing rather than by trusting Ruff to have run: a
-        banned-api entry is a lint, and a lint that was not run is not a boundary.
+        banned-api entry is a lint, and a lint that was not run is not a boundary. Leaf 8.1
+        found that it is worse than that — a lint that WAS run is not a boundary either, once
+        any file carries a per-file ignore for its rule (finding 55) — so this clause now drives
+        the same `CONFINED_NAMES` table `check-chokepoint.sh` uses, over every confined name
+        rather than over `_MINT_SENTINEL` alone.
         """
-        import ast
+        violations = ANALYSIS.find_confinement_violations(BACKEND_SRC)
+        assert not violations, [violation.render() for violation in violations]
 
-        offenders: list[str] = []
-        for path in sorted(BACKEND_SRC.rglob("*.py")):
-            if path.name == "authority.py":
-                continue
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom) and any(alias.name == "_MINT_SENTINEL" for alias in node.names):
-                    offenders.append(f"{path.relative_to(BACKEND_SRC).as_posix()}:{node.lineno}")
-                if isinstance(node, ast.Attribute) and node.attr == "_MINT_SENTINEL":
-                    offenders.append(f"{path.relative_to(BACKEND_SRC).as_posix()}:{node.lineno}")
-        assert not offenders, f"_MINT_SENTINEL is named outside authority.py at {offenders}"
+    def test_every_name_ruff_confines_is_also_confined_by_the_parse(self) -> None:
+        """The two mechanisms must agree, or the weaker one is the real boundary.
+
+        Reads `pyproject.toml`'s `banned-api` table and asserts that every §2.2.1 entry naming a
+        SYMBOL — the entries of the form `src.<module>.<name>` — appears in `CONFINED_NAMES`.
+        Without this, a sixth banned name added to the lint would be silently outside the parse,
+        and the parse is the half that cannot be switched off.
+        """
+        import tomllib
+
+        table = tomllib.loads((REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8"))
+        banned = table["tool"]["ruff"]["lint"]["flake8-tidy-imports"]["banned-api"]
+        parsed = {entry.name for entry in ANALYSIS.CONFINED_NAMES}
+        # A symbol entry is one whose last segment is not a package or module in `src/`: the
+        # module bans are `src.ai`, `src.projects`, …; the symbol bans carry a third-or-deeper
+        # segment naming an identifier, e.g. `src.governance.envelope.sign_envelope`.
+        symbol_entries = {
+            key.rsplit(".", 1)[1]
+            for key in banned
+            if key.startswith("src.") and not (BACKEND_SRC / Path(*key.split(".")[1:])).is_dir()
+            if not (BACKEND_SRC / Path(*key.split(".")[1:])).with_suffix(".py").is_file()
+        }
+        missing = sorted(symbol_entries - parsed)
+        assert not missing, (
+            f"banned-api confines {missing} but CONFINED_NAMES does not, so those names are "
+            "protected only by a lint that any per-file ignore disables (finding 55)"
+        )
+
+    @_SETTINGS
+    @given(
+        confined=st.sampled_from(range(len(ANALYSIS.CONFINED_NAMES))),
+        offender=st.sampled_from(("ai.routes", "projects.service", "secrets.injection", "audit.writer")),
+    )
+    def test_a_generated_module_reaching_a_confined_name_is_always_reported(
+        self, tmp_path_factory: pytest.TempPathFactory, confined: int, offender: str
+    ) -> None:
+        """The control of the control: the parse must FAIL on a violation, for every name.
+
+        A confinement check that reports nothing on a clean tree is indistinguishable from one
+        that reports nothing at all. This generates the violation — every confined name × several
+        offending modules, in both the import and the attribute form — and requires it to be
+        found. `audit.writer` is in the offender set on purpose: the module that owns the one
+        mutation primitive is not thereby permitted to name the signing surface.
+        """
+        entry = ANALYSIS.CONFINED_NAMES[confined]
+        assert offender not in entry.permitted, "the generator must produce a real violation"
+        root = tmp_path_factory.mktemp("q03-confinement")
+        package, _, module = offender.rpartition(".")
+        directory = root / package.replace(".", "/")
+        directory.mkdir(parents=True, exist_ok=True)
+        owner_package = entry.owner.rsplit(".", 1)[0]
+        (directory / f"{module}.py").write_text(
+            f"from ..{entry.owner} import {entry.name}\n"
+            f"from .. import {owner_package} as _pkg\n"
+            f"_reached = _pkg.{entry.name}\n",
+            encoding="utf-8",
+        )
+        violations = ANALYSIS.find_confinement_violations(root)
+        assert violations, f"{offender} reaching {entry.name} was not reported"
+        assert {violation.name for violation in violations} == {entry.name}
+        kinds = {violation.kind for violation in violations}
+        assert "import" in kinds
+        if entry.check_attribute:
+            assert "attribute" in kinds
+
+    @_SETTINGS
+    @given(confined=st.sampled_from(range(len(ANALYSIS.CONFINED_NAMES))))
+    def test_a_permitted_module_reaching_the_same_name_is_never_reported(
+        self, tmp_path_factory: pytest.TempPathFactory, confined: int
+    ) -> None:
+        """The other direction. A check that reported the owner would be switched off in a week."""
+        entry = ANALYSIS.CONFINED_NAMES[confined]
+        root = tmp_path_factory.mktemp("q03-confinement-ok")
+        for permitted in sorted(entry.permitted):
+            package, _, module = permitted.rpartition(".")
+            directory = root / package.replace(".", "/") if package else root
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{module}.py").write_text(
+                f"from ..{entry.owner} import {entry.name}\n_reached = {entry.name}\n",
+                encoding="utf-8",
+            )
+        assert ANALYSIS.find_confinement_violations(root) == []
 
     def test_the_authority_is_frozen_and_slotted(self) -> None:
         """A handler that could widen `blast_radius` after the fact would make every downstream

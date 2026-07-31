@@ -35,6 +35,7 @@ from .audit.writer import AuditWriter
 from .auth.cerbos import CerbosClient
 from .auth.devices import DeviceService
 from .auth.oidc import IdTokenVerifier, OidcClient
+from .auth.pairing_limits import TokenBucketPairingLimiter
 from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
 from .core.config import get_settings
@@ -45,6 +46,7 @@ from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
 from .core.tenancy import TenantContextMiddleware
 from .core.trace import TraceContextMiddleware, current_trace_id
 from .governance.chokepoint import GovernanceChokepoint, UnavailableCommandSink
+from .governance.device_audit import GovernanceDeviceAuditRecorder
 from .governance.policy import UnavailableGovernancePolicy
 from .governance.sequencing import RedisEnvelopeSequencer
 from .mcp.apps import McpAppRegistry
@@ -235,7 +237,37 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.governance_policy = UnavailableGovernancePolicy()
     app.state.command_sink = UnavailableCommandSink()
     app.state.envelope_sequencer = RedisEnvelopeSequencer(redis_client)
-    app.state.device_service = DeviceService(pepper=settings.envelope_pepper.get_secret_value())
+    # §14.6's two exchange buckets, constructed here because `RedisTokenBucketLimiter` lives in
+    # `src/ai/**`, which the §2.4 Ruff table bans everywhere except the composition root. The
+    # existing limiter is reused rather than a second Lua token bucket written: two of them would
+    # be two places for §14.1's "Redis is the single time authority" to be got wrong.
+    #
+    # Per IP: capacity 10, refilling at 10/60 per second — §14.6's "10 exchange attempts per IP
+    # per minute". Global: capacity 600 over one code lifetime, so the refill rate is 600/TTL and
+    # "total attempts across the window cannot exceed 600" holds by construction rather than by a
+    # comment.
+    app.state.device_service = DeviceService(
+        pepper=settings.envelope_pepper.get_secret_value(),
+        recorder=GovernanceDeviceAuditRecorder(writer=app.state.audit_writer),
+        redis=redis_client,
+        limiter=TokenBucketPairingLimiter(
+            per_ip=RedisTokenBucketLimiter(
+                redis=redis_client,
+                capacity=settings.pairing_rate_limit_per_ip_per_minute,
+                refill_rate=settings.pairing_rate_limit_per_ip_per_minute / 60.0,
+                key_prefix="forgeops:pair:ip:",
+            ),
+            global_bucket=RedisTokenBucketLimiter(
+                redis=redis_client,
+                capacity=settings.pairing_rate_limit_global_per_window,
+                refill_rate=settings.pairing_rate_limit_global_per_window / settings.pairing_code_ttl_seconds,
+                key_prefix="forgeops:pair:global:",
+            ),
+        ),
+        code_ttl_seconds=settings.pairing_code_ttl_seconds,
+        max_attempts=settings.pairing_code_max_attempts,
+        alphabet=settings.pairing_code_alphabet,
+    )
     app.state.governance_chokepoint = GovernanceChokepoint(
         policy=app.state.governance_policy,
         approval_gate=ThresholdApprovalGate(),
@@ -391,6 +423,16 @@ def create_app() -> FastAPI:
     from .auth.routes import router as auth_router
 
     app.include_router(auth_router, prefix=settings.api_prefix)
+
+    # Agent pairing and revocation (§3.1, §11.2). TWO routers on one prefix: the protected pair
+    # carries router-level `require_principal`, and the exchange has none because §4.4 makes it
+    # the one new public route. Splitting them is what keeps the exemption visible in the code
+    # that declares the route rather than hidden in a path matcher.
+    from .auth.agent_routes import public_router as agent_public_router
+    from .auth.agent_routes import router as agent_router
+
+    app.include_router(agent_router)
+    app.include_router(agent_public_router)
 
     from .analysis.routes import router as analysis_router
 

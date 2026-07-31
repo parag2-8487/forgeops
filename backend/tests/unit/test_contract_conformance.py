@@ -44,7 +44,15 @@ pytestmark = pytest.mark.mandatory
 #: two allocation calls. `CommandSink.send_command` is deliberately absent: the Protocol is
 #: declared in `chokepoint.py` itself, and the collector binds CROSS-component call sites,
 #: which a same-module Protocol is not.
-INVENTORY_FLOOR = 27
+#: 2026-07-31 (leaf 8.1): 33 sites. The six new ones are all D-70's and §14.6's injected
+#: collaborators: `DeviceAuditRecorder.record` three times (issue, the pairing failure, the
+#: successful pairing) plus `device_revoked` sharing one of those call sites' shape,
+#: `PairingExchangeLimiter.check_per_ip` and `.check_global` from the one comprehension that
+#: consults both, and `AuditWriter.append` from `governance/device_audit.py`. Every one is a
+#: Protocol declared in a DIFFERENT module from its caller, which is exactly what the collector
+#: is looking for — and why routing the pairing audit write through a Protocol buys a bound
+#: signature that a direct `AuditWriter` call from `auth/` would not have had.
+INVENTORY_FLOOR = 33
 
 _SITES = collect_call_sites()
 

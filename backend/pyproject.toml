@@ -220,8 +220,22 @@ ignore = [
 "src/main.py" = ["TID251"]
 # A domain importing ITS OWN namespace is not a cross-domain import, but ruff's
 # banned-api matches on module-path prefix and cannot express "except from
-# within". Each domain is therefore exempted from its own entry; the ban still
-# catches the case that matters, e.g. src/ai reaching into src/mcp.
+# within". Each domain is therefore exempted from its own entry.
+#
+# **What that exemption really does, stated correctly.** An earlier version of this comment
+# claimed "the ban still catches the case that matters, e.g. src/ai reaching into src/mcp". That
+# was false and is finding 55: `["TID251"]` suppresses the whole RULE for the matched files, not
+# the one entry they need, so each glob below unbans EVERY entry in the table for that domain —
+# cross-domain imports and the §2.2.1 private surface alike. Measured: `src/ai/_probe.py`
+# importing `..mcp.gateway`, and the same file importing `..governance.authority._MINT_SENTINEL`,
+# both produce zero TID251 diagnostics.
+#
+# The private surface is now re-asserted by parsing, in `scripts/chokepoint_graph.py`'s
+# `CONFINED_NAMES` table, which runs in the Python half of `check-chokepoint.sh` and is not a
+# lint. The residual — the cross-domain module bans themselves are still Ruff-only, and so are
+# still disabled for these four domains — is recorded rather than implied. Narrowing these globs
+# to file-by-file entries, as `src/auth` and `src/governance` already are, is the fix; it is a
+# larger change than leaf 8.1 and is not smuggled in here.
 "src/ai/**/*.py" = ["TID251"]
 "src/mcp/**/*.py" = ["TID251"]
 "src/analysis/**/*.py" = ["TID251"]
@@ -234,6 +248,20 @@ ignore = [
 # coupling §2.2.1 exists to prevent: a module that can construct a verifier or reach a
 # device's envelope key can forge authority.
 "src/auth/routes.py" = ["TID251"]
+# The second `src/auth` file, added by leaf 8.1. `agent_routes.py` serves §11.2's three device
+# routes, so it must name `auth.devices` — which the table above bans, correctly, everywhere
+# else. It reaches `DeviceService.exchange`, `.issue_pairing_code` and `.revoke`, and none of
+# the eight §2.2.1 names; the exemption is a consequence of the ban being module-shaped, not a
+# widening this file asked for.
+#
+# **Read this before adding a third entry.** A per-file `["TID251"]` disables the whole RULE for
+# that file, not the one entry it needs — so every exemption in this table, including the four
+# domain globs below, also unbans the §2.2.1 private surface for the exempted files. That is
+# finding 55 in `docs/LEARNING-JOURNAL.md` chapter 9. It is neutralised by the confinement half
+# of `scripts/check-chokepoint.sh`, which re-asserts the confined-name table by PARSING the tree
+# and cannot be switched off by a lint ignore. Ruff remains the fast feedback; the parse is the
+# boundary.
+"src/auth/agent_routes.py" = ["TID251"]
 # §2.2.1's five bans exist to keep the chokepoint's private surface private. `governance/`
 # is the one package that must reach it, and the exemption is FILE BY FILE rather than
 # `src/governance/**`, for the same reason `src/auth` is: a glob would also unban every

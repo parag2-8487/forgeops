@@ -95,6 +95,27 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # ─── Pairing and devices (§1.1) ──────────────────────────────────────────
     "pairing-code-invalid": ProblemSpec(401, "Pairing code invalid"),
     "pairing-rate-limited": ProblemSpec(429, "Too many pairing attempts"),
+    # D-71, three entries beyond Appendix C.1's table, each for a state the exchange can
+    # reach and C.1 registered nothing for. The pattern is D-53's and D-56's: a state
+    # that has no type gets reported as whatever is nearest, and "nearest" is always a
+    # lie a client cannot detect.
+    #
+    # `pairing-unavailable` is the sharpest of the three. Both halves of the exchange are
+    # Redis calls — the two §14.6 rate-limit buckets and the single-use consume script —
+    # so a Redis outage refuses the exchange whatever happens. Without this entry that
+    # refusal arrives as an unhandled 500 (a bug) or, worse, as 429 (a lie: 429 tells the
+    # client to slow down, when in fact no rate was measured at all).
+    "pairing-unavailable": ProblemSpec(503, "Pairing service unavailable"),
+    # A submitted CSR that does not parse, whose self-signature does not verify, or whose
+    # key is not EC P-256 (§3.1). Distinguishable from `pairing-code-invalid` on purpose:
+    # the check runs BEFORE the code is consumed, so this answer reveals nothing about
+    # whether the code exists, and folding it into the 401 would leave a broken agent
+    # unable to tell a client bug from a wrong code.
+    "csr-invalid": ProblemSpec(400, "Certificate request invalid"),
+    # Revocation of a device id that does not exist. A 404 rather than the non-disclosing
+    # 403 body, because the route is admin-only and an admin may read every device — §4.2's
+    # enumeration rule constrains the `forbidden` body, not an admin-scoped 404.
+    "device-not-found": ProblemSpec(404, "Device not found"),
     "device-revoked": ProblemSpec(401, "Device revoked"),
     "device-not-connected": ProblemSpec(409, "No agent connected"),
     # ─── Command envelopes (§7.6) ────────────────────────────────────────────

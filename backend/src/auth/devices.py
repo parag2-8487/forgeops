@@ -70,24 +70,44 @@ import hmac
 import secrets
 import uuid
 from dataclasses import dataclass
-from typing import Final
+from datetime import datetime
+from typing import Any, Final
 
-from cryptography.exceptions import InvalidTag
+from cryptography.exceptions import InvalidSignature, InvalidTag
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.x509 import load_pem_x509_csr
 from pydantic import SecretBytes
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..audit.device_log import DeviceAuditEvent, DeviceAuditRecorder
 from .device_models import AgentDevice, DeviceStatus
+from .pairing_limits import PairingExchangeLimiter, PairingUnavailableError
+from .principal import Principal
 
 __all__ = [
+    "CONSUME_SCRIPT",
+    "DEVICE_TOKEN_BYTES",
     "ENVELOPE_KEY_BYTES",
     "ENVELOPE_KEY_LABEL",
+    "ISSUE_SCRIPT",
     "KEK_BYTES",
+    "PAIRING_KEY_PREFIX",
     "SEAL_NONCE_BYTES",
+    "AgentMeta",
+    "CsrRejectedError",
+    "DeviceCredentials",
     "DeviceKeyError",
+    "DeviceNotFoundError",
     "DeviceService",
     "EnvelopeKeyUnavailableError",
+    "PairingCode",
+    "PairingCodeInvalidError",
+    "PairingRateLimitedError",
+    "PairingUnavailableError",
+    "csr_spki_fingerprint",
     "derive_key_encryption_key",
     "envelope_key",
     "generate_envelope_key",
@@ -112,9 +132,99 @@ KEK_BYTES: Final[int] = 32
 #: implementation through GHASH-based derivation, which is a second code path for no benefit.
 SEAL_NONCE_BYTES: Final[int] = 12
 
+#: 32 bytes, per Appendix A.1's `token ← Random(32)`. Only its HMAC is ever stored.
+DEVICE_TOKEN_BYTES: Final[int] = 32
+
+#: The Redis key prefix §3.1 names verbatim: `pair:<hmac>`.
+PAIRING_KEY_PREFIX: Final[str] = "pair:"
+
+#: Issue: write the payload hash **and** its TTL in one atomic step.
+#:
+#: Two commands would leave a window in which a pairing code exists with no expiry, and a
+#: pairing code that never expires is the one failure mode §14.6's arithmetic cannot survive —
+#: every bound in it is a bound per five-minute window.
+ISSUE_SCRIPT: Final[str] = """
+local key = KEYS[1]
+local ttl = tonumber(ARGV[1])
+redis.call('HSET', key,
+    'project', ARGV[2],
+    'tenant', ARGV[3],
+    'issuer', ARGV[4],
+    'device', ARGV[5],
+    'attempts', '0')
+redis.call('EXPIRE', key, ttl)
+return 1
+"""
+
+#: Consume: fetch, increment attempts, burn on exceed, delete on success — one script, one
+#: round trip, one serialisation point.
+#:
+#: **Atomicity is what makes single-use true.** Redis executes one `EVAL` to completion before
+#: the next command on that key, so of N concurrent attempts on one code exactly one can observe
+#: the key and delete it; the rest see `missing`. A read-then-delete pair in the application
+#: would let two callers both read before either deleted, and both would be issued credentials
+#: for one code. Q-17 generates concurrent attempts and requires at most one success, and
+#: `mutations.toml`'s negative control for Q-17 splits this script in two.
+#:
+#: **Why the burn branch is reachable.** `attempts` counts every presentation of this digest
+#: inside the code's window. It exceeds the cap only when the same digest is presented more than
+#: `MAX_ATTEMPTS` times, which is exactly §3.7's `issued --> burned : 5 failed attempts`: after
+#: the cap the key is deleted, so a code under attack stops being usable even by its owner.
+#: Request-shaped validation (the CSR) deliberately happens **before** this script runs, so a
+#: broken agent retrying with a malformed CSR cannot burn a code it legitimately holds.
+#:
+#: Every failure returns a bare status and no payload. A caller cannot learn whether a code
+#: existed from what comes back, which is the response half of Q-17's indistinguishability.
+CONSUME_SCRIPT: Final[str] = """
+local key = KEYS[1]
+local max_attempts = tonumber(ARGV[1])
+if redis.call('EXISTS', key) == 0 then
+    return {'missing'}
+end
+local attempts = tonumber(redis.call('HINCRBY', key, 'attempts', 1))
+if attempts > max_attempts then
+    redis.call('DEL', key)
+    return {'burned'}
+end
+local fields = redis.call('HMGET', key, 'project', 'tenant', 'issuer', 'device')
+redis.call('DEL', key)
+return {'ok', fields[1], fields[2], fields[3], fields[4], tostring(attempts)}
+"""
+
 
 class DeviceKeyError(ValueError):
     """A key could not be derived, sealed or unsealed."""
+
+
+class PairingCodeInvalidError(Exception):
+    """Unknown, expired, burned or already-consumed code — one error for all four.
+
+    One exception type on purpose, carrying no discriminator. §14.6 and Q-17 both require that
+    the four cases be **indistinguishable in the response**, and the cheapest way to leak the
+    difference is to raise four exception types and let a route render them separately. The
+    reason the internal code took a particular branch reaches the audit row's `failure_kind`
+    and stops there.
+    """
+
+
+class PairingRateLimitedError(Exception):
+    """A per-IP or global exchange bucket is exhausted (§14.6)."""
+
+    def __init__(self, *, retry_after_seconds: int) -> None:
+        super().__init__("pairing exchange rate limit exhausted")
+        self.retry_after_seconds = retry_after_seconds
+
+
+class CsrRejectedError(Exception):
+    """The submitted CSR is not a usable P-256 certificate request.
+
+    Checked **before** the pairing code is consumed, so a malformed request cannot spend a
+    code's single use or advance its attempt counter (§3.7's `burned` transition).
+    """
+
+
+class DeviceNotFoundError(Exception):
+    """No device row with that id, so there is nothing to revoke."""
 
 
 class EnvelopeKeyUnavailableError(DeviceKeyError):
@@ -284,6 +394,94 @@ class SealedEnvelopeKey:
     sealed: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class PairingCode:
+    """What `issue_pairing_code` returns, and the only time the code exists in the clear.
+
+    The code is a plain `str` rather than a `SecretStr`, and that is deliberate: it is displayed
+    to a human in a browser and read aloud, so wrapping it would add an `.get_secret_value()`
+    call at the one call site that must not have one — the response body — while doing nothing
+    about the actual exposure, which is the screen. What protects it is the five-minute window,
+    not the type.
+    """
+
+    code: str
+    device_id: uuid.UUID
+    expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AgentMeta:
+    """What the agent tells the backend about itself during the exchange (§3.1's request).
+
+    `fingerprint` is the SHA-256 of the CSR's SubjectPublicKeyInfo DER, lowercase hex. §3.1 lists
+    the field without defining it; this is the definition, and `exchange` **checks** it against
+    the CSR rather than storing it. A field the server accepts and ignores is worse than no field
+    at all — it reads like a bound and is not one.
+    """
+
+    agent_version: str
+    platform: str
+    fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceCredentials:
+    """What a successful exchange issues.
+
+    **The certificate is not here yet.** §3.1's response carries `client_cert` and `ca_bundle`
+    too; both come from the internal CA, which leaf 8.2 builds. Task 8.1 issues the device token
+    and the envelope key — the two credentials that need no CA — and leaf 8.2 extends this type.
+    Returning a placeholder certificate instead would have been worse than an absent field: the
+    agent's mTLS dial would fail with a chain error rather than with "no certificate was issued".
+    """
+
+    device_id: uuid.UUID
+    project_id: uuid.UUID
+    device_token: SecretBytes
+    envelope_key: SecretBytes
+    csr_spki_sha256: str
+
+
+def csr_spki_fingerprint(csr_pem: bytes) -> str:
+    """Validate a P-256 CSR and return the SHA-256 of its SubjectPublicKeyInfo, lowercase hex.
+
+    Three checks, and each excludes a different failure:
+
+    * **it parses as a PEM CSR** — otherwise there is nothing to sign in leaf 8.2;
+    * **its self-signature verifies** — proof that the requester holds the private key for the
+      public key it submitted. Without this check an attacker who intercepted a CSR could pair a
+      device whose key it does not have, and every later mTLS handshake would be made by someone
+      else;
+    * **the key is EC P-256** — §3.1 fixes the curve. Accepting anything else would let a caller
+      choose a 512-bit RSA key and the certificate the CA issues in 8.2 would be worthless.
+
+    Raises `CsrRejectedError` for all three, with a message that names the check but never echoes
+    the submitted bytes.
+    """
+    try:
+        csr = load_pem_x509_csr(csr_pem)
+    except Exception as exc:  # noqa: BLE001 - `cryptography` raises several unrelated types here
+        raise CsrRejectedError("the certificate request is not a readable PEM CSR") from exc
+    try:
+        valid = csr.is_signature_valid
+    except InvalidSignature as exc:  # pragma: no cover - defensive; the property is a bool
+        raise CsrRejectedError("the certificate request's self-signature does not verify") from exc
+    if not valid:
+        raise CsrRejectedError(
+            "the certificate request's self-signature does not verify; the requester has not "
+            "proved possession of the private key"
+        )
+    public_key = csr.public_key()
+    if not isinstance(public_key, ec.EllipticCurvePublicKey) or not isinstance(public_key.curve, ec.SECP256R1):
+        raise CsrRejectedError("the certificate request must carry an EC P-256 public key (§3.1)")
+    spki = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return hashlib.sha256(spki).hexdigest()
+
+
 class DeviceService:
     """Pairing codes, device tokens, certificates, revocation (§1.1, §3.1, §11.2).
 
@@ -300,13 +498,58 @@ class DeviceService:
     provisioning a device key in a transaction that later rolls back must leave no key behind.
     """
 
-    def __init__(self, *, pepper: str) -> None:
+    def __init__(
+        self,
+        *,
+        pepper: str,
+        recorder: DeviceAuditRecorder | None = None,
+        redis: Any | None = None,
+        limiter: PairingExchangeLimiter | None = None,
+        code_ttl_seconds: int = 300,
+        max_attempts: int = 5,
+        alphabet: str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
+        code_length: int = 6,
+    ) -> None:
         if not pepper:
             raise DeviceKeyError(
                 "DeviceService requires a non-empty ENVELOPE_PEPPER: it is the input keying "
                 "material for the envelope key-encryption key (D-62)"
             )
+        if code_ttl_seconds < 1:
+            raise DeviceKeyError("the pairing-code TTL must be positive (Appendix A.1: `TTL > 0`)")
+        if max_attempts < 1:
+            raise DeviceKeyError("MAX_ATTEMPTS must be at least 1 (Appendix A.1's precondition)")
+        if len(set(alphabet)) != len(alphabet) or len(alphabet) < 16:
+            raise DeviceKeyError(
+                "the pairing alphabet must have no duplicates and at least 16 symbols; "
+                "core.config validates the configured value against Crockford base32"
+            )
         self._pepper = pepper
+        self._recorder = recorder
+        self._redis = redis
+        self._limiter = limiter
+        self._ttl = code_ttl_seconds
+        self._max_attempts = max_attempts
+        self._alphabet = alphabet
+        self._code_length = code_length
+        # All three pairing collaborators, or none of them. The custody half of this service
+        # (leaf 7.5) genuinely needs no Redis, no limiter and no audit recorder, so they cannot be
+        # unconditionally required — `make_fixture` and the chokepoint's own use construct the
+        # custody-only form. What must not exist is the HALF-wired form: a service with Redis but
+        # no recorder would consume a code and record nothing, and Appendix A.1 requires the
+        # record on both branches. So the partial combination is refused at construction rather
+        # than discovered at the first exchange.
+        supplied = [name for name, value in (("recorder", recorder), ("redis", redis), ("limiter", limiter)) if value]
+        if supplied and len(supplied) != 3:
+            missing = sorted({"recorder", "redis", "limiter"} - set(supplied))
+            raise DeviceKeyError(
+                f"DeviceService was given {sorted(supplied)} but not {missing}: the pairing flow "
+                "needs all three (Appendix A.1 requires an audit record on both branches, §14.6 "
+                "requires both rate limits, and the consume script is a Redis EVAL). Pass all "
+                "three for the pairing form, or none for the envelope-key custody form"
+            )
+
+    # ── envelope-key custody (leaf 7.5) ───────────────────────────────────────────────────
 
     async def envelope_key(self, session: AsyncSession, device_id: uuid.UUID) -> SecretBytes:
         """§11.2's method form. Delegates to the module-level, banned function."""
@@ -354,3 +597,331 @@ class DeviceService:
         if row is None:
             return None
         return await session.get(AgentDevice, row[0])
+
+    # ── pairing: issue, exchange, revoke (leaf 8.1, Appendix A.1, §3.1, §14.6) ─────────────
+
+    def _pairing_digest(self, code: str) -> bytes:
+        """`HMAC-SHA256(pepper, code)` — the only representation of a code that is ever stored.
+
+        Keyed rather than a bare hash: a 6-character code from a 32-symbol alphabet is a space of
+        1.07 × 10⁹, which a plain SHA-256 rainbow table covers in seconds on a laptop. The pepper
+        is what makes the stored digest useless to someone holding a database dump, and it is the
+        same pepper D-62 derives the envelope KEK from, domain-separated by construction: this is
+        HMAC over the code, that is HKDF under a label.
+        """
+        return hmac.new(self._pepper.encode("utf-8"), code.encode("utf-8"), hashlib.sha256).digest()
+
+    def _generate_code(self) -> str:
+        """A code from the OS CSPRNG, uniformly over the configured alphabet.
+
+        `secrets.choice` rather than `random.choice`: the latter is a Mersenne Twister whose
+        internal state is recoverable from a few hundred outputs, which for a pairing code means
+        an attacker who has seen a handful of codes can predict the next one. Appendix A.1 says
+        "from a CSPRNG, never a PRNG" and this is the line that obeys it.
+
+        `secrets.choice` is also free of the modulo bias `token_bytes[i] % 32` would introduce for
+        an alphabet whose length does not divide 256 — it happens that 32 does, but a configured
+        alphabet of a different length would silently skew, and a skewed alphabet shrinks the
+        search space §14.6's arithmetic assumes.
+        """
+        return "".join(secrets.choice(self._alphabet) for _ in range(self._code_length))
+
+    def _redis_or_raise(self) -> Any:
+        if self._redis is None or self._limiter is None or self._recorder is None:
+            raise DeviceKeyError(
+                "this DeviceService was constructed for envelope-key custody only; the pairing "
+                "flow needs `recorder`, `redis` and `limiter` (see __init__)"
+            )
+        return self._redis
+
+    async def issue_pairing_code(
+        self, session: AsyncSession, *, project_id: uuid.UUID, actor: Principal
+    ) -> PairingCode:
+        """Appendix A.1's `IssuePairingCode`. Joins the caller's transaction and does not commit.
+
+        Ordering matters twice here.
+
+        **Live codes are revoked first.** A.1's `RevokeLiveCodesFor(project)` is what makes "one
+        live code per project" true, and it is what §14.6's arithmetic counts on: the worst case
+        it computes is "10 live codes across the deployment", which is a statement about projects,
+        not about how many times an operator pressed the button.
+
+        **Redis is written last.** The row and the audit record are in the caller's transaction;
+        the Redis key is not, and cannot be. Writing Redis last means a transaction that rolls
+        back afterwards leaves a live Redis key pointing at a device row that does not exist — and
+        the exchange handles that as `pairing-code-invalid`, because its `UPDATE` matches no row.
+        The other order would leave a committed `pending` device with no consumable code, which
+        looks to an operator like a code that never worked.
+        """
+        redis = self._redis_or_raise()
+        assert self._recorder is not None  # noqa: S101 - narrowed by _redis_or_raise
+        stale = await session.execute(
+            text(
+                "SELECT id, pairing_token_hmac FROM agent_devices "
+                "WHERE project_id = :project AND status = :pending AND pairing_token_hmac IS NOT NULL"
+            ),
+            {"project": project_id, "pending": DeviceStatus.PENDING.value},
+        )
+        stale_rows = list(stale.all())
+        if stale_rows:
+            await session.execute(
+                text(
+                    "UPDATE agent_devices SET status = :abandoned, pairing_token_hmac = NULL, "
+                    "pairing_expires_at = NULL WHERE id = ANY(:ids)"
+                ),
+                {"abandoned": DeviceStatus.ABANDONED.value, "ids": [row[0] for row in stale_rows]},
+            )
+
+        code = self._generate_code()
+        digest = self._pairing_digest(code)
+        device_id = uuid.uuid4()
+        inserted = await session.execute(
+            text(
+                "INSERT INTO agent_devices (id, project_id, tenant_id, status, pairing_token_hmac, "
+                "pairing_expires_at, agent_version, platform, last_seq) "
+                "VALUES (:id, :project, :tenant, :status, :digest, "
+                "now() + make_interval(secs => :ttl), '', '', 0) "
+                "RETURNING pairing_expires_at"
+            ),
+            {
+                "id": device_id,
+                "project": project_id,
+                "tenant": actor.tenant_id,
+                "status": DeviceStatus.PENDING.value,
+                "digest": digest,
+                "ttl": self._ttl,
+            },
+        )
+        expires_at: datetime = inserted.one()[0]
+
+        await self._recorder.record(
+            session,
+            DeviceAuditEvent(
+                action="pairing_code_issued",
+                reason="operator initiated pairing",
+                outcome="allowed",
+                project_id=project_id,
+                device_id=device_id,
+                tenant_id=actor.tenant_id,
+                actor_user_id=actor.user_id,
+                details={"device_id": str(device_id), "project_id": str(project_id)},
+            ),
+        )
+
+        # The stale keys go first: a code being replaced must stop working before its successor
+        # starts, or a window exists in which two codes are live for one project.
+        for row in stale_rows:
+            if row[1] is not None:
+                await redis.delete(PAIRING_KEY_PREFIX + bytes(row[1]).hex())
+        await redis.eval(
+            ISSUE_SCRIPT,
+            1,
+            PAIRING_KEY_PREFIX + digest.hex(),
+            str(self._ttl),
+            str(project_id),
+            str(actor.tenant_id or ""),
+            str(actor.user_id),
+            str(device_id),
+        )
+        return PairingCode(code=code, device_id=device_id, expires_at=expires_at)
+
+    async def exchange(
+        self, session: AsyncSession, *, code: str, csr_pem: bytes, meta: AgentMeta, client_ip: str
+    ) -> DeviceCredentials:
+        """Appendix A.1's `ExchangePairingCode`. The one unauthenticated entry point (§4.4).
+
+        The order below is the algorithm's, and two positions in it are load-bearing.
+
+        **Both rate limits precede everything.** §14.6 sizes the per-IP bucket for a single
+        attacker and the global bucket for a distributed one, and neither bound means anything if
+        an unbounded number of requests can reach the consume script first.
+
+        **The CSR is validated before the code is consumed.** A.1 signs the CSR *after* the
+        consume, which is correct for the CA call but would mean a malformed CSR spends a valid
+        code's single use. Since validating a CSR is pure and cheap, it moves in front — and the
+        consequence is worth naming: a caller who holds a real code but sends a broken CSR gets
+        `csr-invalid` and keeps the code, while a caller who holds no code gets
+        `pairing-code-invalid` whatever it sends. Neither response tells an attacker anything
+        about a code it does not have.
+
+        Every failure after that point raises `PairingCodeInvalidError` — unknown, expired, burned,
+        consumed, and "the device row is no longer pairable" all produce one response (Q-17).
+        """
+        redis = self._redis_or_raise()
+        assert self._recorder is not None and self._limiter is not None  # noqa: S101
+        for verdict in (await self._limiter.check_per_ip(client_ip), await self._limiter.check_global()):
+            if not verdict.allowed:
+                raise PairingRateLimitedError(retry_after_seconds=verdict.retry_after_seconds)
+
+        spki = csr_spki_fingerprint(csr_pem)
+        # `compare_digest` on two hex strings rather than `==`. The value is not a secret, but the
+        # comparison is on a path an attacker can time, and there is no reason to hand out a
+        # prefix-length oracle for free.
+        if not hmac.compare_digest(spki, meta.fingerprint.strip().lower()):
+            raise CsrRejectedError("the declared fingerprint does not match the CSR's SubjectPublicKeyInfo SHA-256")
+
+        digest = self._pairing_digest(code)
+        raw = await redis.eval(CONSUME_SCRIPT, 1, PAIRING_KEY_PREFIX + digest.hex(), str(self._max_attempts))
+        outcome = list(raw or [])
+        status = _as_text(outcome[0]) if outcome else "missing"
+        if status != "ok":
+            await self._record_failure(session, failure_kind=status)
+            raise PairingCodeInvalidError()
+
+        project_id = uuid.UUID(_as_text(outcome[1]))
+        tenant_raw = _as_text(outcome[2])
+        tenant_id = uuid.UUID(tenant_raw) if tenant_raw else None
+        issuer_id = uuid.UUID(_as_text(outcome[3]))
+        device_id = uuid.UUID(_as_text(outcome[4]))
+        attempts = _as_text(outcome[5])
+        # A.1's `ASSERT r.attempts ≤ MAX_ATTEMPTS`, kept as a real check rather than a comment:
+        # a script that returned `ok` above the cap would be a burn branch that had stopped
+        # working, and that is precisely the kind of silent weakening §0.4.5 exists to catch.
+        if int(attempts) > self._max_attempts:
+            raise DeviceKeyError(
+                f"the consume script returned ok at attempt {attempts} with a cap of "
+                f"{self._max_attempts}; the burn branch is not firing"
+            )
+
+        token = secrets.token_bytes(DEVICE_TOKEN_BYTES)
+        updated = await session.execute(
+            text(
+                "UPDATE agent_devices SET status = :active, device_token_hmac = :token_hmac, "
+                "pairing_token_hmac = NULL, pairing_expires_at = NULL, agent_version = :version, "
+                "platform = :platform, last_seen = now() "
+                "WHERE id = :id AND status = :pending AND pairing_token_hmac = :digest "
+                "AND (pairing_expires_at IS NULL OR pairing_expires_at > now())"
+            ),
+            {
+                "active": DeviceStatus.ACTIVE.value,
+                "token_hmac": hmac.new(self._pepper.encode("utf-8"), token, hashlib.sha256).digest(),
+                "version": meta.agent_version[:64],
+                "platform": meta.platform[:64],
+                "id": device_id,
+                "pending": DeviceStatus.PENDING.value,
+                "digest": digest,
+            },
+        )
+        if updated.rowcount != 1:
+            # The code was consumable but the device row is not pairable: the row was abandoned,
+            # revoked, already active, or its DB-side expiry has passed. Indistinguishable in the
+            # response from an unknown code, deliberately.
+            await self._record_failure(session, failure_kind="device-not-pairable", project_id=project_id)
+            raise PairingCodeInvalidError()
+
+        # Through `provision_envelope_key`, never by sealing here. One sealing path means D-62's
+        # AAD binding cannot be bypassed by a second one (tasks.md 8.1's own constraint).
+        sealed = await self.provision_envelope_key(session, device_id)
+
+        await self._recorder.record(
+            session,
+            DeviceAuditEvent(
+                action="device_paired",
+                reason="pairing code exchanged",
+                outcome="allowed",
+                project_id=project_id,
+                device_id=device_id,
+                tenant_id=tenant_id,
+                actor_user_id=issuer_id,
+                details={
+                    "device_id": str(device_id),
+                    "csr_spki_sha256": spki,
+                    "agent_version": meta.agent_version[:64],
+                    "platform": meta.platform[:64],
+                    "attempts": attempts,
+                },
+            ),
+        )
+        return DeviceCredentials(
+            device_id=device_id,
+            project_id=project_id,
+            device_token=SecretBytes(token),
+            envelope_key=sealed.key,
+            csr_spki_sha256=spki,
+        )
+
+    async def _record_failure(
+        self, session: AsyncSession, *, failure_kind: str, project_id: uuid.UUID | None = None
+    ) -> None:
+        """A.1's `Audit(system, "pairing_failed", …)`.
+
+        `actor_kind` resolves to `system` because there is no principal on this route and none can
+        be invented; attributing a failed exchange to the operator who issued *some* code would be
+        a record that blames the wrong actor, which `AuditDraft.validate` already refuses.
+
+        `failure_kind` names the branch — `missing`, `burned`, `device-not-pairable` — and that is
+        internal-only: it reaches the audit row and never the response. The response is one
+        `pairing-code-invalid` for every branch (Q-17). The code value is not a parameter of this
+        method, so there is no argument through which it could reach a row.
+        """
+        assert self._recorder is not None  # noqa: S101
+        await self._recorder.record(
+            session,
+            DeviceAuditEvent(
+                action="pairing_failed",
+                reason=f"pairing exchange refused: {failure_kind}",
+                outcome="denied",
+                project_id=project_id,
+                details={"failure_kind": failure_kind},
+            ),
+        )
+
+    async def revoke(self, session: AsyncSession, *, device_id: uuid.UUID, actor: Principal, reason: str) -> None:
+        """Mark a device revoked in Postgres and record it. Joins the caller's transaction.
+
+        **The Redis enforcement set and the pub/sub broadcast are leaf 8.4's**, and the split is
+        not arbitrary: `is_revoked` is checked per inbound frame by the hub (§11.10, Q-16), and
+        there is no hub yet. What this leaf owns is the durable half — the `revoked` status, the
+        `revoked_at` stamp and the audit record — so the route §11.2 lists exists and is
+        auditable. Until 8.4 adds `SADD devtok:revoked`, revocation stops a *new* session (the
+        handshake reads the row) but does not close an open one, because nothing holds one open.
+
+        Idempotent by predicate rather than by check-then-act: the `UPDATE` excludes rows already
+        revoked, so a second call writes no second audit row and reports success.
+        """
+        assert_recorder = self._recorder
+        if assert_recorder is None:
+            raise DeviceKeyError("revocation writes an audit record; this DeviceService has no recorder")
+        result = await session.execute(
+            text(
+                "UPDATE agent_devices SET status = :revoked, revoked_at = now(), "
+                "pairing_token_hmac = NULL, pairing_expires_at = NULL "
+                "WHERE id = :id AND status <> :revoked "
+                "RETURNING project_id, tenant_id, revoked_at"
+            ),
+            {"revoked": DeviceStatus.REVOKED.value, "id": device_id},
+        )
+        row = result.first()
+        if row is None:
+            exists = await session.execute(
+                text("SELECT project_id FROM agent_devices WHERE id = :id"), {"id": device_id}
+            )
+            if exists.first() is None:
+                raise DeviceNotFoundError(str(device_id))
+            return  # already revoked; no second record
+        project_id, tenant_id, revoked_at = row[0], row[1], row[2]
+        await assert_recorder.record(
+            session,
+            DeviceAuditEvent(
+                action="device_revoked",
+                reason=reason,
+                outcome="allowed",
+                project_id=project_id,
+                device_id=device_id,
+                tenant_id=tenant_id,
+                actor_user_id=actor.user_id,
+                details={"device_id": str(device_id), "revoked_at": revoked_at.isoformat()},
+            ),
+        )
+
+
+def _as_text(value: Any) -> str:
+    """Redis replies arrive as `bytes` or `str` depending on `decode_responses`.
+
+    Normalised in one place rather than at five call sites, because a client configured either way
+    must produce the same behaviour — and the difference is invisible until a `uuid.UUID(b'...')`
+    raises in production against a client the tests did not use.
+    """
+    if isinstance(value, bytes | bytearray):
+        return value.decode("utf-8")
+    return "" if value is None else str(value)

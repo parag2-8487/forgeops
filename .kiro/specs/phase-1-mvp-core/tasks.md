@@ -421,14 +421,18 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
 - [ ] 8. Implement agent pairing, the session protocol and the named-operation executor
 
-  - [ ] 8.1 Implement pairing-code issue and single-use exchange
+  - [x] 8.1 Implement pairing-code issue and single-use exchange
 
     - **`backend/src/auth/devices.py` already exists.** Leaf 7.5 created it for D-62's envelope-key custody — `derive_key_encryption_key`, `seal_envelope_key`, `unseal_envelope_key`, the banned module-level `envelope_key`, and `DeviceService.{envelope_key,provision_envelope_key,active_device_for}`. This leaf **extends** that class; `exchange` must call `provision_envelope_key` rather than sealing a key itself, so there is one sealing path and D-62's AAD binding cannot be bypassed by a second one.
     - Implement `DeviceService.issue_pairing_code` and `.exchange`: a 6-character Crockford base32 code from a CSPRNG, storage of only its HMAC under `ENVELOPE_PEPPER`, one live code per project, and a Redis Lua consume script performing fetch, attempt increment, burn-on-exceed and delete-on-success atomically.
     - Add per-IP and global exchange rate limits, constant-time comparison, and one indistinguishable `pairing-code-invalid` response for unknown, expired, burned and consumed codes; write an audit record on failure that never contains the code.
     - Expose `POST /api/v1/agents/pairing-codes` (authorized) and `POST /api/v1/agents/pair/exchange` (the only new public route), plus `DELETE /api/v1/agents/{id}` for revocation.
     - Add integration tests for expiry, burn, single use, and the §14.6 rate-limit caps.
-    - _Design: §3.1, §4.4, §10.3, §11.2, §14.6, Appendix A.1; Deliverable: 1.1; Criterion: 1; Property: Q-17_
+    - **D-70 settled where a non-change-set audit write may live**, which had to be decided before any code: `AuditWriter.append` is a `@mutation_primitive`, so a call from `devices.py` classifies `no-authority`. The answer confines the write by the **shape** of its record — a `DeviceAuditEvent` whose action vocabulary is disjoint from `GovernanceAction`, whose `resource_kind` is a constant rather than a field, which has no before/after pair, and whose `details` keys are a closed set — with the write itself in `governance/device_audit.py`, reached through a Protocol declared in `audit/`. Location alone would have been a second entry point to the whole audit vocabulary, and Q-04 cannot see a transit-shaped row written by another writer, so it would have kept passing while its property stopped holding.
+    - **D-71 registered three problem types Appendix C.1 had no row for** — `pairing-unavailable` (503), `csr-invalid` (400), `device-not-found` (404) — and **D-72** moved every request-shaped check in front of the Redis consume and gave §3.1's `fingerprint` field a checked definition (the CSR's SubjectPublicKeyInfo SHA-256).
+    - **Finding 55, in pre-existing code.** A per-file `["TID251"]` ignore suppresses the whole Ruff rule, not one banned-api entry, so the four domain globs in `pyproject.toml` unbanned §2.2.1's private surface for `src/ai`, `src/mcp`, `src/analysis` and `src/projects` — and the comment above them asserted the opposite. Measured with `ruff check --stdin-filename`. Mechanism 2 is now re-asserted by a `CONFINED_NAMES` table parsed in `check-chokepoint.sh`'s Python half, which no lint ignore can switch off.
+    - **Two things this leaf deliberately does not do,** both by the group's own decomposition: the exchange issues no certificate or `ca_bundle` (the internal CA is 8.2), and revocation writes no Redis `devtok:revoked` member and no pub/sub event (per-message enforcement is 8.4, Q-16).
+    - _Design: §3.1, §4.4, §10.3, §11.2, §14.6, Appendix A.1, §17.1 D-70, D-71, D-72; Deliverable: 1.1; Criterion: 1; Property: Q-17_
 
   - [ ] 8.2 Implement the internal CA and short-lived device certificates
 

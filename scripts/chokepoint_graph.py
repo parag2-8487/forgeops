@@ -64,11 +64,14 @@ from pathlib import Path
 
 __all__ = [
     "AUTHORITY_TYPE",
+    "CONFINED_NAMES",
     "DECORATOR_NAME",
     "GOVERNANCE_PACKAGE",
     "GO_EXECUTOR_PREFIX",
     "GO_MUTATE_PACKAGE",
     "MINT_FUNCTION",
+    "ConfinedName",
+    "ConfinementViolation",
     "GoImport",
     "Primitive",
     "PrimitiveCall",
@@ -76,6 +79,7 @@ __all__ = [
     "check_go_boundary",
     "classify_importers",
     "discover_primitives",
+    "find_confinement_violations",
     "find_primitive_calls",
     "go_import_graph",
     "run_go_half",
@@ -573,6 +577,161 @@ def analyse(src_root: Path) -> tuple[list[Primitive], list[PrimitiveCall]]:
     return primitives, find_primitive_calls(src_root, primitives)
 
 
+# ─── mechanism 2, re-asserted by parsing (finding 55) ─────────────────────────────────────
+#
+# §2.2.1 mechanism 2 is a Ruff `banned-api` table naming the private surface a caller would need
+# in order to forge authority. Ruff enforces it per rule, and `[tool.ruff.lint.per-file-ignores]`
+# suppresses per RULE — so `"src/ai/**/*.py" = ["TID251"]`, added so a domain is not banned from
+# importing itself, also unbans `_MINT_SENTINEL`, `sign_envelope`, `_SIGNING_KEY`,
+# `signing_key_scope` and `send_command` for every file in that domain. Four domains carry that
+# glob, plus `main.py`, `core/tasks.py`, `worker.py`, `alembic/**` and `tests/**`. Measured, not
+# inferred: `src/ai/_probe.py` importing `..governance.authority._MINT_SENTINEL` produces zero
+# TID251 diagnostics.
+#
+# Mechanism 2 was therefore real for exactly one of its names — `_MINT_SENTINEL` — and real only
+# because Q-03's clause B re-asserted that one name by parsing the tree. This table generalises
+# that assertion to the whole surface. A lint ignore cannot switch a parse off.
+
+
+@dataclass(frozen=True, slots=True)
+class ConfinedName:
+    """One name §2.2.1 confines, and the modules permitted to reach it."""
+
+    #: The bare identifier as it appears in an `import` or an attribute access.
+    name: str
+    #: The module that defines it, in `a.b.c` form relative to `src/`.
+    owner: str
+    #: Modules permitted to name it, `owner` included.
+    permitted: frozenset[str]
+    #: Whether attribute access (`envelope.sign_envelope`) is checked as well as import.
+    #:
+    #: False where the identifier is also a legitimate Protocol method or field name elsewhere,
+    #: in which case attribute checking would report the honest uses and a check that cries wolf
+    #: gets switched off. Stated per name rather than left to a reader to work out.
+    check_attribute: bool
+    #: Why it is confined, printed with any violation so the message teaches rather than scolds.
+    reason: str
+
+
+CONFINED_NAMES: tuple[ConfinedName, ...] = (
+    ConfinedName(
+        name="_MINT_SENTINEL",
+        owner="governance.authority",
+        permitted=frozenset({"governance.authority"}),
+        check_attribute=True,
+        reason="MutationAuthority.__post_init__ compares against it by IDENTITY, so being able "
+        "to name it is being able to mint authority",
+    ),
+    ConfinedName(
+        name="sign_envelope",
+        owner="governance.envelope",
+        permitted=frozenset({"governance.envelope", "governance.chokepoint"}),
+        check_attribute=True,
+        reason="a module that can sign an envelope can forge a command the agent will accept",
+    ),
+    ConfinedName(
+        name="_SIGNING_KEY",
+        owner="governance.envelope",
+        permitted=frozenset({"governance.envelope"}),
+        check_attribute=True,
+        reason="the ContextVar holding the per-device signing key (D-60)",
+    ),
+    ConfinedName(
+        name="signing_key_scope",
+        owner="governance.envelope",
+        permitted=frozenset({"governance.envelope", "governance.chokepoint"}),
+        check_attribute=True,
+        reason="D-60: banning only the key would leave an outer caller able to install one of "
+        "its choosing, and a governance path that forgot its own scope would then sign",
+    ),
+    ConfinedName(
+        name="envelope_key",
+        owner="auth.devices",
+        permitted=frozenset({"auth.devices", "governance.chokepoint"}),
+        check_attribute=False,
+        reason="§11.2: a service that can fetch a signing key is a service that can forge a "
+        "command",
+    ),
+    ConfinedName(
+        name="send_command",
+        owner="websocket.hub",
+        permitted=frozenset({"websocket.hub", "governance.chokepoint"}),
+        check_attribute=False,
+        reason="commands reach the hub only from governance.chokepoint",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ConfinementViolation:
+    """One module naming a confined symbol it is not permitted to name."""
+
+    name: str
+    module: str
+    path: str
+    line: int
+    kind: str  # "import" | "attribute"
+    reason: str
+
+    def render(self) -> str:
+        return (
+            f"{self.path}:{self.line}: confined name '{self.name}' reached by {self.kind} from "
+            f"module '{self.module}', which is not permitted (design 2.2.1). {self.reason}"
+        )
+
+
+def find_confinement_violations(src_root: Path) -> list[ConfinementViolation]:
+    """Every module under `src_root` that names a confined symbol without permission.
+
+    Parsing, not importing, for the same reason the primitive discovery parses: a lint that runs
+    module-level code eventually breaks the build for a reason unrelated to what it checks.
+
+    An `owner` module that does not exist yet is not an error. `websocket.hub` arrives with leaf
+    8.4, and a check that failed until then would be a check nobody could satisfy — the same
+    mistake the Python half's original position made. What *is* an error is a name being reached
+    from a module outside its allowlist, which is decidable whether or not the owner exists.
+    """
+    violations: list[ConfinementViolation] = []
+    by_name = {entry.name: entry for entry in CONFINED_NAMES}
+    for path in sorted(src_root.rglob("*.py")):
+        module = _module_name(path, src_root)
+        relative = path.relative_to(src_root.parent).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    entry = by_name.get(alias.name)
+                    if entry is not None and module not in entry.permitted:
+                        violations.append(
+                            ConfinementViolation(
+                                name=entry.name,
+                                module=module,
+                                path=relative,
+                                line=node.lineno,
+                                kind="import",
+                                reason=entry.reason,
+                            )
+                        )
+            elif isinstance(node, ast.Attribute):
+                entry = by_name.get(node.attr)
+                if (
+                    entry is not None
+                    and entry.check_attribute
+                    and module not in entry.permitted
+                ):
+                    violations.append(
+                        ConfinementViolation(
+                            name=entry.name,
+                            module=module,
+                            path=relative,
+                            line=node.lineno,
+                            kind="attribute",
+                            reason=entry.reason,
+                        )
+                    )
+    return violations
+
+
 # ─── the Go half ──────────────────────────────────────────────────────────────────────────
 
 #: The mutation boundary. Importable only from packages rooted at `internal/executor/` by Go's
@@ -810,6 +969,26 @@ def run_python_half(src_root: Path, *, quiet: bool = False) -> int:
             "calls them, so the call-site clause is vacuously satisfied"
         )
     print(f"check-chokepoint(python): OK - {len(calls)} call site(s), all authorised")
+
+    # Mechanism 2, re-asserted by parsing. Run inside the Python half rather than behind its own
+    # flag on purpose: a separate flag is a check somebody forgets to pass, and this one exists
+    # precisely because the mechanism it stands in for was silently switched off.
+    violations = find_confinement_violations(src_root)
+    if not quiet:
+        print(
+            f"check-chokepoint(python): {len(CONFINED_NAMES)} confined name(s) checked by parse "
+            f"(2.2.1 mechanism 2, not defeatable by a per-file lint ignore)"
+        )
+        for entry in CONFINED_NAMES:
+            print(f"  {entry.owner}.{entry.name} -> {sorted(entry.permitted)}")
+    if violations:
+        print("check-chokepoint(python): FAIL - confinement", file=sys.stderr)
+        for violation in violations:
+            print(violation.render(), file=sys.stderr)
+        return 1
+    print(
+        f"check-chokepoint(python): OK - {len(CONFINED_NAMES)} confined name(s), no unpermitted reach"
+    )
     return 0
 
 
