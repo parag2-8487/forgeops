@@ -124,6 +124,139 @@ in the design appendix. Tests must not use mocks or fake data to manufacture a p
 HTTP servers, real Redis, and real PostgreSQL are used instead of vendor networks or real
 API keys. Backend coverage above 70 % is a reported goal in Phase 0, not a gate.
 
+## Local development on Windows
+
+Everything in this section was learned the expensive way and is written down so it is not
+learned again. The rule it all reduces to: **Python is launched from PowerShell, never from Git
+Bash. Bash runs the `.sh` check scripts and nothing else.**
+
+### Tracked entry points
+
+There is one tracked script per job. None of them is optional scaffolding; each replaced an
+untracked helper that was being rewritten from memory every session.
+
+| Script                           | Job                                                                |
+| :------------------------------- | :----------------------------------------------------------------- |
+| `scripts\local-env.ps1`          | dot-source to get the host-side integration environment            |
+| `scripts\pytest.ps1`             | the only entry point for pytest; loads `local-env.ps1` first       |
+| `scripts\leaf-gate.ps1`          | every fast whole-repo static check, run per leaf before committing |
+| `scripts\secret-gate.ps1`        | the mandatory pre-push secret gate, all stages                     |
+| `scripts\pre-commit-run.ps1`     | the real hook set from `.pre-commit-config.yaml`                   |
+| `scripts\install-pre-commit.ps1` | install `pre-commit` hash-verified from `requirements-tools.lock`  |
+
+### Git Bash and native Windows executables
+
+Git Bash rewrites values that look like absolute POSIX paths when it launches a **native**
+Windows executable. `.env` carries `API_PREFIX=/api/v1`, so any shell that sources `.env` and
+then runs `python.exe` delivers `API_PREFIX=C:/Program Files/Git/api/v1`. Because
+`backend/src/core/config.py` sets `env_file=None`, settings come from the OS environment only;
+`create_app()` then registers a route whose path does not start with `/` and Starlette asserts.
+`scripts/check-route-auth.py` surfaced that as "could not build the app from
+`src.main:create_app`", which reads like a repository defect and is not one — the same command
+from PowerShell passes.
+
+Two MSYS switches look interchangeable and are not:
+
+| Variable              | Governs                | Effect here                                                                              |
+| :-------------------- | :--------------------- | :--------------------------------------------------------------------------------------- |
+| `MSYS2_ENV_CONV_EXCL` | **environment values** | `='*'` stops `API_PREFIX` being rewritten. This is the one that fixes the problem above. |
+| `MSYS_NO_PATHCONV`    | **command arguments**  | `=1` stops argument rewriting — and breaks `check-chokepoint.sh`, which passes           |
+|                       |                        | `scripts/chokepoint_graph.py` to a native `python.exe` that then gets an unconverted     |
+|                       |                        | `/c/...` and reports `can't open file 'C:\c\IMP\...'`.                                   |
+
+Adding the second one alongside the first on a guess cost a full extra lap. Neither is needed
+now: the PowerShell entry points above never create an MSYS boundary for Python to cross.
+`MSYS_NO_PATHCONV=1` is still needed for `docker run -v` and for `git show <ref>:<path>` when
+those are invoked **from bash**.
+
+### PowerShell 5.1 reads UTF-8 as ANSI
+
+`Get-Content` without `-Encoding UTF8` decodes a UTF-8 file using the ANSI code page, and a
+child process's stdout is decoded using the **console** code page. The same en dash therefore
+becomes `â€"` one way and `Γ` the other, so a line compared across the two paths is unequal to
+itself. This produced a false "NEW secret shape" verdict in `secret-gate.ps1` stage 2b, and it
+truncates tool output when a `§` decodes to a control character. Two defences, both used by
+every script here:
+
+```powershell
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+Get-Content -LiteralPath $f -Encoding UTF8
+```
+
+**Never edit a `.md` file through PowerShell string replacement.** The mangling is silent and
+affects every en dash in the file.
+
+### The `.env` and `ALEMBIC_DATABASE_URL` trap
+
+`make init-env` copies `.env.example` to `.env`. `.env.example` is **Compose-targeted**: its
+DSNs name the Compose services `postgres:5432` and `redis:6379`, which resolve only on the
+Compose network. `.env` is also where `make init-ca` writes the development CA key, so a
+host-side developer has a genuine reason to load it — and loading it wholesale puts
+`ALEMBIC_DATABASE_URL=...@postgres:5432` into the OS environment.
+
+`backend/alembic/env.py` prefers `ALEMBIC_DATABASE_URL` over `DATABASE_URL` **by design**
+(§6.4: the migrator role owns the schema, the application role must not). `os.environ` outranks
+anything a fixture configures. So every DB-backed test errors at setup, inside
+`schema_at_head`'s `alembic downgrade base`, with `socket.gaierror: [Errno 11001] getaddrinfo
+failed` — a failure that names neither the variable nor the file that set it. Nothing about this
+is Windows-specific; a Linux developer who sources `.env` hits it identically.
+
+Two mechanisms address it, and the precedence is deliberately **not** one of them:
+
+1. `scripts/local-env.ps1` loads `.env` in full and then overrides the endpoint variables
+   unconditionally. An allow-list of "safe" keys was rejected: a new key in `.env.example` would
+   silently escape it. A guard afterwards reads the Compose file's own service names and fails if
+   any exported value still points at one — which is how `OPA_URL=http://opa:8181` was found, on
+   the guard's first run.
+2. `alembic/env.py` catches `socket.gaierror` and re-raises naming the host, the variable it came
+   from, and the remedy. Credentials are never printed, only which variable was chosen.
+
+### Test container ports
+
+Five containers, all published on loopback only, all named `forgeops-test-*`. Ports are
+deliberately non-default so a local development stack and the test stack can coexist. The
+PostgreSQL container runs with `POSTGRES_HOST_AUTH_METHOD=trust`, so the local DSNs carry no
+password — there is nothing to leak.
+
+| Container                 | Image                                 | Host port | Used as                     |
+| :------------------------ | :------------------------------------ | :-------- | :-------------------------- |
+| `forgeops-test-pg`        | `pgvector/pgvector:pg17`              | `55432`   | `forgeops_test` database    |
+| `forgeops-test-redis`     | `redis/redis-stack-server:7.4.0-v3`   | `56379`   | db 0 runtime, db 1 tests    |
+| `forgeops-test-cerbos`    | `ghcr.io/cerbos/cerbos:0.54.0`        | `53592`   | `CERBOS_URL`                |
+| `forgeops-test-ak-server` | `ghcr.io/goauthentik/server:2026.5.6` | `9000`    | OIDC issuer                 |
+| `forgeops-test-ak-worker` | `ghcr.io/goauthentik/server:2026.5.6` | —         | Authentik background worker |
+
+Docker Desktop stopping between sessions leaves all five `Exited (255)`. They restart with
+state intact:
+
+```powershell
+docker start forgeops-test-pg forgeops-test-redis forgeops-test-cerbos `
+             forgeops-test-ak-server forgeops-test-ak-worker
+```
+
+### Running the suite: the two-chunk split
+
+The whole backend suite passes 1,476 tests and takes over an hour, which exceeds the shell
+timeout available to an agent session. It is therefore run in two chunks, and only **once per
+task group** — never per leaf:
+
+```powershell
+scripts\pytest.ps1 -q tests/unit tests/meta tests/property
+scripts\pytest.ps1 -q tests/integration
+```
+
+Per leaf, run the leaf's own tests plus the mandatory selection, plus `leaf-gate.ps1`:
+
+```powershell
+scripts\pytest.ps1 -q tests/unit/test_<leaf>.py
+scripts\pytest.ps1 -q -m mandatory --report-log=../.evidence/mand.jsonl
+backend\.venv\Scripts\python.exe scripts\check-no-skips.py .evidence\mand.jsonl
+powershell -File scripts\leaf-gate.ps1
+```
+
+`check-no-skips.py` consumes a `--report-log` JSONL or `go test -json` events, so it is a
+property of a test **run** and cannot be part of the static gate.
+
 ## Error and API conventions
 
 Every non-2xx backend response is an RFC 9457 problem document with

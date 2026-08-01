@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-07-31**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Leaves reflected       | **56 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 110 `pending`. Reconciled 2026-08-01; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end against the running stack, comprehension artifact regenerated). **Group 8 is in progress**: leaves 8.1 (pairing-code issue and single-use exchange) and 8.2 (the internal CA and short-lived device certificates) are done. Decisions run to **D-74**. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| :--------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-08-01**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Leaves reflected       | **56 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 110 `pending`. Reconciled 2026-08-01; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end, comprehension artifact regenerated). **Group 8 is in progress**: leaves 8.1 (pairing-code issue and single-use exchange) and 8.2 (the internal CA and short-lived device certificates) are done. Decisions run to **D-76**; findings run to **61**. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -2679,6 +2679,88 @@ the drift the authority order exists to prevent — hence a numbered decision ra
 difference. And the method has no caller until leaf 8.4's hub, so its correctness rests entirely on
 its tests until then.
 
+### D-75 — the `.env` trap is fixed at the point of use and at the point of failure, not by changing precedence
+
+`make init-env` copies `.env.example` to `.env`. That file is **Compose-targeted**: its DSNs name
+the services `postgres:5432` and `redis:6379`, which resolve on the Compose network and nowhere
+else. `.env` is also where `make init-ca` writes the development CA key, so a host-side developer
+has a real reason to load it — and loading it puts `ALEMBIC_DATABASE_URL=...@postgres:5432` into
+the OS environment, where it outranks anything a fixture configures. Every DB-backed test then
+errors at setup inside `schema_at_head`'s `alembic downgrade base` with `socket.gaierror: [Errno
+11001] getaddrinfo failed`. Finding 61.
+
+Three places could hold the fix, and the interesting part is which one was rejected.
+
+**`alembic/env.py`'s variable precedence — rejected outright.** Preferring `DATABASE_URL` over
+`ALEMBIC_DATABASE_URL` would make the symptom vanish, and it would reintroduce the defect that
+preference was written to fix: migrations running as the **application** role, which then owns
+`audit_events` and can drop its own append-only triggers. §6.4 says a single-role deployment
+silently defeats mechanism 3. Relaxing a security-relevant precedence because it made a local
+failure noisy is the wrong trade in every direction, and it is worth recording that it was
+considered and refused rather than leaving a future reader to wonder.
+
+**Restructuring `.env.example` — rejected as disproportionate.** Splitting it into
+Compose-targeted and host-targeted halves touches §13.3's fresh-clone guarantee, the CI assertion
+that no `.env` is committed, `docker compose`'s `env_file` chain and `load_project_dotenv`'s key
+validation. That is a large change to four contracts to fix a load-order problem.
+
+**Taken: fix it where it is caused and where it surfaces.** At the point of use,
+`scripts/local-env.ps1` loads `.env` in full — the CA key is genuinely needed — and then
+overrides the endpoint variables unconditionally. An allow-list of "safe to load" keys was
+rejected as pattern H: a new key in `.env.example` escapes a hand-maintained list silently.
+Override-after cannot be escaped that way, and a guard driven from the Compose file's **own**
+service names fails if any exported value still points at one. The guard earned itself on its
+first run by finding `OPA_URL=http://opa:8181`, which no amount of inspection had noticed. At the
+point of failure, `alembic/env.py` catches `socket.gaierror` and re-raises naming the host, the
+variable it came from, and the remedy — credentials never printed, only which variable was chosen.
+
+What it costs: the guard is Windows-only today, because `local-env.ps1` is. A Linux developer who
+sources `.env` still hits the trap and now gets a message that explains it, which is the second
+mechanism doing its job but not the first. The honest state is one mechanism per platform and a
+documented trap, not a solved problem. The `alembic/env.py` change also has no test — it fires on
+a DNS failure, and manufacturing one inside the migration path would need either a fake resolver
+or a deliberately broken DSN in a fixture, so its correctness rests on reading it until something
+needs it.
+
+### D-76 — Python is launched from PowerShell; Git Bash keeps the `.sh` scripts and nothing else
+
+Three sessions lost time to one mechanism. Git Bash rewrites environment **values** that look
+like absolute POSIX paths when it starts a native Windows executable. `.env` carries
+`API_PREFIX=/api/v1`; `core/config.py` sets `env_file=None`, so settings come from the OS
+environment only; `python.exe` therefore receives `API_PREFIX=C:/Program Files/Git/api/v1`,
+`create_app()` registers a route whose path does not begin with `/`, and Starlette asserts.
+`check-route-auth.py` reported that as "could not build the app from `src.main:create_app`" — a
+sentence that reads like a repository defect and is not one.
+
+The per-script workaround was `MSYS2_ENV_CONV_EXCL='*'`. It works, and it has to be remembered
+every time, which is a convention. The rejected variant is instructive: adding
+`MSYS_NO_PATHCONV=1` beside it on the assumption they were two spellings of one switch broke
+`check-chokepoint.sh`, because that one governs **arguments**, and the check passes
+`scripts/chokepoint_graph.py` to a native `python.exe` that then receives an unconverted `/c/...`.
+One variable is about the environment, the other about the argument vector; the failure they
+produce looks the same and the fix does not.
+
+Taken: remove the boundary instead of excluding things from it. `pytest`, `ruff`, `alembic` and
+the `check-*.py` scripts now run from tracked PowerShell entry points — `scripts\pytest.ps1`,
+`scripts\leaf-gate.ps1`, `scripts\secret-gate.ps1`, `scripts\local-env.ps1` — and bash is left
+with the `.sh` check scripts, where it is the right tool. Neither MSYS variable appears in any of
+them. In the same move, the hand-rolled `_belint.sh` / `_hyg.sh` / `_prettier.sh` substitutes are
+retired in favour of running **pre-commit itself**, hash-installed from
+`requirements-tools.lock`: findings 46 and 52 were both a hand-written stand-in drifting from the
+hook it stood in for, and the only way to stop that recurring is to stop having a stand-in. The
+first run of the real hook set immediately found something all three substitutes had missed —
+prettier rewriting `docs/LEARNING-JOURNAL.md`, because an unbackticked `OIDC_ISSUER` paired its
+underscore with a later `_different_` and produced `OIDC*ISSUER`.
+
+What it costs: the entry points are PowerShell, so they are Windows-only, and CI remains the
+authority for the Linux path. `.ps1` is a new file type in `scripts/`, which until now held only
+`.sh` and `.py`. And PowerShell 5.1 brought its own trap — it decodes UTF-8 files as ANSI and
+child stdout as the console code page, so the same en dash compares unequal to itself across the
+two; that produced a false "NEW secret shape" verdict in `secret-gate.ps1` before both sides were
+pinned to UTF-8. The knowledge that used to live in untracked scratch scripts now lives in
+`docs/development.md`, which is the point: the scripts were being rewritten from memory every
+session at full cost.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -2928,6 +3010,38 @@ comment says the default profile is "postgres, redis, opa, backend, frontend" an
 "five-service set", and says "No optional service is declared here." The default set is now
 eight services and both optional services are declared. Nothing mechanical can see the comment
 rot, because every check reads `scripts/compose-default-services.txt` instead.
+
+**60. `scripts/requirements-tools.lock` cannot be installed on Windows, because a row that its
+own `--require-hashes` contract needs does not exist in it.** The lock is the repository's answer
+to inherited debt D4: floating tool versions meant the linter and the vulnerability scanner were
+the two least reproducible pieces of the pipeline, so `requirements-tools.in` is compiled with
+`--generate-hashes` and installed with `pip install --require-hashes`. CI does exactly that, on
+`ubuntu-latest`, and it passes.
+
+The same command on Windows stops with `In --require-hashes mode, all requirements must have
+their versions pinned with ==. These do not: colorama ... (from build==1.5.0)`. `build` is a
+pip-tools dependency and requires `colorama; os_name == "nt"`. `make lock-tools` runs on Linux,
+where that marker is false, so the row was never emitted — and under `--require-hashes` a missing
+row is not resolved leniently, it is fatal. The lock presents as a universal pinned closure and is
+a Linux one.
+
+This is pattern C rather than a packaging inconvenience because of what the lock is _for_. Its
+claim is "the tools that gate the build are verified by digest rather than resolved at run time".
+That claim is true on one platform and unverifiable on another, and nothing said so.
+
+The fix taken is deliberately not a hand-added row: `pip-compile` would drop it on the next
+`make lock-tools`, which is pattern H. `scripts/install-pre-commit.ps1` installs the **pre-commit
+subtree only**, every row still taken from the lock and still with its digests, so
+`--require-hashes` stays in force and `colorama` — reachable only through pip-tools, which is not
+needed to run hooks — never enters the resolution. The script refuses to install if any wanted
+package has no hash-pinned row, so the subset cannot quietly become unverified. It also earned
+that check immediately: the first attempt omitted `python-discovery`, virtualenv 21.x's own
+dependency, and `--require-hashes` named it rather than silently resolving a newer one.
+
+What is left unfixed and is recorded rather than hidden: the full lock is still not installable on
+Windows, and `make lock-tools` will keep producing Linux-only locks. A proper fix is a
+`--generate-hashes` run per target platform, or `pip-compile --universal` where the tool supports
+it, and it belongs with whoever next touches D4 rather than in a group 8 environment pass.
 
 ### Pattern D — a rule right in intent and one case wrong
 
@@ -3377,7 +3491,7 @@ project variable was exported.
 `.env.example`, `docker compose` loads it, and any shell that sources it puts `MCP_AGENT_BLAST_RADIUS`,
 `OIDC_ISSUER`, `ENVELOPE_PEPPER` and sixty-odd others into the environment. Leaf 8.2 needed a `.env`
 to prove `make init-ca` works, created one, and six tests turned red —
-`test_every_missing_credential_appears_in_one_report` failing with "OIDC_ISSUER was not reported",
+`test_every_missing_credential_appears_in_one_report` failing with "`OIDC_ISSUER` was not reported",
 because a _different_ production guard fired first and the assertion never saw the message it was
 looking for.
 
@@ -3668,6 +3782,31 @@ Both scans first flagged the _comment paragraphs explaining the defect_, because
 offending call — a source scan that cannot tell code from prose reports its own documentation as
 a violation, and the tempting fix is the wrong one.
 
+**61. The same `.env` broke the migration path too, and this time the error named nothing at
+all.** Finding 57 above is `.env` reaching the ambient environment and defeating tests that assert
+on what is **absent**. This is its sibling, found one leaf later, and it is worth its own number
+because the symptom, the mechanism and the fix are all different.
+
+`.env.example` is Compose-targeted: `ALEMBIC_DATABASE_URL=...@postgres:5432`. `alembic/env.py`
+prefers `ALEMBIC_DATABASE_URL` over `DATABASE_URL` **by design** — §6.4, so the migrator role and
+not the application role owns the schema. `os.environ` outranks anything a fixture sets. So a
+shell that has loaded `.env` runs `schema_at_head`'s `alembic downgrade base` against a hostname
+that exists only inside Docker, and **every DB-backed test errors at setup** with
+`socket.gaierror: [Errno 11001] getaddrinfo failed`.
+
+The instructive part is the distance between cause and message. The failure names a Windows
+sockets errno. It does not name the variable, the file that set it, the fact that a Compose
+service name is involved, or the design clause that made this variable win. Nothing about it is
+Windows-specific either — `getaddrinfo` fails the same way on Linux, and the CI job never sees it
+only because CI never creates a `.env`. Finding 57's remedy was per-test isolation; that cannot
+help here, because the failure is in a fixture's subprocess before any test body runs.
+
+Two mechanisms, D-75: `scripts/local-env.ps1` overrides the endpoint variables after loading
+`.env` and asserts against the Compose file's own service names, and `alembic/env.py` catches
+`socket.gaierror` and re-raises naming the host, the source variable and the remedy. The cost is
+stated in D-75: one mechanism is Windows-only, and a Linux developer gets the improved message but
+not the prevention.
+
 ### Pattern O — the check frozen at a previous phase, so its findings are noise
 
 This is the inverse of Pattern B and it is worse than it sounds. Pattern B is a gate that
@@ -3729,6 +3868,38 @@ Worth noticing that this and defect 47 were both found by the same act: adding t
 `mutations.toml` and then running the checks around it because the row's evidence needed them. Neither
 was found by reading code. Producing evidence finds things that inspection does not, which is the
 same conclusion defect 36 reached from the database side.
+
+**58. The pre-push secret gate's shape grep scanned the whole staged diff, so it flagged lines
+nobody had written, in files nobody had changed.** `docs/development.md` specifies the gate in
+three stages, and stage 3 — the per-commit pass — was implemented correctly: it filters the diff
+to `^\+` lines before grepping. Stage 2 was not. It piped `git diff --cached` straight into
+`grep`, which sees **context** lines and **removed** lines as readily as added ones.
+
+The consequence is exactly pattern O's, reached from a different direction. Pattern O's checks are
+frozen at an earlier phase and so report correct code as wrong. This check was never frozen; its
+_unit of analysis_ was wrong. Either way the operator is handed hits that are not their work and
+must clear them one by one, and the thing an operator learns from a report they must repeatedly
+overrule is to stop reading it carefully. The gate that guards against a credential leak is the
+worst possible place to teach that habit.
+
+It cost a real error immediately. Four matches were reported before leaf 8.2's push; one of them
+was a bearer-clause literal in `backend/tests/synthetic_secrets.py` — the repository's own
+synthetic-credential helper, an unmodified pre-existing line, present in the diff only as context.
+That is one quarter of the report being noise on its first use.
+
+The fix is not to widen the pattern list or to add an allowlist. Stage 2 now parses the unified
+diff and considers `+` lines only, so context and removals can never be reported. Publishing an
+unchanged shape is still a real question and it now has its own stage: the full-content pass
+classifies every line of every pushed file against **the blob the remote already has**, so a
+pre-existing shape is labelled pre-existing and a new one blocks. The two questions were
+previously conflated into one grep that answered neither well.
+
+A second defect surfaced while proving the fix, and it belongs to the new stage rather than to
+this one: PowerShell 5.1 decodes a UTF-8 file as ANSI and a child process's stdout as the console
+code page, so a line containing one en dash was unequal to itself across the comparison and three
+long-standing lines in `synthetic_secrets.py` were reported as NEW. A gate that cries wolf teaches
+the same lesson as a gate that flags context lines, so it is the same finding wearing a second
+costume. Both sides are now pinned to UTF-8.
 
 ### What to take from this chapter
 
@@ -3796,6 +3967,65 @@ That is also the answer to "why write a property test for a checker that already
 hand-written fixtures encoded the cases their author had thought of, which is the same set of cases
 the implementation encoded — pattern F's problem, one level up. The generator did not share that
 blind spot because it did not share the author.
+
+### Pattern S — the finding that reports the symptom but not the rule, so acting on it needs a guess
+
+Lettered **S** because `Q-` is the correctness-property prefix and R is taken. Found 2026-08-01,
+by the finding being acted on incorrectly.
+
+**59. The secret gate printed the matching line and not the matching pattern, so the operator
+inferred which rule had fired — and the inference was wrong.** The gate greps a twenty-one-rule
+pattern list with a single alternation and prints `grep -n` output. The reader sees a file, a line
+number and the text; the rule that matched is left to be worked out.
+
+Before leaf 8.2's push, three hits in `backend/src/auth/ca.py` and `test_internal_ca.py` were
+reported and attributed, in writing, to the **private-key-armour** rule. That rule cannot have
+matched: `grep -nE` is case-sensitive, its token is uppercase, and the only private-key wording in
+that file is lowercase English prose in docstrings. The rule that actually fired was the
+**password-assignment** one, tripped by `serialization.load_pem_private_key`'s no-passphrase
+keyword argument — a required argument of the `cryptography` library whose value asserts that there
+is **no** passphrase.
+
+Both readings lead to "clear it", so nothing unsafe happened. That is precisely why the pattern is
+worth naming: the outcome was right and the reasoning was wrong, and only the reasoning
+generalises. Under the private-key-armour reading the remedy is to reword prose, which would have
+been attempted and would not have worked, because the matching token is a third-party API's
+parameter name — "describe the shape, never print it" is a rule for text we author and cannot apply
+to a library's signature. Under the correct reading there is nothing to remedy at all. A clearance
+decision was made against an inference where a fact was available.
+
+The axis this pattern names, and its distance from pattern R: R is about a check whose **rule** is
+weaker than the mechanism it describes, so the check's verdict is wrong. S is about a check whose
+verdict is **right** and whose **report** is not actionable without reconstruction. R fails
+silently in the direction of permissiveness; S fails by transferring work to the operator and
+tolerating a wrong reconstruction indefinitely, because nothing ever contradicts it.
+
+The fix is small and the design consequence is not. Every hit now reports
+`pattern -> file:line`, all matching patterns rather than the first — an authorization header
+carrying a bearer token trips two rules and an operator clearing one should see the other — and each
+pattern carries its **own** case sensitivity instead of inheriting one flag for the whole list. The
+AWS key-id and private-key-armour rules are provider literals and match uppercase only; the
+password-assignment and api-key rules match things we write in any casing. Folding twenty-one rules
+into one alternation with one case flag is what made the mis-attribution possible in the first
+place, because it left no way to ask which rule fired.
+
+Naming the rules had a second consequence nobody planned. Once every hit was attributed, the fixed
+gate's first full run reported **forty-two** hits — and twenty-eight of them were in the gate's own
+pattern table, because a file that enumerates credential shapes as string literals matches every
+one of them. The obvious remedy is a path-scoped allowlist for the checker, and it was rejected:
+`check-gitleaks-config.sh` exists precisely because an allowlist is the cheapest way to make a
+secret scan green and therefore the easiest thing to widen under pressure. The remedy taken is the
+one the repository already uses for test credentials — **assemble the shape so no source line
+carries it**, exactly as `backend/tests/synthetic_secrets.py` does. Every regex is now built from
+fragments, every rule name is a name rather than the token, and this journal's own paragraphs about
+the finding describe the shapes instead of quoting them. That took the report from forty-two hits
+to the three that are real, with no exemption anywhere. The rule generalises: **a checker whose
+subject is a set of literals should hold those literals in assembled form, or it becomes its own
+loudest false positive.**
+
+The general rule: **a check that aggregates several rules must say which rule fired.** If the
+report needs the reader to re-derive the match, the report is an invitation to re-derive it wrongly,
+and the wrong derivation is never corrected because the check does not disagree with it.
 
 ---
 

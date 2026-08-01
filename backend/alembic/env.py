@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import sys
 from logging.config import fileConfig
 
 from alembic import context
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import pool
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlmodel import SQLModel
 
@@ -72,6 +74,7 @@ if config.config_file_name is not None:
 # single-role development database keeps working. The choice is announced, because a
 # migration running as the wrong role is invisible otherwise.
 database_url = os.environ.get("ALEMBIC_DATABASE_URL") or os.environ.get("DATABASE_URL")
+_source = "alembic.ini sqlalchemy.url"
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
     _source = "ALEMBIC_DATABASE_URL" if os.environ.get("ALEMBIC_DATABASE_URL") else "DATABASE_URL"
@@ -129,8 +132,34 @@ async def run_async_migrations() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+    try:
+        async with connectable.connect() as connection:
+            await connection.run_sync(do_run_migrations)
+    except socket.gaierror as exc:
+        # D-75. Name the variable, the host and the remedy, because the bare failure names
+        # none of them.
+        #
+        # `make init-env` copies `.env.example` to `.env`, and `.env.example` is
+        # COMPOSE-targeted: its DSNs use the service names `postgres` and `redis`, which
+        # resolve only on the Compose network. `.env` also holds the development CA key
+        # (`make init-ca`), so a host-side developer has a real reason to load it - and
+        # loading it wholesale puts `ALEMBIC_DATABASE_URL=...@postgres:5432` into the OS
+        # environment. `os.environ` outranks anything a test fixture configures, this file
+        # prefers `ALEMBIC_DATABASE_URL` over `DATABASE_URL` by design (§6.4, and that
+        # preference is correct - it must not be relaxed), and so every DB-backed test
+        # errors at setup with `socket.gaierror: [Errno 11001] getaddrinfo failed` from
+        # `schema_at_head`'s `alembic downgrade base`. A Linux developer hits the identical
+        # thing; nothing here is Windows-specific. Recorded as finding 61.
+        host = make_url(config.get_main_option("sqlalchemy.url") or "").host
+        raise RuntimeError(
+            f"alembic: cannot resolve database host {host!r}, taken from {_source}. "
+            f"If {host!r} is a Compose service name you are running outside Compose: "
+            f"`.env.example` (and therefore `.env`) is Compose-targeted, and loading `.env` "
+            f"wholesale for its CA key also imports its Compose DSNs. Set "
+            f"ALEMBIC_DATABASE_URL to a host-reachable DSN, or load `.env` selectively - "
+            f"scripts/local-env.ps1 does the latter. See docs/development.md, "
+            f"'The .env and ALEMBIC_DATABASE_URL trap'."
+        ) from exc
     await connectable.dispose()
 
 
