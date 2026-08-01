@@ -5,7 +5,7 @@
 | Snapshot date          | **2026-08-01**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Leaves reflected       | **56 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 110 `pending`. Reconciled 2026-08-01; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end, comprehension artifact regenerated). **Group 8 is in progress**: leaves 8.1 (pairing-code issue and single-use exchange) and 8.2 (the internal CA and short-lived device certificates) are done. Decisions run to **D-77**; findings run to **61**, and finding 55's residual is closed. See chapter 10. |
+| Leaves reflected       | **56 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 110 `pending`. Reconciled 2026-08-01; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end, comprehension artifact regenerated). **Group 8 is in progress**: leaves 8.1 (pairing-code issue and single-use exchange) and 8.2 (the internal CA and short-lived device certificates) are done. Decisions run to **D-78**; findings run to **61**, and finding 55's residual is closed. See chapter 10. |
 | Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 This document teaches. It is not a changelog, not a status report, and never an
@@ -2803,6 +2803,51 @@ the script to Python 3.11+; it already runs under the backend venv, so this is a
 than a change. Two exemptions exist, and every exemption is a place where the boundary is a
 decision rather than a mechanism. And the parse is import-graph-shaped only: it sees that
 `governance` imports `analysis`, not what it does with it.
+
+### D-78 — `pytest-xdist -n auto` is deferred, and the measurement that motivated it changed
+
+The case for parallelising was strong and is unchanged in principle: 1,483 mandatory tests at leaf
+56 of 166 only grows, and any test that breaks under `-n auto` was order-dependent already —
+findings 43 and 50 were both exactly that — so parallelism surfaces real defects rather than
+creating them. Deferred anyway, for two reasons that are measurements rather than preferences.
+
+**The number that justified it was wrong.** The mandatory selection took **3,479 seconds** with a
+wholesale-loaded `.env` and **1,258 seconds** without it, 1,483 passing both times. The extra 37
+minutes were not the tests; they were pydantic constructing and rejecting a `Settings` object down
+every error path, twenty-eight validation errors at a time. Fixing D-75's first version cut the run
+by 64% for nothing to do with parallelism. Optimising against the polluted number would have been
+optimising against a defect.
+
+**Adding it requires regenerating a lock, on the wrong platform.** `pytest-xdist` is in neither
+`backend/pyproject.toml`'s dev dependencies nor `requirements-dev.lock`, so adding it means
+`make lock-backend`, and CI's `lock-integrity` job runs `check-lock-freshness.sh` against the
+result. `requirements-dev.lock` contains **zero** rows carrying a `sys_platform`, `os_name` or
+`platform_system` marker, which is the same shape as finding 60: it was resolved on Linux and
+presents as universal. Regenerating it here would produce a lock resolved on Windows, and the job
+whose purpose is to prove the lock matches `pyproject.toml` would then be proving it against a
+platform nobody deploys on. That is a worse outcome than a slow suite.
+
+So the decision is: `-n auto` when `requirements-dev.lock` can be regenerated on Linux — the same
+place `make lock-tools` needs to run for finding 60 — and the two belong in one change rather than
+two. Until then the two-chunk split in `docs/development.md` stands, and the group-boundary rule,
+full suite once per group and never per leaf, is what keeps the cost bounded.
+
+What it costs: the full suite stays serial, so the group-close run remains the longest step in a
+session, and order-dependence defect number four goes on being invisible until someone runs the
+suite in a different order. That is a named gap rather than an assumption.
+
+**The unreproduced observation, recorded because it is unreproduced.** A previous session recorded
+one full-suite failure in `test_wiring_tier_config.py` under `pytest-randomly` that did not recur in
+three later runs. It has to be recorded with a correction rather than a seed. **`pytest-randomly` is
+not installed in `backend/.venv`, is not in `backend/requirements-dev.lock`, and is not in
+`pyproject.toml`'s dev dependencies** — checked, all three; the only pytest plugins locked are
+`pytest-asyncio`, `pytest-cov` and `pytest-reportlog`. So the plugin cannot have been active, and no
+seed was captured. The honest record is therefore: **one unexplained failure in
+`test_wiring_tier_config.py`, cause unknown, ordering mechanism unidentified, not reproduced in
+three subsequent runs, and no seed exists to retry it with.** It is written down because three
+order-dependence defects have already been found here and a fourth left unrecorded is one paid for
+twice — but it is written down as an observation, not as a diagnosis, because calling it
+order-dependence would be inventing the part that is missing.
 
 ## 9. What has actually been found by building it
 
