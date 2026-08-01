@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -176,6 +177,12 @@ type Manager struct {
 	newTicker      func(time.Duration) Ticker
 	capabilityList []string
 	startedAt      time.Time
+
+	// The measured clock offset against the backend (§7.6). Guarded by its own mutex rather
+	// than folded into the live session, because `agent doctor` reads it between sessions.
+	skewMu       sync.Mutex
+	skew         time.Duration
+	skewMeasured bool
 }
 
 // uptime is what `session.heartbeat` reports. Measured from construction rather than from
@@ -269,6 +276,12 @@ type Status struct {
 	// usable. Reported rather than hidden: OQ-26 accepts the fallback, and the whole
 	// value of accepting it is that the operator is told.
 	Degraded bool
+	// ClockSkew is the measured offset against the backend's clock, positive when this
+	// agent's clock is ahead. Meaningful only when ClockSkewMeasured is true — a zero skew
+	// and an unmeasured one are the same number and very different facts (§7.6).
+	ClockSkew         time.Duration
+	ClockSkewMeasured bool
+	ClockSkewBeyond   bool
 }
 
 // Status reports whether this agent is paired.
@@ -280,6 +293,11 @@ type Status struct {
 func (m *Manager) Status(ctx context.Context) (Status, error) {
 	backend := m.store.Backend()
 	status := Status{StoreBackend: backend, Degraded: backend == BackendFile}
+	if skew, measured := m.Skew(); measured {
+		status.ClockSkew = skew
+		status.ClockSkewMeasured = true
+		_, status.ClockSkewBeyond = m.skewBeyondTolerance()
+	}
 
 	if strings.TrimSpace(m.backendURL) == "" {
 		return status, connection.ErrDisabled

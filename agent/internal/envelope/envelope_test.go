@@ -488,7 +488,11 @@ func TestVerify_RejectsAnUnknownVersion(t *testing.T) {
 }
 
 func TestVerify_RejectsAMissingRequiredMember(t *testing.T) {
-	for _, blank := range []string{"command_id", "device_id", "approval_id", "nonce", "signature"} {
+	// `approval_id` is deliberately absent from this list since D-83: §7.7's read-only
+	// operations carry it empty, so refusing an empty one refused valid envelopes. The
+	// dispatcher requires it for mutating operations instead, which distinguishes the cases
+	// §7.7 distinguishes. `TestVerify_AnEmptyApprovalIdIsAcceptedHere` is the other side.
+	for _, blank := range []string{"command_id", "device_id", "nonce", "signature"} {
 		raw := signed(t, sampleEnvelope())
 		var asMap map[string]any
 		if err := json.Unmarshal(raw, &asMap); err != nil {

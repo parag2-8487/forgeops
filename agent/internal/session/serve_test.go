@@ -1220,6 +1220,190 @@ func TestServe_AnOrdinaryCloseIsNotRevocation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------------------
+// §7.6, Appendix C.2 — the measured clock skew (leaf 8.6).
+// ---------------------------------------------------------------------------------------
+
+// connectAtSkew builds a handshake result whose `server_time` puts the backend's clock the
+// given offset BEHIND the agent's, so a positive offset means "the agent's clock is fast".
+func connectAtSkew(now time.Time, agentAhead time.Duration) *connectResult {
+	result := okConnect()
+	result.ServerTime = now.Add(-agentAhead).Format(time.RFC3339Nano)
+	return result
+}
+
+func TestClockSkewTolerance_MatchesTheVerifier(t *testing.T) {
+	// Two copies of §7.6's ±60 s exist — this package's constant and the verifier's default —
+	// and this is what stops them drifting. Without it the session could refuse at one bound
+	// while the verifier refused at another, and the error an operator saw would depend on
+	// which layer got there first.
+	creds := syntheticCredentials()
+	now := func() time.Time { return time.Unix(1899999900, 0).UTC() }
+	verifier := newTestVerifier(t, creds, "sha256:local", now)
+	if verifier.ClockSkew() != clockSkewTolerance {
+		t.Errorf("the verifier tolerates %s and the session %s; they must agree",
+			verifier.ClockSkew(), clockSkewTolerance)
+	}
+}
+
+func TestServe_TheAgentStatusFrameReportsTheMeasuredSkew(t *testing.T) {
+	harness := newServeHarness(t, newFakeTransport(nil))
+	transport := harness.transport
+	transport.mu.Lock()
+	transport.connect = connectAtSkew(harness.now.now(), 5*time.Second)
+	transport.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- harness.manager.Serve(ctx) }()
+
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
+	var params map[string]any
+	if err := json.Unmarshal(transport.frames("agent.status")[0].Params, &params); err != nil {
+		t.Fatalf("agent.status params: %v", err)
+	}
+	if params["clock_skew_seconds"] != float64(5) {
+		t.Errorf("clock_skew_seconds = %v, want 5 — signed, so an operator knows which way to move it",
+			params["clock_skew_seconds"])
+	}
+	if params["clock_skew_within_bounds"] != true {
+		t.Error("a 5 s skew was reported as out of bounds")
+	}
+	if params["state"] != "ready" {
+		t.Errorf("state = %v for a healthy session, want ready", params["state"])
+	}
+	if params["policy_bundle_digest"] != "sha256:local" {
+		t.Errorf("policy_bundle_digest = %v", params["policy_bundle_digest"])
+	}
+
+	// The same measurement has to reach `agent doctor`, which reads Status rather than frames.
+	status, err := harness.manager.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !status.ClockSkewMeasured || status.ClockSkew != 5*time.Second || status.ClockSkewBeyond {
+		t.Errorf("Status carries skew=%s measured=%v beyond=%v; doctor cannot report what it cannot read",
+			status.ClockSkew, status.ClockSkewMeasured, status.ClockSkewBeyond)
+	}
+	cancel()
+	<-done
+}
+
+func TestServe_AClockOutsideToleranceRefusesTheCommandAndNamesTheClock(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		ahead time.Duration
+	}{
+		{name: "the agent's clock is four minutes fast", ahead: 4 * time.Minute},
+		{name: "the agent's clock is four minutes slow", ahead: -4 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			harness := newServeHarness(t, newFakeTransport(nil))
+			transport := harness.transport
+			transport.mu.Lock()
+			transport.connect = connectAtSkew(harness.now.now(), tc.ahead)
+			transport.mu.Unlock()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- harness.manager.Serve(ctx) }()
+			waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
+
+			// A genuinely valid envelope. The refusal must come from the clock, not from
+			// anything wrong with the frame — that is the whole point of Appendix C.2's
+			// `clock-skew` row, which exists so the agent says "your clock is 4 minutes fast"
+			// instead of "signature invalid".
+			transport.push(mustJSON(connection.Request{
+				JSONRPC: "2.0", Method: "command.execute",
+				Params: signedEnvelope(t, harness.creds, harness.digest, "cmd-skew", 3, harness.now.now()),
+			}))
+			waitFor(t, func() bool { return len(transport.frames("agent.error")) > 0 })
+
+			var payload map[string]any
+			_ = json.Unmarshal(transport.frames("agent.error")[0].Params, &payload)
+			if payload["code"] != "clock-skew" {
+				t.Errorf("code = %v, want clock-skew", payload["code"])
+			}
+			if payload["command_id"] != "cmd-skew" {
+				t.Errorf("command_id = %v; a refusal that cannot be correlated cannot be acted on",
+					payload["command_id"])
+			}
+			harness.runner.mu.Lock()
+			started := len(harness.runner.started)
+			harness.runner.mu.Unlock()
+			if started != 0 {
+				t.Error("a command ran while the clock was outside tolerance")
+			}
+
+			var status map[string]any
+			_ = json.Unmarshal(transport.frames("agent.status")[0].Params, &status)
+			if status["state"] != "degraded" || status["clock_skew_within_bounds"] != false {
+				t.Errorf("agent.status said state=%v within_bounds=%v; a backend reading `ready` "+
+					"would keep sending commands this agent will refuse",
+					status["state"], status["clock_skew_within_bounds"])
+			}
+			cancel()
+			<-done
+		})
+	}
+}
+
+func TestServe_ASkewInsideToleranceStillExecutes(t *testing.T) {
+	// The control. Without it the two clauses above would pass for an agent that refused every
+	// command, and the refusal would look like a working skew check.
+	harness := newServeHarness(t, newFakeTransport(nil))
+	transport := harness.transport
+	transport.mu.Lock()
+	transport.connect = connectAtSkew(harness.now.now(), 59*time.Second)
+	transport.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- harness.manager.Serve(ctx) }()
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
+
+	transport.push(mustJSON(connection.Request{
+		JSONRPC: "2.0", Method: "command.execute",
+		Params: signedEnvelope(t, harness.creds, harness.digest, "cmd-ok", 3, harness.now.now()),
+	}))
+	waitFor(t, func() bool { return len(transport.frames("command.result")) > 0 })
+	if len(transport.frames("agent.error")) != 0 {
+		t.Errorf("a 59 s skew produced an error frame: %s", transport.frames("agent.error")[0].Params)
+	}
+	cancel()
+	<-done
+}
+
+func TestServe_AnUnmeasuredSkewDoesNotRefuse(t *testing.T) {
+	// A backend that omits `server_time` leaves the skew unmeasured, and an unmeasured skew is
+	// within tolerance rather than outside it. Deliberately not fail-closed, and the reason is
+	// narrow enough to be safe: the measurement comes from the handshake, so "not measured"
+	// means the handshake has not completed, and no command can arrive before it has. Failing
+	// closed here would refuse every command over a field this agent does not control.
+	harness := newServeHarness(t, newFakeTransport(okConnect())) // okConnect carries no server_time
+	transport := harness.transport
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- harness.manager.Serve(ctx) }()
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
+
+	if _, measured := harness.manager.Skew(); measured {
+		t.Error("a handshake with no server_time reported a measured skew")
+	}
+	transport.push(mustJSON(connection.Request{
+		JSONRPC: "2.0", Method: "command.execute",
+		Params: signedEnvelope(t, harness.creds, harness.digest, "cmd-1", 3, harness.now.now()),
+	}))
+	waitFor(t, func() bool { return len(transport.frames("command.result")) > 0 })
+	cancel()
+	<-done
+}
+
+// ---------------------------------------------------------------------------------------
 // The two states before a session exists.
 // ---------------------------------------------------------------------------------------
 

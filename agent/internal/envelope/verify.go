@@ -116,6 +116,14 @@ type Verifier struct {
 	domainPrefix string
 }
 
+// ClockSkew returns the tolerated clock skew (§7.6, §10.4: ±60 s by default).
+//
+// Exported so the session layer can report a MEASURED skew against the same bound this
+// Verifier enforces, rather than against a second copy of the number. §7.6 asks the agent to
+// say "your clock is 4 minutes fast" instead of "signature invalid", and it can only do that
+// if the two layers agree on what "too far" means.
+func (v *Verifier) ClockSkew() time.Duration { return v.clockSkew }
+
 // VerifierOption adjusts a Verifier. Only the genuinely deployment-dependent values are
 // options; nothing that would weaken a check is settable.
 type VerifierOption func(*Verifier)
@@ -197,13 +205,20 @@ func NewVerifier(
 // No failure path returns a non-nil *Verified, so no failure can reach the executor.
 //
 // One check from Appendix A.2 is NOT here, and its absence is deliberate rather than an
-// oversight: A.2's step 6 rejects an `operation` outside §7.7's closed catalogue. That
-// catalogue does not exist yet — it arrives with the named-operation dispatcher in task group
-// 8 — and this package is a leaf that cannot import `executor` (D-59), so the check lands
-// where the table does. Until then an unknown operation is rejected by dispatch rather than by
-// verification, which is a different place, not a missing one. Said out loud because a
-// docstring that lists six checks and renumbers A.2's would leave a reader believing
-// verification is complete.
+// oversight: A.2's step 6 rejects an `operation` outside §7.7's closed catalogue. This package
+// is a leaf that cannot import `executor` (D-59), so the check lands where the table does —
+// `executor.Dispatcher` (leaf 8.7), which also owns the `approval_id` requirement for the
+// mutating half of §7.7's table (D-83). Until dispatch, an unknown operation is rejected in a
+// different place, not in no place. Said out loud because a docstring that lists six checks and
+// renumbers A.2's would leave a reader believing verification is complete.
+//
+// D-84: the POLICY BINDING check runs before ordering and uniqueness, which inverts A.2's
+// numbering (4, 5, then 6) while preserving A.2's postcondition, "no mutation is performed on
+// any failure path". Ordering and uniqueness are the two checks that mutate — the seq
+// compare-and-set and the nonce record — so any non-mutating check placed after them turns its
+// own rejection into a state change. A stale-bundle rejection used to consume the envelope's
+// seq and burn its nonce, which is exactly the shape Q-15 forbids. The numbered order is not
+// itself a property; the postcondition is.
 func (v *Verifier) Verify(ctx context.Context, raw []byte) (*Verified, error) {
 	env, err := v.parse(raw)
 	if err != nil {
@@ -216,13 +231,14 @@ func (v *Verifier) Verify(ctx context.Context, raw []byte) (*Verified, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Non-mutating, and therefore before the two that mutate (D-84).
+	if err := v.checkPolicyBinding(ctx, env); err != nil {
+		return nil, err
+	}
 	if err := v.checkOrdering(ctx, env); err != nil {
 		return nil, err
 	}
 	if err := v.checkUniqueness(ctx, env); err != nil {
-		return nil, err
-	}
-	if err := v.checkPolicyBinding(ctx, env); err != nil {
 		return nil, err
 	}
 	return &Verified{env: env, verifiedAt: v.now(), digest: digest}, nil
@@ -253,17 +269,22 @@ func (v *Verifier) parse(raw []byte) (Envelope, error) {
 		"command_id": env.CommandID,
 		"device_id":  env.DeviceID,
 		"operation":  string(env.Operation),
-		// STRICTER THAN §7.7, knowingly. §7.7's table marks the read-only operations
-		// (`scan.full`, `validate.*`, `readiness.inventory`, `secretscan.run`, …) as
-		// requiring no `approval_id`, so a correct envelope for one of them carries the
-		// member empty — and this loop refuses it. Relaxing it here is not the fix, because
-		// "empty is allowed" and "empty is allowed for non-mutating operations only" differ by
-		// exactly the operation catalogue, which this leaf package cannot import (D-59) and
-		// which does not exist until task group 8. Reconciling the two belongs to the leaf
-		// that creates the catalogue; leaving the rule strict until then refuses some valid
-		// envelopes and accepts no invalid ones, which is the safe direction to be wrong in.
-		// Recorded in the journal's chapter 9 so it is a known cost rather than a surprise.
-		"approval_id":                  env.ApprovalID,
+		// `approval_id` is deliberately NOT here, and D-83 records why. §7.7's table marks
+		// the read-only operations (`scan.full`, `validate.*`, `readiness.inventory`,
+		// `secretscan.run`, …) as requiring no `approval_id`, so a correct envelope for one
+		// of them carries the member empty. The blanket check that used to live here refused
+		// those — wrong by refusal, against envelopes the backend legitimately sends.
+		//
+		// The requirement is operation-dependent, so it belongs where operations are known.
+		// This package imports nothing from `internal/**` (D-59, asserted by
+		// `TestPackageIsALeaf`) and therefore cannot consult the catalogue; it owns the
+		// operation-INDEPENDENT checks. `executor.Dispatcher` (leaf 8.7) owns the other half
+		// and refuses a mutating operation with an empty `approval_id`, which is stronger
+		// than the blanket rule because it distinguishes the cases §7.7 distinguishes.
+		//
+		// The cost, stated so nobody has to infer it: a `*Verified` no longer implies
+		// "carries an approval". Its guarantee is signature, freshness, ordering, uniqueness
+		// and policy binding verified — nothing about authorisation.
 		"nonce":                        env.Nonce,
 		"policy_context.bundle_digest": env.PolicyContext.BundleDigest,
 		"signature":                    env.Signature,

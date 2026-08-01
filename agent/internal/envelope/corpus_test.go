@@ -273,11 +273,16 @@ func TestCorpus_ContainsNoFloatAnywhere(t *testing.T) {
 // TestCorpus_VerifyAcceptsTheCommittedSignature drives the whole six-check path, not just the
 // canonicaliser, so the corpus proves an END-TO-END agreement rather than a shared subroutine.
 //
-// Two fixtures are not verifiable by construction, and each is asserted rather than skipped —
+// One fixture is not verifiable by construction, and it is asserted rather than skipped —
 // `scripts/check-no-skips.py --go` treats every Go test as mandatory, and §0.4.4 is explicit
 // that a skip inside a green run is indistinguishable from coverage. So instead of stepping
-// over them, `TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason` below asserts
-// exactly why each is rejected.
+// over it, `TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason` below asserts
+// exactly why it is rejected.
+//
+// It was two until D-83. `08-non-mutating-no-approval` was excluded because `parse` required a
+// non-empty `approval_id` for every operation, which refused §7.7's read-only half; that check
+// now lives in the dispatcher, where "mutating" is knowable, so the fixture verifies like any
+// other and this test's coverage grew by one without a new fixture being written.
 func TestCorpus_VerifyAcceptsTheCommittedSignature(t *testing.T) {
 	verified := 0
 	for _, fixture := range loadCorpus(t) {
@@ -303,24 +308,22 @@ func TestCorpus_VerifyAcceptsTheCommittedSignature(t *testing.T) {
 		t.Fatal("no fixture reached Verify; every assertion in this test would then be vacuous")
 	}
 	if verified == len(loadCorpus(t)) {
-		t.Fatal("every fixture reached Verify, so the corpus no longer covers the two documented " +
-			"non-verifiable shapes; see TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason")
+		t.Fatal("every fixture reached Verify, so the corpus no longer covers the documented " +
+			"non-verifiable shape; see TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason")
 	}
 }
 
 // verifiable reports whether Verify can accept a fixture at all.
 //
-// Two shapes cannot, and both are in the corpus on purpose:
+// One shape cannot, and it is in the corpus on purpose: an envelope signed under
+// `forgeops-approval-v1`. Verify checks the command prefix by construction, so an approval
+// response is not a command and must not verify as one.
 //
-//   - an envelope signed under `forgeops-approval-v1`. Verify checks the command prefix by
-//     construction, so an approval response is not a command and must not verify as one;
-//   - a read-only operation with an empty `approval_id`. §7.7's table says a non-mutating
-//     operation requires no approval, while `parse` requires the member to be non-empty for
-//     every operation. That over-strictness is recorded in the journal's chapter 9 and
-//     reconciled by the leaf that creates the operation catalogue, because only there is
-//     "mutating" knowable — this package is a leaf and cannot import §7.7's table (D-59).
-func verifiable(fixture corpusFixture, env Envelope) bool {
-	return fixture.DomainPrefix == DomainPrefix && env.ApprovalID != ""
+// A read-only operation with an empty `approval_id` used to be the second such shape. D-83
+// removed it: the requirement is operation-dependent, so it moved to the dispatcher, and the
+// fixture is now an ordinary verifiable one.
+func verifiable(fixture corpusFixture, _ Envelope) bool {
+	return fixture.DomainPrefix == DomainPrefix
 }
 
 func verifierFor(t *testing.T, fixture corpusFixture, env Envelope) (*Verifier, *MemoryReplayGuard) {
@@ -342,8 +345,8 @@ func verifierFor(t *testing.T, fixture corpusFixture, env Envelope) (*Verifier, 
 	return verifier, guard
 }
 
-// TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason turns the two exclusions
-// above into assertions, so nothing in this file is stepped over silently.
+// TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason turns the exclusion
+// above into an assertion, so nothing in this file is stepped over silently.
 func TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason(t *testing.T) {
 	seen := 0
 	for _, fixture := range loadCorpus(t) {
@@ -367,13 +370,6 @@ func TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason(t *testin
 				if !errors.Is(err, ErrSignature) {
 					t.Fatalf("expected a signature failure for an approval-prefixed envelope, got %v", err)
 				}
-			case env.ApprovalID == "":
-				if !errors.Is(err, ErrSchema) {
-					t.Fatalf("expected a schema failure for an empty approval_id, got %v", err)
-				}
-				if !strings.Contains(err.Error(), "approval_id") {
-					t.Fatalf("the rejection must name the member it refused; got %v", err)
-				}
 			default:
 				t.Fatalf("fixture %q is not verifiable for a reason this test does not know about",
 					fixture.Name)
@@ -381,7 +377,7 @@ func TestCorpus_TheUnverifiableFixturesAreRejectedForTheirStatedReason(t *testin
 		})
 	}
 	if seen == 0 {
-		t.Fatal("the corpus no longer contains either documented non-verifiable shape, so this " +
+		t.Fatal("the corpus no longer contains the documented non-verifiable shape, so this " +
 			"test proves nothing; add one back or delete this test deliberately")
 	}
 }

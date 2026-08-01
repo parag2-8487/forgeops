@@ -46,6 +46,14 @@ const (
 	defaultHeartbeatTimeout  = 90 * time.Second
 )
 
+// clockSkewTolerance is §7.6's ±60 s window, as the SESSION sees it.
+//
+// It mirrors `envelope.NewVerifier`'s default, and `TestClockSkewTolerance_MatchesTheVerifier`
+// asserts the two are equal against `(*envelope.Verifier).ClockSkew()` rather than trusting
+// this comment. Two copies of a number are a drift waiting to happen; two copies with an
+// equality test are a number in one place with a local name.
+const clockSkewTolerance = 60 * time.Second
+
 // authorizationHeader and the scheme are assembled rather than written out: the secret gate
 // matches on credential shape and not on sensitivity (finding 64), and a header name is not
 // a secret. This is the repository's established remedy, applied here for the same reason
@@ -368,6 +376,13 @@ func (m *Manager) acceptHandshake(result connectResult) (SessionInfo, error) {
 	}
 	if parsed, err := time.Parse(time.RFC3339Nano, result.ServerTime); err == nil {
 		info.ServerTime = parsed
+		// §7.6's measured skew, and this is the only place the agent can measure it: an
+		// envelope carries `not_after` and nothing that says what the backend thought the
+		// time was, so `server_time` in the handshake is the one honest reference point.
+		// Recorded rather than acted on here; `execute` refuses on it and `agent.status`
+		// reports it, which is what lets `agent doctor` say "your clock is 4 minutes fast"
+		// instead of "signature invalid" (Appendix C.2's `clock-skew` row).
+		m.setSkew(m.now().Sub(parsed))
 	}
 	if m.bundle != nil {
 		m.bundle.ObserveBackend(result.BundleDigest, result.BundleStale)
@@ -394,6 +409,13 @@ func (m *Manager) session(ctx context.Context, t connection.Transport, creds Cre
 	// check: the hub refuses a revoked device before it issues a session id, so reaching
 	// this line means the backend considered the device live a moment ago.
 	live.drain(ctx)
+
+	// One `agent.status` immediately, so the measured clock skew, the bundle digest and the
+	// journal backlog are reported at the moment they are known rather than at the first
+	// heartbeat 30 seconds later. §7.3 makes `agent.status` the drift-detection and
+	// `doctor`-parity frame; a skew that is only visible after half a minute of refusals is
+	// visible too late to explain them.
+	live.reportStatus(ctx)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -488,6 +510,22 @@ func (s *liveSession) worker(ctx context.Context) {
 }
 
 func (s *liveSession) execute(ctx context.Context, frame commandFrame) {
+	// Clock skew is checked BEFORE verification, and the order is the point. The verifier
+	// would reject a badly skewed envelope as `envelope-expired`, which is true and useless:
+	// §7.6 wants the agent to name the clock rather than the envelope. Appendix C.2's
+	// `clock-skew` row says refuse envelopes and report the measured skew, so that is what
+	// this does — and it does it without consulting anything the frame carries, because a
+	// frame from an attacker must not be able to talk its way past a local fault.
+	if skew, beyond := s.manager.skewBeyondTolerance(); beyond {
+		s.manager.logger.Warn("refusing a command: the local clock is outside tolerance",
+			zap.Duration("skew", skew))
+		s.reportError(ctx, "clock-skew",
+			fmt.Sprintf("the agent's clock is %s from the backend's, outside the ±%s tolerance",
+				skew.Round(time.Second), clockSkewTolerance),
+			commandIDOf(frame.params))
+		return
+	}
+
 	verified, err := s.verify(ctx, frame.params)
 	if err != nil {
 		s.manager.logger.Warn("command.execute refused", zap.Error(err))
@@ -772,6 +810,76 @@ func (s *liveSession) queueDepth(ctx context.Context) int {
 
 func (s *liveSession) bundleCurrent() bool {
 	return s.manager.bundle != nil && s.manager.bundle.Current()
+}
+
+// reportStatus sends one `agent.status` frame (§7.3, §10.10).
+//
+// `state` is the honest one rather than an optimistic one: an agent whose clock is outside
+// tolerance or whose bundle is stale reports `degraded`, because in both cases it will refuse
+// the next `command.execute` and a backend that believed it was `ready` would keep sending.
+func (s *liveSession) reportStatus(ctx context.Context) {
+	skew, beyond := s.manager.skewBeyondTolerance()
+	state := "ready"
+	switch {
+	case beyond:
+		state = "degraded"
+	case !s.bundleCurrent():
+		state = "degraded"
+	}
+	digest := ""
+	if s.manager.bundle != nil {
+		digest = s.manager.bundle.Digest()
+	}
+	params := map[string]any{
+		"state":                state,
+		"policy_bundle_digest": digest,
+		"agent_version":        s.manager.version,
+		// Seconds as a float, and signed: positive means the agent's clock is AHEAD of the
+		// backend's. A magnitude alone would leave an operator guessing which way to move it.
+		"clock_skew_seconds":       skew.Seconds(),
+		"clock_skew_within_bounds": !beyond,
+		"queue_depth":              s.queueDepth(ctx),
+		"credential_store":         s.manager.store.Backend(),
+	}
+	s.notify(ctx, "agent.status", params)
+}
+
+// setSkew records the measured offset between this agent's clock and the backend's.
+func (m *Manager) setSkew(skew time.Duration) {
+	m.skewMu.Lock()
+	m.skew = skew
+	m.skewMeasured = true
+	m.skewMu.Unlock()
+}
+
+// Skew returns the last measured clock offset and whether one has been measured at all.
+//
+// The second return value exists so `agent doctor` can say "not measured yet" rather than
+// print a confident zero — an unmeasured skew and a perfectly synchronised clock are the same
+// number and very different facts.
+func (m *Manager) Skew() (time.Duration, bool) {
+	m.skewMu.Lock()
+	defer m.skewMu.Unlock()
+	return m.skew, m.skewMeasured
+}
+
+// skewBeyondTolerance reports the measured skew and whether it exceeds §7.6's window.
+//
+// An UNMEASURED skew is within tolerance, not outside it. That direction is deliberate and is
+// the opposite of this repository's usual fail-closed instinct, so it is worth saying why: the
+// measurement comes from `session.connect`'s `server_time`, so "not measured" means the
+// handshake has not completed — and no command can arrive before it has. Failing closed on an
+// unmeasured skew would refuse every command from a backend that simply omits the member,
+// which is a field this agent does not control.
+func (m *Manager) skewBeyondTolerance() (time.Duration, bool) {
+	skew, measured := m.Skew()
+	if !measured {
+		return 0, false
+	}
+	if skew < 0 {
+		return skew, -skew > clockSkewTolerance
+	}
+	return skew, skew > clockSkewTolerance
 }
 
 // sendRequest marshals one JSON-RPC frame. `id == nil` is a notification (§7.3).
