@@ -186,6 +186,33 @@ Get-Content -LiteralPath $f -Encoding UTF8
 **Never edit a `.md` file through PowerShell string replacement.** The mangling is silent and
 affects every en dash in the file.
 
+### The mutation harness reads a skipped property test as a passing one
+
+`scripts/mutation-harness.py` decides whether a control is real by running the property test with a
+deliberate mutation applied and requiring it to **fail**. A test that **skips** does not fail, so a
+harness run in a shell where `scripts/local-env.ps1` has not been dot-sourced reports `VACUOUS` for
+every DB- or Redis-backed row — the containers are up, but the test skips for want of
+`DATABASE_URL`, and the harness cannot tell "the mutation did not bite" from "the test never ran".
+
+Symptom, exactly as it appears: `tests/meta/test_regime_end_to_end.py` fails two cases,
+`::test_every_check_passes_on_the_real_tree[1.6 mutation harness]` and
+`::test_no_check_modifies_a_tracked_file` (which asserts each invocation exits 0), with
+`the property PASSED under its own negative control` and a pytest line like
+`5 passed, 13 skipped`. **The skip count is the tell.** Nothing is wrong with the tree.
+
+Every shell invocation is a fresh process, so the environment does not survive from one command to
+the next. Dot-source first, in the same process:
+
+```powershell
+. .\scripts\local-env.ps1
+python scripts\mutation-harness.py --all --allow-incomplete --skip-git-check
+```
+
+With the environment exported, all nine rows report `EXPECTED FAIL / OBSERVED OK` (leaf 8.5,
+2026-08-02). Making the harness distinguish a skip from a pass is the real fix and is not done: it
+would mean parsing the mutated run's report for a skip and reporting a third verdict. Until then,
+read a `VACUOUS` verdict together with the skip count before believing it.
+
 ### The `.env` and `ALEMBIC_DATABASE_URL` trap
 
 `make init-env` copies `.env.example` to `.env`. `.env.example` is **Compose-targeted**: its
