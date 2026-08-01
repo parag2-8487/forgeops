@@ -499,7 +499,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row removing the domain-separation prefix on one side only.
     - _Design: §7.6, §10.4, Appendix A.2, Appendix B Q-14; Deliverable: 1.1; Property: Q-14_
 
-  - [ ] 8.9 Write property test Q-15 for replay, reordering and expiry rejection
+  - [x] 8.9 Write property test Q-15 for replay, reordering and expiry rejection
 
     - Generate envelope streams containing replays, reorderings and expiries; prove each is rejected and that no rejected envelope performs a mutation or advances any counter.
     - Add the `mutations.toml` row updating `last_seq` before the signature check.

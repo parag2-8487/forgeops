@@ -671,3 +671,48 @@ domain-separation clause asserts something stronger and different: `signing_inpu
 empty prefix, so on that side this mutation cannot be expressed through the public function at
 all.
 """
+
+[Q-15]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/envelope"
+test_run    = "TestProperty_Q15|TestVerify_"
+original    = "agent/internal/envelope/order.go"
+overlay     = "backend/tests/mutation/overlays/q15_ordering_before_signature.go"
+property    = "agent/internal/envelope/q15_property_test.go"
+mutation    = "Update `last_seq` before the signature check"
+description = """
+Replaces `order.go` with a version whose ordering check runs AHEAD of the signature check.
+Appendix A.2 states the constraint the other way round and explains why in one sentence; this
+control is that sentence turned into a failing test.
+
+Stated as an attack rather than as a diff: `AdvanceSeq` is a compare-and-set, so running it
+first lets an UNAUTHENTICATED caller — anyone able to put bytes on the socket — push a device's
+`seq` high-water mark arbitrarily high before any signature is examined. Every envelope the real
+backend then mints carries a `seq` at or below that mark and is refused as replayed. The device
+is locked out by the very check that exists to protect it, and nothing in the logs looks like an
+attack: it looks like a replay.
+
+`TestProperty_Q15_NoRejectedEnvelopeAdvancesACounter` must then fail. It drives a GENERATED
+stream of events against one verifier and one guard — fresh, replayed nonce, reordered seq,
+expired, too far ahead, forged signature, tampered body, stale bundle — and checks after EVERY
+event that a rejection changed neither the mark nor the nonce set. Under the mutation the forged
+and tampered events advance the mark, which is the clause that fails first.
+
+`TestVerify_` is in `test_run` too, and deliberately: `TestVerify_ABadSignatureDoesNotAdvanceSeq`
+asserts the same thing as a single example, and `rejection_test.go`'s eleven-row table asserts it
+for every reachable refusal. Three independent objections to one mutation, which is what makes
+this control informative rather than merely red.
+
+ONE HONEST EXCEPTION, encoded in the property rather than hidden by it. An AUTHENTICATED
+envelope carrying a fresh `seq` and a REUSED nonce does advance the mark, because ordering
+precedes uniqueness and the set is the check (D-84). The property asserts that case advances the
+mark and asserts every other rejection does not, so a future change in either direction is a
+failing test rather than a quietly weaker guarantee.
+
+WHY `order.go` EXISTS. `go build -overlay` replaces a whole file. With `Verify` inside
+`verify.go` the overlay would have carried a copy of three hundred lines including every check
+helper, rotting on the first unrelated edit. Extracting the ORDER — which is the thing the
+property is about — keeps the reviewable diff to two moved statements. Q-01's row records the
+same reasoning for `rollback.go`, and Q-14's for `domain.go`.
+"""
