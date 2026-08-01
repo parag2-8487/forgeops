@@ -19,6 +19,7 @@ import (
 	k8sx "github.com/parag8487/ForgeOps/agent/internal/k8s"
 	"github.com/parag8487/ForgeOps/agent/internal/logging"
 	"github.com/parag8487/ForgeOps/agent/internal/mcp"
+	"github.com/parag8487/ForgeOps/agent/internal/session"
 	"github.com/parag8487/ForgeOps/agent/internal/telemetry"
 )
 
@@ -46,6 +47,11 @@ type App struct {
 	closers   []namedCloser
 	closeOnce sync.Once
 	closeErr  error
+
+	// The session manager is built on demand; see Session for why.
+	sessionOnce sync.Once
+	sessionMgr  *session.Manager
+	sessionErr  error
 }
 
 type namedCloser struct {
@@ -175,3 +181,31 @@ func (a *App) Docker() *dockerx.Probe { return a.docker }
 func (a *App) K8s() *k8sx.Probe       { return a.k8s }
 func (a *App) Tofu() *iac.TofuRunner  { return a.tofu }
 func (a *App) MCP() *mcp.Server       { return a.mcpSrv }
+
+// Session returns the session manager, constructing it on first use.
+//
+// Lazy rather than wired in New, and the reason is not tidiness: `session.NewStore`
+// probes the OS keychain by writing a marker and creates the state directory. Doing that
+// during composition would make `forgeops-agent version` touch the user's credential
+// manager, and would make every existing App construction test depend on a keychain being
+// present. `pair` and `doctor` are the only commands that need it, and they are the only
+// ones that pay for it.
+//
+// The error is memoised with the manager: a failed keychain probe fails the same way on
+// every call, and retrying it per command would produce a different diagnosis for the
+// same machine depending on which command ran.
+func (a *App) Session() (*session.Manager, error) {
+	a.sessionOnce.Do(func() {
+		store, err := session.NewStore(a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
+		if err != nil {
+			a.sessionErr = err
+			return
+		}
+		a.sessionMgr, a.sessionErr = session.NewManager(a.cfg.BackendWSSURL, session.Deps{
+			Store:        store,
+			Logger:       a.logger.Named("session"),
+			AgentVersion: a.bi.Version,
+		})
+	})
+	return a.sessionMgr, a.sessionErr
+}

@@ -154,6 +154,28 @@ func NewKeyPair() (*KeyPair, error) {
 	}, nil
 }
 
+// SPKISHA256 is the SHA-256 of the public key's SubjectPublicKeyInfo DER, lowercase hex.
+//
+// This is the `fingerprint` field of §3.1's exchange request. The backend recomputes it
+// from the submitted CSR and REJECTS a mismatch rather than storing what it was told, so
+// the value has to be computed from the same key the CSR carries — which is why it lives
+// on KeyPair rather than being assembled by the caller from whatever is at hand.
+//
+// The public key, not the private one: this method exists on the type that holds the
+// private key precisely so there is one place to see that nothing derived from the
+// private half is ever returned.
+func (k *KeyPair) SPKISHA256() (string, error) {
+	if k == nil || k.PublicKey == nil {
+		return "", fmt.Errorf("identity: SPKISHA256 needs a generated key pair")
+	}
+	der, err := x509.MarshalPKIXPublicKey(k.PublicKey)
+	if err != nil {
+		return "", fmt.Errorf("identity: marshalling the public key: %w", err)
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // BuildCSR produces the certificate request sent during pairing.
 //
 // Takes the KeyPair and returns PEM. The private key is used to SIGN the request and is

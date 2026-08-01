@@ -16,6 +16,8 @@ import (
 	"runtime"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/parag8487/ForgeOps/agent/internal/identity"
 )
 
 // Credentials is everything the agent needs to be itself (§10.3).
@@ -261,6 +263,28 @@ func (s *FileStore) Load(_ context.Context) (Credentials, error) {
 		return c, fmt.Errorf("session: decoding credentials: %w", err)
 	}
 	return c, nil
+}
+
+// ClientCertificatePEM satisfies identity.CredentialSource, which is how the mTLS dial
+// gets its credential without `identity` importing this package (§10.2).
+//
+// Returns identity's ErrNoCredential when nothing is stored — not this package's
+// ErrNoCredentials — because the caller is the identity provider and its contract is the
+// one that has to hold. Both are surfaced by `agent doctor` as "unpaired", and the
+// session manager's ErrUnpaired is what distinguishes that from "no backend URL".
+func (s *FileStore) ClientCertificatePEM(ctx context.Context) (cert, key, caBundle []byte, err error) {
+	c, err := s.Load(ctx)
+	if err != nil {
+		if errors.Is(err, ErrNoCredentials) {
+			return nil, nil, nil, fmt.Errorf("%w: run `forgeops-agent pair`", identity.ErrNoCredential)
+		}
+		return nil, nil, nil, err
+	}
+	if len(c.ClientCert) == 0 || len(c.ClientKey) == 0 {
+		return nil, nil, nil, fmt.Errorf(
+			"%w: stored credentials carry no certificate", identity.ErrNoCredential)
+	}
+	return c.ClientCert, c.ClientKey, c.CABundle, nil
 }
 
 // Wipe removes the stored credentials.
