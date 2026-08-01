@@ -5,7 +5,7 @@
 | Snapshot date          | **2026-08-02**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Leaves reflected       | **58 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 108 `pending`. Reconciled 2026-08-02; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end, comprehension artifact regenerated). **Group 8 is in progress**: 8.1 (pairing-code issue and single-use exchange), 8.2 (the internal CA and short-lived certificates), 8.3 (the agent `pair` command and credential persistence) and 8.4 (the backend WebSocket hub) are done. Decisions run to **D-80**; findings run to **63**, and patterns T and U are new. See chapter 10. |
+| Leaves reflected       | **58 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 108 `pending`. Reconciled 2026-08-02; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end, comprehension artifact regenerated). **Group 8 is in progress**: 8.1 (pairing-code issue and single-use exchange), 8.2 (the internal CA and short-lived certificates), 8.3 (the agent `pair` command and credential persistence) and 8.4 (the backend WebSocket hub) are done. Decisions run to **D-81**; findings run to **64**, and patterns T and U are new. See chapter 10. |
 | Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 This document teaches. It is not a changelog, not a status report, and never an
@@ -2947,6 +2947,44 @@ reconnect loop — so a caller that ignores the result member cannot tell that r
 a real gap, and it is why the agent's renewal path in leaf 8.5 has to read the member rather than
 assume the beat succeeded.
 
+### D-81 — three unpublished commits were rewritten rather than given an exemption
+
+The pre-push gate blocked leaves 8.3 and 8.4 on four added lines carrying five credential-shape
+hits. Not one of them was a credential: an authorisation-scheme constant, a PEM armour line whose
+body was the word `nope`, a needle that **is** the assertion that no private key is ever
+transmitted, and one line of evidence prose. A follow-up commit had already assembled all four out
+of existence, so the tip was clean — but the gate's stage 3 scans each commit's own added lines
+separately, and two commits in the middle of the range still added them.
+
+Two answers existed. Add four allowlist entries, or rewrite the two commits so the shape never
+enters history. The rewrite was taken, and the reasoning is about the precedent rather than about
+these four lines. An exemption is a judgement that a human made once and that nobody will re-make;
+the next hit needs the same judgement, so the gate stops being a gate and becomes a queue of
+questions. The repository already has a GitGuardian incident (35267706) for a placeholder that was
+just as harmless, which is the empirical version of the same point: the reader of a shape is a
+scanner, and a scanner cannot read intent.
+
+Method, and why non-interactive: `git checkout -f -B` from the unchanged base, `cherry-pick -n` each
+leaf commit, `git apply --index` the remedy hunks that belong to that leaf, `commit --no-verify`.
+`--index` matters — the first attempt applied the patches to the working tree only, so the commits
+kept the unfixed content and the fixes sat unstaged, which the tree-equality check caught
+immediately. `--no-verify` matters too: a reformatting hook firing during the rebuild would change
+content, and the whole claim being made is that content did **not** change.
+
+Proved in three parts, in this order: `git diff 4bb9916 <new tip>` **empty**, so history moved and
+content did not; the gate's stages 2a, 2b, 2c, 3 and 4 clean over the new range, stage 3 being the
+per-commit one; and `git log --oneline` over the range showing two sensible leaf commits instead of
+three. Map: `89158b5` → `8dfa012`, `b52aa63` → `2f0150f`, and `4bb9916` folded away entirely. No
+tracked file cited any of the three old SHAs, checked before the branch pointer moved.
+
+What it costs: two commit messages now describe work their diff performs but that was authored a
+commit later, which is a small honesty debt paid down by saying so in each message. `4bb9916`
+survives only as the local ref `backup-4bb9916` for the duration of the session, so the pre-rewrite
+history is not recoverable from anywhere else once that ref is gone. And the general cost is the one
+worth naming: this repair was cheap **only** because nothing was published. After a push the same
+repair is a force-push over published history, which is why the recurrence had to be fixed in the
+same change rather than noted for later — see finding 64.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -4289,6 +4327,59 @@ What it cost: `go vet`'s findings were still caught, because `go vet ./...` is r
 of every leaf's verification and the CI `agent` job runs it too. So no defect escaped — the loss was
 in the gate's credibility, which is the thing chapter 9 keeps finding is worth more than any single
 check.
+
+### Pattern O again — finding 64, the correct check standing past the point where the fix gets expensive
+
+**Finding 64.** The credential-shape grep existed, was correct, and had caught every hit it was
+pointed at. It ran only in `scripts/secret-gate.ps1`, which is the **pre-push** gate. So for the
+third time in this branch a harmless shape entered a commit, was found at push time, and the only
+remedy available at that point was rewriting history (D-81). The check was never wrong. Its
+**position** was.
+
+That is pattern O's shape — a check whose findings arrive at the wrong moment to be acted on cheaply
+— with the cost curve made explicit. Before the push, the repair is `cherry-pick -n` plus
+`git apply`: two minutes, nothing published, no coordination with anybody. After the push, the same
+repair is a force-push over published history, which needs a human decision, invalidates anyone
+else's clone, and per `secret-safety.md` is not something an agent may do unasked. The grep itself
+costs seconds. So the check sat one position away from being free and three incidents' worth of
+expensive.
+
+The fix is the same grep at commit time: `scripts/check-added-shapes.py`, wired as a local
+`pre-commit` hook with `pass_filenames: false` and `always_run: true`, because the question is about
+the staged diff as a whole and a deletion-only commit must still be scanned rather than skipped. It
+parses `git diff --cached --unified=0` and considers `+` lines only, which is finding 58's fix carried
+across rather than re-derived — a gate that reports a line the commit **deleted** teaches its operator
+to skim it. It also takes `--range BASE..TIP` so the same code can answer the per-commit question the
+push gate's stage 3 asks.
+
+Two things had to be true for the hook to be worth having, and both are asserted rather than assumed.
+Its pattern table must not drift from the gate's: `backend/tests/meta/test_check_added_shapes.py`
+**parses the PowerShell table** out of `secret-gate.ps1` — through `ast` with an explicit node
+allowlist, since the entries are assembled expressions and not literals — and requires the two lists
+to be equal row for row and in order, with a mutated-copy control proving the comparison can fail. A
+hook weaker than the gate it front-runs would restore exactly this finding, silently. And it must
+actually block: a throwaway repository, one staged line carrying a shape, exit status 1 naming
+`x.py:1: credential shape [aws-akid]`, with the control alongside it showing the same staging passes
+without the shape. Both hold, 34 cases.
+
+The retrospective control is the strongest evidence available and it was free:
+`python scripts/check-added-shapes.py --range d50de98..backup-4bb9916` — the pre-rewrite history —
+reports **four findings, five rule hits**, exactly the lines that forced D-81, and the same command
+over the rewritten range reports none. The hook is therefore known to fire on the incident it was
+built for, which is the standard chapter 9 keeps asking for and pattern B keeps punishing the absence
+of.
+
+Its own table is assembled fragment by fragment for the same reason the gate's is: written as
+literals, the file matches itself and the hook blocks the commit that adds it. One test asserts that
+directly, over its own source.
+
+What it costs: the shape table now exists twice, in PowerShell and in Python, and a parse-based
+parity test is a weaker guarantee than a single source would be. A single source was considered and
+rejected — the table cannot live in a data file, because a data file spelling the shapes out is
+itself full of them and trips stage 2b, and rewiring the working push gate to call Python for stages
+2a and 3 changes a gate that currently works in order to avoid a duplication a test already covers.
+Also, every commit now pays the grep, and prose in this journal has to name a shape rather than spell
+it — as this section does throughout.
 
 ---
 

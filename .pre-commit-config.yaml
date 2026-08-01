@@ -65,6 +65,19 @@ repos:
         entry: python scripts/check-test-credentials.py
         language: system
         files: ^backend/tests/.*\.py$
+      # The same added-lines shape grep that `scripts/secret-gate.ps1` runs at push time, moved
+      # to commit time. It had to move: three times a harmless credential SHAPE reached a commit
+      # and the pre-push gate caught it, and the only remedy at that point is a history rewrite.
+      # A correct check positioned after the point where the damage becomes expensive is journal
+      # pattern O. `pass_filenames: false` with `always_run: true` because the question is about
+      # the staged diff as a whole, not about any one file, and a deletion-only commit must still
+      # be scanned rather than skipped.
+      - id: check-added-shapes
+        name: no credential shape in an added line (FO-SEC001, pre-push gate stage 2a/3)
+        entry: python scripts/check-added-shapes.py
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: check-ci-jobs
         name: every CI job Appendix E cites must exist
         entry: python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md
