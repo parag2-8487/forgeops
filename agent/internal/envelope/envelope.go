@@ -37,22 +37,9 @@ import (
 	"unicode/utf16"
 )
 
-// Version is the only accepted value of an envelope's `v` member.
-//
-// A version member that is never checked is a version member that cannot be used to
-// change anything later, so it is validated rather than merely carried.
-const Version = "1"
-
-// DomainPrefix and ApprovalDomainPrefix are the domain-separation strings from §7.6.
-//
-// The prefix is why a signature over an envelope can never be replayed as a signature
-// over an approval response, even though the same per-device key signs both. Without
-// it, "the bytes verified" and "the bytes meant what the reader thinks they meant" are
-// different statements.
-const (
-	DomainPrefix         = "forgeops-envelope-v1"
-	ApprovalDomainPrefix = "forgeops-approval-v1"
-)
+// Version, DomainPrefix, ApprovalDomainPrefix and SigningInput live in `domain.go`, extracted so
+// Q-14's negative control can overlay the domain-separation seam without carrying a copy of this
+// whole file. See the comment there.
 
 // Operation is a member of the closed named-operation catalogue (§7.7).
 //
@@ -149,23 +136,6 @@ func CanonicalBytes(e Envelope) ([]byte, error) {
 		return nil, err
 	}
 	return jcs(body)
-}
-
-// SigningInput returns prefix || 0x00 || CanonicalBytes(e).
-//
-// The concatenation lives here rather than at each call site so the order is fixed in one
-// place. Two call sites that concatenated in different orders would each verify their own
-// signatures happily and reject the other's.
-func SigningInput(prefix string, e Envelope) ([]byte, error) {
-	canonical, err := CanonicalBytes(e)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]byte, 0, len(prefix)+1+len(canonical))
-	out = append(out, prefix...)
-	out = append(out, 0x00)
-	out = append(out, canonical...)
-	return out, nil
 }
 
 // Digest returns the hex SHA-256 of the envelope's signing input.

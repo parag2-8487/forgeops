@@ -493,7 +493,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests asserting every enum member has a handler, that no handler is referenced outside the table, and that mutating operations refuse to run without an `approval_id`.
     - _Design: §7.7, §10.5, §17.1 D-47; Deliverable: 1.1, 1.6; Criterion: 5, 6_
 
-  - [ ] 8.8 Write property test Q-14 for canonicalisation and signature verification
+  - [x] 8.8 Write property test Q-14 for canonicalisation and signature verification
 
     - Generate envelopes and prove `CanonicalBytes` is byte-identical in Go and Python for the same logical envelope, that verification accepts exactly the correctly signed envelope, and that every single-byte mutation is rejected.
     - Add the `mutations.toml` row removing the domain-separation prefix on one side only.

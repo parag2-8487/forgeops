@@ -619,3 +619,55 @@ assert principal_module.blast_radius_for_role(UserRole.VIEWER) == "infrastructur
     "the mutation did not widen a viewer's radius; the control would be a no-op"
 )
 """
+
+[Q-14]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/envelope"
+test_run    = "TestProperty_Q14|TestCorpus_"
+original    = "agent/internal/envelope/domain.go"
+overlay     = "backend/tests/mutation/overlays/q14_domain_prefix_removed.go"
+property    = "agent/internal/envelope/q14_property_test.go"
+mutation    = "Remove the domain-separation prefix on one side only"
+description = """
+Replaces `domain.go` with a version whose `DomainPrefix` is the empty string, so the Go
+signing input becomes `0x00 || CanonicalBytes(e)` instead of
+`"forgeops-envelope-v1" || 0x00 || CanonicalBytes(e)`. The mutated build stays perfectly
+self-consistent: it signs and verifies with the same (missing) prefix, so a test that only
+round-trips through one runtime would still pass. That self-consistency is the whole
+difficulty of this class of bug and the reason Appendix B words the control as "on one side
+only".
+
+Three things must then fail, and they fail for three different reasons, which is what makes
+the control worth having rather than one assertion repeated.
+
+`TestProperty_Q14_TheSigningInputCarriesThePrefixAndSeparator` fails immediately: it asserts
+`DomainPrefix` is non-empty and that the signing input begins with it. A property that only
+checked "signing input = prefix ‖ NUL ‖ canonical" would still hold with an empty prefix, which
+is why the non-emptiness is asserted separately.
+
+`TestProperty_Q14_VerificationAcceptsExactlyTheCorrectlySignedEnvelope` fails on the
+domain-separation clause: with the envelope prefix empty, `Sign("", env)` and
+`Sign(DomainPrefix, env)` produce the SAME MAC, and the test requires them to differ. That is
+the clause that says an approval response cannot be replayed as a command — the mutation
+collapses the two domains into one.
+
+`TestCorpus_VerifyAcceptsTheCommittedSignature` fails because `agent/testdata/envelopes/*.json`
+carries signatures computed WITH the prefix by both runtimes. This is the cross-runtime half of
+Q-14 biting: the mutated Go verifier rejects bytes the Python signer produced. It is included in
+`test_run` deliberately, because it is the only assertion in the repository that can observe a
+one-sided divergence at all.
+
+WHY `domain.go` EXISTS. `go build -overlay` replaces a whole file. With these two constants and
+`SigningInput` inside `envelope.go` the overlay would have carried a copy of four hundred and
+fifty lines, rotting on the first unrelated edit. Extracting them keeps the reviewable diff to
+one string, and the overlay keeps `SigningInput`'s signature identical so a change to it stops
+the mutated build compiling rather than silently ceasing to mutate anything. Q-01's row records
+the same reasoning for `rollback.go`.
+
+The Python half of Q-14 lives in `backend/tests/property/test_q14_envelope_canonicalisation.py`
+and is NOT in this row's `test_run`, because a Go overlay cannot affect it. Its own
+domain-separation clause asserts something stronger and different: `signing_input` REFUSES an
+empty prefix, so on that side this mutation cannot be expressed through the public function at
+all.
+"""
