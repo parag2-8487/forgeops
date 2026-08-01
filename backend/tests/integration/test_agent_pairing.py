@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -35,9 +36,17 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from src.ai.rate_limit.redis_bucket import RedisTokenBucketLimiter
 from src.audit.writer import AuditWriter
+from src.auth.ca import (
+    CertificateAuthorityUnavailableError,
+    CertificateRejectedError,
+    InternalCertificateAuthority,
+    UnavailableCertificateAuthority,
+    generate_development_ca,
+)
 from src.auth.devices import (
     PAIRING_KEY_PREFIX,
     AgentMeta,
+    CertificateRotationRefusedError,
     CsrRejectedError,
     DeviceNotFoundError,
     DeviceService,
@@ -86,6 +95,23 @@ def build_rsa_csr() -> bytes:
     return csr.public_bytes(serialization.Encoding.PEM)
 
 
+#: One development CA for the whole module. Generated once because key generation is the slowest
+#: thing in this file by an order of magnitude, and every test wants the *same* issuer so a
+#: certificate from one test is verifiable in another.
+_CA_CERT_PEM, _CA_KEY_PEM = generate_development_ca()
+
+
+def build_ca(*, ttl_hours: int = 24, renew_before_hours: int = 6, clock: Any = None) -> InternalCertificateAuthority:
+    """The production CA over the module's development key material."""
+    return InternalCertificateAuthority(
+        cert_pem=_CA_CERT_PEM,
+        key_pem=_CA_KEY_PEM,
+        ttl_hours=ttl_hours,
+        renew_before_hours=renew_before_hours,
+        clock=clock,
+    )
+
+
 def make_service(
     redis: Any,
     *,
@@ -94,6 +120,7 @@ def make_service(
     per_ip_capacity: int = 10,
     global_capacity: int = 600,
     refill_rate: float = 0.0001,
+    ca: Any = None,
 ) -> DeviceService:
     """The production `DeviceService`, sized so a cap can be observed inside one test.
 
@@ -120,6 +147,7 @@ def make_service(
                 key_prefix=f"forgeops-test:pair:global:{uuid.uuid4().hex[:8]}:",
             ),
         ),
+        ca=ca if ca is not None else build_ca(),
         code_ttl_seconds=ttl_seconds,
         max_attempts=max_attempts,
     )
@@ -153,7 +181,8 @@ async def device_rows(session: AsyncSession, project_id: uuid.UUID) -> list[Mapp
     result = await session.execute(
         text(
             "SELECT id, status, pairing_token_hmac, device_token_hmac, envelope_key_enc, "
-            "agent_version, platform, pairing_expires_at, revoked_at "
+            "agent_version, platform, pairing_expires_at, revoked_at, cert_serial, "
+            "cert_fingerprint, cert_not_after "
             "FROM agent_devices WHERE project_id = :project ORDER BY created_at ASC"
         ),
         {"project": project_id},
@@ -700,6 +729,7 @@ class TestTheRateLimitCaps:
             recorder=GovernanceDeviceAuditRecorder(writer=AuditWriter()),
             redis=redis_client,
             limiter=TokenBucketPairingLimiter(per_ip=UnreachableBucket(), global_bucket=UnreachableBucket()),
+            ca=build_ca(),
         )
         csr, fingerprint = build_csr()
         async with sessions() as session:
@@ -787,7 +817,7 @@ class TestTheHalfWiredServiceIsRefused:
         """A service with Redis but no recorder would consume a code and record nothing."""
         from src.auth.devices import DeviceKeyError
 
-        with pytest.raises(DeviceKeyError, match="needs all three"):
+        with pytest.raises(DeviceKeyError, match="needs all four"):
             DeviceService(pepper=PEPPER, redis=redis_client)
 
     async def test_the_custody_only_form_still_works(self, redis_client: Any) -> None:
@@ -801,3 +831,233 @@ class TestTheHalfWiredServiceIsRefused:
                 meta=AgentMeta(agent_version="0", platform="linux", fingerprint="0" * 64),
                 client_ip="",
             )
+
+
+# ─── leaf 8.2: the internal CA and short-lived device certificates ────────────────────────
+
+
+class TestTheExchangeIssuesACertificate:
+    async def test_the_certificate_chains_to_the_ca_and_names_the_device(
+        self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
+    ) -> None:
+        """§3.1's `client_cert` and `ca_bundle`, verified rather than merely returned.
+
+        Three things are asserted about the certificate rather than one: it verifies under the CA,
+        its subject CN is the **device id** (not the CSR's subject — the CA rewrites it), and its
+        public key is the one the agent proved possession of. The third is what makes the
+        certificate useful: a certificate over somebody else's key would chain fine and be
+        unusable.
+        """
+        private = ec.generate_private_key(ec.SECP256R1())
+        csr, fingerprint = build_csr(key=private)
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await service.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            credentials = await service.exchange(
+                session,
+                code=issued.code,
+                csr_pem=csr,
+                meta=AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint),
+                client_ip="203.0.113.30",
+            )
+            await session.commit()
+            rows = await device_rows(session, project_id)
+
+        ca = build_ca()
+        certificate = ca.verify_chain(credentials.client_cert_pem)
+        assert certificate.subject.rfc4514_string() == f"CN={issued.device_id}"
+        assert certificate.public_key().public_numbers() == private.public_key().public_numbers()
+        assert credentials.ca_bundle_pem == ca.ca_bundle
+
+        row = next(row for row in rows if row["id"] == issued.device_id)
+        assert row["cert_serial"] == credentials.cert_serial
+        assert row["cert_fingerprint"] == credentials.cert_fingerprint
+        assert row["cert_not_after"] is not None
+        # The row's fingerprint must be the fingerprint OF the issued certificate, computed
+        # independently here — if the service stored a digest of something else, the handshake
+        # check in §3.1 would reject every genuine device.
+        expected = ":".join(f"{byte:02X}" for byte in certificate.fingerprint(hashes.SHA256()))
+        assert row["cert_fingerprint"] == expected
+
+    async def test_the_ttl_and_the_renew_window_come_from_configuration(
+        self, sessions: async_sessionmaker[AsyncSession], redis_client: Any
+    ) -> None:
+        """`notAfter = now + DEVICE_CERT_TTL_HOURS`, and `renew_after` is that minus the margin."""
+        service = make_service(redis_client, ca=build_ca(ttl_hours=3, renew_before_hours=1))
+        csr, fingerprint = build_csr()
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await service.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            credentials = await service.exchange(
+                session,
+                code=issued.code,
+                csr_pem=csr,
+                meta=AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint),
+                client_ip="203.0.113.31",
+            )
+            await session.commit()
+        window = credentials.cert_not_after - credentials.renew_after
+        assert window == timedelta(hours=1)
+        assert timedelta(hours=2, minutes=58) < credentials.cert_not_after - datetime.now(UTC) <= timedelta(hours=3)
+
+    async def test_no_ca_refuses_without_spending_the_code(
+        self, sessions: async_sessionmaker[AsyncSession], redis_client: Any
+    ) -> None:
+        """Availability is checked BEFORE the consume, so a misconfigured deployment burns nothing.
+
+        The proof is the second half: after the 503, the same code still works against a service
+        that does have a CA. Without the pre-check the code would have been deleted by the consume
+        script and the operator would have to reissue it on every attempt.
+        """
+        broken = make_service(redis_client, ca=UnavailableCertificateAuthority())
+        csr, fingerprint = build_csr()
+        meta = AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint)
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await broken.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            with pytest.raises(CertificateAuthorityUnavailableError, match="make init-ca"):
+                await broken.exchange(session, code=issued.code, csr_pem=csr, meta=meta, client_ip="203.0.113.32")
+            working = make_service(redis_client)
+            credentials = await working.exchange(
+                session, code=issued.code, csr_pem=csr, meta=meta, client_ip="203.0.113.32"
+            )
+            await session.commit()
+        assert credentials.device_id == issued.device_id
+
+
+class TestRotation:
+    async def test_it_replaces_the_serial_and_fingerprint_without_reconnection(
+        self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
+    ) -> None:
+        """§3.1's `cert_renewing -> active`: a new certificate over the live session.
+
+        "Without reconnection" is asserted as the thing it means here — the device row stays
+        `active` throughout and no pairing code is involved — since there is no socket to hold open
+        until leaf 8.4.
+        """
+        csr, fingerprint = build_csr()
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await service.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            first = await service.exchange(
+                session,
+                code=issued.code,
+                csr_pem=csr,
+                meta=AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint),
+                client_ip="203.0.113.33",
+            )
+            await session.commit()
+
+            rotated_csr, _ = build_csr()
+            bundle = await service.rotate_certificate(session, device_id=issued.device_id, csr_pem=rotated_csr)
+            await session.commit()
+            rows = await device_rows(session, project_id)
+
+        assert bundle.serial != first.cert_serial
+        assert bundle.fingerprint != first.cert_fingerprint
+        row = next(row for row in rows if row["id"] == issued.device_id)
+        assert row["status"] == "active"
+        assert row["cert_serial"] == bundle.serial
+        assert row["cert_fingerprint"] == bundle.fingerprint
+        build_ca().verify_chain(bundle.certificate_pem)
+
+    async def test_the_new_key_is_the_rotated_key_not_the_original(
+        self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
+    ) -> None:
+        """Rotation exists to change the KEY, not only the dates. This is that clause."""
+        original = ec.generate_private_key(ec.SECP256R1())
+        replacement = ec.generate_private_key(ec.SECP256R1())
+        csr, fingerprint = build_csr(key=original)
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await service.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            await service.exchange(
+                session,
+                code=issued.code,
+                csr_pem=csr,
+                meta=AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint),
+                client_ip="203.0.113.34",
+            )
+            await session.commit()
+            rotated_csr, _ = build_csr(key=replacement)
+            bundle = await service.rotate_certificate(session, device_id=issued.device_id, csr_pem=rotated_csr)
+            await session.commit()
+        certificate = build_ca().verify_chain(bundle.certificate_pem)
+        assert certificate.public_key().public_numbers() == replacement.public_key().public_numbers()
+        assert certificate.public_key().public_numbers() != original.public_key().public_numbers()
+
+    async def test_a_revoked_device_is_refused(
+        self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
+    ) -> None:
+        """An attacker holding an expiring certificate must not be able to renew it."""
+        csr, fingerprint = build_csr()
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await service.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            await service.exchange(
+                session,
+                code=issued.code,
+                csr_pem=csr,
+                meta=AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint),
+                client_ip="203.0.113.35",
+            )
+            await session.commit()
+            await service.revoke(session, device_id=issued.device_id, actor=actor, reason="stolen")
+            await session.commit()
+            rotated_csr, _ = build_csr()
+            with pytest.raises(CertificateRotationRefusedError, match="not active"):
+                await service.rotate_certificate(session, device_id=issued.device_id, csr_pem=rotated_csr)
+        assert project_id
+
+    async def test_a_pending_device_is_refused(
+        self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
+    ) -> None:
+        """A device that never exchanged its code has no certificate to rotate."""
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await service.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            rotated_csr, _ = build_csr()
+            with pytest.raises(CertificateRotationRefusedError, match="pending"):
+                await service.rotate_certificate(session, device_id=issued.device_id, csr_pem=rotated_csr)
+        assert project_id
+
+    async def test_an_unknown_device_raises_not_found(
+        self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
+    ) -> None:
+        async with sessions() as session:
+            await make_project(session)
+            rotated_csr, _ = build_csr()
+            with pytest.raises(DeviceNotFoundError):
+                await service.rotate_certificate(session, device_id=uuid.uuid4(), csr_pem=rotated_csr)
+
+    async def test_a_rejected_csr_leaves_the_previous_certificate_in_place(
+        self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
+    ) -> None:
+        """A failed rotation must not leave the device with no usable certificate."""
+        csr, fingerprint = build_csr()
+        async with sessions() as session:
+            project_id, actor = await make_project(session)
+            issued = await service.issue_pairing_code(session, project_id=project_id, actor=actor)
+            await session.commit()
+            first = await service.exchange(
+                session,
+                code=issued.code,
+                csr_pem=csr,
+                meta=AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint),
+                client_ip="203.0.113.36",
+            )
+            await session.commit()
+            with pytest.raises(CertificateRejectedError):
+                await service.rotate_certificate(session, device_id=issued.device_id, csr_pem=build_rsa_csr())
+            await session.commit()
+            rows = await device_rows(session, project_id)
+        row = next(row for row in rows if row["id"] == issued.device_id)
+        assert row["cert_serial"] == first.cert_serial
+        assert row["cert_fingerprint"] == first.cert_fingerprint

@@ -27,6 +27,35 @@ BASE = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_project_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove every registered project variable from the environment for each test.
+
+    **Why this is needed, and why it was not before (finding 57).** `Settings` is
+    `env_file=None`, so it reads the OS environment. `build()` below passes explicit kwargs, and
+    those win — but every key it does *not* pass still comes from the ambient environment. The
+    production-settings tests assert on what is **absent**, so they only hold on a machine where
+    no project variable is exported.
+
+    `.env` is exactly such an export. `make init-env` copies `.env.example` to `.env`, `docker
+    compose` loads it, and any shell that sources it puts `MCP_AGENT_BLAST_RADIUS=read_only`,
+    `OIDC_ISSUER`, `ENVELOPE_PEPPER` and sixty-odd others into the environment — after which
+    `test_every_missing_credential_appears_in_one_report` fails with "OIDC_ISSUER was not
+    reported", because a *different* validation error fired first. The tests were written before
+    `.env` existed in this working tree, which is why the dependency was invisible.
+
+    Scrubbing rather than asserting: the alternative is for each test to name the variables it
+    needs absent, which is a list that goes stale the moment §13.1 grows. `PROJECT_CONFIG_KEYS` is
+    the registered inventory and is already the single source for what counts as project config.
+
+    `TestUnknownKeys::test_unrelated_ambient_variables_are_still_ignored` deliberately *sets*
+    ambient variables with `monkeypatch.setenv`; its own calls run after this fixture, so it is
+    unaffected — which is the ordering that makes an autouse scrub safe here.
+    """
+    for name in PROJECT_CONFIG_KEYS:
+        monkeypatch.delenv(name, raising=False)
+
+
 def build(**overrides: object) -> Settings:
     return Settings(**{**BASE, **overrides})  # type: ignore[arg-type]
 

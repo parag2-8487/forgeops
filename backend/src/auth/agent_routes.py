@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.db import get_session
 from ..core.errors import problem
+from .ca import CertificateAuthorityUnavailableError
 from .dependencies import require_principal, require_role
 from .devices import (
     AgentMeta,
@@ -113,17 +114,17 @@ class ExchangeRequest(BaseModel):
 
 
 class ExchangeResponse(BaseModel):
-    """What leaf 8.1 issues.
+    """What the exchange issues (§3.1's `201` body, as far as Phase 1 has built it).
 
-    §3.1's response also carries `client_cert`, `ca_bundle`, `policy_bundle`,
-    `policy_bundle_digest` and `renew_after`. The certificate pair arrives with leaf 8.2 (the
-    internal CA) and the bundle pair with leaf 9.3 (bundle publication); both are absent rather
-    than stubbed, because an agent that received an empty `ca_bundle` would fail its mTLS dial
-    with a chain error instead of with "no certificate was issued".
+    §3.1's response also carries `policy_bundle` and `policy_bundle_digest`. Both come from
+    `PolicyBundleService.publish`, which leaf 9.3 builds; they are absent rather than empty,
+    because D-30 makes a missing bundle a **deny** on the agent side, so a zero-byte bundle would
+    be a field that means "refuse everything" while looking like a bundle.
 
     The token and the key are hex-encoded. They are 32 random bytes each and JSON has no byte
     type; hex rather than base64url because the agent stores them as bytes and one decoding
-    mistake there is a credential that silently never matches.
+    mistake there is a credential that silently never matches. The certificate and CA bundle are
+    PEM strings, which are already text and already have exactly one spelling.
     """
 
     device_id: uuid.UUID
@@ -131,6 +132,12 @@ class ExchangeResponse(BaseModel):
     device_token: str
     envelope_key: str
     csr_spki_sha256: str
+    client_cert: str
+    ca_bundle: str
+    cert_serial: str
+    cert_fingerprint: str
+    cert_not_after: str
+    renew_after: str
 
 
 class RevokeRequest(BaseModel):
@@ -209,6 +216,15 @@ async def exchange_pairing_code(
             "pairing-unavailable",
             detail="The pairing service cannot evaluate its rate limits right now.",
         ) from exc
+    except CertificateAuthorityUnavailableError as exc:
+        # Mapped onto the same 503 as a Redis outage, and for the same reason: the exchange cannot
+        # complete, the client should retry with backoff, and the `detail` must not name a
+        # configuration variable to an unauthenticated caller. The operator's diagnostic is the log
+        # line the exception carries, not this body.
+        raise problem(
+            "pairing-unavailable",
+            detail="The pairing service cannot issue a device certificate right now.",
+        ) from exc
     except CsrRejectedError as exc:
         # A distinct, 400-shaped answer, and it is safe to distinguish: the CSR is public and the
         # check runs BEFORE the code is consumed, so this response tells a caller nothing about
@@ -225,6 +241,12 @@ async def exchange_pairing_code(
         device_token=credentials.device_token.get_secret_value().hex(),
         envelope_key=credentials.envelope_key.get_secret_value().hex(),
         csr_spki_sha256=credentials.csr_spki_sha256,
+        client_cert=credentials.client_cert_pem.decode("utf-8"),
+        ca_bundle=credentials.ca_bundle_pem.decode("utf-8"),
+        cert_serial=credentials.cert_serial,
+        cert_fingerprint=credentials.cert_fingerprint,
+        cert_not_after=credentials.cert_not_after.isoformat(),
+        renew_after=credentials.renew_after.isoformat(),
     )
 
 

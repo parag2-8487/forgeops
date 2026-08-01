@@ -152,6 +152,23 @@ class TestSettingsAmbientEnv:
 class TestSettingsProductionIssuer:
     """MCP_OIDC_ISSUERS required non-empty when APP_ENV=production."""
 
+    @pytest.fixture(autouse=True)
+    def _no_ambient_project_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Scrub registered project variables for these two tests (finding 57).
+
+        `get_settings(explicit=...)` supplies the keys it names; every other registered key still
+        arrives from the OS environment, and both tests below assert that a **specific** validation
+        error fires. On a machine where `.env` has been exported — which is what `make init-env`
+        plus `docker compose` produce — `MCP_AGENT_BLAST_RADIUS=read_only` raises its own production
+        guard first and the `match=` never sees `MCP_OIDC_ISSUERS`.
+
+        Scoped to this class rather than module-wide on purpose: `TestProjectConfigKeys` and the
+        ambient-tolerance tests below read the real environment deliberately, and a module-wide
+        scrub would quietly change what they are testing.
+        """
+        for name in PROJECT_CONFIG_KEYS:
+            monkeypatch.delenv(name, raising=False)
+
     def test_production_requires_issuers(self):
         """Empty MCP_OIDC_ISSUERS in production must fail.
 

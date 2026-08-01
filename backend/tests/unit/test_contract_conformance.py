@@ -52,7 +52,12 @@ pytestmark = pytest.mark.mandatory
 #: Protocol declared in a DIFFERENT module from its caller, which is exactly what the collector
 #: is looking for — and why routing the pairing audit write through a Protocol buys a bound
 #: signature that a direct `AuditWriter` call from `auth/` would not have had.
-INVENTORY_FLOOR = 33
+#: 2026-07-31 (leaf 8.2): 35 sites. The two new ones are `CertificateIssuer.sign` from `exchange`
+#: and from `rotate_certificate`. `ca_bundle` is a property rather than a method and so is not a
+#: call site; that is worth knowing rather than guessing at, because it means the availability
+#: pre-check in `exchange` is not covered by the conformance test and is covered by
+#: `test_no_ca_refuses_without_spending_the_code` instead.
+INVENTORY_FLOOR = 35
 
 _SITES = collect_call_sites()
 

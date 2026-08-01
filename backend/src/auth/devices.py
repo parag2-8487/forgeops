@@ -83,6 +83,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.device_log import DeviceAuditEvent, DeviceAuditRecorder
+from .ca import CertificateBundle, CertificateIssuer, CertificateRejectedError
 from .device_models import AgentDevice, DeviceStatus
 from .pairing_limits import PairingExchangeLimiter, PairingUnavailableError
 from .principal import Principal
@@ -97,6 +98,8 @@ __all__ = [
     "PAIRING_KEY_PREFIX",
     "SEAL_NONCE_BYTES",
     "AgentMeta",
+    "CertificateRejectedError",
+    "CertificateRotationRefusedError",
     "CsrRejectedError",
     "DeviceCredentials",
     "DeviceKeyError",
@@ -225,6 +228,15 @@ class CsrRejectedError(Exception):
 
 class DeviceNotFoundError(Exception):
     """No device row with that id, so there is nothing to revoke."""
+
+
+class CertificateRotationRefusedError(Exception):
+    """The device exists but is not in a state that may receive a new certificate.
+
+    Distinct from `DeviceNotFoundError`, because the two need different answers: "no such device"
+    is a 404 an admin can act on, and "this device is revoked" is a refusal the *agent* must read
+    as "stop and wipe" rather than as "retry later".
+    """
 
 
 class EnvelopeKeyUnavailableError(DeviceKeyError):
@@ -427,13 +439,13 @@ class AgentMeta:
 
 @dataclass(frozen=True, slots=True)
 class DeviceCredentials:
-    """What a successful exchange issues.
+    """What a successful exchange issues (§3.1's `201` body).
 
-    **The certificate is not here yet.** §3.1's response carries `client_cert` and `ca_bundle`
-    too; both come from the internal CA, which leaf 8.2 builds. Task 8.1 issues the device token
-    and the envelope key — the two credentials that need no CA — and leaf 8.2 extends this type.
-    Returning a placeholder certificate instead would have been worse than an absent field: the
-    agent's mTLS dial would fail with a chain error rather than with "no certificate was issued".
+    `policy_bundle` and `policy_bundle_digest` are still absent: they come from
+    `PolicyBundleService.publish`, which leaf 9.3 builds. Absent rather than empty, because an
+    agent handed a zero-byte bundle would evaluate policy against nothing and D-30 makes
+    `ErrNoBundle` a **deny** — so the honest intermediate state is "no field" rather than "a field
+    that means deny and looks like a bundle".
     """
 
     device_id: uuid.UUID
@@ -441,6 +453,12 @@ class DeviceCredentials:
     device_token: SecretBytes
     envelope_key: SecretBytes
     csr_spki_sha256: str
+    client_cert_pem: bytes
+    ca_bundle_pem: bytes
+    cert_serial: str
+    cert_fingerprint: str
+    cert_not_after: datetime
+    renew_after: datetime
 
 
 def csr_spki_fingerprint(csr_pem: bytes) -> str:
@@ -505,6 +523,7 @@ class DeviceService:
         recorder: DeviceAuditRecorder | None = None,
         redis: Any | None = None,
         limiter: PairingExchangeLimiter | None = None,
+        ca: CertificateIssuer | None = None,
         code_ttl_seconds: int = 300,
         max_attempts: int = 5,
         alphabet: str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
@@ -528,25 +547,38 @@ class DeviceService:
         self._recorder = recorder
         self._redis = redis
         self._limiter = limiter
+        self._ca = ca
         self._ttl = code_ttl_seconds
         self._max_attempts = max_attempts
         self._alphabet = alphabet
         self._code_length = code_length
-        # All three pairing collaborators, or none of them. The custody half of this service
-        # (leaf 7.5) genuinely needs no Redis, no limiter and no audit recorder, so they cannot be
-        # unconditionally required — `make_fixture` and the chokepoint's own use construct the
-        # custody-only form. What must not exist is the HALF-wired form: a service with Redis but
-        # no recorder would consume a code and record nothing, and Appendix A.1 requires the
-        # record on both branches. So the partial combination is refused at construction rather
-        # than discovered at the first exchange.
-        supplied = [name for name, value in (("recorder", recorder), ("redis", redis), ("limiter", limiter)) if value]
-        if supplied and len(supplied) != 3:
-            missing = sorted({"recorder", "redis", "limiter"} - set(supplied))
+        # All four pairing collaborators, or none of them. The custody half of this service
+        # (leaf 7.5) genuinely needs no Redis, no limiter, no CA and no audit recorder, so they
+        # cannot be unconditionally required — `make_fixture` and the chokepoint's own use
+        # construct the custody-only form. What must not exist is the HALF-wired form: a service
+        # with Redis but no recorder would consume a code and record nothing, and one with no CA
+        # would consume a code and issue no certificate. So a partial combination is refused at
+        # construction rather than discovered at the first exchange.
+        #
+        # `ca` is satisfied by `UnavailableCertificateAuthority`, which is present-but-refusing
+        # rather than absent — the distinction that lets a deployment without
+        # `INTERNAL_CA_CERT_PEM` start, report 503 on the exchange, and still serve everything
+        # else (§11.1's `Unavailable*` pattern).
+        collaborators = (
+            ("recorder", recorder),
+            ("redis", redis),
+            ("limiter", limiter),
+            ("ca", ca),
+        )
+        supplied = [name for name, value in collaborators if value is not None]
+        if supplied and len(supplied) != len(collaborators):
+            missing = sorted({name for name, _ in collaborators} - set(supplied))
             raise DeviceKeyError(
                 f"DeviceService was given {sorted(supplied)} but not {missing}: the pairing flow "
-                "needs all three (Appendix A.1 requires an audit record on both branches, §14.6 "
-                "requires both rate limits, and the consume script is a Redis EVAL). Pass all "
-                "three for the pairing form, or none for the envelope-key custody form"
+                "needs all four (Appendix A.1 requires an audit record on both branches, §14.6 "
+                "requires both rate limits, the consume script is a Redis EVAL, and §3.1's "
+                "response carries a certificate). Pass all four for the pairing form, or none "
+                "for the envelope-key custody form"
             )
 
     # ── envelope-key custody (leaf 7.5) ───────────────────────────────────────────────────
@@ -748,10 +780,17 @@ class DeviceService:
         consumed, and "the device row is no longer pairable" all produce one response (Q-17).
         """
         redis = self._redis_or_raise()
-        assert self._recorder is not None and self._limiter is not None  # noqa: S101
+        assert self._recorder is not None and self._limiter is not None and self._ca is not None  # noqa: S101
         for verdict in (await self._limiter.check_per_ip(client_ip), await self._limiter.check_global()):
             if not verdict.allowed:
                 raise PairingRateLimitedError(retry_after_seconds=verdict.retry_after_seconds)
+
+        # CA availability is checked HERE, before the code is consumed, although the signing call
+        # itself stays where Appendix A.1 puts it. Reading `ca_bundle` is the cheapest question
+        # that distinguishes a configured CA from `UnavailableCertificateAuthority`, and asking it
+        # now means a deployment with no `INTERNAL_CA_CERT_PEM` answers 503 without spending a
+        # code that the operator would then have to reissue.
+        ca_bundle = self._ca.ca_bundle
 
         spki = csr_spki_fingerprint(csr_pem)
         # `compare_digest` on two hex strings rather than `==`. The value is not a secret, but the
@@ -813,6 +852,24 @@ class DeviceService:
         # AAD binding cannot be bypassed by a second one (tasks.md 8.1's own constraint).
         sealed = await self.provision_envelope_key(session, device_id)
 
+        # The CA call is the one step Appendix A.1 keeps after the consume, and it has to stay
+        # there: it issues a credential, so it cannot precede the decision to issue one. What
+        # protects the code is that CA *availability* was checked before the consume — a
+        # deployment with no CA refuses without spending anything.
+        issued = self._ca.sign(csr_pem, device_id=device_id)
+        await session.execute(
+            text(
+                "UPDATE agent_devices SET cert_serial = :serial, cert_fingerprint = :fingerprint, "
+                "cert_not_after = :not_after WHERE id = :id"
+            ),
+            {
+                "serial": issued.serial,
+                "fingerprint": issued.fingerprint,
+                "not_after": issued.not_after,
+                "id": device_id,
+            },
+        )
+
         await self._recorder.record(
             session,
             DeviceAuditEvent(
@@ -826,6 +883,8 @@ class DeviceService:
                 details={
                     "device_id": str(device_id),
                     "csr_spki_sha256": spki,
+                    "cert_serial": issued.serial,
+                    "cert_fingerprint": issued.fingerprint,
                     "agent_version": meta.agent_version[:64],
                     "platform": meta.platform[:64],
                     "attempts": attempts,
@@ -838,6 +897,73 @@ class DeviceService:
             device_token=SecretBytes(token),
             envelope_key=sealed.key,
             csr_spki_sha256=spki,
+            client_cert_pem=issued.certificate_pem,
+            ca_bundle_pem=ca_bundle,
+            cert_serial=issued.serial,
+            cert_fingerprint=issued.fingerprint,
+            cert_not_after=issued.not_after,
+            renew_after=issued.renew_after,
+        )
+
+    async def rotate_certificate(
+        self, session: AsyncSession, *, device_id: uuid.UUID, csr_pem: bytes
+    ) -> CertificateBundle:
+        """§11.2's `rotate_certificate`: a replacement certificate for a live device.
+
+        **`csr_pem` is an addition to §11.2's sketch, and it is not optional.** Rotation exists
+        because the certificate is short-lived, and a short-lived certificate whose *key* never
+        changes gives up most of what short-lived buys — a key stolen once stays useful for as long
+        as the device does. Reissuing over the same key would also require the CA to keep every
+        device's public key, which is a store this design does not have and does not want. So the
+        agent generates a fresh P-256 pair and sends a new CSR, exactly as it did at pairing.
+
+        Runs over the **live session** (§3.1): the hub calls this in response to the agent's
+        rotation request before `renew_after`, so the new certificate arrives without a reconnect.
+        There is deliberately no REST route — a device certificate handed out over a route
+        authenticated by something other than the device's current certificate would be a second,
+        weaker enrolment path.
+
+        Refuses a device that is not `active`. A revoked or pending device asking for a fresh
+        certificate is either a bug or an attacker holding a certificate that is about to expire,
+        and in both cases the answer is no.
+        """
+        if self._ca is None:
+            raise DeviceKeyError(
+                "this DeviceService was constructed for envelope-key custody only; certificate "
+                "rotation needs a `ca` (see __init__)"
+            )
+        result = await session.execute(text("SELECT status FROM agent_devices WHERE id = :id"), {"id": device_id})
+        row = result.first()
+        if row is None:
+            raise DeviceNotFoundError(str(device_id))
+        if str(row[0]) != DeviceStatus.ACTIVE.value:
+            raise CertificateRotationRefusedError(
+                f"device {device_id} is {row[0]}, not active; no certificate is issued"
+            )
+        issued = self._ca.sign(csr_pem, device_id=device_id)
+        # Serial and fingerprint are overwritten, not appended to. The previous certificate stops
+        # being the one the hub accepts the moment this commits, which is what makes rotation a
+        # replacement rather than an accumulation of valid credentials.
+        await session.execute(
+            text(
+                "UPDATE agent_devices SET cert_serial = :serial, cert_fingerprint = :fingerprint, "
+                "cert_not_after = :not_after WHERE id = :id"
+            ),
+            {
+                "serial": issued.serial,
+                "fingerprint": issued.fingerprint,
+                "not_after": issued.not_after,
+                "id": device_id,
+            },
+        )
+        return CertificateBundle(
+            device_id=device_id,
+            certificate_pem=issued.certificate_pem,
+            ca_bundle_pem=self._ca.ca_bundle,
+            serial=issued.serial,
+            fingerprint=issued.fingerprint,
+            not_after=issued.not_after,
+            renew_after=issued.renew_after,
         )
 
     async def _record_failure(

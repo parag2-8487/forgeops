@@ -36,6 +36,18 @@ def pem_header(kind: str = "RSA PRIVATE") -> str:
     return "-" * 5 + "BEGIN " + kind + " " + "KEY" + "-" * 5
 
 
+def pem_armour(label: str) -> str:
+    """Build any PEM begin-armour line, for labels that are not `... KEY`.
+
+    `pem_header` above hard-codes the `KEY` suffix, which covers the private-key cases FO-SEC001
+    was written for. Leaf 8.2 needs `CERTIFICATE` and `CERTIFICATE REQUEST` too — a certificate is
+    not a secret, but the gate matches on **shape** and not on sensitivity, deliberately: "a
+    scanner cannot tell, and a blocked scan that gets waved through is worse than no scan". So the
+    armour is assembled here rather than exempted there.
+    """
+    return "-" * 5 + "BEGIN " + label + "-" * 5
+
+
 def bearer_clause() -> str:
     """An `Authorization`-style clause carrying an obviously fake token."""
     return "Bearer " + SYNTHETIC_MARKER + ".not-a-jwt"

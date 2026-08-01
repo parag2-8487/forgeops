@@ -434,12 +434,17 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - **Two things this leaf deliberately does not do,** both by the group's own decomposition: the exchange issues no certificate or `ca_bundle` (the internal CA is 8.2), and revocation writes no Redis `devtok:revoked` member and no pub/sub event (per-message enforcement is 8.4, Q-16).
     - _Design: §3.1, §4.4, §10.3, §11.2, §14.6, Appendix A.1, §17.1 D-70, D-71, D-72; Deliverable: 1.1; Criterion: 1; Property: Q-17_
 
-  - [ ] 8.2 Implement the internal CA and short-lived device certificates
+  - [x] 8.2 Implement the internal CA and short-lived device certificates
 
     - Implement CSR signing with `cryptography==44.0.0` producing certificates with `notAfter = now + DEVICE_CERT_TTL_HOURS` (default 24), and `rotate_certificate` issuing a replacement over the live session before `renew_after`.
     - Add `scripts/init-ca.sh` and `make init-ca` writing the development CA into `.env` only when absent, never overwriting, and never committing key material.
     - Store `cert_serial` and `cert_fingerprint` on `agent_devices`; add tests for chain validation, expiry rejection, fingerprint mismatch and rotation without reconnection.
-    - _Design: §3.1, §11.2, §13.1, §14.2; Deliverable: 1.1, 1.10; Criterion: 1_
+    - **`cryptography` is pinned at `49.0.0`, not `44.0.0`.** §15.9's resolution is that the committed lockfiles win and Phase 1 must not downgrade any of them; `pyjwt[crypto]==2.13.0` already resolves 49.0.0. The pin was made explicit in `backend/pyproject.toml` by leaf 7.5 with that reasoning recorded there, so this leaf consumes it rather than re-deciding it.
+    - **D-73** settles what the certificate says: the CA **discards** the CSR's subject and issues `CN=<device_id>` (a CSR arrives on an unauthenticated route, and a CA that copies caller-supplied data into an identity field lets the caller choose who it is), issues no SAN, and carries `clientAuth` only. The chain check is a **precondition**; `agent_devices.cert_fingerprint` is the authorisation input, and the two are deliberately not collapsed.
+    - **D-74** extends §11.2's `rotate_certificate` signature with `csr_pem`. Reissuing over the existing key would need a public-key store this design does not have, and a short-lived certificate whose key never changes gives up most of what short-lived buys. Rotation is refused for any device that is not `active` and **replaces** the serial and fingerprint rather than appending.
+    - **Finding 56, in pre-existing code:** `DEVICE_CERT_TTL_HOURS`'s documented lower bound of 1 is unreachable, because `DEVICE_CERT_RENEW_BEFORE_HOURS` is `ge=1` and must be strictly smaller. It fails closed (the configuration refuses to load), so it is recorded rather than changed.
+    - **What has no caller yet:** `rotate_certificate` is called by the hub in leaf 8.4, and `verify_chain` by the handshake in the same leaf. Both are exercised only by their tests until then, which is why `TestRotation` carries six cases and `TestChainValidation` eight.
+    - _Design: §3.1, §11.2, §13.1, §14.2, §14.3, §17.1 D-73, D-74; Deliverable: 1.1, 1.10; Criterion: 1_
 
   - [ ] 8.3 Implement the agent `pair` command and credential persistence
 

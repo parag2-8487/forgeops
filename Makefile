@@ -10,7 +10,7 @@ SHELL := /bin/sh
 DOCKER_COMPOSE_VERSION := 2.24.7
 PIP_TOOLS_VERSION := 7.6.0
 
-.PHONY: help bootstrap init-env clean
+.PHONY: help bootstrap init-env init-ca clean
 .PHONY: build build-agent build-backend build-frontend
 .PHONY: test test-agent test-backend test-frontend
 .PHONY: lint lint-agent lint-backend lint-frontend lint-chokepoint
@@ -66,6 +66,10 @@ bootstrap: ## Verify the pinned toolchain; never rewrites lockfiles
 init-env: ## Create .env from .env.example only when .env is absent
 	@printf '==> init-env: ensuring a local .env exists without overwriting one\n'
 	@sh scripts/init-env.sh
+
+init-ca: ## Generate a development internal CA into .env only when absent; never overwrites
+	@printf '==> init-ca: ensuring a development internal CA exists without overwriting one\n'
+	@sh scripts/init-ca.sh
 
 clean: ## Remove build output only; never .env, lockfiles or Docker volumes
 	@printf '==> clean: removing build output (preserving .env, lockfiles and Docker volumes)\n'

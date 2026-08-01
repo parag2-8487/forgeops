@@ -32,6 +32,7 @@ from .ai.routing.tiers import load_tier_config
 from .analysis.plan_analyzer.approval import ThresholdApprovalGate
 from .analysis.plan_analyzer.semantic import SemanticPlanAnalyzer
 from .audit.writer import AuditWriter
+from .auth.ca import InternalCertificateAuthority, UnavailableCertificateAuthority
 from .auth.cerbos import CerbosClient
 from .auth.devices import DeviceService
 from .auth.oidc import IdTokenVerifier, OidcClient
@@ -237,20 +238,46 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.governance_policy = UnavailableGovernancePolicy()
     app.state.command_sink = UnavailableCommandSink()
     app.state.envelope_sequencer = RedisEnvelopeSequencer(redis_client)
-    # §14.6's two exchange buckets, constructed here because `RedisTokenBucketLimiter` lives in
-    # `src/ai/**`, which the §2.4 Ruff table bans everywhere except the composition root. The
-    # existing limiter is reused rather than a second Lua token bucket written: two of them would
-    # be two places for §14.1's "Redis is the single time authority" to be got wrong.
+    # The internal CA (§3.1, §14.2). Constructed only when BOTH PEMs are configured; otherwise the
+    # fail-closed stand-in, so a fresh clone starts and every route except the exchange works,
+    # while the exchange answers 503 `pairing-unavailable` rather than issuing a certificate no CA
+    # vouches for. `make init-ca` populates the two variables into the untracked `.env`.
     #
-    # Per IP: capacity 10, refilling at 10/60 per second — §14.6's "10 exchange attempts per IP
-    # per minute". Global: capacity 600 over one code lifetime, so the refill rate is 600/TTL and
-    # "total attempts across the window cannot exceed 600" holds by construction rather than by a
-    # comment.
+    # A malformed PEM is a startup failure, deliberately unlike an absent one: absent means "not
+    # configured yet", malformed means "configured wrongly", and the second must not degrade
+    # silently into the first.
+    ca_cert_pem = settings.internal_ca_cert_pem.get_secret_value().strip()
+    ca_key_pem = settings.internal_ca_key_pem.get_secret_value().strip()
+    device_ca: Any
+    if ca_cert_pem and ca_key_pem:
+        device_ca = InternalCertificateAuthority(
+            cert_pem=ca_cert_pem,
+            key_pem=ca_key_pem,
+            ttl_hours=settings.device_cert_ttl_hours,
+            renew_before_hours=settings.device_cert_renew_before_hours,
+        )
+    else:
+        device_ca = UnavailableCertificateAuthority()
+        logger.warning(
+            "no internal CA configured; agent pairing will refuse with 503 until `make init-ca` "
+            "populates INTERNAL_CA_CERT_PEM and INTERNAL_CA_KEY_PEM",
+        )
+    app.state.device_ca = device_ca
     app.state.device_service = DeviceService(
         pepper=settings.envelope_pepper.get_secret_value(),
         recorder=GovernanceDeviceAuditRecorder(writer=app.state.audit_writer),
         redis=redis_client,
         limiter=TokenBucketPairingLimiter(
+            # §14.6's two exchange buckets, constructed here because `RedisTokenBucketLimiter`
+            # lives in `src/ai/**`, which the §2.4 Ruff table bans everywhere except the
+            # composition root. The existing limiter is reused rather than a second Lua token
+            # bucket written: two of them would be two places for §14.1's "Redis is the single
+            # time authority" to be got wrong.
+            #
+            # Per IP: capacity 10, refilling at 10/60 per second — §14.6's "10 exchange attempts
+            # per IP per minute". Global: capacity 600 over one code lifetime, so the refill rate
+            # is 600/TTL and "total attempts across the window cannot exceed 600" holds by
+            # construction rather than by a comment.
             per_ip=RedisTokenBucketLimiter(
                 redis=redis_client,
                 capacity=settings.pairing_rate_limit_per_ip_per_minute,
@@ -264,6 +291,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 key_prefix="forgeops:pair:global:",
             ),
         ),
+        ca=device_ca,
         code_ttl_seconds=settings.pairing_code_ttl_seconds,
         max_attempts=settings.pairing_code_max_attempts,
         alphabet=settings.pairing_code_alphabet,
