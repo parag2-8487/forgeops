@@ -478,7 +478,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests for backoff bounds, hot-loop avoidance when the handshake is rejected, heartbeat timeout, and drain ordering under a stale bundle.
     - _Design: §3.1, §7.3, §7.4, §10.3; Deliverable: 1.1; Criterion: 1; Property: Q-31_
 
-  - [ ] 8.6 Implement envelope verification and replay rejection
+  - [x] 8.6 Implement envelope verification and replay rejection
 
     - Implement `Verifier.Verify` performing schema, freshness, signature, ordering, nonce-uniqueness, policy-digest and operation-catalogue checks in exactly that order, returning the unexported-field `Verified` value that only this function can construct.
     - Verify the signature **before** any state mutation so an unauthenticated caller cannot advance `last_seq` and lock out the backend; tolerate ±60 s clock skew and report measured skew in `agent.status`.
@@ -486,7 +486,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests for each rejection path proving no mutation and no counter advance occurs.
     - _Design: §7.6, §10.4, Appendix A.2, Appendix C.2; Deliverable: 1.1, 1.10; Property: Q-14, Q-15_
 
-  - [ ] 8.7 Implement the named-operation dispatch table
+  - [x] 8.7 Implement the named-operation dispatch table
 
     - Implement `executor.Dispatcher` with the closed §7.7 catalogue, a single `handlerTable` as the only dispatch surface, per-operation timeouts and progress emission.
     - Add no `exec`, no `shell`, no `run_command` and no operation taking a command string; route mutating operations only through `mutate` with a `*envelope.Verified`.
