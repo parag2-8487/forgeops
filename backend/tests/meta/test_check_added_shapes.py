@@ -221,6 +221,57 @@ class TestTheCheckerRunsAsAProcess:
         assert "1 added line(s) considered" in result.stdout
 
 
+class TestItNeverPassesWhileCheckingNothing:
+    """`pre-commit run --all-files` -- which is what CI runs -- stages nothing.
+
+    A hook whose whole input is the staged diff would then report a clean scan of zero lines on
+    every CI run, forever, which is pattern B. The fallback and its announcement are the fix, and
+    both are asserted because an unasserted fallback is indistinguishable from the bug.
+    """
+
+    def test_with_nothing_staged_it_scans_the_tip_commit_and_says_so(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(CHECKER_PATH)],
+            capture_output=True,
+            cwd=REPO_ROOT,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        if "nothing staged" in result.stdout:
+            considered = int(re.search(r"(\d+) added line\(s\)", result.stdout).group(1))
+            assert considered > 0, "fell back to HEAD and still found nothing to scan"
+        else:
+            assert "staged change" in result.stdout
+
+    def test_the_scope_is_always_named(self) -> None:
+        """Whichever branch ran, the output must say which, so a reader can tell a real scan from
+        an empty one without knowing the code."""
+        result = subprocess.run(
+            [sys.executable, str(CHECKER_PATH)],
+            capture_output=True,
+            cwd=REPO_ROOT,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert "staged change" in result.stdout or "nothing staged" in result.stdout
+
+
+class TestTheGitHookInstallerWiresItUp:
+    """The config entry alone does not make the hook fire: this repository runs pre-commit from a
+    script, not from `.git/hooks` (D-76), so `git commit` fires nothing by default. That is the gap
+    between "the check exists" and finding 64's actual requirement."""
+
+    def test_the_installer_runs_the_checker(self) -> None:
+        installer = (REPO_ROOT / "scripts" / "install-git-hooks.ps1").read_text(encoding="utf-8")
+        assert "scripts/check-added-shapes.py" in installer
+        assert "exit 1" in installer, "a hook that cannot find python must block, not pass"
+
+    def test_the_installer_refuses_to_clobber_a_foreign_hook(self) -> None:
+        installer = (REPO_ROOT / "scripts" / "install-git-hooks.ps1").read_text(encoding="utf-8")
+        assert "refusing to overwrite" in installer
+
+
 class TestTheCheckerDoesNotMatchItself:
     def test_its_own_source_carries_no_shape(self) -> None:
         """The failure mode this file's assembled table exists to avoid: a pattern table written

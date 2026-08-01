@@ -180,8 +180,17 @@ def main(argv: list[str] | None = None) -> int:
             blocked += len(found)
     else:
         diff = _git("diff", "--cached", "--unified=0", "--no-color")
+        scope = "staged change"
+        if not diff.strip():
+            # `pre-commit run --all-files`, which is what CI runs, stages nothing: the staged diff
+            # is empty and this hook would report "0 added lines, clean" forever. That is pattern B
+            # exactly -- a gate that passes while checking nothing. So with nothing staged the
+            # question falls back to the tip commit's own added lines, which is a real scan of real
+            # content. It is NOT equivalent to scanning the whole push: use `--range` for that.
+            diff = _git("show", "--format=", "--unified=0", "--no-color", "HEAD")
+            scope = "nothing staged, so HEAD's own added lines instead"
         found, count = findings_for(diff)
-        print(f"check-added-shapes: {count} added line(s) considered")
+        print(f"check-added-shapes: {count} added line(s) considered ({scope})")
         for finding in found:
             print(f"  {finding}")
         blocked += len(found)

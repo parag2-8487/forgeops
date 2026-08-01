@@ -4373,6 +4373,27 @@ Its own table is assembled fragment by fragment for the same reason the gate's i
 literals, the file matches itself and the hook blocks the commit that adds it. One test asserts that
 directly, over its own source.
 
+**A config entry is not a hook, and that gap is the finding repeating itself.** This repository does
+not run the pre-commit framework from `.git/hooks`; it invokes it explicitly through
+`scripts/leaf-gate.ps1` (D-76), and `.git/hooks` was empty. So declaring `check-added-shapes` in
+`.pre-commit-config.yaml` made it run in `leaf-gate` and in CI's `pre-commit --all-files` job, and
+made it run on `git commit` **not at all** — which is finding 63's shape (a check that cannot execute
+where its operator works) sitting inside the fix for finding 64. `scripts/install-git-hooks.ps1`
+closes it by writing `.git/hooks/pre-commit` to run this one check and nothing else: the full set
+pulls a container and rewrites files mid-commit, which is why it is script-invoked in the first
+place. Proof is a real commit, not a claim — a staged line carrying a shape, `git commit`, `BLOCKED:
+1 credential shape(s)`, `HEAD` unmoved. If the interpreter cannot be found the hook exits 1, because
+a gate that cannot run is a block and not a pass.
+
+Two more sharp edges, recorded rather than left to be rediscovered. `core.hooksPath` was rejected: it
+would make a later `pre-commit install` silently do nothing, whereas an ordinary `.git/hooks/pre-commit`
+gets moved aside to `pre-commit.legacy` and still called. And `pre-commit run --all-files`, which is
+what CI runs, stages nothing — so the hook's input would be an empty diff and it would report a clean
+scan of zero lines on every CI run, forever. With nothing staged it therefore falls back to the tip
+commit's own added lines and **names the scope it used** in its output, with a test asserting that a
+reader can always tell a real scan from an empty one. That fallback is not equivalent to scanning a
+whole push; `--range` is, and the pre-push gate still runs it.
+
 What it costs: the shape table now exists twice, in PowerShell and in Python, and a parse-based
 parity test is a weaker guarantee than a single source would be. A single source was considered and
 rejected — the table cannot live in a data file, because a data file spelling the shapes out is
