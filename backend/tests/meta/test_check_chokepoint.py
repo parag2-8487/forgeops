@@ -31,9 +31,11 @@ pytestmark = pytest.mark.mandatory
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = REPO_ROOT / "scripts" / "chokepoint_graph.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "chokepoint"
+CROSSDOMAIN = Path(__file__).resolve().parent / "fixtures" / "crossdomain"
 BAD = FIXTURES / "bad_chokepoint.py"
 GOOD = FIXTURES / "governance" / "good_chokepoint.py"
 BACKEND_SRC = REPO_ROOT / "backend" / "src"
+PYPROJECT = REPO_ROOT / "backend" / "pyproject.toml"
 AGENT_ROOT = REPO_ROOT / "agent"
 
 
@@ -209,6 +211,139 @@ class TestTheGoHalf:
         assert expected.is_dir()
         assert CHECK.GO_MUTATE_PACKAGE.endswith("agent/internal/executor/internal/mutate")
         assert CHECK.GO_EXECUTOR_PREFIX.endswith("agent/internal/executor")
+
+
+class TestTheCrossDomainModuleBans:
+    """Finding 55's residual, closed by parsing (design.md §2.2.1).
+
+    The bans are DISCOVERED from `backend/pyproject.toml`, so every assertion here is made
+    against the real table Ruff reads rather than against a copy. The tree walked is the
+    fixture's, so the negative control can be a permanent offender without redding the build.
+    """
+
+    def test_the_ban_set_is_discovered_and_not_empty(self) -> None:
+        """Non-vacuity. An empty set satisfies every claim you can make about it."""
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        assert bans, "no cross-domain module ban was discovered; the clause checks nothing"
+        assert len(bans) >= 10, [ban.dotted for ban in bans]
+
+    def test_the_four_glob_exempted_domains_are_all_in_the_discovered_set(self) -> None:
+        """These are the domains finding 55 left uncovered, so they are the ones that matter."""
+        discovered = {ban.relative for ban in CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)}
+        assert {"ai", "mcp", "analysis", "projects"} <= discovered, discovered
+
+    def test_symbol_bans_are_not_mistaken_for_module_bans(self) -> None:
+        """`src.governance.envelope.sign_envelope` is a symbol; the confined-name table owns it.
+
+        Told apart against the filesystem, not by a naming convention — a convention such as
+        "a leading underscore means a symbol" would have mis-classified `sign_envelope` and
+        `send_command` on its first use.
+        """
+        relative = {ban.relative for ban in CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)}
+        assert "governance.envelope.sign_envelope" not in relative
+        assert "governance.authority._MINT_SENTINEL" not in relative
+        assert not any(ban.relative.startswith("celery") for ban in CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC))
+
+    def test_a_missing_or_renamed_table_fails_closed(self, tmp_path: Path) -> None:
+        """A typo in the section name must not make the check trivially pass."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.ruff.lint.flake8-tidy-imports.banned-apis]\n"src.ai".msg = "typo in the section name"\n',
+            encoding="utf-8",
+        )
+        assert CHECK.parse_module_bans(tmp_path / "pyproject.toml", BACKEND_SRC) == ()
+
+    def test_an_entry_naming_nothing_on_disk_is_not_a_module_ban(self, tmp_path: Path) -> None:
+        """A ban on a deleted domain must not read as coverage of a live one."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[tool.ruff.lint.flake8-tidy-imports.banned-api]\n"src.nosuchdomain".msg = "gone"\n',
+            encoding="utf-8",
+        )
+        assert CHECK.parse_module_bans(tmp_path / "pyproject.toml", BACKEND_SRC) == ()
+
+    def test_the_negative_control_is_flagged(self) -> None:
+        """`ai/` reaching `mcp/` — the exact case Ruff misses for the four glob domains."""
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        violations = CHECK.find_module_ban_violations(CROSSDOMAIN, bans)
+        offenders = {(v.importer, v.imported) for v in violations}
+        assert ("ai.reaches_mcp", "mcp.gateway") in offenders, offenders
+
+    def test_the_absolute_form_of_the_same_crossing_is_flagged_too(self) -> None:
+        """Otherwise the check is bypassable by writing the import the other way."""
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        violations = CHECK.find_module_ban_violations(CROSSDOMAIN, bans)
+        offenders = {(v.importer, v.imported) for v in violations}
+        assert ("ai.reaches_mcp_absolutely", "mcp.gateway") in offenders, offenders
+
+    @pytest.mark.parametrize(
+        "module",
+        ["ai.stays_within_domain", "ai.helper", "mcp.gateway", "core.errors"],
+    )
+    def test_the_control_of_the_control_is_clean(self, module: str) -> None:
+        """Within-domain, `core`, and a stdlib `import secrets` must all pass.
+
+        The last is a regression control: `src.secrets` is a banned domain and `secrets` is the
+        standard library, and matching module paths by suffix rather than by resolution reported
+        `core/trace.py` as a cross-domain importer on this check's first real run.
+        """
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        violations = CHECK.find_module_ban_violations(CROSSDOMAIN, bans)
+        assert module not in {v.importer for v in violations}, [v.render() for v in violations]
+
+    def test_a_stdlib_import_sharing_a_banned_domain_name_is_never_flagged(self) -> None:
+        """Stated as its own assertion because it is the one that fires on the real tree."""
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        violations = CHECK.find_module_ban_violations(CROSSDOMAIN, bans)
+        assert not any(v.imported == "secrets" for v in violations), [v.render() for v in violations]
+
+    def test_the_real_tree_is_clean_under_the_module_bans(self) -> None:
+        """The check must pass on the tree as it stands, or it is not a gate."""
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        violations = CHECK.find_module_ban_violations(BACKEND_SRC, bans)
+        assert violations == [], [v.render() for v in violations]
+
+    def test_every_exemption_is_load_bearing(self) -> None:
+        """An exemption nobody needs is an exemption nobody will notice widening.
+
+        Removing each one must produce at least one violation on the real tree. `main` is
+        excluded from the sweep only because it is a wildcard: it is the app factory, and
+        asserting it composes at least one banned domain is done directly instead.
+        """
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        original = CHECK.CROSS_DOMAIN_EXEMPTIONS
+        try:
+            for exemption in original:
+                CHECK.CROSS_DOMAIN_EXEMPTIONS = tuple(e for e in original if e is not exemption)
+                violations = CHECK.find_module_ban_violations(BACKEND_SRC, bans)
+                assert violations, (
+                    f"removing the exemption {exemption.importer} -> {exemption.banned} changed "
+                    "nothing, so it is dead weight that can be widened unnoticed"
+                )
+        finally:
+            CHECK.CROSS_DOMAIN_EXEMPTIONS = original
+
+    def test_violation_messages_name_the_file_the_line_the_importer_and_the_ban(self) -> None:
+        bans = CHECK.parse_module_bans(PYPROJECT, BACKEND_SRC)
+        violations = CHECK.find_module_ban_violations(CROSSDOMAIN, bans)
+        assert violations
+        for violation in violations:
+            rendered = violation.render()
+            assert violation.path in rendered
+            assert f":{violation.line}:" in rendered
+            assert violation.importer in rendered
+            assert violation.ban in rendered
+
+    def test_the_python_half_fails_when_pyproject_is_absent(self, tmp_path: Path) -> None:
+        """The bans cannot be read, so the clause is checking nothing and must not pass.
+
+        Built as a copy of the real source tree so the earlier clauses pass and this one is the
+        reason for the failure, rather than the empty-primitive-set guard firing first.
+        """
+        import shutil
+
+        src = tmp_path / "src"
+        shutil.copytree(BACKEND_SRC, src)
+        assert not (tmp_path / "pyproject.toml").exists()
+        assert CHECK.run_python_half(src, quiet=True) == 1
 
 
 class TestTheEntryPointExists:

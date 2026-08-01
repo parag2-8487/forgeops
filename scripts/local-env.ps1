@@ -17,31 +17,43 @@
   environment from PowerShell removes the conversion step rather than working around it, which is
   D-76. See docs/development.md, "Git Bash and native Windows executables".
 
-  WHY `.env` IS LOADED AND THEN OVERRIDDEN, NOT FILTERED. A host-side run has a real reason to
-  load `.env`: it holds INTERNAL_CA_KEY_PEM / INTERNAL_CA_CERT_PEM from `make init-ca`, plus
-  ENVELOPE_PEPPER and LOCAL_SECRET_SEAL_KEY. But `.env` is a copy of the COMPOSE-targeted
-  `.env.example`, whose DSNs name the Compose services `postgres` and `redis` - names that do not
-  resolve on the host. That is finding 61, and it presents as `socket.gaierror` inside
-  `schema_at_head`'s `alembic downgrade base`, i.e. as every DB-backed test erroring at setup for
-  a reason that looks nothing like its cause.
+  WHY `.env` IS NOT LOADED AT ALL, WHICH IS A CORRECTION. The first version of this file loaded
+  `.env` in full and then overrode the endpoint variables, on the reasoning that a host-side run
+  needs `.env` for INTERNAL_CA_KEY_PEM, ENVELOPE_PEPPER and LOCAL_SECRET_SEAL_KEY. That reasoning
+  was wrong twice over and the mandatory selection said so: 22 tests failed.
 
-  An allow-list of "safe" keys would be pattern H: a hand-maintained list that a new key in
-  `.env.example` silently escapes. So `.env` is loaded in full and the endpoint keys are then
-  overridden unconditionally, and a guard afterwards fails if any exported value still points at
-  a Compose service name. A new Compose endpoint appearing in `.env.example` therefore breaks the
-  guard loudly instead of breaking a test suite quietly.
+  First, overriding the endpoints fixes finding 61 and does nothing about finding 57, which is the
+  larger problem: sixty-odd tests assert on what is **ABSENT** from the environment, so any key
+  from `.env` breaks them regardless of its value. `test_the_derived_radius_ignores_the_variable`
+  cannot pass with MCP_AGENT_BLAST_RADIUS set, by construction.
 
-  NO SECRET VALUES LIVE IN THIS FILE. The two DB passwords below are for a local container
-  started with POSTGRES_HOST_AUTH_METHOD=trust and are self-labelling as local-only. Everything
-  genuinely sensitive comes from the untracked `.env`.
+  Second, `.env.example`'s values carry trailing inline comments -
+  `MCP_AGENT_BLAST_RADIUS=read_only    # read_only | workspace | infrastructure` - so a naive
+  parser exports the comment as part of the value and pydantic reports
+  `Input should be 'read_only', 'workspace' or 'infrastructure'` for a variable that says
+  `read_only`. Fixing the parser would have fixed the symptom and left the first problem.
+
+  So this file sets an EXPLICIT variable set and reads no `.env`. `.env` exists for `docker
+  compose` and for `make init-ca`; a host-side test run must not see it. Nothing in the test suite
+  needs the development CA key - `test_internal_ca.py` builds its own - which is checked by the
+  suite passing rather than asserted here.
+
+  `-WithDotEnv` exists for the flows that genuinely want it, such as driving `make init-ca`'s
+  output by hand. It is off by default and must never be on for a test run.
 #>
+[CmdletBinding()]
+param(
+    [switch] $WithDotEnv
+)
+
 
 $ErrorActionPreference = 'Stop'
 
 $__leRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 # ---------------------------------------------------------------------------------------------
-# 1. `.env` in full, when present, so the CA key and the pepper are available.
+# 1. `.evidence/ak.env` only (two Authentik bootstrap keys). `.env` is read ONLY when explicitly
+#    asked for, and never for a test run - see the header.
 # ---------------------------------------------------------------------------------------------
 function Import-DotEnvFile {
     param([string] $Path)
@@ -57,6 +69,13 @@ function Import-DotEnvFile {
         $v = $t.Substring($eq + 1).Trim()
         if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[-1] -eq '"') -or ($v[0] -eq "'" -and $v[-1] -eq "'"))) {
             $v = $v.Substring(1, $v.Length - 2)
+        } else {
+            # A trailing inline comment is part of the LINE, not of the value. `.env.example`
+            # documents its enums this way - `SECRET_BACKEND=infisical  # infisical | local` -
+            # and exporting the comment produces
+            # "Input should be 'infisical' or 'local'" for a variable that says `infisical`.
+            $hash = $v.IndexOf('#')
+            if ($hash -ge 0) { $v = $v.Substring(0, $hash).TrimEnd() }
         }
         if ($k -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { continue }
         Set-Item -Path "env:$k" -Value $v
@@ -65,7 +84,39 @@ function Import-DotEnvFile {
     return $n
 }
 
-$__leEnvCount = Import-DotEnvFile (Join-Path $__leRoot '.env')
+$__leEnvCount = 0
+$__leAkCount = 0
+
+# ---------------------------------------------------------------------------------------------
+# 1b. Clear every project key `.env.example` DECLARES, then set the explicit set below.
+#
+#     Not tidiness - correctness, and it is what makes a run reproducible in a shell somebody has
+#     already polluted. Sixty-odd tests assert on what is ABSENT from the environment (finding 57),
+#     so an inherited CERBOS_URL is as fatal as a loaded one, and it is harder to see: it survives
+#     in the parent shell after one `. scripts\local-env.ps1` that predates this fix. The guard at
+#     the bottom found exactly that - CERBOS_URL, INFISICAL_URL and OPA_URL still pointing at
+#     Compose service names in a process that had never read `.env`.
+#
+#     The key NAMES come from `.env.example`, which is tracked and is the same file
+#     `core/config.py`'s PROJECT_CONFIG_KEYS validates against, so a new setting is covered without
+#     editing anything here. Only names are read; no value from that file is ever exported.
+# ---------------------------------------------------------------------------------------------
+$__leDeclared = @()
+foreach ($line in (Get-Content -LiteralPath (Join-Path $__leRoot '.env.example') -Encoding UTF8)) {
+    $m = [regex]::Match($line.Trim(), '^([A-Za-z_][A-Za-z0-9_]*)=')
+    if ($m.Success) { $__leDeclared += $m.Groups[1].Value }
+}
+$__leDeclared = @($__leDeclared | Sort-Object -Unique)
+if ($__leDeclared.Count -eq 0) {
+    throw 'local-env: .env.example declared no keys; refusing to continue (the clear step would be a no-op)'
+}
+$__leCleared = 0
+foreach ($k in $__leDeclared) {
+    if (Test-Path "env:$k") { Remove-Item "env:$k" -ErrorAction SilentlyContinue; $__leCleared++ }
+}
+
+# Imports run AFTER the clear, or the clear would undo them.
+if ($WithDotEnv) { $__leEnvCount = Import-DotEnvFile (Join-Path $__leRoot '.env') }
 $__leAkCount = Import-DotEnvFile (Join-Path $__leRoot '.evidence\ak.env')
 
 # ---------------------------------------------------------------------------------------------
@@ -83,14 +134,6 @@ $env:DATABASE_URL = 'postgresql+asyncpg://forgeops_app@127.0.0.1:55432/forgeops_
 # is finding 61 exactly.
 $env:ALEMBIC_DATABASE_URL = 'postgresql+asyncpg://forgeops_migrator@127.0.0.1:55432/forgeops_test'
 $env:REDIS_URL = 'redis://127.0.0.1:56379/0'
-$env:CERBOS_URL = 'http://127.0.0.1:53592'
-# Found by the guard below on its first run, not by inspection - which is the argument for having
-# the guard. `.env` ships OPA_URL=http://opa:8181. There is no local OPA container (the policy
-# suite runs `opa test` as a CLI, not against a server), so this points at a loopback port that
-# is simply not listening. That is the honest state: a connection refused on 127.0.0.1 names its
-# own cause, where `getaddrinfo failed` on `opa` does not.
-$__leOpaPort = if ($env:OPA_PORT) { $env:OPA_PORT } else { '8181' }
-$env:OPA_URL = "http://127.0.0.1:$__leOpaPort"
 
 $env:FORGEOPS_REQUIRE_INTEGRATION = '1'
 $env:PGHOST = '127.0.0.1'
@@ -98,10 +141,14 @@ $env:PGPORT = '55432'
 $env:PGUSER = 'postgres'
 $env:POSTGRES_USER = 'postgres'
 $env:POSTGRES_DB = 'forgeops_test'
-$env:POSTGRES_PORT = '55432'
-$env:REDIS_PORT = '56379'
 $env:FORGEOPS_APP_DB_PASSWORD = 'local-only-not-a-real-secret'
 $env:FORGEOPS_MIGRATOR_DB_PASSWORD = 'local-only-not-a-real-secret'
+
+# NOTHING ELSE IS EXPORTED, AND THAT IS A CONSTRAINT RATHER THAN AN OVERSIGHT. This set is
+# `scripts/_env.sh`'s, which the suite is known to pass under. An earlier version of this file also
+# set CERBOS_URL, OPA_URL, POSTGRES_PORT and REDIS_PORT, and every one of those is a registered
+# project key that some test asserts is ABSENT - finding 57. A variable is added here only with a
+# test run behind it, never because it looks useful.
 
 # ---------------------------------------------------------------------------------------------
 # 3. The guard. Non-vacuous by construction: it is driven from the Compose file's own service
@@ -139,6 +186,6 @@ if ($__leBad.Count -gt 0) {
     throw 'local-env: add the variable above to the override block (finding 61)'
 }
 
-Write-Host ("local-env: .env keys={0} ak keys={1} compose services guarded={2}" -f `
-    $__leEnvCount, $__leAkCount, $__leServices.Count)
+Write-Host ("local-env: declared keys={0} cleared={1} dotenv keys={2} ak keys={3} compose services guarded={4}" -f `
+    $__leDeclared.Count, $__leCleared, $__leEnvCount, $__leAkCount, $__leServices.Count)
 $env:FORGEOPS_LOCAL_ENV_READY = '1'

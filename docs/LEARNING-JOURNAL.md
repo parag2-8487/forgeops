@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| :--------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-08-01**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Leaves reflected       | **56 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 110 `pending`. Reconciled 2026-08-01; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end, comprehension artifact regenerated). **Group 8 is in progress**: leaves 8.1 (pairing-code issue and single-use exchange) and 8.2 (the internal CA and short-lived device certificates) are done. Decisions run to **D-76**; findings run to **61**. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-08-01**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Leaves reflected       | **56 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 110 `pending`. Reconciled 2026-08-01; all three sources agree via `scripts/_state.sh`. **Group 7 is complete** — all eleven leaves plus its close-out (`verify-chain` proved end to end, comprehension artifact regenerated). **Group 8 is in progress**: leaves 8.1 (pairing-code issue and single-use exchange) and 8.2 (the internal CA and short-lived device certificates) are done. Decisions run to **D-77**; findings run to **61**, and finding 55's residual is closed. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -2705,22 +2705,106 @@ that no `.env` is committed, `docker compose`'s `env_file` chain and `load_proje
 validation. That is a large change to four contracts to fix a load-order problem.
 
 **Taken: fix it where it is caused and where it surfaces.** At the point of use,
-`scripts/local-env.ps1` loads `.env` in full — the CA key is genuinely needed — and then
-overrides the endpoint variables unconditionally. An allow-list of "safe to load" keys was
-rejected as pattern H: a new key in `.env.example` escapes a hand-maintained list silently.
-Override-after cannot be escaped that way, and a guard driven from the Compose file's **own**
-service names fails if any exported value still points at one. The guard earned itself on its
-first run by finding `OPA_URL=http://opa:8181`, which no amount of inspection had noticed. At the
-point of failure, `alembic/env.py` catches `socket.gaierror` and re-raises naming the host, the
-variable it came from, and the remedy — credentials never printed, only which variable was chosen.
+`scripts/local-env.ps1` reads **no** `.env` at all: it clears every key `.env.example` declares —
+names only, never values — and then exports one explicit set of host-facing variables. At the point
+of failure, `alembic/env.py` catches `socket.gaierror` and re-raises naming the host, the variable
+it came from, and the remedy — credentials never printed, only which variable was chosen.
 
-What it costs: the guard is Windows-only today, because `local-env.ps1` is. A Linux developer who
-sources `.env` still hits the trap and now gets a message that explains it, which is the second
-mechanism doing its job but not the first. The honest state is one mechanism per platform and a
-documented trap, not a solved problem. The `alembic/env.py` change also has no test — it fires on
-a DNS failure, and manufacturing one inside the migration path would need either a fake resolver
-or a deliberately broken DSN in a fixture, so its correctness rests on reading it until something
-needs it.
+**The first version of the first mechanism was wrong, and the mandatory selection is what said
+so.** It loaded `.env` in full and then overrode the endpoint variables, reasoning that a
+host-side run needs the CA key and that an allow-list of "safe" keys would be pattern H. Both
+halves of that reasoning were defensible and the result was 22 failures.
+
+Two distinct causes, and the second one hid behind the first. `.env.example` documents its enums
+inline — `MCP_AGENT_BLAST_RADIUS=read_only    # read_only | workspace | infrastructure` — so a
+parser that treats the rest of the line as the value exports the comment too, and pydantic then
+reports `Input should be 'read_only', 'workspace' or 'infrastructure'` for a variable whose value
+is `read_only`. Fixing the parser would have made the errors go away and left the real problem:
+overriding the **endpoints** answers finding 61 and does nothing at all about finding 57, which is
+the larger claim. `test_the_derived_radius_ignores_the_variable` cannot pass with
+`MCP_AGENT_BLAST_RADIUS` set to anything, because the property it asserts is that the variable is
+ignored, and the test establishes that by the variable being absent.
+
+So the mechanism became "clear, then set", and clearing turned out to matter more than setting. The
+guard found `CERBOS_URL`, `INFISICAL_URL` and `OPA_URL` still pointing at Compose service names in
+a process that had never read `.env` — they had survived in the parent shell from one earlier
+dot-source. A script that only sets variables is not reproducible in a shell somebody has already
+polluted, and every session inherits its predecessor's shell. The cleared key set is discovered
+from `.env.example`, so a new setting is covered without editing anything, and the script refuses
+to run if that discovered set is empty.
+
+The exported set is now exactly `scripts/_env.sh`'s, which the suite is known to pass under.
+The first version also set `CERBOS_URL`, `OPA_URL`, `POSTGRES_PORT` and `REDIS_PORT` because they
+looked useful; every one is a registered project key some test asserts is absent. A variable is
+added there only with a test run behind it.
+
+What it costs: the guard and the clear are Windows-only, because `local-env.ps1` is. A Linux
+developer who sources `.env` still hits the trap and now gets a message that explains it, which is
+the second mechanism doing its job but not the first. The honest state is one mechanism per
+platform and a documented trap, not a solved problem. The `alembic/env.py` change also has no
+test — it fires on a DNS failure, and manufacturing one inside the migration path would need
+either a fake resolver or a deliberately broken DSN in a fixture, so its correctness rests on
+reading it until something needs it. And the diagnostic cost of getting this wrong was a
+58-minute suite run: the lesson filed with it is that a change to the _environment_ must be
+proved by the mandatory selection before it is committed, not after.
+
+### D-77 — finding 55's residual is closed by parsing the ban table, not by narrowing the globs
+
+§2.2.1 mechanism 2 is a Ruff `banned-api` table with two halves: eight SYMBOL bans that keep the
+chokepoint's private surface private, and seventeen cross-domain MODULE bans that say a domain
+depends on `src/core` and never on a peer. Leaf 8.1 re-asserted the symbol half by parsing, because
+`["TID251"]` suppresses per RULE and four domains carry a glob. The module half stayed Ruff-only,
+so for `src/ai`, `src/mcp`, `src/analysis` and `src/projects`, `src/ai` importing `src/mcp` was
+uncaught. That was recorded as finding 55's residual with three options.
+
+**(a) Narrow the four globs to file-by-file entries, as `src/auth` and `src/governance` already
+are. Rejected.** It trades one mechanism for forty-odd hand-maintained entries that churn on every
+new module — pattern H waiting to happen, and the churn falls on whoever adds a file rather than on
+whoever weakens a boundary.
+
+**(c) Leave it advisory for four domains. Rejected.** Group 7 was spent making boundaries
+mechanical. This would have been the one place left where a boundary was a convention.
+
+**(b) Taken: parse the bans out of the same `pyproject.toml` table Ruff reads.** Immune to lint
+ignores, which is the actual defect, and the ban set cannot drift from Ruff's because there is only
+one copy of it. Three design points earned rather than chosen:
+
+The ban set is **discovered, never restated**, and the check exits 1 when the discovered set is
+empty — the same guard §2.2.1 requires for the primitive set, for the same reason: a renamed table
+key or a moved file must not make the clause trivially pass. Module bans and symbol bans share one
+table and one syntax, and they are told apart **against the filesystem**: `src.auth.devices` is a
+module because `src/auth/devices.py` exists, `src.governance.envelope.sign_envelope` is a symbol
+because `src/governance/envelope/sign_envelope.py` does not. A naming convention would have
+mis-classified `sign_envelope` and `send_command` on its first use. And a domain importing its own
+namespace is decided **structurally** — the importer's first component against the ban's — not by
+an exemption, which is why this needs no equivalent of Ruff's four globs.
+
+It found two things on its first run over the real tree, which is the argument for having it.
+`governance/chokepoint.py` imports `analysis.plan_analyzer` three times; its `["TID251"]` ignore
+had unbanned every cross-domain module for that file, so the crossing had never been reviewed **as**
+a crossing. It is legitimate — plan analysis is a stage of the single mutation path, not a peer
+domain calling in — and it is now an exemption with a written reason instead of a side effect. The
+second was a defect in the check itself: `import secrets` is the standard library and `src.secrets`
+is a banned domain, so matching by suffix rather than by resolution reported `core/trace.py` as a
+cross-domain importer. That is pattern R in a new place, it now requires the `src.` prefix on any
+absolute import exactly as Ruff does, and there is a named regression control for it.
+
+The negative control was designed first, as required: `backend/tests/meta/fixtures/crossdomain/`
+holds `ai/reaches_mcp.py`, which must be reported, and the same crossing written as an absolute
+import, which must also be reported — otherwise the check is bypassable by writing the import the
+other way. The control-of-the-control is three separate clean cases: a within-domain import, a
+`core` import, and the stdlib `import secrets`. One further test removes each exemption in turn and
+requires a violation to appear, so an exemption nobody needs cannot sit there waiting to be widened.
+
+What it costs: the four globs remain in `pyproject.toml`, so Ruff still reports nothing for those
+domains and a developer reading the config alone would still draw the wrong conclusion — the
+comment there now says so explicitly. The check reads `pyproject.toml` with `tomllib`, which ties
+the script to Python 3.11+; it already runs under the backend venv, so this is a constraint rather
+than a change. Two exemptions exist, and every exemption is a place where the boundary is a
+decision rather than a mechanism. And the parse is import-graph-shaped only: it sees that
+`governance` imports `analysis`, not what it does with it.
+
+## 9. What has actually been found by building it
 
 ### D-76 — Python is launched from PowerShell; Git Bash keeps the `.sh` scripts and nothing else
 
@@ -3466,6 +3550,18 @@ worse, because it stops the next reader asking.
 The residual is recorded rather than implied: the **cross-domain module** bans are still Ruff-only,
 so `src/ai` importing `src/mcp` remains uncaught. Narrowing those four globs to file-by-file entries,
 as `src/auth` and `src/governance` already are, is the fix, and it is larger than one leaf.
+
+**Closed, 2026-08-01, by D-77, and not by that fix.** Narrowing the globs was rejected as pattern H
+— forty-odd hand-maintained entries churning on every new module. Instead the seventeen cross-domain
+module bans are now **discovered from the same `pyproject.toml` table** and enforced by
+`scripts/chokepoint_graph.py`'s `parse_module_bans` and `find_module_ban_violations`, so there is
+one copy of the ban set and a lint ignore cannot switch it off. The four globs remain, and they no
+longer hide anything. Two things surfaced the moment the check ran on the real tree: a
+`governance` → `analysis` crossing that had never been reviewed **as** a crossing, because
+`chokepoint.py`'s own `["TID251"]` had unbanned it; and a defect in the new check, where
+`import secrets` was matched against the banned `src.secrets` domain by suffix rather than by
+resolution — pattern R again. `backend/tests/meta/fixtures/crossdomain/` is the negative control,
+and its clean cases include that stdlib import as a named regression control.
 
 **56. `DEVICE_CERT_TTL_HOURS`'s documented lower bound of 1 cannot be used.** §13.1 gives it
 `ge=1, le=168`, and gives `DEVICE_CERT_RENEW_BEFORE_HOURS` the same `ge=1` — then a validator

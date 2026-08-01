@@ -64,7 +64,9 @@ from pathlib import Path
 
 __all__ = [
     "AUTHORITY_TYPE",
+    "BANNED_API_SECTION",
     "CONFINED_NAMES",
+    "CROSS_DOMAIN_EXEMPTIONS",
     "DECORATOR_NAME",
     "GOVERNANCE_PACKAGE",
     "GO_EXECUTOR_PREFIX",
@@ -72,6 +74,9 @@ __all__ = [
     "MINT_FUNCTION",
     "ConfinedName",
     "ConfinementViolation",
+    "CrossDomainExemption",
+    "ModuleBan",
+    "ModuleBanViolation",
     "GoImport",
     "Primitive",
     "PrimitiveCall",
@@ -732,6 +737,255 @@ def find_confinement_violations(src_root: Path) -> list[ConfinementViolation]:
     return violations
 
 
+# ─── mechanism 2, second half: the cross-domain MODULE bans ───────────────────────────────
+#
+# Finding 55's residual, closed by parsing. The confined-name table above re-asserts the eight
+# SYMBOL bans of §2.2.1. It does not touch the other half of the same Ruff table: the
+# cross-domain MODULE bans, which say a domain depends on `src/core` and never on another domain.
+# Those stayed Ruff-only, and `["TID251"]` suppresses per RULE, so for the four domains carrying a
+# glob — `src/ai`, `src/mcp`, `src/analysis`, `src/projects` — `src/ai` importing `src/mcp` was
+# uncaught. Measured, not inferred.
+#
+# Three options were on the table.
+#
+# (a) Narrow the four globs to file-by-file entries, as `src/auth` and `src/governance` already
+#     are. Rejected: it trades one mechanism for forty-odd hand-maintained entries that churn
+#     every time a module is added, which is pattern H waiting to happen.
+# (b) Taken. Parse the bans out of the same `pyproject.toml` table Ruff reads, and enforce them
+#     here. Immune to lint ignores, which is the actual defect, and the ban set cannot drift from
+#     Ruff's because there is only one copy of it.
+# (c) Leave it advisory for four domains. Rejected: group 7 was spent making boundaries
+#     mechanical, and this is the one place that would still be a convention.
+#
+# The ban set is DISCOVERED, never restated. A hard-coded list here would be pattern H with two
+# copies, and the second copy would be the one that rots. `run_python_half` exits 1 when the
+# discovered set is empty, for the same reason it does on an empty primitive set: a renamed table
+# key, a moved `pyproject.toml` or a typo in the section name must not make the check trivially
+# pass.
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleBan:
+    """One cross-domain module ban, as discovered in `pyproject.toml`."""
+
+    #: The key as written, e.g. `src.auth.devices`.
+    dotted: str
+    #: The same path relative to `src/`, e.g. `auth.devices`, which is how importers name it.
+    relative: str
+    #: The owning domain: the first component below `src/`.
+    domain: str
+    #: Ruff's own message, printed with any violation so the two agree by construction.
+    msg: str
+
+
+@dataclass(frozen=True, slots=True)
+class CrossDomainExemption:
+    """One module permitted to cross a domain boundary, and why.
+
+    File-shaped and explicit, deliberately. This is the small list option (a) would have made
+    large: the exemptions are the genuine composition seams, not one entry per module.
+    """
+
+    importer: str
+    banned: str
+    reason: str
+
+
+CROSS_DOMAIN_EXEMPTIONS: tuple[CrossDomainExemption, ...] = (
+    CrossDomainExemption(
+        importer="main",
+        banned="*",
+        reason="the app factory composes every domain's router; that IS its job (design 7.1)",
+    ),
+    CrossDomainExemption(
+        importer="governance.chokepoint",
+        banned="auth.devices",
+        reason="2.2.1: the chokepoint is the one caller permitted to reach the device service, "
+        "which is why the ban names auth.devices rather than auth",
+    ),
+    # Found by this check on its first run over the real tree, which is the argument for having
+    # it. `governance/chokepoint.py` carries `["TID251"]` for its 2.2.1 symbol reasons, and that
+    # ignore also unbanned every cross-domain MODULE for the file - finding 55 exactly - so this
+    # crossing had never been reviewed AS a crossing. It is legitimate: plan analysis is a STAGE
+    # of the single mutation path, not a peer domain calling in, so the dependency direction is
+    # chokepoint -> analysis and never the reverse. Recorded here so it is a decision with a
+    # reason rather than a side effect of a lint ignore.
+    CrossDomainExemption(
+        importer="governance.chokepoint",
+        banned="analysis",
+        reason="plan analysis is a stage of the chokepoint's own pipeline (design 2.2.1); the "
+        "dependency runs chokepoint -> analysis only",
+    ),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleBanViolation:
+    """One module importing another domain it is not permitted to import."""
+
+    importer: str
+    imported: str
+    ban: str
+    path: str
+    line: int
+    msg: str
+
+    def render(self) -> str:
+        return (
+            f"{self.path}:{self.line}: cross-domain import: module '{self.importer}' imports "
+            f"'{self.imported}', banned by '{self.ban}' (design 2.2.1). {self.msg}"
+        )
+
+
+BANNED_API_SECTION = ("tool", "ruff", "lint", "flake8-tidy-imports", "banned-api")
+
+
+def parse_module_bans(pyproject: Path, src_root: Path) -> tuple[ModuleBan, ...]:
+    """Every `src.`-rooted MODULE ban in the Ruff banned-api table.
+
+    Module bans and symbol bans share one table and one syntax. They are told apart against the
+    FILESYSTEM rather than by a naming convention: `src.auth.devices` is a module because
+    `src/auth/devices.py` exists, and `src.governance.envelope.sign_envelope` is a symbol because
+    `src/governance/envelope/sign_envelope.py` does not and `src/governance/envelope.py` does.
+    Asking the tree is the same discipline the rest of this file follows - assert the thing, not a
+    document about the thing. A convention such as "a leading underscore means a symbol" would
+    have mis-classified `sign_envelope` and `send_command` on its first use.
+
+    Third-party bans (`celery`, `arq`, ...) are not returned: they are enforced by the queue seam
+    and are not a domain boundary.
+    """
+    import tomllib
+
+    with pyproject.open("rb") as handle:
+        data = tomllib.load(handle)
+    table: object = data
+    for key in BANNED_API_SECTION:
+        if not isinstance(table, dict) or key not in table:
+            return ()
+        table = table[key]
+    if not isinstance(table, dict):
+        return ()
+
+    bans: list[ModuleBan] = []
+    for dotted, value in table.items():
+        if not dotted.startswith("src."):
+            continue
+        parts = dotted.split(".")[1:]
+        if not parts:
+            continue
+        candidate = src_root.joinpath(*parts)
+        is_module = candidate.is_dir() or candidate.with_suffix(".py").is_file()
+        if not is_module:
+            continue
+        msg = ""
+        if isinstance(value, dict):
+            msg = str(value.get("msg", ""))
+        bans.append(
+            ModuleBan(
+                dotted=dotted,
+                relative=".".join(parts),
+                domain=parts[0],
+                msg=msg,
+            )
+        )
+    return tuple(sorted(bans, key=lambda ban: ban.relative))
+
+
+def _package_of(path: Path, src_root: Path) -> str:
+    """The dotted package a file's relative imports resolve against."""
+    if path.name == "__init__.py":
+        rel = path.parent.relative_to(src_root)
+    else:
+        rel = path.parent.relative_to(src_root)
+    text = rel.as_posix()
+    return "" if text == "." else text.replace("/", ".")
+
+
+def _import_targets(node: ast.stmt, package: str) -> list[str]:
+    """The dotted modules one import statement names, relative to `src/`.
+
+    Relative imports are resolved here rather than skipped, because this codebase uses them ON
+    PURPOSE - `TID252` is disabled so that `core.errors.ProblemException` is one class object in
+    every importer. A cross-domain checker that only understood absolute imports would therefore
+    understand almost nothing in this tree, and would report a clean run while looking at nothing.
+
+    An ABSOLUTE import must carry the `src.` prefix to be a source module, and dropping that
+    requirement is a false-positive machine: `src.secrets` is a banned domain and `secrets` is the
+    standard library, so a bare `import secrets` in `core/trace.py` was reported as a cross-domain
+    import on the first run of this check. Ruff has the same rule for the same reason - its
+    banned-api key `src.secrets` does not match a plain `import secrets` - and matching module
+    paths by suffix rather than by resolution is pattern R's mistake in a new place.
+    """
+    if isinstance(node, ast.Import):
+        return [alias.name[4:] for alias in node.names if alias.name.startswith("src.")]
+    if not isinstance(node, ast.ImportFrom):
+        return []
+    tail = node.module or ""
+    if node.level == 0:
+        return [tail[4:]] if tail.startswith("src.") else []
+    base = package.split(".") if package else []
+    # level 1 is "this package"; each further dot climbs one package.
+    climb = node.level - 1
+    if climb > len(base):
+        return []
+    base = base[: len(base) - climb] if climb else base
+    parts = base + (tail.split(".") if tail else [])
+    return [".".join(parts)] if parts else []
+
+
+def _is_exempt(importer: str, banned: str) -> str | None:
+    for exemption in CROSS_DOMAIN_EXEMPTIONS:
+        if exemption.importer != importer:
+            continue
+        if exemption.banned in ("*", banned):
+            return exemption.reason
+    return None
+
+
+def find_module_ban_violations(
+    src_root: Path, bans: Iterable[ModuleBan]
+) -> list[ModuleBanViolation]:
+    """Every module under `src_root` importing a banned module from outside its own domain.
+
+    A domain importing its own namespace is not a cross-domain import, and that is decided
+    structurally - the importer's first component against the ban's - rather than by an
+    exemption. Ruff cannot express "except from within", which is why it needed four globs;
+    a parse can, which is why this needs none.
+    """
+    ban_list = list(bans)
+    violations: list[ModuleBanViolation] = []
+    for path in sorted(src_root.rglob("*.py")):
+        module = _module_name(path, src_root)
+        package = _package_of(path, src_root)
+        relative = path.relative_to(src_root.parent).as_posix()
+        importer_domain = module.split(".")[0]
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            for target in _import_targets(node, package):
+                if not target:
+                    continue
+                for ban in ban_list:
+                    if target != ban.relative and not target.startswith(ban.relative + "."):
+                        continue
+                    if importer_domain == ban.domain:
+                        continue
+                    if _is_exempt(module, ban.relative) is not None:
+                        continue
+                    violations.append(
+                        ModuleBanViolation(
+                            importer=module,
+                            imported=target,
+                            ban=ban.dotted,
+                            path=relative,
+                            line=node.lineno,
+                            msg=ban.msg,
+                        )
+                    )
+    return violations
+
+
 # ─── the Go half ──────────────────────────────────────────────────────────────────────────
 
 #: The mutation boundary. Importable only from packages rooted at `internal/executor/` by Go's
@@ -988,6 +1242,43 @@ def run_python_half(src_root: Path, *, quiet: bool = False) -> int:
         return 1
     print(
         f"check-chokepoint(python): OK - {len(CONFINED_NAMES)} confined name(s), no unpermitted reach"
+    )
+
+    # Mechanism 2's other half: the cross-domain MODULE bans, finding 55's residual. Discovered
+    # from the same `pyproject.toml` table Ruff reads, so the two cannot disagree.
+    pyproject = src_root.parent / "pyproject.toml"
+    if not pyproject.is_file():
+        print(
+            f"check-chokepoint(python): FAIL - no pyproject.toml at {pyproject}, so the "
+            "cross-domain module bans cannot be read and this clause is checking nothing.",
+            file=sys.stderr,
+        )
+        return 1
+    bans = parse_module_bans(pyproject, src_root)
+    if not bans:
+        print(
+            "check-chokepoint(python): FAIL - the discovered cross-domain module-ban set is "
+            f"EMPTY. Either {'.'.join(BANNED_API_SECTION)} was renamed, or every entry stopped "
+            "resolving to a module on disk, and this clause is no longer looking at anything "
+            "(design 2.2.1, finding 55).",
+            file=sys.stderr,
+        )
+        return 1
+    if not quiet:
+        print(
+            f"check-chokepoint(python): {len(bans)} cross-domain module ban(s) discovered in "
+            f"{pyproject.name} (not defeatable by a per-file lint ignore)"
+        )
+        for ban in bans:
+            print(f"  {ban.dotted}  (domain '{ban.domain}')")
+    ban_violations = find_module_ban_violations(src_root, bans)
+    if ban_violations:
+        print("check-chokepoint(python): FAIL - cross-domain import", file=sys.stderr)
+        for violation in ban_violations:
+            print(violation.render(), file=sys.stderr)
+        return 1
+    print(
+        f"check-chokepoint(python): OK - {len(bans)} cross-domain module ban(s), no violation"
     )
     return 0
 

@@ -203,11 +203,25 @@ is Windows-specific; a Linux developer who sources `.env` hits it identically.
 
 Two mechanisms address it, and the precedence is deliberately **not** one of them:
 
-1. `scripts/local-env.ps1` loads `.env` in full and then overrides the endpoint variables
-   unconditionally. An allow-list of "safe" keys was rejected: a new key in `.env.example` would
-   silently escape it. A guard afterwards reads the Compose file's own service names and fails if
-   any exported value still points at one — which is how `OPA_URL=http://opa:8181` was found, on
-   the guard's first run.
+1. `scripts/local-env.ps1` reads **no** `.env` at all. It clears every key `.env.example` declares
+   — names only, never values — and then exports one explicit set of host-facing variables.
+   Clearing first is what makes a run reproducible in a shell somebody has already polluted, and it
+   is the only thing that also addresses finding 57: sixty-odd tests assert on what is **absent**
+   from the environment, so an inherited `CERBOS_URL` is as fatal as a loaded one. A guard
+   afterwards reads the Compose file's own service names and fails if any exported value still
+   points at one; it found `OPA_URL=http://opa:8181` on its first run, and later found the same
+   three variables surviving in a parent shell from before this fix.
+
+   An earlier version loaded `.env` in full and overrode only the endpoint variables. That fixed
+   finding 61 and left finding 57 untouched, and the mandatory selection said so: **22 tests
+   failed**. It also exported `.env.example`'s trailing inline comments as part of the values, so
+   pydantic reported `Input should be 'read_only', 'workspace' or 'infrastructure'` for a variable
+   whose value was `read_only`. Both are recorded because the first fix looked right and was
+   measurably wrong.
+
+   `-WithDotEnv` exists for flows that genuinely want `.env`, such as driving `make init-ca` by
+   hand. It is off by default and must never be on for a test run.
+
 2. `alembic/env.py` catches `socket.gaierror` and re-raises naming the host, the variable it came
    from, and the remedy. Credentials are never printed, only which variable was chosen.
 

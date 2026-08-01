@@ -232,10 +232,15 @@ ignore = [
 #
 # The private surface is now re-asserted by parsing, in `scripts/chokepoint_graph.py`'s
 # `CONFINED_NAMES` table, which runs in the Python half of `check-chokepoint.sh` and is not a
-# lint. The residual — the cross-domain module bans themselves are still Ruff-only, and so are
-# still disabled for these four domains — is recorded rather than implied. Narrowing these globs
-# to file-by-file entries, as `src/auth` and `src/governance` already are, is the fix; it is a
-# larger change than leaf 8.1 and is not smuggled in here.
+# lint. The cross-domain MODULE bans are re-asserted the same way, by `parse_module_bans` +
+# `find_module_ban_violations` in the same script: the ban set is DISCOVERED from the
+# `banned-api` table below, so there is only one copy of it and the two cannot drift, and the
+# check exits 1 if that discovered set is ever empty. Narrowing these four globs to
+# file-by-file entries was the alternative and was rejected — it trades one mechanism for
+# forty-odd hand-maintained entries that churn on every new module. The globs below therefore
+# remain, and they no longer hide anything: Ruff is the fast feedback, the parse is the
+# boundary. `backend/tests/meta/fixtures/crossdomain/` is the negative control, and
+# `ai/reaches_mcp.py` in it is the exact case these globs used to let through.
 "src/ai/**/*.py" = ["TID251"]
 "src/mcp/**/*.py" = ["TID251"]
 "src/analysis/**/*.py" = ["TID251"]
