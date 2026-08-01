@@ -227,6 +227,11 @@ if [ -f "$CONFIG" ]; then
 	#   check-chokepoint reachability over both runtimes: parses backend/src/** and
 	#                    queries `go list -deps -json`. A whole-graph question cannot be
 	#                    answered file by file, and it writes nothing (design 2.2.1)
+	#   check-added-shapes  parses `git diff --cached` for credential shapes in ADDED lines
+	#                    (finding 64). The staged diff is one object, not a file list, and a
+	#                    deletion-only commit must still be scanned rather than skipped — so
+	#                    `always_run: true` here is the point of the hook rather than an
+	#                    exemption from filtering. It writes nothing.
 	#
 	# Both Phase 1 additions take fixed arguments rather than a filename list, so
 	# `pass_filenames: true` would append paths and break them. Their read-only
@@ -236,7 +241,7 @@ if [ -f "$CONFIG" ]; then
 	#
 	# Adding a name to this list without that evidence reopens the hole the rule
 	# closes, so the list is deliberately short and each entry is justified above.
-	NON_FILENAME_EXEMPT='gitleaks check-ci-jobs check-no-latest check-gitleaks-config check-chokepoint'
+	NON_FILENAME_EXEMPT='gitleaks check-ci-jobs check-no-latest check-gitleaks-config check-chokepoint check-added-shapes'
 	awk -F'\t' -v exempt=" $NON_FILENAME_EXEMPT " '
 		$1=="hook" && ($3=="always_run" || $3=="pass_filenames") && index(exempt, " " $2 " ")==0 {
 			if (($3=="always_run" && $4=="true") || ($3=="pass_filenames" && $4=="false"))

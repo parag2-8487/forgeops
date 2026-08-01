@@ -470,7 +470,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - **Finding 63, in pre-existing code:** the `go-vet` pre-commit hook used `language: script`, so on Windows it failed with `Executable /bin/sh not found` and `go vet` never actually ran locally. Latent until this leaf, because the hook is filtered to `^agent/.*\.go$`. Fixed to `bash scripts/go-vet-changed.sh` under `language: system`, the form three sibling hooks in the same file already use.
     - _Design: §3.1, §7.3, §11.10, §14.1; Deliverable: 1.1; Criterion: 1; Property: Q-16_
 
-  - [ ] 8.5 Implement the agent session manager, reconnect and journal drain
+  - [x] 8.5 Implement the agent session manager, reconnect and journal drain
 
     - Implement `Manager.Serve`: mTLS dial through `identity.Provider`, `session.connect`, heartbeat every 30 s with a 90 s timeout, and reconnect with base 1 s, cap 60 s, jitter 0.5×, resetting the attempt counter only after a successful `session.connect`.
     - Implement the nine `phases.md` message types on Phase 0's fixed envelope, adding no tenth method; replay journalled intents as `approval.request`.

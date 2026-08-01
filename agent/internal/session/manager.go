@@ -108,7 +108,50 @@ type Deps struct {
 	// variable here, so the value in an audit row is the version that was actually
 	// built and not a constant somebody forgot to bump.
 	AgentVersion string
+
+	// ---- Serve's collaborators (leaf 8.5) -------------------------------------------
+	//
+	// All optional in the sense that Pair, Status and Wipe do not need them; Serve
+	// refuses to run without the ones it cannot substitute for, rather than running in a
+	// weakened form. A missing Verifier, for instance, refuses every inbound frame.
+
+	// Identity supplies the mTLS client configuration for the socket dial (§10.2).
+	Identity identity.Provider
+	// Transport builds one transport per connection attempt. A factory rather than an
+	// instance because a transport holds a connection: reusing one across reconnects
+	// would carry the dead socket into the new attempt. nil means the real WSS transport.
+	Transport func(*tls.Config) connection.Transport
+	// Verifier checks every inbound envelope. nil refuses every frame.
+	Verifier Verifier
+	// Runner executes verified commands; leaf 8.7's dispatcher, through an adapter.
+	Runner CommandRunner
+	// Journal is the durable outbound queue drained after a successful connect (D-41).
+	Journal Journal
+	// Bundle is the agent's policy-bundle view; nil means "holds no bundle", which
+	// refuses mutations and holds intents rather than allowing them.
+	Bundle BundleState
+	// Jitter returns §7.4's uniform factor in [0.5, 1.5]. Injected so a backoff test
+	// measures the bound rather than a random draw.
+	Jitter func() float64
+	// After and NewTicker are the two time sources the reconnect and heartbeat loops
+	// use. Injected together with Clock so a test drives 90-second behaviour in
+	// milliseconds instead of waiting.
+	After     func(time.Duration) <-chan time.Time
+	NewTicker func(time.Duration) Ticker
+	// Capabilities is reported in `session.connect`.
+	Capabilities []string
 }
+
+// Ticker is the heartbeat's clock, narrowed to what the loop uses so a test can drive it.
+type Ticker interface {
+	C() <-chan time.Time
+	Stop()
+}
+
+type realTicker struct{ t *time.Ticker }
+
+func (r realTicker) C() <-chan time.Time { return r.t.C }
+func (r realTicker) Stop()               { r.t.Stop() }
 
 // Manager is the agent half of phases.md §1.1: JSON-RPC 2.0 over WSS on Phase 0's fixed
 // envelope, layered ABOVE connection.Transport so the Phase 0 transport contract is
@@ -120,7 +163,25 @@ type Manager struct {
 	http       *http.Client
 	now        func() time.Time
 	version    string
+
+	// Serve's collaborators (leaf 8.5).
+	identity       identity.Provider
+	dial           func(*tls.Config) connection.Transport
+	verifier       Verifier
+	runner         CommandRunner
+	journal        Journal
+	bundle         BundleState
+	jitter         func() float64
+	after          func(time.Duration) <-chan time.Time
+	newTicker      func(time.Duration) Ticker
+	capabilityList []string
+	startedAt      time.Time
 }
+
+// uptime is what `session.heartbeat` reports. Measured from construction rather than from
+// the current connection, because an agent that has reconnected forty times has still been
+// up the whole time and that is the number an operator is asking about.
+func (m *Manager) uptime() time.Duration { return m.now().Sub(m.startedAt) }
 
 // NewManager builds the manager. `backendURL` is AGENT_BACKEND_WSS_URL; empty is a
 // supported state and makes Status return connection.ErrDisabled.
@@ -144,13 +205,42 @@ func NewManager(backendURL string, deps Deps) (*Manager, error) {
 	if version == "" {
 		version = "unknown"
 	}
+	dial := deps.Transport
+	if dial == nil {
+		dial = func(cfg *tls.Config) connection.Transport {
+			return connection.NewWSSTransport(logger, connection.WithTLSConfig(cfg))
+		}
+	}
+	jitter := deps.Jitter
+	if jitter == nil {
+		jitter = defaultJitter
+	}
+	after := deps.After
+	if after == nil {
+		after = time.After
+	}
+	ticker := deps.NewTicker
+	if ticker == nil {
+		ticker = func(d time.Duration) Ticker { return realTicker{t: time.NewTicker(d)} }
+	}
 	return &Manager{
-		backendURL: backendURL,
-		store:      deps.Store,
-		logger:     logger,
-		http:       client,
-		now:        clock,
-		version:    version,
+		backendURL:     backendURL,
+		store:          deps.Store,
+		logger:         logger,
+		http:           client,
+		now:            clock,
+		version:        version,
+		identity:       deps.Identity,
+		dial:           dial,
+		verifier:       deps.Verifier,
+		runner:         deps.Runner,
+		journal:        deps.Journal,
+		bundle:         deps.Bundle,
+		jitter:         jitter,
+		after:          after,
+		newTicker:      ticker,
+		capabilityList: deps.Capabilities,
+		startedAt:      clock(),
 	}, nil
 }
 

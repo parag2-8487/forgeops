@@ -69,7 +69,12 @@ Invoke-Check 'check-route-auth' {
 }
 
 foreach ($sh in @('check-hygiene.sh', 'check-structure.sh', 'check-makefile.sh')) {
-    Invoke-Check $sh { & $gitBash -c "cd '$($RepoRoot -replace '\\','/')' && bash scripts/$sh 2>&1 | tail -3" }
+    # `-o pipefail` is load-bearing, and its absence was finding 66. Without it the exit status
+    # of `bash scripts/X.sh | tail -3` is TAIL's, which is always 0 — so all three of these
+    # checks could fail loudly in the output while this script reported `exit=0` and added
+    # nothing to $failures. `check-hygiene.sh` did exactly that during leaf 8.5, printing two
+    # violations and being recorded as clean.
+    Invoke-Check $sh { & $gitBash -o pipefail -c "cd '$($RepoRoot -replace '\\','/')' && bash scripts/$sh 2>&1 | tail -3" }
 }
 
 # `check-no-skips.py` is deliberately NOT here. It consumes a pytest `--report-log` JSONL or

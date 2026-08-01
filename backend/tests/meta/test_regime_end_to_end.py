@@ -241,6 +241,11 @@ def test_the_new_regime_hooks_are_read_only() -> None:
     `check-chokepoint` joined the list with leaf 7.3. Reachability is a property of the
     whole import and call graph, so it cannot be answered from a filename list at all;
     it parses `backend/src/**` and runs `go list -deps -json`, and writes nothing.
+
+    `check-added-shapes` joined it with finding 64. Its input is the staged diff as a whole
+    rather than a file list, and a deletion-only commit must still be scanned, so
+    `always_run: true` is the point of the hook rather than an exemption from filtering. It
+    parses `git diff --cached` and writes nothing.
     """
     config = _pre_commit_config()
     expected = {
@@ -249,6 +254,7 @@ def test_the_new_regime_hooks_are_read_only() -> None:
         "check-no-latest",
         "check-gitleaks-config",
         "check-chokepoint",
+        "check-added-shapes",
     }
     hooks = {
         hook["id"]: hook for repo in config["repos"] for hook in repo.get("hooks", []) if hook.get("id") in expected
