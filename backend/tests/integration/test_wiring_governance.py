@@ -105,14 +105,23 @@ class TestTheDefaultsFailClosed:
         with pytest.raises(PolicySourceUnavailableError):
             await policy.evaluate(payload={})
 
-    async def test_the_composed_sink_refuses_rather_than_discarding(self, production_app: FastAPI) -> None:  # noqa: F811
+    async def test_the_composed_sink_refuses_when_no_agent_is_connected(self, production_app: FastAPI) -> None:  # noqa: F811
+        """The sink is the real hub from leaf 8.4, and it keeps `UnavailableCommandSink`'s refusal.
+
+        `production_app` points at an unreachable Redis, so the hub cannot find a live session for
+        any device — which is the same answer it gives in production for a device that is not
+        connected, and the same 409 the placeholder sink used to give. What changed is that the
+        refusal is now a fact about the device rather than a fact about the backend.
+        """
         import uuid
 
         from src.core.errors import ProblemException
-        from src.governance.chokepoint import SignedCommand, UnavailableCommandSink
+        from src.governance.chokepoint import SignedCommand
+        from src.websocket.hub import AgentHub
 
         sink = production_app.state.command_sink
-        assert isinstance(sink, UnavailableCommandSink)
+        assert isinstance(sink, AgentHub)
+        assert sink is production_app.state.agent_hub
         with pytest.raises(ProblemException) as raised:
             await sink.send_command(
                 device_id=uuid.uuid4(),

@@ -65,6 +65,7 @@ __all__ = [
     "InternalCertificateAuthority",
     "IssuedCertificate",
     "UnavailableCertificateAuthority",
+    "certificate_fingerprint",
     "generate_development_ca",
     "load_pem",
 ]
@@ -187,6 +188,17 @@ def _fingerprint(certificate: x509.Certificate) -> str:
     """
     digest = certificate.fingerprint(hashes.SHA256())
     return ":".join(f"{byte:02X}" for byte in digest)
+
+
+def certificate_fingerprint(certificate: x509.Certificate) -> str:
+    """The spelling stored in `agent_devices.cert_fingerprint`, for a verifier to compare against.
+
+    Public because the hub's handshake (§11.10) has to recompute it from the certificate the
+    client presented and compare it with the device row — D-73 keeps those two as a
+    *precondition* and an *authorisation input* rather than collapsing them, so both sides need
+    the same spelling and there must be exactly one function producing it.
+    """
+    return _fingerprint(certificate)
 
 
 class InternalCertificateAuthority:

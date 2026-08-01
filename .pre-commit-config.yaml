@@ -118,8 +118,16 @@ repos:
         files: ^agent/.*\.go$
       - id: go-vet
         name: go vet (changed agent packages)
-        entry: scripts/go-vet-changed.sh
-        language: script
+        # `bash scripts/...` under `language: system`, not `language: script`, and the difference is
+        # a real defect rather than a style choice (finding 63). `language: script` asks pre-commit
+        # to execute the file through its shebang; on Windows there is no `/bin/sh`, so the hook
+        # failed with `Executable /bin/sh not found` for every commit that touched an agent Go file
+        # — which meant `go vet` was never actually run locally on this platform, while CI on Linux
+        # ran it and passed. Three sibling hooks in this file (`check-no-latest`,
+        # `check-gitleaks-config`, `check-chokepoint`) already spell it this way and work on both
+        # platforms, so this is the form that was already proven here.
+        entry: bash scripts/go-vet-changed.sh
+        language: system
         types: [go]
         files: ^agent/.*\.go$
 

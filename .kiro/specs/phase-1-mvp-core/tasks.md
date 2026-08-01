@@ -446,20 +446,28 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - **What has no caller yet:** `rotate_certificate` is called by the hub in leaf 8.4, and `verify_chain` by the handshake in the same leaf. Both are exercised only by their tests until then, which is why `TestRotation` carries six cases and `TestChainValidation` eight.
     - _Design: §3.1, §11.2, §13.1, §14.2, §14.3, §17.1 D-73, D-74; Deliverable: 1.1, 1.10; Criterion: 1_
 
-  - [ ] 8.3 Implement the agent `pair` command and credential persistence
+  - [x] 8.3 Implement the agent `pair` command and credential persistence
 
     - Implement `session.Manager.Pair` and the `forgeops-agent pair --code --backend` CLI path: generate the key pair, send the CSR, persist `Credentials` through `session.Store`, and report the result in `agent doctor`.
     - Add `session.ErrUnpaired` distinct from Phase 0's `connection.ErrDisabled` so `doctor` can distinguish "no URL" from "no token".
     - Add tests for a successful exchange, a rejected code, a retry after success failing by design, and credential wipe.
+    - **The CSR carries a self-describing placeholder subject, not an identity.** §3.1 builds it before the device id exists, and D-73 already settles that the CA discards the CSR's subject and issues `CN=<device_id>` itself. `pairingCSRCommonName` is therefore `forgeops-agent-pairing-request`, so anyone reading a captured CSR can see the field is not meant to be trusted.
+    - **`Pair` refuses locally before it sends anything (`ErrAlreadyPaired`).** The code is single-use server-side, so a second `pair` would fail regardless — but only after this agent had replaced the working credential it holds. Refusing first is what stops a mistyped retry from unpairing a healthy agent, and it spends no attempt against the five-attempt cap.
+    - **Finding 62, in pre-existing code:** `agent/internal/app/commands.go` held double-encoded `✓`/`✗` glyphs, so `agent doctor` printed `âœ“ Docker: …` on every line. Fixed here with the glyphs as `\u` escapes behind named constants; the pattern is in the journal's chapter 9.
     - _Design: §10.3, §10.10, Appendix A.1; Deliverable: 1.1; Criterion: 1_
 
-  - [ ] 8.4 Implement the backend WebSocket hub
+  - [x] 8.4 Implement the backend WebSocket hub
 
     - Implement `AgentHub.serve` at `/api/v1/ws/agent`: verify the client certificate against the internal CA and the device row, verify the bearer device token, run the handshake, and check the Redis revocation set **per message**.
     - Allocate `seq` via a Redis Lua compare-and-set, correlate `command.execute` → `command.result` by id, fan `command.progress` out to SSE, and deliver commands across replicas through a Redis stream keyed by device id.
     - **The `seq` allocator already exists.** `governance/sequencing.py::RedisEnvelopeSequencer` landed with leaf 7.5, because an envelope cannot be minted without a `seq` and a nonce (§7.6). This leaf **consumes** it rather than reimplementing it; a second allocator would hand out duplicate sequence numbers, which the agent cannot distinguish from a replay.
     - Keep `send_command` callable only from `governance` (banned-api) and implement `broadcast_revocation` over pub/sub for prompt socket closure.
     - Add integration tests for handshake rejection paths, heartbeat timeout at 90 s, per-message revocation, and cross-replica delivery.
+    - **Authentication lives in the route, not in the hub, and that is a boundary rather than a layout choice.** §2.4's table bans `src.auth.devices` outside `governance/`, so a hub that authenticated peers itself would be a hub that could reach an envelope key. The route reads the composed `DeviceService` off `app.state` and hands `serve` an already-authenticated `AuthenticatedDevice`; the hub names its needs through a `DeviceDirectory` Protocol it declares.
+    - **D-79** decides that the hub keeps `UnavailableCommandSink`'s refusal rather than inheriting the placeholder's absence: `send_command` refuses with `device-not-connected` (409) for a device with no live session key, and fails closed when Redis cannot answer. Delivery is always through the Redis stream even when this replica owns the socket, because a local fast path would be a second delivery order.
+    - **D-80** decides that certificate rotation rides `session.heartbeat` — an optional `csr` param, a `certificate` member in the result — rather than a tenth JSON-RPC method. §7.3's catalogue is closed so a reader can enumerate every message that exists.
+    - **What this leaf deliberately does not do:** `approval.request` is refused as retryable, because the chokepoint has no agent-originated entry (its three transits are `submit`, `approve`, `revert`); the stale-bundle handshake reports the current digest but carries no bundle body, which is leaf 9.3's; and `RedisProgressSink` publishes to a channel whose SSE consumer does not exist yet.
+    - **Finding 63, in pre-existing code:** the `go-vet` pre-commit hook used `language: script`, so on Windows it failed with `Executable /bin/sh not found` and `go vet` never actually ran locally. Latent until this leaf, because the hook is filtered to `^agent/.*\.go$`. Fixed to `bash scripts/go-vet-changed.sh` under `language: system`, the form three sibling hooks in the same file already use.
     - _Design: §3.1, §7.3, §11.10, §14.1; Deliverable: 1.1; Criterion: 1; Property: Q-16_
 
   - [ ] 8.5 Implement the agent session manager, reconnect and journal drain

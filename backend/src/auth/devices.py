@@ -83,7 +83,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..audit.device_log import DeviceAuditEvent, DeviceAuditRecorder
-from .ca import CertificateBundle, CertificateIssuer, CertificateRejectedError
+from .ca import (
+    CertificateBundle,
+    CertificateIssuer,
+    CertificateRejectedError,
+    certificate_fingerprint,
+)
 from .device_models import AgentDevice, DeviceStatus
 from .pairing_limits import PairingExchangeLimiter, PairingUnavailableError
 from .principal import Principal
@@ -96,11 +101,15 @@ __all__ = [
     "ISSUE_SCRIPT",
     "KEK_BYTES",
     "PAIRING_KEY_PREFIX",
+    "REVOCATION_CHANNEL",
+    "REVOCATION_SET_KEY",
     "SEAL_NONCE_BYTES",
     "AgentMeta",
+    "AuthenticatedDevice",
     "CertificateRejectedError",
     "CertificateRotationRefusedError",
     "CsrRejectedError",
+    "DeviceAuthenticationError",
     "DeviceCredentials",
     "DeviceKeyError",
     "DeviceNotFoundError",
@@ -110,6 +119,7 @@ __all__ = [
     "PairingCodeInvalidError",
     "PairingRateLimitedError",
     "PairingUnavailableError",
+    "RevocationUnavailableError",
     "csr_spki_fingerprint",
     "derive_key_encryption_key",
     "envelope_key",
@@ -117,6 +127,59 @@ __all__ = [
     "seal_envelope_key",
     "unseal_envelope_key",
 ]
+
+#: The Redis SET that decides whether a device may send its NEXT frame (§3.1, §11.10, Q-16).
+#:
+#: Redis-authoritative, exactly like the `seq` high-water mark, and for the same reason: the hub
+#: runs on any replica, the revoking request arrives at another, and a per-process cache would let
+#: the frame after a revocation through on every replica that had not been told. `agent_devices.
+#: status` is the durable record; this set is the enforcement point.
+REVOCATION_SET_KEY: Final[str] = "forgeops:devtok:revoked"
+
+#: pub/sub channel carrying `device_id` after a revocation, for prompt socket closure.
+#:
+#: An optimisation and never the guarantee. §3.1 is explicit: the per-message `SISMEMBER` is what
+#: makes revocation take effect on the next message, and a replica that missed this event still
+#: refuses the next frame.
+REVOCATION_CHANNEL: Final[str] = "forgeops:revocations"
+
+
+class RevocationUnavailableError(Exception):
+    """The revocation set could not be read.
+
+    Raised rather than answered, so the caller must decide — and the hub's decision is to close
+    the socket. Returning `False` here would be the single most damaging default in the system: a
+    Redis outage would silently turn every revoked device back on, which is the inverse of Q-16.
+    """
+
+
+class DeviceAuthenticationError(Exception):
+    """The presented certificate and token do not authenticate an active device.
+
+    One exception for every branch — unknown fingerprint, wrong token, non-active device, revoked
+    device — for the reason `PairingCodeInvalidError` gives: the caller is unauthenticated, so
+    telling it *which* check failed is telling it something it has not earned. The branch reaches
+    the log line, and the hub closes with one code.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedDevice:
+    """What the WebSocket handshake established about the peer (§11.10).
+
+    Frozen, and carrying no key material: the hub logs this, and the hub is explicitly not
+    allowed to hold the envelope signing key (§2.2.2). `last_seq` is the mirror column, passed on
+    so the handshake can answer `seq_base` without a second query.
+    """
+
+    device_id: uuid.UUID
+    project_id: uuid.UUID
+    tenant_id: uuid.UUID | None
+    policy_bundle_digest: str
+    last_seq: int
+    agent_version: str
+    platform: str
+
 
 #: HKDF's `info` label. Versioned, so a future scheme change is a new label rather than a silent
 #: reinterpretation of the same bytes — and domain-separated from the pepper's HMAC use, which is
@@ -966,6 +1029,132 @@ class DeviceService:
             renew_after=issued.renew_after,
         )
 
+    # ── the WebSocket handshake and per-message revocation (leaf 8.4, §11.10, Q-16) ────────
+
+    async def authenticate_session(
+        self, session: AsyncSession, *, certificate_pem: bytes, device_token: str
+    ) -> AuthenticatedDevice:
+        """Authenticate a WebSocket peer from its client certificate and bearer token (§3.1).
+
+        Four checks, in this order, and the order is the point:
+
+        1. **the certificate chains to the internal CA and is inside its validity window.** Done
+           first because it is the only check that needs no database row, so an unrelated
+           certificate costs one signature verification rather than a query;
+        2. **its fingerprint names an `active` device row.** D-73 keeps the chain check as a
+           precondition and `agent_devices.cert_fingerprint` as the authorisation input; this is
+           where the second half happens;
+        3. **the bearer token matches that row's HMAC, in constant time.** The certificate proves
+           possession of a key; the token proves possession of the secret the exchange issued.
+           Both are required, because a certificate is presented by the TLS stack and could be
+           replayed by anything holding the file, while the token is what the agent keeps in its
+           keychain;
+        4. **the device is not in the Redis revocation set.** Checked here *and* per message: this
+           call closes the door on a new session, and `is_revoked` closes it on the next frame.
+
+        Two-secret verification is why this method is not simply a token lookup: a token lookup
+        would authenticate a device whose certificate had been revoked or replaced by rotation,
+        and the whole reason certificates are short-lived is that presenting an old one must stop
+        working.
+        """
+        if self._ca is None:
+            raise DeviceKeyError(
+                "this DeviceService was constructed for envelope-key custody only; the hub "
+                "handshake needs a `ca` to verify a client certificate (see __init__)"
+            )
+        try:
+            certificate = self._ca.verify_chain(certificate_pem)
+        except CertificateRejectedError as exc:
+            raise DeviceAuthenticationError(f"client certificate rejected: {exc}") from exc
+
+        fingerprint = certificate_fingerprint(certificate)
+        result = await session.execute(
+            text(
+                "SELECT id, project_id, tenant_id, device_token_hmac, policy_bundle_digest, "
+                "last_seq, agent_version, platform FROM agent_devices "
+                "WHERE cert_fingerprint = :fingerprint AND status = :status"
+            ),
+            {"fingerprint": fingerprint, "status": DeviceStatus.ACTIVE.value},
+        )
+        row = result.mappings().first()
+
+        # The token is decoded and compared even when no row was found, against a throwaway
+        # digest. Returning early would make "unknown certificate" measurably faster than "wrong
+        # token", and the hub's one close code would then leak which of the two it was through
+        # timing alone.
+        try:
+            presented = bytes.fromhex(device_token.strip())
+        except ValueError:
+            presented = b""
+        expected = bytes(row["device_token_hmac"] or b"") if row is not None else b""
+        candidate = hmac.new(self._pepper.encode("utf-8"), presented, hashlib.sha256).digest()
+        matches = hmac.compare_digest(candidate, expected) if expected else False
+        if row is None or not matches:
+            raise DeviceAuthenticationError("no active device matches the presented certificate and token")
+
+        device_id = row["id"] if isinstance(row["id"], uuid.UUID) else uuid.UUID(str(row["id"]))
+        if await self.is_revoked(device_id):
+            raise DeviceAuthenticationError(f"device {device_id} is revoked")
+
+        return AuthenticatedDevice(
+            device_id=device_id,
+            project_id=row["project_id"],
+            tenant_id=row["tenant_id"],
+            policy_bundle_digest=str(row["policy_bundle_digest"] or ""),
+            last_seq=int(row["last_seq"] or 0),
+            agent_version=str(row["agent_version"] or ""),
+            platform=str(row["platform"] or ""),
+        )
+
+    async def is_revoked(self, device_id: uuid.UUID) -> bool:
+        """`SISMEMBER devtok:revoked <device_id>` — the per-message guarantee (Q-16).
+
+        **Fails closed.** A Redis error raises `RevocationUnavailableError` rather than returning
+        `False`, and the hub turns that into a closed socket. The alternative — treating an
+        unreachable revocation set as "nobody is revoked" — would mean a Redis outage silently
+        re-enabled every revoked device, which is precisely the failure this check exists to
+        prevent. An agent that cannot be checked does not get to act.
+
+        No caching, deliberately. A one-second cache would be a one-second window in which a
+        revoked device still executes a mutation, and §3.1 makes the guarantee *per message*.
+        """
+        if self._redis is None:
+            raise RevocationUnavailableError(
+                "no Redis client is configured, so revocation cannot be checked; refusing rather "
+                "than assuming this device is live (§11.10, Q-16)"
+            )
+        try:
+            member = await self._redis.sismember(REVOCATION_SET_KEY, str(device_id))
+        except Exception as exc:  # noqa: BLE001 - any client failure is the same outage
+            raise RevocationUnavailableError(
+                f"could not read the revocation set for device {device_id}: {exc}"
+            ) from exc
+        return bool(member)
+
+    async def _publish_revocation(self, device_id: uuid.UUID) -> None:
+        """Add the device to the enforcement set, then announce it (§3.1's two Redis calls).
+
+        Order matters and is not interchangeable. The `SADD` is the guarantee, the `PUBLISH` is
+        the optimisation, so the set is written first: a subscriber that acted on the event before
+        the set contained the id could close a socket the next handshake would happily reopen.
+
+        A publish failure is swallowed, a `SADD` failure is not. Losing the announcement costs
+        promptness — the socket closes on the device's next frame instead of immediately — while
+        losing the set membership costs the guarantee.
+        """
+        if self._redis is None:
+            raise RevocationUnavailableError(
+                "no Redis client is configured, so a revocation cannot be enforced per message"
+            )
+        try:
+            await self._redis.sadd(REVOCATION_SET_KEY, str(device_id))
+        except Exception as exc:  # noqa: BLE001 - any client failure is the same outage
+            raise RevocationUnavailableError(f"could not add device {device_id} to the revocation set: {exc}") from exc
+        try:
+            await self._redis.publish(REVOCATION_CHANNEL, str(device_id))
+        except Exception:  # noqa: BLE001 - promptness is best-effort; the set is the guarantee
+            pass
+
     async def _record_failure(
         self, session: AsyncSession, *, failure_kind: str, project_id: uuid.UUID | None = None
     ) -> None:
@@ -993,17 +1182,24 @@ class DeviceService:
         )
 
     async def revoke(self, session: AsyncSession, *, device_id: uuid.UUID, actor: Principal, reason: str) -> None:
-        """Mark a device revoked in Postgres and record it. Joins the caller's transaction.
+        """Mark a device revoked in Postgres, in the Redis enforcement set, and on the record.
 
-        **The Redis enforcement set and the pub/sub broadcast are leaf 8.4's**, and the split is
-        not arbitrary: `is_revoked` is checked per inbound frame by the hub (§11.10, Q-16), and
-        there is no hub yet. What this leaf owns is the durable half — the `revoked` status, the
-        `revoked_at` stamp and the audit record — so the route §11.2 lists exists and is
-        auditable. Until 8.4 adds `SADD devtok:revoked`, revocation stops a *new* session (the
-        handshake reads the row) but does not close an open one, because nothing holds one open.
+        Three effects, and the split between them is §3.1's: `agent_devices.status` is the durable
+        record, `REVOCATION_SET_KEY` is what the hub consults per inbound frame (Q-16), and
+        `REVOCATION_CHANNEL` is the announcement that closes an open socket promptly rather than
+        on its next message. Leaf 8.1 owned only the first; the second and third land here with
+        the hub that reads them.
 
         Idempotent by predicate rather than by check-then-act: the `UPDATE` excludes rows already
         revoked, so a second call writes no second audit row and reports success.
+
+        **The Redis write happens before the caller's commit, and that ordering is deliberate.**
+        The two stores can disagree in exactly one direction: a rolled-back transaction leaves a
+        device denied in Redis while its row still says `active`. That device refuses every frame
+        and every new handshake, which is the safe half of the disagreement — the inverse ordering
+        would leave a revoked row whose sockets keep working until somebody noticed. The cost is
+        real and is not hidden: recovering such a device means re-running the revocation (which is
+        idempotent) or removing the id from the set deliberately.
         """
         assert_recorder = self._recorder
         if assert_recorder is None:
@@ -1024,8 +1220,13 @@ class DeviceService:
             )
             if exists.first() is None:
                 raise DeviceNotFoundError(str(device_id))
+            # Already revoked in Postgres. The enforcement set is written again anyway: a device
+            # revoked before this leaf existed has a `revoked` row and no set membership, and a
+            # second revocation is the only occasion anything would notice.
+            await self._publish_revocation(device_id)
             return  # already revoked; no second record
         project_id, tenant_id, revoked_at = row[0], row[1], row[2]
+        await self._publish_revocation(device_id)
         await assert_recorder.record(
             session,
             DeviceAuditEvent(

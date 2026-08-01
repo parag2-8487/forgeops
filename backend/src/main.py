@@ -8,6 +8,7 @@ versioned /api/v1/health. Middleware stack ordering per §4.3.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -34,7 +35,7 @@ from .analysis.plan_analyzer.semantic import SemanticPlanAnalyzer
 from .audit.writer import AuditWriter
 from .auth.ca import InternalCertificateAuthority, UnavailableCertificateAuthority
 from .auth.cerbos import CerbosClient
-from .auth.devices import DeviceService
+from .auth.devices import REVOCATION_CHANNEL, DeviceService
 from .auth.oidc import IdTokenVerifier, OidcClient
 from .auth.pairing_limits import TokenBucketPairingLimiter
 from .auth.sessions import SessionService
@@ -46,7 +47,7 @@ from .core.logging import configure_logging
 from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
 from .core.tenancy import TenantContextMiddleware
 from .core.trace import TraceContextMiddleware, current_trace_id
-from .governance.chokepoint import GovernanceChokepoint, UnavailableCommandSink
+from .governance.chokepoint import GovernanceChokepoint
 from .governance.device_audit import GovernanceDeviceAuditRecorder
 from .governance.policy import UnavailableGovernancePolicy
 from .governance.sequencing import RedisEnvelopeSequencer
@@ -59,6 +60,7 @@ from .mcp.registry import McpServerRegistry
 from .mcp.routing import HeaderRouter
 from .mcp.tasks import RedisTaskStore
 from .mcp.upstream import McpUpstream
+from .websocket.hub import AgentHub, HubDeps, RedisProgressSink, TlsPeerCertificate
 
 
 def _resolve_config_path(configured: str) -> Path:
@@ -230,13 +232,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     #   * `UnavailableGovernancePolicy` raises on every evaluation, which the chokepoint turns
     #     into a DENY with an audit record (§11.6: "an OPA outage denies"). Leaf 9.2 replaces it
     #     with `OpaGovernancePolicy` once leaf 9.1 has authored the bundle to query.
-    #   * `UnavailableCommandSink` refuses delivery with `device-not-connected`. Leaf 8.4
-    #     replaces it with the real hub.
+    #   * `UnavailableCommandSink` refused delivery with `device-not-connected` until leaf 8.4;
+    #     `AgentHub` replaces it below and keeps that refusal for a device with no live session.
     #
     # A permissive default for either would let a mutation through on the strength of nothing
     # objecting, which is precisely what §9's convention forbids.
     app.state.governance_policy = UnavailableGovernancePolicy()
-    app.state.command_sink = UnavailableCommandSink()
     app.state.envelope_sequencer = RedisEnvelopeSequencer(redis_client)
     # The internal CA (§3.1, §14.2). Constructed only when BOTH PEMs are configured; otherwise the
     # fail-closed stand-in, so a fresh clone starts and every route except the exchange works,
@@ -296,6 +297,33 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         max_attempts=settings.pairing_code_max_attempts,
         alphabet=settings.pairing_code_alphabet,
     )
+    # The agent hub (§11.10, leaf 8.4). Constructed AFTER `device_service`, because it
+    # authenticates through it, and BEFORE the chokepoint, because it is the chokepoint's sink.
+    # `UnavailableCommandSink` is gone from the graph: the hub keeps its refusal — a device with no
+    # live session still gets `device-not-connected` — so nothing that used to fail closed now
+    # succeeds silently.
+    #
+    # `TlsPeerCertificate` is the default certificate source and trusts NO header. A deployment
+    # that terminates TLS at a proxy composes a source that reads the proxy's verified-client
+    # header; until it does, a plaintext connection produces no certificate and the handshake is
+    # refused, which is the correct answer for "mTLS is not actually in place".
+    agent_hub = AgentHub(
+        HubDeps(
+            redis=redis_client,
+            devices=app.state.device_service,
+            sessionmaker=sessionmaker,
+            progress=RedisProgressSink(redis_client),
+            heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
+            heartbeat_timeout_seconds=settings.heartbeat_timeout_seconds,
+        )
+    )
+    app.state.agent_hub = agent_hub
+    app.state.command_sink = agent_hub
+    app.state.client_certificate_source = TlsPeerCertificate()
+    # Promptness only. The correctness guarantee is the per-message `SISMEMBER` inside the hub, so
+    # this task failing is a slower close and never a missed revocation.
+    revocation_task = asyncio.create_task(agent_hub.subscribe_revocations(channel=REVOCATION_CHANNEL))
+
     app.state.governance_chokepoint = GovernanceChokepoint(
         policy=app.state.governance_policy,
         approval_gate=ThresholdApprovalGate(),
@@ -400,6 +428,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     try:
         yield
     finally:
+        # Cancelled before Redis closes: the subscriber holds a connection from the same pool, and
+        # tearing the pool down under it produces a shutdown traceback that hides real failures.
+        revocation_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await revocation_task
         await shared_http.aclose()
         await redis_client.aclose()
         await engine.dispose()
@@ -461,6 +494,13 @@ def create_app() -> FastAPI:
 
     app.include_router(agent_router)
     app.include_router(agent_public_router)
+
+    # The agent hub (§11.10). One WebSocket route, authenticated inside its handshake by the
+    # client certificate and the bearer device token — which is why `check-route-auth.py` reports
+    # the path rather than passing it: a WebSocket route has no method set for it to examine.
+    from .websocket.routes import router as agent_hub_router
+
+    app.include_router(agent_hub_router)
 
     from .analysis.routes import router as analysis_router
 
