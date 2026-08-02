@@ -716,3 +716,195 @@ helper, rotting on the first unrelated edit. Extracting the ORDER — which is t
 property is about — keeps the reviewable diff to two moved statements. Q-01's row records the
 same reasoning for `rollback.go`, and Q-14's for `domain.go`.
 """
+
+[Q-16]
+runtime     = "python"
+property    = "backend/tests/property/test_q16_immediate_revocation.py"
+target      = "src.websocket.hub.AgentHub._live"
+mutation    = "Check revocation once per connection instead of per message"
+description = """
+Wraps the hub's per-frame revocation check in a per-connection cache, so the first frame's answer
+is reused for every later frame on the same socket. §3.1 is explicit that the per-message
+`SISMEMBER` is the GUARANTEE and the pub/sub close is only an optimisation; this control turns the
+guarantee back into the optimisation and nothing else changes — the check still runs, still reads
+real Redis, still fails closed. It just stops being asked again.
+
+That is the whole difficulty of the bug: a cached check is indistinguishable from a correct one
+for every test that revokes before the first frame arrives. `test_q16_immediate_revocation.py`
+therefore generates the POSITION of the revocation inside the stream (0 to 4 frames answered
+first), the METHOD the next frame carries, and how many frames queue behind it. Under the mutation
+the clause fails for every generated position except zero, which is exactly the range a
+hand-written example is least likely to cover.
+
+The assertion that bites is on the COUNT of results — the hub must answer exactly the frames that
+preceded the revocation and stop — rather than on "the last frame produced no result", because a
+cached check answers every frame in the stream and a count is what shows it.
+`::test_a_replica_that_never_subscribed_still_refuses` fails for the same reason with no subscriber
+present at all, and `::test_the_control_shows_an_unrevoked_device_is_answered_every_time` keeps the
+whole file from passing for a hub that closes 4403 unconditionally.
+
+Leaf 8.4's `tests/integration/test_agent_hub.py::TestRevocationTakesEffectOnTheNextMessage` also
+objects, and its doubles are imported by the property rather than copied: two definitions of "a
+directory whose `is_revoked` reads the real Redis set" is how a property comes to quantify over a
+shape the integration tests never exercise.
+"""
+patch = """
+import src.websocket.hub as hub_module
+
+_real_live = hub_module.AgentHub._live
+_answered: dict[tuple[int, str], bool] = {}
+
+
+async def _once_per_connection(self, ws, device_id):
+    key = (id(ws), str(device_id))
+    if key not in _answered:
+        _answered[key] = await _real_live(self, ws, device_id)
+    return _answered[key]
+
+
+hub_module.AgentHub._live = _once_per_connection
+
+# The mutation must be OBSERVABLE before the property runs, or the control proves nothing. A
+# duck-typed self is enough: `_live` reads `self._deps.devices.is_revoked` and, for an unrevoked
+# device, returns True without touching the socket.
+import asyncio  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+_calls = 0
+
+
+async def _is_revoked(device_id):
+    global _calls
+    _calls += 1
+    return False
+
+
+_probe = SimpleNamespace(_deps=SimpleNamespace(devices=SimpleNamespace(is_revoked=_is_revoked)))
+_socket = object()
+
+
+async def _observe():
+    await hub_module.AgentHub._live(_probe, _socket, "11111111-1111-4111-8111-111111111111")
+    await hub_module.AgentHub._live(_probe, _socket, "11111111-1111-4111-8111-111111111111")
+
+
+asyncio.run(_observe())
+assert _calls == 1, (
+    f"the underlying revocation check ran {_calls} times for two frames; the cache did not install "
+    "and the control would be a no-op"
+)
+"""
+
+[Q-17]
+runtime     = "python"
+property    = "backend/tests/property/test_q17_pairing_code_safety.py"
+target      = "src.auth.devices.CONSUME_SCRIPT"
+mutation    = "Make the consume script non-atomic (read then delete)"
+description = """
+Splits the single `EVAL` into a read followed by a separate delete, which is what the docstring
+above `CONSUME_SCRIPT` says must never happen. Redis executes one script to completion before the
+next command on that key, so of N concurrent attempts on one code exactly one can observe the key
+and delete it. Two round trips lose that: two callers can both read the key before either deletes
+it, and both are issued credentials for one pairing code.
+
+The mutation is delivered as a script that returns the fields WITHOUT deleting, plus an
+application-level delete after the read — so the window is real rather than simulated, and the
+timing is the operating system's rather than the test's.
+
+`test_q17_pairing_code_safety.py::test_over_generated_concurrency` must then fail. It generates the
+NUMBER of concurrent attempts between two and eight, because a read-then-delete pair is atomic
+*enough* at two attempts on a fast machine and visibly wrong at eight — a fixed concurrency of two
+is a coin toss against this mutation, and the generated count is not. It asserts the count of
+SUCCESSES equals one, so "everything failed" cannot pass, and then reads the database: exactly one
+device row is `active` and its `pairing_token_hmac` is `NULL`, which is Appendix A.1's "the code
+cannot be reused, even in the DB".
+
+Leaf 8.1's `::test_concurrent_attempts_yield_at_most_one_success` objects too, at its fixed
+concurrency of six. Both are in scope; the property is what makes the clause hold at every
+concurrency rather than at one.
+"""
+patch = """
+import src.auth.devices as devices_module
+
+#: The read half only. `HMGET` and the attempt counter stay, so every non-concurrent test still
+#: passes and the ONLY behaviour that changes is the serialisation point.
+_NON_ATOMIC_READ = \"\"\"
+local key = KEYS[1]
+local max_attempts = tonumber(ARGV[1])
+if redis.call('EXISTS', key) == 0 then
+    return {'missing'}
+end
+local attempts = tonumber(redis.call('HINCRBY', key, 'attempts', 1))
+if attempts > max_attempts then
+    redis.call('DEL', key)
+    return {'burned'}
+end
+local fields = redis.call('HMGET', key, 'project', 'tenant', 'issuer', 'device')
+return {'ok', fields[1], fields[2], fields[3], fields[4], tostring(attempts)}
+\"\"\"
+
+_real_eval = None
+
+devices_module.CONSUME_SCRIPT = _NON_ATOMIC_READ
+
+_real_exchange = devices_module.DeviceService.exchange
+
+
+async def _exchange_then_delete(self, session, *, code, csr_pem, meta, client_ip):
+    digest = self._pairing_digest(code)
+    key = devices_module.PAIRING_KEY_PREFIX + digest.hex()
+    try:
+        return await _real_exchange(self, session, code=code, csr_pem=csr_pem, meta=meta, client_ip=client_ip)
+    finally:
+        # The delete the script no longer performs, moved into the application: the window between
+        # the read and this line is the mutation.
+        await self._redis.delete(key)
+
+
+devices_module.DeviceService.exchange = _exchange_then_delete
+
+assert \"DEL\" not in devices_module.CONSUME_SCRIPT.split(\"HMGET\")[-1], (
+    \"the consume script still deletes the key inside the EVAL; the control would be a no-op\"
+)
+"""
+
+[Q-31]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/session"
+test_run    = "TestProperty_Q31|TestJournal"
+original    = "agent/internal/session/journal_kinds.go"
+overlay     = "backend/tests/mutation/overlays/q31_envelope_kind_admitted.go"
+property    = "agent/internal/session/q31_property_test.go"
+mutation    = "Admit a `KindEnvelope` record kind, so the journal can persist an authorisation"
+description = """
+Replaces `journal_kinds.go` with a version that adds `KindEnvelope` and admits it in `validKinds`,
+so `Append` will persist a record carrying a signed command envelope.
+
+THIS DEVIATES FROM APPENDIX B'S WORDING, DELIBERATELY, AND APPENDIX B HAS BEEN AMENDED TO MATCH
+(D-87). Appendix B originally said "add a `KindEnvelope` case to `Drain` that hands the stored
+envelope straight to `executor.Execute`". That case cannot be written as a small, honest overlay,
+because there is nothing for it to consume: D-41's whole argument is that no record kind can carry
+an authorisation, so a `Drain` branch reading one has no input. Writing the branch would mean
+shipping production code whose only purpose is to be broken — a real, reachable path from a
+persisted envelope to the executor, guarded by a test. That is precisely the hole D-41 exists to
+prevent, and Q-01's row warns against controls of that shape.
+
+So the control breaks the fact the property rests on, which is the vocabulary. It bites EARLIER
+than Appendix B's version rather than later: with an envelope kind admitted, the journal can hold
+an authorisation before any drain runs, and the guarantee has already failed at `Append`.
+
+`TestProperty_Q31_TheVocabularyCannotRepresentAnAuthorisation` fails on two clauses — the kind's
+name contains `envelope`, and the set has seven members where D-41 fixes six.
+`TestProperty_Q31_AppendRefusesEveryKindOutsideTheVocabulary` fails because `command.envelope` is
+one of the names it generates and `Append` now accepts it, leaving a record on disk that the same
+test asserts is not there. `TestJournal` is in `test_run` too: leaf 8.5's example tests assert the
+same closed set from the other direction.
+
+WHY `journal_kinds.go` EXISTS. Two reasons. The mechanical one is the overlay: `go build -overlay`
+replaces a whole file, and the table lived inside a four-hundred-and-forty-line `journal.go`.
+The substantive one is that this table IS D-41's guarantee, so a reader checking the claim should
+be able to check it by reading one short file — and a control that breaks it should be a one-line
+diff against that file. `rollback.go` (Q-01), `domain.go` (Q-14) and `order.go` (Q-15) were
+separated for the mechanical reason alone; this one has both.
+"""

@@ -505,19 +505,19 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row updating `last_seq` before the signature check.
     - _Design: §7.6, §10.4, Appendix B Q-15; Deliverable: 1.1; Property: Q-15_
 
-  - [ ] 8.10 Write property test Q-16 for immediate revocation
+  - [x] 8.10 Write property test Q-16 for immediate revocation
 
     - Generate revocation timings relative to an in-flight message stream; prove the first message after revocation is rejected and the socket closed, and that a replica which missed the pub/sub event still rejects on the next frame.
     - Add the `mutations.toml` row checking revocation once per connection instead of per message.
     - _Design: §3.1, §11.2, §11.10, Appendix B Q-16; Deliverable: 1.1; Property: Q-16_
 
-  - [ ] 8.11 Write property test Q-17 for pairing-code safety
+  - [x] 8.11 Write property test Q-17 for pairing-code safety
 
     - Generate concurrent exchange attempts on one code; prove at most one succeeds, that expired, burned and unknown codes are indistinguishable in the response, that attempts beyond the cap always fail, and that the code value appears in no log, audit row or column.
     - Add the `mutations.toml` row making the consume script non-atomic (read then delete).
     - _Design: §11.2, §14.6, Appendix A.1, Appendix B Q-17; Deliverable: 1.1; Criterion: 1; Property: Q-17_
 
-  - [ ] 8.12 Write property test Q-31 for queue-and-revalidate
+  - [x] 8.12 Write property test Q-31 for queue-and-revalidate
     - Generate offline/reconnect sequences and journal contents; prove no persisted record carries an envelope, `approval_id`, authority, device token, envelope key or secret value; prove `Drain` applies nothing and that every intent produces a new chokepoint transit with a fresh `approval_id`, digest, nonce and `seq`.
     - Prove a revoked device wipes rather than drains, a stale bundle leaves intents queued, and redelivery after an acknowledged batch is a no-op.
     - Add the `mutations.toml` row adding a `KindEnvelope` case to `Drain` that hands the stored envelope straight to `executor.Execute`.

@@ -52,36 +52,9 @@ import (
 // crash into a manual recovery. Corruption anywhere EARLIER is different and is reported:
 // it means the file was damaged rather than truncated.
 
-// RecordKind enumerates what may be queued. See the package note above for why the list
-// is closed and what is deliberately absent.
-type RecordKind string
-
-const (
-	KindScanBatch       RecordKind = "scan.batch"
-	KindCommandResult   RecordKind = "command.result"
-	KindCommandProgress RecordKind = "command.progress"
-	KindAgentStatus     RecordKind = "agent.status"
-	KindSecretFindings  RecordKind = "secretscan.findings" // metadata only, never values
-	KindIntent          RecordKind = "intent"              // replayed as approval.request
-)
-
-// validKinds is the closed set. A record with any other kind is refused at Append, so an
-// unknown kind cannot reach the file and be drained later by a version that understands
-// it differently.
-var validKinds = map[RecordKind]bool{
-	KindScanBatch:       true,
-	KindCommandResult:   true,
-	KindCommandProgress: true,
-	KindAgentStatus:     true,
-	KindSecretFindings:  true,
-	KindIntent:          true,
-}
-
-// mutatingKinds are drained SECOND, after everything else has been acknowledged.
-//
-// Ordering matters: a scan batch delivered after an intent would let the backend evaluate
-// the intent against an index it is about to replace.
-func (k RecordKind) isIntent() bool { return k == KindIntent }
+// `RecordKind`, its closed constant set, `validKinds` and `isIntent` live in `journal_kinds.go`.
+// That table is D-41's guarantee rather than a detail of this file, and Q-31's negative control
+// overlays it — see the comment there and D-87.
 
 // Record is one queued item.
 type Record struct {

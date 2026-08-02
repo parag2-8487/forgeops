@@ -197,30 +197,66 @@ func (f fakeIdentity) ClientTLS(context.Context) (*tls.Config, error) {
 func (f fakeIdentity) Identity(context.Context) (identity.Info, error) { return identity.Info{}, nil }
 func (f fakeIdentity) RenewBefore() time.Duration                      { return time.Hour }
 
-// bundle is the policy-bundle view. `current` is set by the test because leaf 9.4 owns the
+// fakeBundle is the policy-bundle view. `current` is set by the test because leaf 9.4 owns the
 // real one.
+//
+// Guarded by a mutex, and that is not defensive style: `ObserveBackend` is called from `Serve`'s
+// goroutine while the test reads the result, and `go test -race -shuffle=on` reported it as a data
+// race at group 8's close-out. A double that races is a double that can report a stale answer, so
+// the assertion it feeds is not reliable — the detector was right and the fix belongs here.
 type fakeBundle struct {
+	mu       sync.Mutex
 	digest   string
 	current  bool
 	observed []string
 }
 
-func (b *fakeBundle) Digest() string { return b.digest }
-func (b *fakeBundle) Current() bool  { return b.current }
+func (b *fakeBundle) Digest() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.digest
+}
+
+func (b *fakeBundle) Current() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.current
+}
+
 func (b *fakeBundle) ObserveBackend(digest string, stale bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.observed = append(b.observed, digest)
 	if stale {
 		b.current = false
 	}
 }
 
+func (b *fakeBundle) setCurrent(current bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.current = current
+}
+
+func (b *fakeBundle) observedDigests() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.observed...)
+}
+
 // recordingJournal captures what the drain did without touching a disk.
+//
+// Also mutex-guarded, for the reason above: `Drain` runs on the session's goroutine and the test
+// polls its results. `records` and `stats` are the exception — both are written by the test BEFORE
+// `Serve` starts and only read afterwards, so they need no lock on the write side; `Stats` still
+// takes it, because it is called from the heartbeat goroutine.
 type recordingJournal struct {
+	mu            sync.Mutex
 	records       []Record
 	bundleCurrent []bool
 	delivered     []Record
 	sendErr       error
-	wiped         int
+	wipes         int
 	stats         JournalStats
 }
 
@@ -231,40 +267,81 @@ func (j *recordingJournal) Drain(
 	send func(context.Context, Record) error,
 	bundleCurrent bool,
 ) (DrainReport, error) {
+	j.mu.Lock()
 	j.bundleCurrent = append(j.bundleCurrent, bundleCurrent)
+	queued := append([]Record(nil), j.records...)
+	j.mu.Unlock()
+
 	report := DrainReport{}
 	// The real FileJournal orders non-intents before intents and stops at the first
 	// failure. Both behaviours are reproduced here, because a double that delivered
 	// everything regardless would make the stale-bundle assertion below vacuous.
 	for _, pass := range []bool{false, true} {
 		if pass && !bundleCurrent {
-			for _, r := range j.records {
+			for _, r := range queued {
 				if r.Kind == KindIntent {
 					report.IntentsHeld++
 				}
 			}
 			return report, nil
 		}
-		for _, r := range j.records {
+		for _, r := range queued {
 			if (r.Kind == KindIntent) != pass {
 				continue
 			}
 			if err := send(ctx, r); err != nil {
 				return report, err
 			}
+			j.mu.Lock()
 			j.delivered = append(j.delivered, r)
+			j.mu.Unlock()
 			report.Delivered++
 			if pass {
 				report.IntentsDelivered++
 			}
 		}
 	}
-	return report, j.sendErr
+	j.mu.Lock()
+	err := j.sendErr
+	j.mu.Unlock()
+	return report, err
 }
 
-func (j *recordingJournal) Wipe(context.Context) error { j.wiped++; return nil }
+func (j *recordingJournal) Wipe(context.Context) error {
+	j.mu.Lock()
+	j.wipes++
+	j.mu.Unlock()
+	return nil
+}
+
 func (j *recordingJournal) Stats(context.Context) (JournalStats, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	return j.stats, nil
+}
+
+func (j *recordingJournal) deliveredRecords() []Record {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return append([]Record(nil), j.delivered...)
+}
+
+func (j *recordingJournal) bundleFlags() []bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return append([]bool(nil), j.bundleCurrent...)
+}
+
+func (j *recordingJournal) wipeCount() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.wipes
+}
+
+func (j *recordingJournal) setStats(stats JournalStats) {
+	j.mu.Lock()
+	j.stats = stats
+	j.mu.Unlock()
 }
 
 // recordingRunner is the dispatcher stand-in. It records the order it was called in, which
@@ -727,11 +804,11 @@ func TestServe_AStaleBundleAnnouncementIsRecorded(t *testing.T) {
 	if !info.BundleStale {
 		t.Error("the handshake did not report the bundle as stale")
 	}
-	if harness.bundle.current {
+	if harness.bundle.Current() {
 		t.Error("a stale announcement left the bundle marked current; mutations would be allowed")
 	}
-	if len(harness.bundle.observed) != 1 || harness.bundle.observed[0] != "sha256:backend" {
-		t.Errorf("observed %v, want the backend digest recorded", harness.bundle.observed)
+	if len(harness.bundle.observedDigests()) != 1 || harness.bundle.observedDigests()[0] != "sha256:backend" {
+		t.Errorf("observed %v, want the backend digest recorded", harness.bundle.observedDigests())
 	}
 }
 
@@ -742,7 +819,7 @@ func TestServe_AStaleBundleAnnouncementIsRecorded(t *testing.T) {
 func TestServe_TheHeartbeatCarriesSeqUptimeAndQueueDepth(t *testing.T) {
 	transport := newFakeTransport(okConnect())
 	harness := newServeHarness(t, transport)
-	harness.journal.stats = JournalStats{Records: 3}
+	harness.journal.setStats(JournalStats{Records: 3})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -862,7 +939,7 @@ func TestServe_TheDrainRunsAfterConnectAndMapsKindsToTheNineMethods(t *testing.T
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
 
-	waitFor(t, func() bool { return len(harness.journal.delivered) == 3 })
+	waitFor(t, func() bool { return len(harness.journal.deliveredRecords()) == 3 })
 	methods := transport.methods()
 	if methods[0] != "session.connect" {
 		t.Fatalf("the first frame was %q; the drain must not precede the handshake", methods[0])
@@ -893,16 +970,16 @@ func TestServe_AStaleBundleHoldsTheIntentsAndDeliversTheRest(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
 
-	waitFor(t, func() bool { return len(harness.journal.bundleCurrent) > 0 })
-	waitFor(t, func() bool { return len(harness.journal.delivered) == 1 })
+	waitFor(t, func() bool { return len(harness.journal.bundleFlags()) > 0 })
+	waitFor(t, func() bool { return len(harness.journal.deliveredRecords()) == 1 })
 	time.Sleep(30 * time.Millisecond)
 
-	if harness.journal.bundleCurrent[0] {
+	if harness.journal.bundleFlags()[0] {
 		t.Error("the drain was told the bundle was current after a stale announcement")
 	}
-	if len(harness.journal.delivered) != 1 || harness.journal.delivered[0].Kind != KindCommandResult {
+	if len(harness.journal.deliveredRecords()) != 1 || harness.journal.deliveredRecords()[0].Kind != KindCommandResult {
 		t.Errorf("delivered %v; a stale bundle must hold the intent and pass the rest",
-			harness.journal.delivered)
+			harness.journal.deliveredRecords())
 	}
 	for _, method := range transport.methods() {
 		if method == "approval.request" {
@@ -1159,9 +1236,9 @@ func TestServe_ARevocationWipesTheJournalAndTheCredentials(t *testing.T) {
 		t.Fatal("Serve did not return after a revocation")
 	}
 
-	if harness.journal.wiped != 1 {
+	if harness.journal.wipeCount() != 1 {
 		t.Errorf("journal wiped %d time(s); a revoked principal's intents must not survive",
-			harness.journal.wiped)
+			harness.journal.wipeCount())
 	}
 	if _, err := harness.store.Load(context.Background()); !errors.Is(err, ErrNoCredentials) {
 		t.Errorf("credentials still load after revocation: %v", err)
@@ -1190,7 +1267,7 @@ func TestServe_ACloseOf4403IsRevocation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not return after a 4403 close")
 	}
-	if harness.journal.wiped != 1 {
+	if harness.journal.wipeCount() != 1 {
 		t.Error("the journal survived a 4403 close")
 	}
 }
@@ -1211,7 +1288,7 @@ func TestServe_AnOrdinaryCloseIsNotRevocation(t *testing.T) {
 	cancel()
 	<-done
 
-	if harness.journal.wiped != 0 {
+	if harness.journal.wipeCount() != 0 {
 		t.Error("an ordinary close wiped the journal")
 	}
 	if _, err := harness.store.Load(context.Background()); err != nil {
