@@ -436,6 +436,29 @@ jobs:
         if: failure()
         run: docker logs forgeops-ci-cerbos 2>&1 | tail -n 100
 
+  # ── 8. policy: opa check --strict + opa test over every Rego bundle ───────
+  # design.md §8.3 (new job), §11.7, §13.4; task 9.1; criterion 7.
+  #
+  # Gated on `infra`, whose paths-filter already covers `policies/**` and `scripts/**`.
+  # Not gated on `agent` or `backend`: this job's subject is the Rego, and leaf 9.4's Go
+  # evaluator and leaf 9.2's client are proved by the `agent` and `backend` jobs against
+  # the same bundle.
+  #
+  # No pinned OPA action and no downloaded binary. `scripts/policy-test.sh` reads the
+  # digest-pinned `openpolicyagent/opa` reference out of docker-compose.yml and runs that
+  # image, so this job cannot drift from the server the backend talks to — which is the
+  # whole premise of double evaluation (§10.6.1). It is also the same script `make
+  # policy-test` runs, so a developer's local answer and this job's answer come from one
+  # definition.
+  policy:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: opa check --strict, opa test, and the D-25 totality declaration
+        run: bash scripts/policy-test.sh
+
   # ── 8. frontend: lint → test → build with a non-default browser URL ───────
   frontend:
     needs: changes

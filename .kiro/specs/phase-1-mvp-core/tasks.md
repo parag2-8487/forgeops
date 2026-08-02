@@ -525,7 +525,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
 - [ ] 9. Implement the policy engine and prove double evaluation agrees
 
-  - [ ] 9.1 Author the governance Rego bundle and add the `policy` CI job
+  - [x] 9.1 Author the governance Rego bundle and add the `policy` CI job
 
     - Create `policies/agent/{governance,schedule,paths,approval}.rego`, each with an explicit `default allow := false` at its entry document so a deny is a **defined** `false` (the D-25 lesson applied to the new bundle).
     - Implement the three named policies as data-driven rules: blocked-weekday windows in the project timezone, protected path globs, and approval required for non-`allow` verdicts, `prod`, or any delete.

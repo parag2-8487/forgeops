@@ -198,6 +198,12 @@ verify-release: ## cosign verify-blob + SBOM presence on a published artifact (c
 	@printf '==> verify-release: cosign verify-blob + SBOM presence check\n'
 	@sh scripts/verify-release.sh
 
+# ─── Policy bundles (task 9.1, design.md §8.3, §11.7, §13.4) ────────────────
+.PHONY: policy-test
+policy-test: ## opa check --strict + opa test over every Rego bundle (criterion 7)
+	@printf '==> policy-test: opa check --strict + opa test over policies/\n'
+	@bash scripts/policy-test.sh
+
 # ─── End-to-end (task 15.6) ────────────────────────────────────────────────
 .PHONY: e2e
 e2e: ## Run Playwright e2e against a built frontend + running backend

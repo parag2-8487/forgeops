@@ -15,7 +15,6 @@
 # is gone and this file is empty. If a line is still here when Phase 1 closes, that
 # is a real gap in the evidence chain, not a formatting detail.
 
-policy: task 9.1 (opa test policies/ -v, opa check --strict)
 secrets: task 10.4 (Infisical CRUD round trip against the container)
 k8s: task 14.9 (kind cluster, server-side dry-run, SPIRE attestation)
 templates: task 15.6 (8 x 5 template matrix through the real ValidationPipeline)

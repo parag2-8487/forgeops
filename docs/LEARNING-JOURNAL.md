@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-08-02**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Leaves reflected       | **66 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 100 `pending`. Reconciled 2026-08-02; all three sources agree via `scripts/_state.sh`. **Groups 7 and 8 are both complete, close-outs included.** Group 8 shipped pairing, the internal CA, the agent `pair` command, the backend hub, the agent session loop, envelope verification with its measured clock skew, the named-operation dispatch table, and five negative-control rows — Q-14, Q-15, Q-16, Q-17 and Q-31, taking `mutations.toml` to **14 of 31**, every row proved attributable by `scripts/control-of-the-control.py`. Decisions run to **D-89**; findings run to **66**, and patterns T and U are new. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-08-02**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Leaves reflected       | **67 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 99 `pending`. Reconciled 2026-08-02; all three sources agree via `scripts/_state.sh`. **Groups 7 and 8 are both complete, close-outs included**, and group 9 is under way: leaf 9.1 authored the governance Rego bundle (`policies/agent/{governance,schedule,paths,approval}.rego`, `opa test` **PASS: 67/67**) and added the `policy` CI job, so `ci-jobs-baseline.txt` is down to five staged rows. `mutations.toml` stands at **14 of 31**, every row proved attributable by `scripts/control-of-the-control.py`. Decisions run to **D-92**; findings run to **70**, and patterns T and U are new. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -3249,6 +3249,88 @@ until group 18, which is late in the phase, and the mitigation is only that a mi
 and immediately on the first frame rather than silently. Naming the leaf is what makes it checkable —
 `grep 18.1` finds the obligation, where "owed" found nothing.
 
+### D-90 — the governance bundle has one entry document, and precedence lives in it
+
+Leaf 9.1 authors four Rego files: `schedule.rego`, `paths.rego` and `approval.rego` implement
+phases.md §1.7's three named policies, and `governance.rego` composes them. Both evaluators —
+the backend's OPA server (9.2) and the agent's embedded Rego (9.4) — query exactly one document,
+`data.forgeops.governance.decision`, which carries `{result, reason, rule}`, the same three fields
+§10.6's Go `Decision` struct has.
+
+The alternative was for each side to query the three sub-policies and combine them. It was rejected
+because combining them is a decision — a schedule block outranks a required approval, a schedule
+block outranks a protected path, and a malformed input outranks everything — and a decision made in
+two places is a decision that will eventually be made two ways. Q-06 exists to prove the two
+evaluators agree; it would then have been proving agreement between two independent
+re-implementations of the precedence rule rather than between two evaluations of one bundle. Putting
+precedence in Rego means the digests that Q-07 compares cover it too: a change to precedence changes
+the bundle, and a stale agent is refused rather than quietly ranking differently.
+
+The second half of the decision is what an input the caller got wrong should answer. `{}` initially
+came back `require_approval` — defined, and not `allow`, so arguably safe — because finding 68's
+fail-closed clause fires on the absent blast-radius verdict. That is still wrong: it invites the
+chokepoint to open an approval flow for an operation nobody named. `governance.rego` therefore has
+an `input_error` term at the top of the precedence order, and `operation` is the one field with no
+defensible default: a timezone can fall back to UTC and a glob list to empty, but "which operation"
+cannot be guessed. What it costs: one more term to keep total, and a test whose control
+(`::test_a_named_gated_operation_with_no_timestamp_is_denied_by_the_schedule_not_by_malformedness`)
+exists only to show the totality tests are failing on the guard rather than on something else.
+
+### D-91 — the policy gate is one script, running the OPA that docker-compose.yml pins
+
+`make policy-test` and the new `policy` CI job both run `scripts/policy-test.sh` and nothing else, so
+a developer's local verdict and the verdict that blocks a pull request come from one definition. The
+script picks its OPA by reading the digest-pinned `openpolicyagent/opa:1.4.2@sha256:…` reference out
+of `docker-compose.yml` — the same thing `scripts/ci/start-cerbos.sh` does with its own image, and
+for the same reason: the compose file is where the pin checks already look, so drift between the gate
+and the running server becomes impossible rather than merely unlikely. A local `opa` binary is used
+only when `opa version` equals that pin exactly; otherwise the container runs. That matters more here
+than elsewhere, because §10.6.1's entire claim is that the agent, the server and this gate evaluate
+the same Rego semantics, and a developer on an older OPA getting a locally-green answer would be
+evidence of nothing.
+
+`open-policy-agent/setup-opa` pinned by commit SHA was the obvious alternative and was rejected on
+two counts: it is a second pin to keep fresh, and the version it installs is unrelated to the version
+the server runs, so nothing would stop the two diverging.
+
+The command carries `--ignore '*.yaml'`, which is a deviation from §8.3's literal `opa test policies/
+-v` and is recorded rather than absorbed. `policies/` now holds two unrelated policy systems: Rego
+for OPA, and — since leaf 6.4 — YAML for Cerbos. OPA loads a `.yaml` under a `-d` root as a **data**
+document, and all six Cerbos files define a top-level `apiVersion`, so `opa test policies/` dies with
+six `merge error`s before a single test executes. Enumerating the Rego subdirectories
+(`opa test policies/agent policies/mcp`) would also work and was rejected: it excludes a third bundle
+silently, on the day it lands, which is exactly the failure mode `ci-jobs-baseline.txt` exists to
+prevent one level up.
+
+Two guards were added because the gate would otherwise have been able to pass over nothing. `opa
+test` on a tree with no tests prints `PASS: 0/0` and exits 0, so the count is read out of the output
+and a zero refused. And clause 3 greps every non-test `policies/agent/*.rego` for
+`default allow := false`, because `governance_test.rego`'s behavioural assertions can be satisfied by
+an input that happens to make a rule fire while D-25's trap is precisely the input that makes none
+fire. Both guards were proved to bite: a fifth bundle file with no default fails the gate by name,
+and `PASS: 0/0` is refused.
+
+### D-92 — a `**/` prefix in a protected glob means "at the root or below"
+
+`glob.match("**/package.json", ["/"], "package.json")` is **false**: with `/` as the delimiter, the
+`**/` prefix needs at least one leading segment to consume. So the single most natural way to write
+phases.md §1.7's "never edit package.json" is exactly the way that misses the `package.json` at the
+repository root — the file the requirement is about. `paths.rego` therefore matches a pattern against
+the path and, when the pattern starts with `**/`, also against the pattern with that prefix removed.
+
+The alternative was to keep glob semantics untouched and require every project to supply both
+`package.json` and `**/package.json`. Rejected because the failure is silent and the stakes are a
+protected file: a project that writes only the natural pattern gets a policy that appears to work,
+because it catches `frontend/package.json`, and does not protect the root file. A policy whose
+correctness depends on the operator knowing a globbing subtlety is not a control.
+
+What it costs: `paths.rego` no longer means exactly what `glob.match` means, so a reader has to know
+about one exception. It is confined to that one prefix and asserted in both directions —
+`::test_a_double_star_prefix_covers_the_root_and_below` and
+`::test_a_pattern_without_the_prefix_is_unchanged`, the latter including that `*/package.json` still
+does **not** match a root-level file — so the widening cannot spread into a general loosening that
+would make a project's stated pattern mean something else.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -4726,6 +4808,77 @@ defect — finding 63 (a hook that could not execute on this platform), finding 
 too late to be cheap), and now this. The generalisation worth carrying forward: for every gate, ask
 separately whether it runs, whether it can fail, and whether its failure is counted. Those are three
 different questions and this repository has now answered "no" to each of them at least once.
+
+**Finding 67.** §11.7's `schedule.rego` sketch computed the weekday as
+`time.weekday(time.parse_ns("2006-01-02T15:04:05Z07:00", input.now_rfc3339))` and then built its
+message with `sprintf("blocked window: %s in %s", [day, tz])`. `time.weekday` given a bare nanosecond
+count answers in **UTC**. So the verdict named the project's timezone in a decision computed without
+it, and the one thing that makes "never deploy on Fridays" a real rule — whose Friday — was
+decorative. A UTC Friday at 02:30 is Thursday evening in Los Angeles and Friday morning in Kolkata,
+so the sketch would have blocked a Los Angeles team on Thursday night and let a Kolkata team deploy
+on Friday afternoon.
+
+Fixed with `time.weekday([ns, tz])` and `time.clock([ns, tz])`, the array forms that take a location.
+The pattern this belongs to is B — a control that runs and cannot fail for the reason it exists —
+with a twist worth naming separately: the timezone was **present in the output** and absent from the
+computation, which is the most convincing possible form of the bug, because every log line and every
+UI string would have looked right. `::test_the_weekday_and_hour_are_local_to_the_project` asserts the
+six local values across three zones directly rather than only through their consequences, so the UTC
+form fails on the numbers rather than on a verdict that might coincide.
+
+**Finding 68.** §11.7's `approval.rego` sketch was
+`default require_approval := false` plus `require_approval if input.blast_radius.verdict != "allow"`.
+For an input document with no `blast_radius` at all that expression is **undefined**, the rule does
+not fire, and the default answers "no approval needed". Omitting a field was therefore a way past the
+approval gate — and the field in question is the blast-radius verdict, the output of the Semantic Plan
+Analyzer that PRD §2.2 puts in the mutation path on purpose.
+
+Closed by adding `require_approval if not input.blast_radius.verdict` and the same for
+`input.environment`. The two new clauses are kept syntactically separate from the `!=` and `==`
+clauses rather than folded into a single "verdict is not exactly allow" test, because Appendix B words
+Q-06's negative control against the line `require_approval if input.environment == "prod"` and a
+reviewer has to be able to find it.
+
+The general lesson is Rego-specific and worth carrying: in a language where an absent field makes an
+expression undefined rather than false, `default X := false` is not a fail-closed default on its own.
+It is fail-closed for the inputs the rules can evaluate and fail-**open** for the inputs they cannot,
+and those are the malformed ones. Every `default … := false` in this bundle now has a companion
+clause asserting the field it depends on is present, or a test over an empty input, or both.
+
+**Finding 69.** `glob.match("**/package.json", ["/"], "package.json")` is false, for the reason D-92
+gives. Recorded as a finding as well as a decision because the shape recurs: the natural spelling of a
+protective rule was the spelling that missed the highest-value target, and it missed it **silently** —
+`frontend/package.json` was caught, so a smoke test would have passed. The three-line test that found
+it asserts a root-level file and a nested file in the same case.
+
+**Finding 70.** This one is in leaf 9.1's own first draft, and it is recorded because the failure
+direction is the dangerous one. The malformed-input guard D-90 describes was first written as:
+
+```rego
+input_error := "…" if {
+	not is_string(input.operation)
+}
+```
+
+OPA compiles that to `__local = input.operation; not is_string(__local)`. The **assignment** is
+undefined when `input.operation` is absent, so the body fails and the guard does not fire — for
+exactly the one input it exists to catch, an input with no `operation` at all. It fired correctly for
+`operation: 7` and not at all for `{}`.
+
+Hoisting the positive test into its own rule fixes it:
+
+```rego
+input_error := "…" if not named_operation
+
+named_operation if is_string(input.operation)
+```
+
+Now the absence is a failed body in `named_operation`, which makes the rule undefined, which makes
+`not named_operation` true. What caught it was
+`::test_the_entry_document_is_total_for_an_empty_input`, written before the guard existed and for a
+different purpose — the value of a test over the emptiest possible input, restated. The
+generalisation: `not f(input.x)` and `not g` where `g if f(input.x)` are **not** the same expression
+in Rego when `input.x` may be absent, and the first one fails open.
 
 ---
 
