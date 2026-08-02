@@ -49,7 +49,9 @@ from .core.tenancy import TenantContextMiddleware
 from .core.trace import TraceContextMiddleware, current_trace_id
 from .governance.chokepoint import GovernanceChokepoint
 from .governance.device_audit import GovernanceDeviceAuditRecorder
-from .governance.policy import UnavailableGovernancePolicy
+from .governance.policy import (
+    UnavailableGovernancePolicy,  # noqa: F401 - re-exported for tests and deployments with no bundle
+)
 from .governance.sequencing import RedisEnvelopeSequencer
 from .mcp.apps import McpAppRegistry
 from .mcp.auth import OidcTokenVerifier
@@ -60,6 +62,7 @@ from .mcp.registry import McpServerRegistry
 from .mcp.routing import HeaderRouter
 from .mcp.tasks import RedisTaskStore
 from .mcp.upstream import McpUpstream
+from .policies.opa import OpaGovernancePolicy
 from .websocket.hub import AgentHub, HubDeps, RedisProgressSink, TlsPeerCertificate
 
 
@@ -116,6 +119,24 @@ async def _check_postgres(engine: Any) -> None:
 async def _check_redis(redis: Any) -> None:
     """Quick Redis check with a 2s timeout."""
     await redis.ping()
+
+
+async def _check_opa(http: Any, opa_url: str) -> None:
+    """Quick OPA check with a 2s timeout (§11.7, task 9.2).
+
+    Belongs in readiness for the same reason Cerbos does and the IdP does not: with double
+    policy evaluation, a replica that cannot reach OPA denies every mutation — the
+    chokepoint's stage 1 fails closed — so it is serving refusals for the whole governed
+    surface and should be drained. An Authentik outage only degrades login (D-56).
+
+    OPA's own `/health` is used rather than a policy query. A query would also exercise the
+    bundle, and that is the wrong thing for a liveness probe to gate on: a replica whose
+    bundle is undefined must answer 503 to a *mutation* with `governance-policy-undefined`,
+    which is a diagnosable problem document, rather than fall out of the load balancer with
+    no explanation anywhere.
+    """
+    response = await http.get(f"{opa_url.rstrip('/')}/health", timeout=2.0)
+    response.raise_for_status()
 
 
 @asynccontextmanager
@@ -226,18 +247,24 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # cannot be reordered". A chokepoint assembled at a call site would let one caller assemble
     # it differently, and the assembly is where a stage would go missing.
     #
-    # Two of the seven collaborators are deliberately fail-closed placeholders at this wave,
-    # and neither is silent about it:
+    # One of the seven collaborators was a deliberately fail-closed placeholder until leaf 9.2,
+    # and neither placeholder was ever silent about it:
     #
-    #   * `UnavailableGovernancePolicy` raises on every evaluation, which the chokepoint turns
-    #     into a DENY with an audit record (§11.6: "an OPA outage denies"). Leaf 9.2 replaces it
-    #     with `OpaGovernancePolicy` once leaf 9.1 has authored the bundle to query.
+    #   * `UnavailableGovernancePolicy` raised on every evaluation, which the chokepoint turns
+    #     into a DENY with an audit record (§11.6: "an OPA outage denies"). **Leaf 9.2 replaces
+    #     it with `OpaGovernancePolicy`**, querying the bundle leaf 9.1 authored over the shared
+    #     `httpx` client. The placeholder stays in the tree and stays tested: it is what a
+    #     deployment with no governance bundle should compose, and `test_wiring_governance.py`
+    #     asserts the composed source is now the real one.
     #   * `UnavailableCommandSink` refused delivery with `device-not-connected` until leaf 8.4;
     #     `AgentHub` replaces it below and keeps that refusal for a device with no live session.
     #
     # A permissive default for either would let a mutation through on the strength of nothing
     # objecting, which is precisely what §9's convention forbids.
-    app.state.governance_policy = UnavailableGovernancePolicy()
+    app.state.governance_policy = OpaGovernancePolicy(opa_url=str(settings.opa_url), http=shared_http)
+    # Read by `/health/ready`. Held on state rather than re-derived from settings there, so
+    # readiness reports on the URL the composed client actually queries.
+    app.state.opa_url = str(settings.opa_url)
     app.state.envelope_sequencer = RedisEnvelopeSequencer(redis_client)
     # The internal CA (§3.1, §14.2). Constructed only when BOTH PEMs are configured; otherwise the
     # fail-closed stand-in, so a fresh clone starts and every route except the exchange works,
@@ -569,6 +596,19 @@ def create_app() -> FastAPI:
             except Exception as exc:
                 errors.append({"dependency": "cerbos", "detail": str(exc)})
 
+        # OPA (§11.7, task 9.2). Same argument as Cerbos, one layer up: Cerbos decides who
+        # may ask, OPA decides whether the governance bundle permits it, and a replica that
+        # cannot reach OPA denies every mutation at the chokepoint's stage 1.
+        opa_http = getattr(request.app.state, "shared_http", None)
+        opa_url = getattr(request.app.state, "opa_url", None)
+        if opa_http is not None and opa_url:
+            try:
+                await asyncio.wait_for(_check_opa(opa_http, opa_url), timeout=2.0)
+            except TimeoutError:
+                errors.append({"dependency": "opa", "detail": "health check timed out"})
+            except Exception as exc:
+                errors.append({"dependency": "opa", "detail": str(exc)})
+
         if errors:
             # Rendered with the same required RFC 9457 members as every other
             # problem document (§4.2): stable type URI, title, status equal to
@@ -591,6 +631,8 @@ def create_app() -> FastAPI:
         checks = {"postgres": "ok", "redis": "ok"}
         if cerbos is not None:
             checks["cerbos"] = "ok"
+        if opa_http is not None and opa_url:
+            checks["opa"] = "ok"
         return JSONResponse({"status": "ready", "checks": checks})
 
     # --- Versioned health (API surface informational echo) ---

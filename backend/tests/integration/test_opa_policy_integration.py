@@ -25,27 +25,11 @@ Design authority: §11.4, §5.4, §14.1 (fail-closed policy).
 
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
-import time
-import uuid
-from pathlib import Path
-
 import httpx
 import pytest
 from src.mcp.policy import DEFAULT_ALLOW_PATH, DEFAULT_FILTER_PATH, OpaGatewayPolicy
 
-from .capability import require_capability
-
-# Same digest as docker-compose.yml, so the policy runs on the engine it ships with.
-OPA_IMAGE = "openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5"
-#: The REGO subtree, not `policies/` (D-57). Task 6.4 added `policies/cerbos/*.yaml`
-#: beside it, and `opa run /policies` loads every YAML it finds as a *data document* —
-#: six Cerbos policies all declaring `apiVersion` at the top level produce
-#: "6 errors occurred during loading: ... merge error" and OPA refuses to start. Loading
-#: only what OPA owns means a third policy engine's files can never do that again.
-POLICY_DIR = Path(__file__).resolve().parents[3] / "policies" / "mcp"
+from .opa_server import MCP_POLICY_DIR, opa_server
 
 CLAIMS = {"sub": "user-42"}
 
@@ -57,67 +41,16 @@ UNANNOTATED_TOOL = {"name": "agent.mystery"}  # no blast_radius at all
 ALL_TOOLS = [READ_ONLY_TOOL, WORKSPACE_TOOL, INFRA_TOOL, UNANNOTATED_TOOL]
 
 
-def _wait_until_healthy(url: str, timeout: float = 30.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            if httpx.get(f"{url}/health", timeout=1.0).status_code == 200:
-                return True
-        except Exception:
-            time.sleep(0.3)
-    return False
-
-
 @pytest.fixture(scope="module")
 def opa_url() -> str:
-    """A reachable OPA server loading `policies/`, started here if necessary."""
-    preset = os.environ.get("FORGEOPS_TEST_OPA_URL", "").strip()
-    if preset and _wait_until_healthy(preset, timeout=5.0):
-        yield preset
-        return
+    """A reachable OPA server loading `policies/mcp`, started here if necessary.
 
-    docker = shutil.which("docker")
-    if docker is None:
-        require_capability("opa", "no FORGEOPS_TEST_OPA_URL and no docker on PATH to start one")
-
-    name = f"forgeops-opa-test-{uuid.uuid4().hex[:8]}"
-    started = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [
-            docker,
-            "run",
-            "--rm",
-            "-d",
-            "--name",
-            name,
-            "-p",
-            "0:8181",
-            "-v",
-            f"{POLICY_DIR.as_posix()}:/policies:ro",
-            OPA_IMAGE,
-            "run",
-            "--server",
-            "--addr=0.0.0.0:8181",
-            "/policies",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if started.returncode != 0:
-        require_capability("opa", f"could not start the OPA container: {started.stderr.strip()[:200]}")
-
-    try:
-        port = subprocess.run(  # noqa: S603
-            [docker, "port", name, "8181/tcp"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.splitlines()[0]
-        url = f"http://127.0.0.1:{port.rsplit(':', 1)[-1].strip()}"
-        if not _wait_until_healthy(url):
-            require_capability("opa", "the OPA container never became healthy")
+    The start/poll/teardown logic moved to `tests/integration/opa_server.py` when leaf 9.2
+    became its second caller: two copies of "a real OPA server" is how one of them comes to
+    load a directory the other does not.
+    """
+    with opa_server(MCP_POLICY_DIR) as url:
         yield url
-    finally:
-        subprocess.run([docker, "rm", "-f", name], capture_output=True, check=False)  # noqa: S603
 
 
 @pytest.fixture()

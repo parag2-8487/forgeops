@@ -195,6 +195,15 @@ class MutationRequest:
     reason: str
     origin: str = "manual"
     generation_run_id: uuid.UUID | None = None
+    #: The deployment target this change is for, e.g. `"dev"`, `"staging"`, `"prod"`.
+    #:
+    #: Optional, and `None` is NOT treated as a default environment. `approval.rego`'s
+    #: "require approval for production" rule answers `require_approval` when the member is
+    #: absent, so a caller that does not state where a change is going gets a human in the
+    #: loop rather than an auto-approval (§11.7, finding 68). Defaulting it to `"dev"` here
+    #: was the alternative and is the fail-open direction: a caller that forgot the field
+    #: would have got an auto-approvable verdict for what might be a production change.
+    environment: str | None = None
 
     def __post_init__(self) -> None:
         if not self.items:
@@ -379,6 +388,7 @@ class GovernanceChokepoint:
             admitted=admitted,
             operation=APPLY_OPERATION,
             items=req.items,
+            environment=req.environment,
         )
 
         # ── one transaction: compile, blast radius, gate, audit, handle ───────────────────
@@ -847,12 +857,21 @@ class GovernanceChokepoint:
         operation: str,
         items: Sequence[ChangeItemRequest],
         change_set_id: uuid.UUID | None = None,
+        environment: str | None = None,
     ) -> GovernanceDecision:
         """Stage 1, with both failure translations (§2.2, §5.5, D-25 lineage).
 
         An **undefined** document is 503 and never a deny. An **unavailable** engine is a deny,
         because §11.6 says an OPA outage denies and §9's convention says anything that could
         cause a wrong file to be written must refuse.
+
+        Every decision this produces — allow, require_approval, and the deny an outage
+        synthesises — is recorded in `policy_evaluations` with `side="backend"` before the
+        method returns, which is what makes double evaluation auditable (§11.7, FR-37). The
+        **undefined** case writes no row, and that is deliberate: `policy_evaluations.result`
+        is constrained to the three decision values, an undefined document produced no
+        decision, and the audit record `_refuse` writes already names it. Inventing a fourth
+        result to record a non-decision would make the table's own vocabulary a lie.
         """
         payload = {
             "operation": operation,
@@ -861,6 +880,13 @@ class GovernanceChokepoint:
             "device_id": str(admitted.device_id),
             "bundle_digest": admitted.bundle_digest,
             "change_set_id": None if change_set_id is None else str(change_set_id),
+            "environment": environment,
+            # The scheduling window and the protected globs are per-project data. Leaf 9.5
+            # owns the policy rows they come from, so this is empty today and the bundle's
+            # totality is what makes an empty parameter set a defined answer rather than an
+            # undefined document: no blocked weekday blocks nothing, no glob protects
+            # nothing. Named here rather than omitted so the seam is visible.
+            "policy_parameters": {},
             "principal": {
                 "kind": principal.kind,
                 "role": str(principal.role),
@@ -890,6 +916,13 @@ class GovernanceChokepoint:
                 reason=f"policy engine unavailable; failing closed (§2.2, §11.6): {exc}",
                 rule_id=None,
             )
+        await self._record_evaluation(
+            session,
+            admitted=admitted,
+            operation=operation,
+            change_set_id=change_set_id,
+            decision=decision,
+        )
         if decision.result == "deny":
             await self._refuse(
                 session,
@@ -902,6 +935,45 @@ class GovernanceChokepoint:
                 device_id=admitted.device_id,
             )
         return decision
+
+    async def _record_evaluation(
+        self,
+        session: AsyncSession,
+        *,
+        admitted: _Admitted,
+        operation: str,
+        change_set_id: uuid.UUID | None,
+        decision: GovernanceDecision,
+    ) -> None:
+        """Append one `policy_evaluations` row for the backend side of the evaluation.
+
+        Written here rather than by the policy client (D-93). The client holds no session and
+        must not: a row written on its own connection could commit while the transit that
+        produced it rolls back, which is Q-04's defect in a second table. `policy_evaluations`
+        is part of the transit's record, and this class already owns the inserts into
+        `change_sets`, `change_items` and `rollback_handles` for exactly that reason.
+
+        `reason` is truncated to the column width rather than allowed to raise. A governance
+        transit must not fail because an explanation was long, and the audit record carries
+        the untruncated text.
+        """
+        await session.execute(
+            text(
+                "INSERT INTO policy_evaluations (id, policy_id, change_set_id, tenant_id, "
+                "operation, result, reason, side) VALUES (:id, NULL, :cs, :tenant, :operation, "
+                ":result, :reason, 'backend')"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "cs": change_set_id,
+                "tenant": admitted.tenant_id,
+                "operation": operation[:64],
+                "result": decision.result,
+                "reason": (decision.reason if decision.rule_id is None else f"[{decision.rule_id}] {decision.reason}")[
+                    :1024
+                ],
+            },
+        )
 
     # ─── stage 3 and 4 helpers ────────────────────────────────────────────────────────────
 

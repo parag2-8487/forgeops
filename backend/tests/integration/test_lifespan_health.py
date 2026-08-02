@@ -37,6 +37,7 @@ from fastapi.testclient import TestClient
 
 from .capability import require_capability
 from .cerbos_stub import cerbos_health_stub
+from .opa_stub import opa_health_stub
 
 PROBLEM_CONTENT_TYPE = "application/problem+json"
 
@@ -188,12 +189,14 @@ class TestReadinessRecovery:
         redis_port = _free_port()
         assert _port_is_closed(redis_port)
 
-        # Task 6.4 added Cerbos to readiness, so this test needs it reachable or the
-        # 200 it waits for could never arrive — and the subject here is Redis
-        # recovering, not authorisation. A transport substitution (§0.4.1): the
-        # production client over a real socket, with a stub answering only health.
-        with cerbos_health_stub() as cerbos_url:
+        # Task 6.4 added Cerbos to readiness and task 9.2 added OPA, so this test needs
+        # both reachable or the 200 it waits for could never arrive — and the subject
+        # here is Redis recovering, not authorisation or policy. A transport substitution
+        # (§0.4.1): the production clients over real sockets, with stubs answering only
+        # health.
+        with cerbos_health_stub() as cerbos_url, opa_health_stub() as opa_url:
             os.environ["CERBOS_URL"] = cerbos_url
+            os.environ["OPA_URL"] = opa_url
             app = _build_app(database_url, f"redis://127.0.0.1:{redis_port}/0")
             self._observe_recovery(app, redis_server, redis_port)
 
@@ -241,7 +244,7 @@ class TestReadinessRecovery:
                 # Still an EXACT set, now with the dependency task 6.4 added. Exact
                 # rather than a subset check because a probe silently disappearing from
                 # readiness is the failure this line exists to catch.
-                assert payload["checks"] == {"postgres": "ok", "redis": "ok", "cerbos": "ok"}
+                assert payload["checks"] == {"postgres": "ok", "redis": "ok", "cerbos": "ok", "opa": "ok"}
         finally:
             if redis_proc is not None:
                 redis_proc.terminate()

@@ -532,7 +532,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add `policies/agent/*_test.rego` covering Friday inside and outside the window across timezones, `package.json` protection, and prod approval; add the `policy` CI job running `opa test policies/ -v` and `opa check --strict policies/`, plus `make policy-test`.
     - _Design: §8.3, §11.7, §13.4; Deliverable: 1.7; Criterion: 7_
 
-  - [ ] 9.2 Implement the backend governance policy client
+  - [x] 9.2 Implement the backend governance policy client
 
     - Implement `OpaGovernancePolicy` querying the governance bundle over the existing shared `httpx` client, failing closed on transport error and raising `governance-policy-undefined` (503) on an undefined document rather than reading it as a deny.
     - Persist a `policy_evaluations` row per decision with `side="backend"`, the rule id and the human-readable reason for FR-37.

@@ -60,11 +60,26 @@ def alembic_ok(database_url: str, *args: str) -> subprocess.CompletedProcess[str
 
 @pytest.fixture()
 def migrated(database_url: str):
-    """Bring the real database to head, then tear it back down to base."""
+    """Bring the real database to head, then restore the session invariant.
+
+    **The teardown used to end at `base`, and that was finding 73.** `schema_at_head` in
+    `migration_support.py` is SESSION-scoped and promises "the database is at head for the
+    whole session"; a function-scoped fixture that leaves it at base silently breaks that
+    promise for every test file collected after this one. It went unnoticed for as long as it
+    did because collection is alphabetical: every existing consumer of `schema_at_head` sorts
+    BEFORE `test_initial_schema.py`, and `tests/integration/test_policy_evaluations.py` (leaf
+    9.2) is the first that sorts after it — where it failed with
+    `UndefinedTableError: relation "projects" does not exist`, which reads like a broken test
+    rather than like a broken fixture.
+    """
     alembic_ok(database_url, "downgrade", "base")
     alembic_ok(database_url, "upgrade", "head")
     yield database_url
+    # `downgrade base` first, because that is what the assertions in this module are about —
+    # the schema being buildable from nothing — and `upgrade head` after, because that is what
+    # the rest of the session was promised.
     alembic_ok(database_url, "downgrade", "base")
+    alembic_ok(database_url, "upgrade", "head")
 
 
 @pytest.fixture()
@@ -79,7 +94,9 @@ def migrated_phase0(database_url: str):
     alembic_ok(database_url, "downgrade", "base")
     alembic_ok(database_url, "upgrade", "0001")
     yield database_url
+    # Restores `schema_at_head`'s session-scoped promise. See `migrated` above (finding 73).
     alembic_ok(database_url, "downgrade", "base")
+    alembic_ok(database_url, "upgrade", "head")
 
 
 async def _scalar(engine, sql: str, **params):
@@ -246,4 +263,9 @@ class TestInitialSchemaAgainstPostgres:
                 remaining = {r[0] for r in rows}
         finally:
             await engine.dispose()
+            # Restores `schema_at_head`'s session-scoped promise (finding 73). In the `finally`
+            # rather than after the assertion, because a failure here must not cascade: leaving
+            # the database at base would turn one real schema fault into dozens of unrelated
+            # `UndefinedTableError`s in later files, which is how a diagnosis becomes a rerun.
+            alembic_ok(database_url, "upgrade", "head")
         assert remaining == set(), f"downgrade left tables behind: {sorted(remaining)}"

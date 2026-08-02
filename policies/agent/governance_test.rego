@@ -291,10 +291,22 @@ test_a_delete_requires_approval if {
 
 # Finding 68: an absent field must not read as permission. Both of these pass trivially
 # against §11.7's sketch, which is why they are here.
-test_an_absent_blast_radius_requires_approval if {
-	d := governance.decision with input as wednesday([{"op": "remove", "path": "/blast_radius"}])
+test_a_blast_radius_object_with_no_verdict_requires_approval if {
+	d := governance.decision with input as wednesday([{
+		"op": "replace",
+		"path": "/blast_radius",
+		"value": {"score": 12},
+	}])
 	d.result == "require_approval"
 	d.reason == "blast-radius verdict is absent"
+}
+
+# Finding 71, the one exception, and the reason it is not a hole: §2.2 runs this bundle at
+# stage 1 and computes the blast radius at stage 4, so an entirely absent member is the
+# normal stage-1 shape. Stage 4 blocks a BLOCK verdict itself, in the chokepoint.
+test_an_entirely_absent_blast_radius_is_left_to_stage_four if {
+	d := governance.decision with input as wednesday([{"op": "remove", "path": "/blast_radius"}])
+	d.result == "allow"
 }
 
 test_an_absent_environment_requires_approval if {
@@ -451,6 +463,7 @@ every_fixture := [
 	base("America/Los_Angeles"),
 	wednesday([{"op": "replace", "path": "/environment", "value": "prod"}]),
 	wednesday([{"op": "replace", "path": "/blast_radius/verdict", "value": "block"}]),
+	wednesday([{"op": "replace", "path": "/blast_radius", "value": {"score": 12}}]),
 	wednesday([{"op": "remove", "path": "/blast_radius"}]),
 	wednesday([{"op": "remove", "path": "/environment"}]),
 	wednesday([{

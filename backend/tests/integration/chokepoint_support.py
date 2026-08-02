@@ -10,11 +10,15 @@ quantifying over a shape the integration tests never exercise.
 What is substituted, and why §0.4.1 permits it
 ----------------------------------------------
 The real `SemanticPlanAnalyzer`, `ThresholdApprovalGate`, `AuditWriter`, `RedisEnvelopeSequencer`,
-`DeviceService` custody path and envelope signing all run. Two collaborators are substituted, and
-in both cases the production article **does not exist yet**: `GovernancePolicySource` arrives with
-leaf 9.2 (it cannot precede leaf 9.1's bundle) and `CommandSink` with leaf 8.4's hub. Both doubles
-below are ordinary classes implementing the real Protocol — §0.4.3's "signature-enforcing double"
-— and never a `Mock`, which `FO-TD004` forbids under `tests/integration/**`.
+`DeviceService` custody path and envelope signing all run. Two collaborators are substituted.
+`CommandSink`'s production article is leaf 8.4's hub, which needs a live WebSocket.
+`GovernancePolicySource`'s production article exists as of leaf 9.2 — `OpaGovernancePolicy`, which
+`test_wiring_governance.py` asserts is what `create_app()` composes — and the double stays because
+these suites drive the chokepoint's branches *given* a decision, including the two a real OPA
+cannot be made to produce on demand: an undefined document and an outage. The real client against
+a real OPA loading the real bundle is `test_governance_policy_opa.py`. Both doubles below are
+ordinary classes implementing the real Protocol — §0.4.3's "signature-enforcing double" — and
+never a `Mock`, which `FO-TD004` forbids under `tests/integration/**`.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ __all__ = [
     "one_create",
     "one_delete",
     "one_update",
+    "policy_evaluations",
     "redis_client",
     "redis_url",
     "require_approval",
@@ -321,5 +326,45 @@ async def handles(session: AsyncSession, change_set_id: uuid.UUID) -> list[Mappi
     result = await session.execute(
         text("SELECT id, consumed, backup_manifest, agent_device_id FROM rollback_handles WHERE change_set_id = :cs"),
         {"cs": change_set_id},
+    )
+    return list(result.mappings().all())
+
+
+async def policy_evaluations(
+    session: AsyncSession,
+    project_id: uuid.UUID | None = None,
+    *,
+    marker: str | None = None,
+) -> list[Mapping[str, Any]]:
+    """`policy_evaluations` rows, oldest first, scoped by change set or by a reason marker.
+
+    **Why a marker exists at all (finding 72).** The table has no `project_id`, and
+    `change_set_id` is NULL for exactly the rows a project filter would need it for: A.3
+    evaluates policy at stage 1, before `InsertChangeSet`, so every stage-1 row — including
+    every deny, which is the row an operator most wants — is unattributable to a project.
+    `tenant_id` is NULL in the single-tenant local shape too. So a test cannot scope these
+    rows by anything the schema offers, and neither can the operator query FR-37 implies.
+
+    The marker is the test-side workaround, not a fix: each transit's decision reason carries
+    a fresh token and the query filters on it. The real fix is a `project_id` column, which
+    belongs to the leaf that owns the policies API and its migrations.
+    """
+    clauses = []
+    params: dict[str, Any] = {}
+    if project_id is not None:
+        clauses.append("(cs.project_id = :project OR pe.change_set_id IS NULL)")
+        params["project"] = project_id
+    if marker is not None:
+        clauses.append("pe.reason LIKE :marker")
+        params["marker"] = f"%{marker}%"
+    where = " AND ".join(clauses) if clauses else "true"
+    result = await session.execute(
+        text(
+            "SELECT pe.id, pe.change_set_id, pe.tenant_id, pe.operation, pe.result, pe.reason, "
+            "pe.side, pe.created_at FROM policy_evaluations pe "
+            "LEFT JOIN change_sets cs ON cs.id = pe.change_set_id "
+            f"WHERE {where} ORDER BY pe.created_at ASC, pe.id ASC"
+        ),
+        params,
     )
     return list(result.mappings().all())

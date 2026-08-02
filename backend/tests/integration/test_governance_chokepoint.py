@@ -23,12 +23,16 @@ real `SemanticPlanAnalyzer`, the real `ThresholdApprovalGate`, the real `AuditWr
 run. Two collaborators are substituted, and in both cases the production article **does not exist
 yet**:
 
-* `GovernancePolicySource` — leaf 9.2 builds `OpaGovernancePolicy`, and it cannot exist before
-  leaf 9.1 authors the bundle it queries. What is composed today is
-  `UnavailableGovernancePolicy`, which the chokepoint turns into a deny, and that composed
-  default is asserted in `test_wiring_governance.py`. Driving the allow, deny, require-approval
-  and undefined paths therefore needs a policy source, and the one below is a hand-written class
-  implementing the Protocol — not a `Mock`, which `FO-TD004` forbids under this directory.
+* `GovernancePolicySource` — leaf 9.2 builds `OpaGovernancePolicy` and `test_wiring_governance.py`
+  asserts it is what `create_app()` now composes, so the production article **does** exist as of
+  that leaf. The double below stays, and the reason changed rather than disappeared: these tests
+  are about what the chokepoint does *given* a decision — including the two decisions a real OPA
+  cannot be made to produce on demand, an undefined document and an outage — so scripting the
+  answer is the only way to reach every branch. The real client against a real OPA loading the
+  real bundle is `test_governance_policy_opa.py`, and the two halves meet in
+  `::test_the_payload_shape_matches_what_the_chokepoint_sends` there. The double is a
+  hand-written class implementing the Protocol — not a `Mock`, which `FO-TD004` forbids under
+  this directory.
 * `CommandSink` — leaf 8.4 builds the hub. `RecordingSink` below keeps what it was handed so the
   per-path envelope assertions can read it.
 

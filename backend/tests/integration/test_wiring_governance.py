@@ -92,18 +92,43 @@ class TestTheChokepointIsComposedFromTheRealCollaborators:
         assert derive_key_encryption_key(service._pepper) == expected  # noqa: SLF001
 
 
-@wires("governance_policy", "command_sink")
+@wires("governance_policy", "command_sink", "opa_url")
 class TestTheDefaultsFailClosed:
-    async def test_the_composed_policy_source_refuses_rather_than_allowing(
+    async def test_the_composed_policy_source_is_the_real_client_and_still_refuses(
         self,
         production_app: FastAPI,  # noqa: F811
     ) -> None:
-        from src.governance.policy import PolicySourceUnavailableError, UnavailableGovernancePolicy
+        """Leaf 9.2 replaced `UnavailableGovernancePolicy` with the real OPA client.
+
+        Rewritten rather than deleted, and the assertion it makes is the one that still
+        matters: the composed source is now `OpaGovernancePolicy`, and against the
+        unreachable OPA `production_app` points at, it still raises
+        `PolicySourceUnavailableError` — the exception the chokepoint turns into a deny. So
+        the fail-closed property the placeholder guaranteed by construction is now a
+        measured property of the real client, which is strictly more than was asserted
+        before.
+
+        It also asserts the client got the app's SHARED httpx client rather than one of its
+        own, because §11.7's "no second connection pool" is not visible anywhere else.
+        """
+        from src.governance.policy import PolicySourceUnavailableError
+        from src.policies.opa import GOVERNANCE_DECISION_PATH, OpaGovernancePolicy
 
         policy = production_app.state.governance_policy
-        assert isinstance(policy, UnavailableGovernancePolicy)
-        with pytest.raises(PolicySourceUnavailableError):
-            await policy.evaluate(payload={})
+        assert isinstance(policy, OpaGovernancePolicy)
+        assert policy._http is production_app.state.shared_http  # noqa: SLF001
+        assert policy._decision_path == GOVERNANCE_DECISION_PATH  # noqa: SLF001
+        assert production_app.state.opa_url == str(production_app.state.settings.opa_url)
+
+        # The refusal is proved against a deliberately dead address rather than against
+        # whatever is or is not listening on the configured port: a developer with a real OPA
+        # running locally must not turn this assertion into a different one.
+        import httpx
+
+        async with httpx.AsyncClient(timeout=0.05) as http:
+            dead = OpaGovernancePolicy(opa_url="http://192.0.2.1:8181", http=http)
+            with pytest.raises(PolicySourceUnavailableError):
+                await dead.evaluate(payload={"operation": "changeset.apply"})
 
     async def test_the_composed_sink_refuses_when_no_agent_is_connected(self, production_app: FastAPI) -> None:  # noqa: F811
         """The sink is the real hub from leaf 8.4, and it keeps `UnavailableCommandSink`'s refusal.

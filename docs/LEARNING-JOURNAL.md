@@ -1,12 +1,12 @@
 # ForgeOps — Learning Journal
 
-| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Snapshot date          | **2026-08-02**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Leaves reflected       | **67 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 99 `pending`. Reconciled 2026-08-02; all three sources agree via `scripts/_state.sh`. **Groups 7 and 8 are both complete, close-outs included**, and group 9 is under way: leaf 9.1 authored the governance Rego bundle (`policies/agent/{governance,schedule,paths,approval}.rego`, `opa test` **PASS: 67/67**) and added the `policy` CI job, so `ci-jobs-baseline.txt` is down to five staged rows. `mutations.toml` stands at **14 of 31**, every row proved attributable by `scripts/control-of-the-control.py`. Decisions run to **D-92**; findings run to **70**, and patterns T and U are new. See chapter 10. |
-| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Field                  | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snapshot date          | **2026-08-02**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Branch                 | `phase-1-implementation` (Phase 0 lives on `phase-0-implementation`, unmerged into `main`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Phase                  | Phase 1 — MVP Core: Analysis, Generation & Approval, `in-progress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Leaves reflected       | **68 of 166** `done` in `PROGRESS.md`, 0 `blocked`, 98 `pending`. Reconciled 2026-08-02; all three sources agree via `scripts/_state.sh`. **Groups 7 and 8 are both complete, close-outs included**, and group 9 is under way: leaf 9.1 authored the governance Rego bundle (`policies/agent/{governance,schedule,paths,approval}.rego`, `opa test` **PASS: 68/68**) and added the `policy` CI job, so `ci-jobs-baseline.txt` is down to five staged rows; leaf 9.2 wired `OpaGovernancePolicy` into the chokepoint's stage-1 seam, put OPA into `/health/ready`, and started writing the `side="backend"` half of `policy_evaluations`. `mutations.toml` stands at **14 of 31**, every row proved attributable by `scripts/control-of-the-control.py`. Decisions run to **D-93**; findings run to **73**, and patterns T and U are new. See chapter 10. |
+| Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 This document teaches. It is not a changelog, not a status report, and never an
 authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
@@ -3331,6 +3331,38 @@ about one exception. It is confined to that one prefix and asserted in both dire
 does **not** match a root-level file — so the widening cannot spread into a general loosening that
 would make a project's stated pattern mean something else.
 
+### D-93 — the `policy_evaluations` row is written by the chokepoint, not by the policy client
+
+Task 9.2's wording is "persist a `policy_evaluations` row per decision". The obvious reading puts
+the write in `OpaGovernancePolicy`, and that is the one place it must not go. The client holds no
+session — `GovernancePolicySource.evaluate` takes a payload and returns a decision, deliberately —
+and giving it one would mean a row committed on its own connection while the transit that produced
+it rolled back. That is precisely Q-04's defect, one table over: evidence that outlives the thing
+it is evidence of.
+
+So `GovernanceChokepoint._record_evaluation` writes it, in the caller's session, immediately after
+the decision is obtained and **before** the deny path's `_refuse` raises.
+`::test_a_rolled_back_transit_leaves_no_evaluation_row` asserts the atomicity with a positive
+control in the same session, so "absent afterwards" cannot pass for a method that never wrote
+anything.
+
+Two further consequences are recorded rather than absorbed. The **undefined** case writes no row:
+`policy_evaluations.result` is constrained to allow/deny/require_approval, an undefined document
+produced no decision, and inventing a fourth result to record a non-decision would make the
+constraint a lie and would undo D-25's distinction inside the table — the `policy_undefined` audit
+row is the evidence, and "no row" is an asserted property. And the rule id is prefixed into
+`reason` as `[rule.id] text` rather than getting a column, because FR-37 wants both and adding a
+column is a migration this leaf does not own; the cost is that the rule is findable by `LIKE`
+rather than by an index, which is acceptable for a table an operator reads and nothing joins on.
+
+The alternative considered and rejected was a consumer-declared `PolicyEvaluationRecorder`
+protocol in `governance/policy.py` with a concrete implementation in `policies/` composed by
+`main.py` — the D-82 shape. It was rejected on two counts: it needs an optional collaborator, and
+the only defensible default for an optional recorder is one that writes nothing, which is a gate
+that can never fail (D-51); and the chokepoint already owns the raw inserts into `change_sets`,
+`change_items` and `rollback_handles` for exactly the reason that applies here, so a fourth table
+in the same method is consistent rather than novel.
+
 ## 9. What has actually been found by building it
 
 Chapter 5 was one defect. Building Phase 1 on top of Phase 0 found many more, and they are
@@ -4879,6 +4911,69 @@ Now the absence is a failed body in `named_operation`, which makes the rule unde
 different purpose — the value of a test over the emptiest possible input, restated. The
 generalisation: `not f(input.x)` and `not g` where `g if f(input.x)` are **not** the same expression
 in Rego when `input.x` may be absent, and the first one fails open.
+
+**Finding 71.** `approval.rego` shipped with leaf 9.1 carrying
+`require_approval if not input.blast_radius.verdict`, which finding 68 had just added as the
+fail-closed treatment of an absent field. Leaf 9.2 wired the real client to the real chokepoint and
+the clause turned out to be **always true**: §2.2's stage order evaluates policy at **stage 1** and
+runs the Semantic Plan Analyzer at **stage 4**, so no blast-radius verdict exists at the moment the
+bundle is asked. Appendix A.11's input document shows one because it describes the _agreement
+check_ between the two evaluators, not the transit.
+
+The consequence was not a leak, it was a lockout: every transit would have answered
+`require_approval`, and A.3's `change_set_auto_approved` path — a real path with its own audit
+action and its own tests — would have been unreachable for every caller. Safe, and useless.
+
+The fix distinguishes two shapes that finding 68 had treated as one. An **entirely absent**
+`blast_radius` means "stage 4 has not run and it owns this", and nothing is lost because stage 4
+blocks a BLOCK verdict itself, unconditionally, in the chokepoint. A **present** `blast_radius`
+with no readable verdict stays fail-closed, because that is the shape a refactor produces and the
+one that would otherwise silently disable the clause. Both directions are asserted.
+
+What this is really an instance of: a fail-closed default is only correct with respect to a stated
+contract about what the caller supplies, and finding 68 hardened the field without checking when
+the field exists. The generalisation worth carrying is that "absent" is at least two different
+facts — _not supplied yet_ and _not supplied at all_ — and a policy that cannot tell them apart
+will get one of them wrong. Note also that the two findings were made two hours apart, in the same
+group, by the same reasoning applied at two different levels of the stack; the second could not
+have been found by reading the bundle, only by wiring it to its caller.
+
+**Finding 72.** `policy_evaluations` has no `project_id`, and `change_set_id` is NULL for every
+stage-1 row — A.3 evaluates policy before `InsertChangeSet`, so the rows an operator most wants to
+explain, the denials, are exactly the rows with no change set. `tenant_id` is NULL in the
+single-tenant local shape. So there is no column by which an evaluation can be attributed to a
+project, which means neither a test nor the "surface the rule id and reason for this project"
+query FR-37 implies can be written.
+
+Leaf 9.2 works around it in the tests with a per-transit reason marker, and the workaround is
+labelled as one in `chokepoint_support.policy_evaluations`'s docstring rather than left to look
+like a style choice. The real fix is a `project_id` column and it is owed to the leaf that owns the
+policies API and its migrations, not taken here — adding a column in a leaf whose subject is the
+client would put a migration in a commit nobody would think to look in.
+
+**Finding 73.** `tests/integration/test_initial_schema.py` ended three teardowns at
+`alembic downgrade base`: the `migrated` fixture, the `migrated_phase0` fixture, and
+`test_downgrade_removes_every_phase_0_table` itself. `migration_support.schema_at_head` is
+**session-scoped** and promises the database is at head for the whole session, so those teardowns
+silently broke that promise for every test file collected afterwards.
+
+It survived unnoticed for the whole of Phase 1 so far because pytest collects alphabetically and
+**every existing consumer of `schema_at_head` sorts before `test_initial_schema.py`**.
+`tests/integration/test_policy_evaluations.py`, added by leaf 9.2, is the first that sorts after it
+— and it failed with `UndefinedTableError: relation "projects" does not exist`, which reads like a
+broken new test rather than like a fixture that has been wrong for weeks. It passed on its own and
+failed in the suite, which is the signature.
+
+All three now restore head, and the one inside the test body does it from a `finally`: leaving the
+database at base after a genuine schema failure would turn one real fault into dozens of unrelated
+errors in later files, which is how a diagnosis becomes a rerun.
+
+The general point is about scope, and it is a new one for this journal: a **function**-scoped
+fixture that mutates state a **session**-scoped fixture owns is a contract violation that only
+manifests as an ordering dependency, and ordering dependencies are invisible until the ordering
+changes. This repository runs `pytest-randomly` by default, which should have surfaced it — and did
+not, because the two suites that would collide are usually run separately. Worth remembering the
+next time a fixture's teardown "cleans up".
 
 ---
 

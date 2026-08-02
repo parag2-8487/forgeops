@@ -31,6 +31,7 @@ from asgi_lifespan import LifespanManager
 
 from .capability import require_capability
 from .cerbos_stub import cerbos_health_stub
+from .opa_stub import opa_health_stub
 from .production_app import apply_committed_baseline_env
 from .wiring import wires
 
@@ -66,9 +67,11 @@ async def app_with_unreachable_idp(
     # module asserts about the IdP — so Cerbos has to be reachable here or the 200
     # below would be a 503 for a reason that has nothing to do with §6.3. A transport
     # substitution (§0.4.1): the production client and a real socket, with a stub
-    # process answering only the health path.
-    with cerbos_health_stub() as cerbos_url:
+    # process answering only the health path. Task 9.2 added OPA to readiness for the
+    # same reason Cerbos is there, so it needs the same treatment.
+    with cerbos_health_stub() as cerbos_url, opa_health_stub() as opa_url:
         monkeypatch.setenv("CERBOS_URL", cerbos_url)
+        monkeypatch.setenv("OPA_URL", opa_url)
         app = create_app()
         async with LifespanManager(app):
             yield app
@@ -117,6 +120,17 @@ class TestReadinessIgnoresTheIdentityProvider:
         """
         checks = (await client.get("/health/ready")).json()["checks"]
         assert checks.get("cerbos") == "ok", checks
+
+    async def test_the_policy_engine_is_probed(self, client: httpx.AsyncClient) -> None:
+        """Task 9.2's half of the same line (§11.7).
+
+        Cerbos decides who may ask; OPA decides whether the governance bundle permits it. A
+        replica that cannot reach OPA denies every mutation at the chokepoint's stage 1, so it
+        is serving refusals for the whole governed surface and should be drained — the same
+        argument as Cerbos, one layer up, and the opposite of the IdP's.
+        """
+        checks = (await client.get("/health/ready")).json()["checks"]
+        assert checks.get("opa") == "ok", checks
 
     async def test_liveness_is_unaffected(self, client: httpx.AsyncClient) -> None:
         assert (await client.get("/health")).status_code == 200
