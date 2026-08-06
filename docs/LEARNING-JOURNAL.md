@@ -5407,3 +5407,9 @@ underlying source says otherwise.
 **Why this approach**: Prevents invalid project settings from polluting database state while providing structured activity audit logs.
 **What was rejected**: Unvalidated JSON payload ingestion for project configuration settings.
 **What cost was accepted**: Strict settings key whitelist validation.
+
+### Leaf 12.2: GitHub Import & App Installation Token Source
+**What landed**: Implemented ackend/src/projects/github_import.py with GitHubAppTokenSource and GitHubImporter for GitHub repository importing and App installation access token exchange, with unit tests.
+**Why this approach**: Restricts token scope to individual GitHub App installations rather than requiring broad user tokens.
+**What was rejected**: Permanent static OAuth tokens for multi-repository scanning.
+**What cost was accepted**: Synthetic token generation fallback during test/development runs.

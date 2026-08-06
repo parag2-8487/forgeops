@@ -155,7 +155,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 11.12 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-11 for coalescing safety                                | complete  |
 | 11.13 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-25 for grammar integrity and closure termination        | complete  |
 | 12.1  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement project CRUD, settings, tags and the activity feed                  | complete  |
-| 12.2  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement GitHub import and the App installation token source                 | pending  |
+| 12.2  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement GitHub import and the App installation token source                 | complete  |
 | 12.3  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the deterministic readiness scoring engine                          | pending  |
 | 12.4  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the readiness API and the plain-language report                     | pending  |
 | 12.5  | Implement the multi-project workspace and deployment-readiness analysis                            | Write property test Q-18 for readiness determinism and monotonicity           | pending  |
