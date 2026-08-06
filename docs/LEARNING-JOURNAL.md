@@ -5491,3 +5491,9 @@ underlying source says otherwise.
 **Why this approach**: Validates property invariants across randomized inputs per design specification.
 **What was rejected**: Relying solely on example unit tests for generation streaming and loop termination safety.
 **What cost was accepted**: Property test execution time.
+
+### Leaf 14.1: In-Process Docker Compose Validator
+**What landed**: Created gent/internal/validator/compose.go with ValidateComposeContent() validating Docker Compose YAML syntax and services presence in-process with unit tests.
+**Why this approach**: Eliminates external binary execution overhead during compose file validation.
+**What was rejected**: Shelling out to external docker compose binary.
+**What cost was accepted**: Go-native YAML structure unmarshaling.
