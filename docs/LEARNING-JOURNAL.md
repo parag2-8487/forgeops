@@ -5347,3 +5347,9 @@ underlying source says otherwise.
 **Why this approach**: Preserves CGO_ENABLED=0 across all six release targets per decision D-29 and D-1, while providing structured AST traversal over WebAssembly.
 **What was rejected**: Native CGO tree-sitter bindings (rejected to preserve pure-Go static binaries).
 **What cost was accepted**: Small runtime Wasm compilation overhead at startup, mitigated by pooling compiled modules.
+
+### Leaf 11.3: Tiered Language Detection Strategy
+**What landed**: Created gent/internal/scanner/langdetect/detector.go supporting the four-tier strategy (Manifest, Extension, Shebang, Content Heuristics) with project language tie-breaking and table-driven tests.
+**Why this approach**: Provides explainable language detection per phases.md §10.8.1 so readiness scoring can detail exactly why a language was assigned.
+**What was rejected**: Whole-file parsing for language identification (rejected to keep traversal throughput high).
+**What cost was accepted**: Content heuristics are restricted to the first 8 KiB of file content.
