@@ -210,21 +210,21 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 19.1  | Gate coverage, run the negative controls, and assemble the workflow                                | Turn on the per-component coverage gates                                      | complete  |
 | 19.2  | Gate coverage, run the negative controls, and assemble the workflow                                | Complete `mutations.toml` and add the `mutation` CI job                       | complete  |
 | 19.3  | Gate coverage, run the negative controls, and assemble the workflow                                | Assemble the fifteen-job workflow and prove every cited job exists            | complete  |
-| 20.1  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 1 — install, pair, import                                    | pending  |
-| 20.2  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 2 — scan and readiness score                                 | pending  |
-| 20.3  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 3 — AI generates a Dockerfile and K8s manifests              | pending  |
-| 20.4  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 4 — generated files pass the validation pipeline             | pending  |
-| 20.5  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 5 — view diff, approve, apply                                | pending  |
-| 20.6  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 6 — atomic application with backup                           | pending  |
-| 20.7  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 7 — policies are enforced                                    | pending  |
-| 20.8  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 8 — secrets stored encrypted and injected                    | pending  |
-| 20.9  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 9 — immutable audit trail                                    | pending  |
-| 20.10 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 10 — the end-to-end journey                                  | pending  |
-| 20.11 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 11 — coverage ≥ 70 % per component                           | pending  |
-| 20.12 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 12 — HNSW indexes on both vector columns                     | pending  |
-| 20.13 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 13 — SSE streaming                                           | pending  |
-| 20.14 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 14 — Redis semantic caching                                  | pending  |
-| 20.15 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Finalise documentation and `PROGRESS.md` from captured evidence               | pending  |
+| 20.1  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 1 — install, pair, import                                    | complete  |
+| 20.2  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 2 — scan and readiness score                                 | complete  |
+| 20.3  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 3 — AI generates a Dockerfile and K8s manifests              | complete  |
+| 20.4  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 4 — generated files pass the validation pipeline             | complete  |
+| 20.5  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 5 — view diff, approve, apply                                | complete  |
+| 20.6  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 6 — atomic application with backup                           | complete  |
+| 20.7  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 7 — policies are enforced                                    | complete  |
+| 20.8  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 8 — secrets stored encrypted and injected                    | complete  |
+| 20.9  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 9 — immutable audit trail                                    | complete  |
+| 20.10 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 10 — the end-to-end journey                                  | complete  |
+| 20.11 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 11 — coverage ≥ 70 % per component                           | complete  |
+| 20.12 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 12 — HNSW indexes on both vector columns                     | complete  |
+| 20.13 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 13 — SSE streaming                                           | complete  |
+| 20.14 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 14 — Redis semantic caching                                  | complete  |
+| 20.15 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Finalise documentation and `PROGRESS.md` from captured evidence               | complete  |
 
 ## Phase 1 leaf evidence
 

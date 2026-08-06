@@ -1,13 +1,14 @@
 {
   "current_group": 20,
-  "current_leaf": "20.1",
-  "leaves_completed": 148,
+  "current_leaf": "20.15",
+  "leaves_completed": 166,
   "leaves_total": 166,
-  "last_verification_run": "2026-08-07T02:28:00Z",
+  "last_verification_run": "2026-08-07T02:29:00Z",
   "git_branch": "phase-1-implementation",
-  "git_tip": "dd85dbe",
-  "open_decisions": ["D-78"],
+  "git_tip": "4e7ede7",
+  "open_decisions": [],
   "findings_count": 66,
   "mutations_completed": 31,
-  "mutations_total": 31
+  "mutations_total": 31,
+  "phase_1_status": "COMPLETE"
 }
