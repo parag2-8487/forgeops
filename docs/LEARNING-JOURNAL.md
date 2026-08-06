@@ -5443,3 +5443,9 @@ underlying source says otherwise.
 **Why this approach**: Ensures search endpoint availability even when reranker dependencies fail.
 **What was rejected**: Throwing unhandled exceptions to client when reranker service is unavailable.
 **What cost was accepted**: Temporary fallback to RRF-only candidate ranking.
+
+### Leaf 13.3: Structured Artifact Schemas & Renderers
+**What landed**: Created ackend/src/generation/schemas.py and ackend/src/generation/renderers.py supporting Dockerfile and Kubernetes deployment manifest schemas and text renderers with unit tests.
+**Why this approach**: Validates structural schema fields before rendering final text configuration output.
+**What was rejected**: Unstructured free-form text generation without Pydantic schema validation.
+**What cost was accepted**: Dedicated schema model and rendering function definitions per artifact type.
