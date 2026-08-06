@@ -5593,3 +5593,9 @@ underlying source says otherwise.
 **Why this approach**: Proves diff fidelity and losslessness across arbitrary content modifications.
 **What was rejected**: Hand-crafted diff string assertion tests.
 **What cost was accepted**: Randomized line pair property evaluation.
+
+### Leaf 17.1: Frontend Session Handling & API Proxy Surface
+**What landed**: Created rontend/lib/session.ts and rontend/lib/proxy.ts implementing session storage, auth headers, and backend proxy routing with unit tests.
+**Why this approach**: Centralizes session management and API proxying across all frontend feature views.
+**What was rejected**: Unauthenticated raw fetch requests.
+**What cost was accepted**: LocalStorage session storage lifecycle.
