@@ -5545,3 +5545,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees automated end-to-end integration testing for Kubernetes and SPIFFE/SPIRE attestation on every PR.
 **What was rejected**: Manual or external cluster deployment for CI verification.
 **What cost was accepted**: Kind cluster boot time in CI runner.
+
+### Leaf 15.1: Template Loader & Manifest Contract
+**What landed**: Created ackend/src/generation/templates.py with TemplateLoader and TemplateManifest executing variable contract validation and rendering with unit tests.
+**Why this approach**: Guarantees template parameter contracts are satisfied prior to artifact rendering.
+**What was rejected**: Unchecked Jinja/string replacement without manifest contracts.
+**What cost was accepted**: Strict variable validation on render calls.
