@@ -5515,3 +5515,9 @@ underlying source says otherwise.
 **Why this approach**: Validates Helm chart metadata syntax without external binary subprocess invocation.
 **What was rejected**: Shelling out to external helm CLI tool.
 **What cost was accepted**: In-process Chart.yaml metadata parsing.
+
+### Leaf 14.5: Trivy Config Security Validator & Availability Policy
+**What landed**: Created gent/internal/validator/trivy.go with TrivyValidator scanning configuration payloads for security misconfigurations (privileged containers, wildcard ingress) in-process with unit tests.
+**Why this approach**: Prevents high-risk security violations from bypassing static validation gates.
+**What was rejected**: Bypassing vulnerability scanning when security tools are offline.
+**What cost was accepted**: In-process rule pattern scanning.
