@@ -2,6 +2,8 @@ package secretscan_test
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/parag8487/ForgeOps/agent/internal/secretscan"
@@ -28,6 +30,42 @@ func TestInterfacesAndStructs(t *testing.T) {
 
 	var rc secretscan.RedactedChunk
 	_ = rc // Just asserting the type exists
+}
+
+func TestScannerFindsCredentials(t *testing.T) {
+	content, err := os.ReadFile("testdata/synthetic_credentials.txt")
+	if err != nil {
+		t.Fatalf("failed to read test file: %v", err)
+	}
+
+	scanner, err := secretscan.NewScanner()
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	findings, err := scanner.Scan(context.Background(), "synthetic_credentials.txt", content)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	if len(findings) == 0 {
+		t.Fatalf("expected to find secrets, got none")
+	}
+
+	rawValues := []string{"AKIAIOSFODNN7EXAMPLE", "ghp_123456789012345678901234567890123456"}
+	for _, finding := range findings {
+		for _, raw := range rawValues {
+			if strings.Contains(finding.Fingerprint, raw) || strings.Contains(finding.Kind, raw) || strings.Contains(finding.Path, raw) {
+				t.Errorf("finding metadata contains raw secret value: %s", raw)
+			}
+		}
+		if finding.Kind == "" {
+			t.Errorf("expected finding to have a Kind")
+		}
+		if finding.Fingerprint == "" {
+			t.Errorf("expected finding to have a Fingerprint")
+		}
+	}
 }
 
 type mockScanner struct{}
