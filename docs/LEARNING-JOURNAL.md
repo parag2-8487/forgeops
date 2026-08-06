@@ -5449,3 +5449,9 @@ underlying source says otherwise.
 **Why this approach**: Validates structural schema fields before rendering final text configuration output.
 **What was rejected**: Unstructured free-form text generation without Pydantic schema validation.
 **What cost was accepted**: Dedicated schema model and rendering function definitions per artifact type.
+
+### Leaf 13.4: Model Tier Selection Wiring
+**What landed**: Created ackend/src/ai/routing/tier_selector.py with select_model_tier() routing prompts across tier_1_fast, tier_2_balanced, and tier_3_advanced models, with reachability unit tests.
+**Why this approach**: Minimizes cost and latency by mapping request complexity to appropriate model capacity tiers.
+**What was rejected**: Fixed single model tier routing for all tasks.
+**What cost was accepted**: Tier selection decision boundary evaluation.

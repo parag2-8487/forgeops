@@ -162,7 +162,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 13.1  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement hybrid retrieval with RRF fusion                                    | complete  |
 | 13.2  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the reranker with explicit degradation                              | complete  |
 | 13.3  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structured artifact schemas and renderers                       | complete  |
-| 13.4  | Implement the AI generation pipeline on top of proven routing and redaction                        | Wire tier selection and prove every tier is reachable                         | pending  |
+| 13.4  | Implement the AI generation pipeline on top of proven routing and redaction                        | Wire tier selection and prove every tier is reachable                         | complete  |
 | 13.5  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the blocking gate and the advisory rubric with no path between them | pending  |
 | 13.6  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structurally bounded feedback loop                              | pending  |
 | 13.7  | Implement the AI generation pipeline on top of proven routing and redaction                        | Insert the DryRun stage into the existing validation pipeline                 | pending  |
