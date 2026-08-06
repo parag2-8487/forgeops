@@ -5431,3 +5431,9 @@ underlying source says otherwise.
 **Why this approach**: Proves mathematically that readiness scoring is deterministic and non-decreasing upon adding positive readiness artifacts.
 **What was rejected**: Manual hand-written example cases for monotonicity testing.
 **What cost was accepted**: Hypothesis test generation time during property test runs.
+
+### Leaf 13.1: Hybrid Retrieval with Reciprocal Rank Fusion (RRF)
+**What landed**: Implemented backend/src/ai/rrf.py with reciprocal_rank_fusion() merging sparse BM25 and dense vector ranking streams using k=60 constant parameter with unit tests.
+**Why this approach**: Avoids score calibration issues across sparse and dense search backends by operating directly on ordinal ranks.
+**What was rejected**: Raw score weighted addition between BM25 scores and cosine similarities.
+**What cost was accepted**: Rank array merging and sorting overhead per search query.
