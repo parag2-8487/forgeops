@@ -5581,3 +5581,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees auditable rollback state history for all deployment changes.
 **What was rejected**: Destructive hard-deletion of executed ChangeSet records.
 **What cost was accepted**: Rollback state validation checks.
+
+### Leaf 16.3: Property Test Q-22 for ChangeSet State Legality
+**What landed**: Created ackend/tests/property/test_q22_changeset_state_legality.py verifying Property Q-22 via Hypothesis across 100 generated state transition sequences.
+**Why this approach**: Guarantees invalid state transitions raise ValueError and state invariants are preserved under arbitrary API sequences.
+**What was rejected**: Manual hand-written transition test cases.
+**What cost was accepted**: Generated sequence property evaluation.
