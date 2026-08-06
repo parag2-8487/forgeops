@@ -5,6 +5,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"strings"
 
 	"github.com/zricethezav/gitleaks/v8/detect"
 	"github.com/zricethezav/gitleaks/v8/sources"
@@ -87,10 +89,37 @@ func (s *gitleaksScanner) Scan(ctx context.Context, path string, content []byte)
 }
 
 func (s *gitleaksScanner) Redact(ctx context.Context, c Chunk, findings []Finding) RedactedChunk {
-	return RedactedChunk{text: c.Text}
+	if len(findings) == 0 {
+		return RedactedChunk{text: c.Text}
+	}
+
+	fragment := sources.Fragment{
+		Raw:      c.Text,
+		Bytes:    []byte(c.Text),
+		FilePath: "chunk",
+	}
+
+	reports := s.detector.DetectContext(ctx, detect.Fragment(fragment))
+	redactedText := c.Text
+
+	for _, r := range reports {
+		mac := hmac.New(sha256.New, []byte("forgeops-default-pepper"))
+		mac.Write([]byte(r.Secret))
+		hashHex := hex.EncodeToString(mac.Sum(nil))[:8]
+
+		marker := fmt.Sprintf("FORGEOPS_REDACTED:%s:%s", r.RuleID, hashHex)
+		redactedText = strings.ReplaceAll(redactedText, r.Secret, marker)
+	}
+
+	return RedactedChunk{text: redactedText}
 }
 
-// Redact is a package-level function to construct RedactedChunk (useful for chokepoints).
-func Redact(ctx context.Context, c Chunk, findings []Finding) RedactedChunk {
-	return RedactedChunk{text: c.Text}
+// Redact is a package-level function to construct RedactedChunk for global chokepoints.
+// It initializes a default scanner to redact the given text. For performance, use Scanner.Redact.
+func Redact(ctx context.Context, c Chunk, findings []Finding) (RedactedChunk, error) {
+	scanner, err := NewScanner()
+	if err != nil {
+		return RedactedChunk{}, err
+	}
+	return scanner.Redact(ctx, c, findings), nil
 }

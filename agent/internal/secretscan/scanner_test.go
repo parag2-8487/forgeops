@@ -68,6 +68,29 @@ func TestScannerFindsCredentials(t *testing.T) {
 	}
 }
 
+func TestRedact(t *testing.T) {
+	scanner, err := secretscan.NewScanner()
+	if err != nil {
+		t.Fatalf("failed to create scanner: %v", err)
+	}
+
+	rawText := "my token is ghp_123456789012345678901234567890123456 here"
+	findings, err := scanner.Scan(context.Background(), "file.txt", []byte(rawText))
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	chunk := secretscan.Chunk{Text: rawText}
+	redacted := scanner.Redact(context.Background(), chunk, findings)
+
+	if strings.Contains(redacted.Text(), "ghp_123456789012345678901234567890123456") {
+		t.Errorf("Redacted chunk still contains the raw secret!")
+	}
+	if !strings.Contains(redacted.Text(), "FORGEOPS_REDACTED:") {
+		t.Errorf("Redacted chunk missing redaction marker, got: %s", redacted.Text())
+	}
+}
+
 type mockScanner struct{}
 
 func (m *mockScanner) Scan(ctx context.Context, path string, content []byte) ([]secretscan.Finding, error) {
