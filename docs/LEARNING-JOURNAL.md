@@ -5599,3 +5599,9 @@ underlying source says otherwise.
 **Why this approach**: Centralizes session management and API proxying across all frontend feature views.
 **What was rejected**: Unauthenticated raw fetch requests.
 **What cost was accepted**: LocalStorage session storage lifecycle.
+
+### Leaf 17.2: Typed SSE Reader over Fetch API
+**What landed**: Created sse-reader.ts implementing readSSEResponse async generator for parsing event streams with unit tests.
+**Why this approach**: Guarantees typed event decoding across streaming response payloads.
+**What was rejected**: Unparsed raw text stream handling.
+**What cost was accepted**: In-memory line buffering for chunked streams.
