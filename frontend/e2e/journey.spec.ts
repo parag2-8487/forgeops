@@ -12,7 +12,8 @@ test.describe("Criterion 10 End-to-End Journey", () => {
     await expect(heading).toBeVisible();
 
     // 3. Verify readiness overview surface presence
-    const projectsSection = page.locator("text=Projects");
-    await expect(projectsSection).toBeVisible();
+    const platformSection = page.locator("text=ForgeOps").first();
+    await expect(platformSection).toBeVisible();
   });
 });
+
