@@ -81,11 +81,11 @@ for lock in requirements.lock requirements-dev.lock; do
 	if diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" >/dev/null 2>&1; then
 		printf 'ok:   %s is up to date\n' "$lock"
 	else
-		printf 'ERROR: backend/%s is stale. Run: make lock-backend\n' "$lock" >&2
-		diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" >&2
-
+		printf 'ERROR: backend/%s is stale. Run: make lock-backend\n' "$lock"
+		diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" || true
 		FAILED=1
 	fi
+
 
 
 done
