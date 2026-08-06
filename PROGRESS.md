@@ -194,15 +194,15 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 16.4  | Implement the Change Approval Center API surface                                                   | Write property test Q-23 for diff fidelity                                    | complete  |
 | 17.1  | Implement the frontend feature surfaces                                                            | Add session handling, the login route and `proxy.ts`                          | complete  |
 | 17.2  | Implement the frontend feature surfaces                                                            | Implement the typed SSE reader over fetch                                     | complete  |
-| 17.3  | Implement the frontend feature surfaces                                                            | Implement the project list and detail surfaces                                | pending  |
-| 17.4  | Implement the frontend feature surfaces                                                            | Implement the readiness surface with an accessible radar chart                | pending  |
-| 17.5  | Implement the frontend feature surfaces                                                            | Implement the generation surface with progressive UX                          | pending  |
-| 17.6  | Implement the frontend feature surfaces                                                            | Implement the Change Approval Center surface                                  | pending  |
-| 17.7  | Implement the frontend feature surfaces                                                            | Implement the policy list, editor and violation display                       | pending  |
-| 17.8  | Implement the frontend feature surfaces                                                            | Implement the secret vault surface                                            | pending  |
-| 17.9  | Implement the frontend feature surfaces                                                            | Implement the audit log viewer                                                | pending  |
-| 17.10 | Implement the frontend feature surfaces                                                            | Implement the agent pairing and device surface                                | pending  |
-| 17.11 | Implement the frontend feature surfaces                                                            | Pin the new frontend dependencies and gate frontend coverage                  | pending  |
+| 17.3  | Implement the frontend feature surfaces                                                            | Implement the project list and detail surfaces                                | complete  |
+| 17.4  | Implement the frontend feature surfaces                                                            | Implement the readiness surface with an accessible radar chart                | complete  |
+| 17.5  | Implement the frontend feature surfaces                                                            | Implement the generation surface with progressive UX                          | complete  |
+| 17.6  | Implement the frontend feature surfaces                                                            | Implement the Change Approval Center surface                                  | complete  |
+| 17.7  | Implement the frontend feature surfaces                                                            | Implement the policy list, editor and violation display                       | complete  |
+| 17.8  | Implement the frontend feature surfaces                                                            | Implement the secret vault surface                                            | complete  |
+| 17.9  | Implement the frontend feature surfaces                                                            | Implement the audit log viewer                                                | complete  |
+| 17.10 | Implement the frontend feature surfaces                                                            | Implement the agent pairing and device surface                                | complete  |
+| 17.11 | Implement the frontend feature surfaces                                                            | Pin the new frontend dependencies and gate frontend coverage                  | complete  |
 | 18.1  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the e2e stack overlay, the fixture OIDC issuer and the agent container    | pending  |
 | 18.2  | Build the end-to-end journey and the `e2e` CI job                                                  | Implement the criterion-10 journey specification                              | pending  |
 | 18.3  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the `e2e` CI job                                                          | pending  |

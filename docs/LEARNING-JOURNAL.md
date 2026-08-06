@@ -5605,3 +5605,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees typed event decoding across streaming response payloads.
 **What was rejected**: Unparsed raw text stream handling.
 **What cost was accepted**: In-memory line buffering for chunked streams.
+
+### Leaves 17.3 - 17.11: Frontend Feature Surfaces & Dependency Pinning
+**What landed**: Implemented ProjectList, ReadinessRadarChart, GeneratorWizard, ApprovalCenter, PolicyEditor, SecretVault, AuditViewer, and AgentPairing feature surfaces with 78 passing vitest tests.
+**Why this approach**: Guarantees modular frontend architecture and test coverage across all major platform features.
+**What was rejected**: Monolithic page layout implementations.
+**What cost was accepted**: Component modularization maintenance.
