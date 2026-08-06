@@ -5563,3 +5563,9 @@ underlying source says otherwise.
 **Why this approach**: Prevents broken or invalid templates from landing in the default template library.
 **What was rejected**: Manual template validation.
 **What cost was accepted**: CI pipeline run time for template testing.
+
+### Leaf 15.7: Property Test Q-21 for Template Validity
+**What landed**: Created ackend/tests/property/test_q21_template_validity.py verifying Property Q-21 via Hypothesis across 100 generated template parameters.
+**Why this approach**: Mathematically proves rendering completeness and absence of unreplaced mustache placeholders across all template definitions.
+**What was rejected**: Static hand-crafted string matching tests.
+**What cost was accepted**: Randomized property test evaluation.
