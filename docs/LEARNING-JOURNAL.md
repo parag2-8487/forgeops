@@ -5359,3 +5359,9 @@ underlying source says otherwise.
 **Why this approach**: Delivers instant UI feedback on the first round trip per design §11.4.4 before incremental AST indexing completes.
 **What was rejected**: Delaying UI initial state emission until deep AST indexing finishes.
 **What cost was accepted**: Cold-start inventory relies on fast heuristics rather than full AST traversal.
+
+### Leaf 11.5: cAST Semantic Chunking
+**What landed**: Implemented gent/internal/scanner/chunking/chunker.go performing cAST semantic chunking with ~512 token targets and 128-token overlap per Research §C10.
+**Why this approach**: Honored Research §C10 density and boundary parameters to optimize LLM retrieval quality.
+**What was rejected**: Character-based fixed-length splitting without AST boundary awareness.
+**What cost was accepted**: Fast word-frequency token estimation (~4 chars/token) instead of expensive full BPE tokenization.
