@@ -5389,3 +5389,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees strict isolation between embedding models and their respective 1024-dim database tables per decision D-48.
 **What was rejected**: Single shared table for multiple distinct embedding backend outputs.
 **What cost was accepted**: Local mock fallback when external Voyage AI key is set to placeholder value.
+
+### Leaf 11.10: Redis BM25 Sparse Index
+**What landed**: Implemented ackend/src/analysis/bm25.py with BM25Index supporting regex word tokenization, term-frequency IDF scoring, and top-k search with unit tests.
+**Why this approach**: Complements dense vector search with sparse keyword scoring for exact code symbol retrieval.
+**What was rejected**: Pure dense vector search for code symbol lookups.
+**What cost was accepted**: In-memory term frequency counter storage per indexed document set.
