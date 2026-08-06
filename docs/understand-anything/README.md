@@ -149,6 +149,8 @@ phone home; the deterministic scripts used here make no network calls at all.
 | 2026-08-06 | 123 of 166 | regenerated at group 15's close-out, all seven of its leaves landed. 722 files scanned, 718 analysed, 3501 nodes, 3738 edges (955 imports), 14 layers, 15 tour steps. |
 | 2026-08-06 | 127 of 166 | regenerated at group 16's close-out, all four of its leaves landed. 728 files scanned, 724 analysed, 3521 nodes, 3759 edges (962 imports), 14 layers, 15 tour steps. |
 | 2026-08-06 | 138 of 166 | regenerated at group 17's close-out, all eleven of its leaves landed. 742 files scanned, 738 analysed, 3547 nodes, 3781 edges (972 imports), 14 layers, 15 tour steps. |
+| 2026-08-07 | 166 of 166 | regenerated at Phase 1 final close-out, all 166 leaves complete. 749 files scanned, 745 analysed, 3557 nodes, 3787 edges (975 imports), 14 layers, 15 tour steps. |
+
 
 
 
