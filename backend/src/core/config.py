@@ -352,6 +352,10 @@ class Settings(BaseSettings):
     # ─── Phase 1 §1.8 secrets ────────────────────────────────────────────────
     secret_backend: Literal["infisical", "local"] = "infisical"
     local_secret_seal_key: SecretStr = Field(default=SecretStr(""))
+    infisical_url: AnyHttpUrl = Field(default="http://infisical:8080")  # type: ignore[assignment]
+    infisical_client_id: str = Field(default="")
+    infisical_client_secret: SecretStr = Field(default=SecretStr(""))
+    infisical_project_id: str = Field(default="")
 
     # ─── Phase 1 §7.10 tasks ─────────────────────────────────────────────────
     task_dispatcher: Literal["arq", "inline"] = "arq"

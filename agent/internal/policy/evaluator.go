@@ -52,7 +52,7 @@ func (e *Evaluator) Load(ctx context.Context, bundleData []byte) error {
 		rego.ParsedBundle("bundle", &b),
 		rego.Query("data.forgeops.governance.decision"),
 	)
-	
+
 	pq, err := r.PrepareForEval(ctx)
 	if err != nil {
 		return err

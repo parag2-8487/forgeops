@@ -513,7 +513,7 @@ class AgentHub:
             await self._deps.progress.publish(command_id=str(params.get("command_id") or ""), event=dict(params))
         elif method == "agent.status":
             await self._touch_last_seen(local.device_id, agent_version=params.get("agent_version"))
-            
+
             # Drift detection
             reported_digest = params.get("policy_bundle_digest")
             if reported_digest is not None:
@@ -522,11 +522,17 @@ class AgentHub:
                     # Update status to POLICY_STALE
                     async with self._session_scope() as session:
                         from sqlmodel import update
+
                         from src.auth.device_models import AgentDevice, DeviceStatus
-                        stmt = update(AgentDevice).where(AgentDevice.id == local.device_id).values(status=DeviceStatus.POLICY_STALE)
+
+                        stmt = (
+                            update(AgentDevice)
+                            .where(AgentDevice.id == local.device_id)
+                            .values(status=DeviceStatus.POLICY_STALE)
+                        )
                         await session.execute(stmt)
                         await session.commit()
-            
+
             await self._respond(ws, request_id, {"server_time": self._now_iso()})
         elif method == "agent.error":
             logger.warning(

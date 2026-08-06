@@ -1,16 +1,17 @@
+from collections.abc import AsyncIterator
+from typing import Any
+
 import pytest
 import pytest_asyncio
-import uuid
-from typing import AsyncIterator, Any
-from httpx import AsyncClient, ASGITransport
-
-from src.auth.dependencies import require_principal
-from src.auth.cerbos import CerbosPrincipal
-
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
 from asgi_lifespan import LifespanManager
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from src.auth.cerbos import CerbosPrincipal
+from src.auth.dependencies import require_principal
+
 from tests.integration.production_app import apply_committed_baseline_env
+
 
 @pytest_asyncio.fixture
 async def policies_app(
@@ -22,9 +23,9 @@ async def policies_app(
     apply_committed_baseline_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", schema_at_head)
-    
+
     app = create_app()
-    
+
     def mock_principal() -> CerbosPrincipal:
         return CerbosPrincipal(id="test-user", roles=["admin"])
 
@@ -32,7 +33,7 @@ async def policies_app(
 
     async with LifespanManager(app):
         yield app
-        
+
     app.dependency_overrides.clear()
 
     # Cleanup test policies
@@ -43,11 +44,13 @@ async def policies_app(
     finally:
         await engine.dispose()
 
+
 @pytest_asyncio.fixture
 async def client(policies_app: Any) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=policies_app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
         yield ac
+
 
 @pytest.mark.asyncio
 async def test_policy_crud_lifecycle(
@@ -59,7 +62,7 @@ async def test_policy_crud_lifecycle(
         "name": "Test Policy",
         "rego_rules": "package forgeops\n\ndefault allow = true\n",
         "enabled": True,
-        "engine": "rego"
+        "engine": "rego",
     }
     resp = await client.post("/api/v1/policies", json=create_payload)
     assert resp.status_code == 201, resp.text
@@ -87,6 +90,7 @@ async def test_policy_crud_lifecycle(
     resp = await client.get(f"/api/v1/policies/{policy_id}")
     assert resp.status_code == 404
 
+
 @pytest.mark.asyncio
 async def test_policy_templates(client: AsyncClient) -> None:
     resp = await client.get("/api/v1/policies/templates")
@@ -96,40 +100,36 @@ async def test_policy_templates(client: AsyncClient) -> None:
     assert any(t["id"] == "scheduling" for t in templates)
     assert any(t["id"] == "file_restrictions" for t in templates)
 
+
 @pytest.mark.asyncio
 async def test_policy_create_invalid_rego(client: AsyncClient) -> None:
     create_payload = {
         "name": "Invalid Policy",
-        "rego_rules": "package forgeops\ndefault allow == true", # syntax error
+        "rego_rules": "package forgeops\ndefault allow == true",  # syntax error
         "enabled": True,
     }
     resp = await client.post("/api/v1/policies", json=create_payload)
     assert resp.status_code == 422
     assert "rego_parse_error" in resp.text
 
+
 @pytest.mark.asyncio
 async def test_policy_dry_run(client: AsyncClient) -> None:
     # 1. Create a policy
     create_payload = {
         "name": "Dry Run Policy",
-        "rego_rules": "package forgeops.governance\n\ndefault decision = \"deny\"\n\ndecision = \"allow\" if { input.action == \"allow_me\" }\n"
+        "rego_rules": 'package forgeops.governance\n\ndefault decision = "deny"\n\ndecision = "allow" if { input.action == "allow_me" }\n',
     }
     resp = await client.post("/api/v1/policies", json=create_payload)
     assert resp.status_code == 201
     policy_id = resp.json()["id"]
 
     # 2. Dry run with allowed input
-    resp = await client.post(
-        f"/api/v1/policies/{policy_id}/test", 
-        json={"input": {"action": "allow_me"}}
-    )
+    resp = await client.post(f"/api/v1/policies/{policy_id}/test", json={"input": {"action": "allow_me"}})
     assert resp.status_code == 200
     assert resp.json()["decision"] == "allow"
 
     # 3. Dry run with denied input
-    resp = await client.post(
-        f"/api/v1/policies/{policy_id}/test", 
-        json={"input": {"action": "deny_me"}}
-    )
+    resp = await client.post(f"/api/v1/policies/{policy_id}/test", json={"input": {"action": "deny_me"}})
     assert resp.status_code == 200
     assert resp.json()["decision"] == "deny"

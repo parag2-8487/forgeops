@@ -125,8 +125,8 @@ at user level, outside this repository:
 | Path                                                | What                                                                                                                        |
 | :-------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
 | `~/.understand-anything/Understand-Anything-2.9.0/` | the extracted `v2.9.0` release (SHA-256 of the archive: `2F4461C3DD14AFF3F87248FAA2573D0C74F0AFA78C0B3AEEE24ADF7ED588D85F`) |
-| `~/.antigravity/skills/understand*`                        | nine directory junctions into the plugin's `skills/`                                                                        |
-| `~/.antigravity/agents/understand.json`                    | the Kiro agent definition, prompt-pointed at `skills/understand/SKILL.md`                                                   |
+| `~/.antigravity/skills/understand*`                 | nine directory junctions into the plugin's `skills/`                                                                        |
+| `~/.antigravity/agents/understand.json`             | the Kiro agent definition, prompt-pointed at `skills/understand/SKILL.md`                                                   |
 | `~/.understand-anything-plugin`                     | the universal plugin-root junction the skills resolve through                                                               |
 
 Nothing was installed into this repository, and no credential was given to the tool. The

@@ -21,13 +21,9 @@ from src.ai.routing.cache import CacheHit, TieredSemanticCache
 # ---------------------------------------------------------------------------
 
 model_st = st.text(min_size=1, max_size=20, alphabet="abcdefghijklmnop-0123456789")
-message_st = st.fixed_dictionaries(
-    {
-        "role": st.sampled_from(["user", "assistant", "system"]),
-        "content": st.text(min_size=1, max_size=50),
-    }
-)
-messages_st = st.lists(message_st, min_size=1, max_size=5)
+from src.secrets.redaction import create_redacted_chunk
+
+prompt_st = st.builds(lambda s: create_redacted_chunk(s), st.text(min_size=1, max_size=50))
 content_st = st.text(min_size=1, max_size=200)
 
 
@@ -64,31 +60,31 @@ class FakeRedis:
 class TestL1HitServedFromL1:
     """L1 cache hit returns served_from='L1_exact'."""
 
-    @given(model=model_st, messages=messages_st, content=content_st)
+    @given(model=model_st, prompt=prompt_st, content=content_st)
     @settings(max_examples=50, deadline=None)
-    async def test_l1_hit_returns_l1_exact(self, model, messages, content):
+    async def test_l1_hit_returns_l1_exact(self, model, prompt, content):
         """After storing, lookup returns CacheHit with served_from='L1_exact'."""
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
         # Store a value
-        await cache.store(model=model, messages=messages, content=content)
+        await cache.store(model=model, prompt=prompt, content=content)
 
         # Lookup should hit
-        hit = await cache.lookup(model=model, messages=messages)
+        hit = await cache.lookup(model=model, prompt=prompt)
         assert hit is not None
         assert hit.served_from == "L1_exact"
         assert hit.content == content
 
-    @given(model=model_st, messages=messages_st, content=content_st)
+    @given(model=model_st, prompt=prompt_st, content=content_st)
     @settings(max_examples=50, deadline=None)
-    async def test_staleness_seconds_non_negative(self, model, messages, content):
+    async def test_staleness_seconds_non_negative(self, model, prompt, content):
         """staleness_seconds is always >= 0 on cache hits."""
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
-        await cache.store(model=model, messages=messages, content=content)
-        hit = await cache.lookup(model=model, messages=messages)
+        await cache.store(model=model, prompt=prompt, content=content)
+        hit = await cache.lookup(model=model, prompt=prompt)
 
         assert hit is not None
         assert hit.staleness_seconds >= 0.0
@@ -97,14 +93,14 @@ class TestL1HitServedFromL1:
 class TestL1MissReturnsNone:
     """L1 cache miss returns None."""
 
-    @given(model=model_st, messages=messages_st)
+    @given(model=model_st, prompt=prompt_st)
     @settings(max_examples=50, deadline=None)
-    async def test_miss_returns_none(self, model, messages):
+    async def test_miss_returns_none(self, model, prompt):
         """Lookup on empty cache returns None."""
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
-        hit = await cache.lookup(model=model, messages=messages)
+        hit = await cache.lookup(model=model, prompt=prompt)
         assert hit is None
 
 
@@ -115,32 +111,32 @@ class TestL2ConsultedOnlyOnL1Miss:
     we prove that the lookup path does NOT call any L2 logic when L1 hits.
     """
 
-    @given(model=model_st, messages=messages_st, content=content_st)
+    @given(model=model_st, prompt=prompt_st, content=content_st)
     @settings(max_examples=30, deadline=None)
-    async def test_l1_hit_no_l2_call(self, model, messages, content):
+    async def test_l1_hit_no_l2_call(self, model, prompt, content):
         """When L1 hits, no additional Redis calls are made for L2."""
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
         # Store value (creates one set call)
-        await cache.store(model=model, messages=messages, content=content)
+        await cache.store(model=model, prompt=prompt, content=content)
         redis.get_calls.clear()
 
         # Lookup should hit L1 with exactly one get call
-        hit = await cache.lookup(model=model, messages=messages)
+        hit = await cache.lookup(model=model, prompt=prompt)
         assert hit is not None
         assert hit.served_from == "L1_exact"
         # Only one get call (the L1 lookup)
         assert len(redis.get_calls) == 1
 
-    @given(model=model_st, messages=messages_st)
+    @given(model=model_st, prompt=prompt_st)
     @settings(max_examples=30, deadline=None)
-    async def test_l1_miss_single_get(self, model, messages):
+    async def test_l1_miss_single_get(self, model, prompt):
         """When L1 misses, exactly one get call is made (L1 only in Phase 0)."""
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
-        hit = await cache.lookup(model=model, messages=messages)
+        hit = await cache.lookup(model=model, prompt=prompt)
         assert hit is None
         # Should still be just 1 get for L1
         assert len(redis.get_calls) == 1
@@ -156,15 +152,15 @@ class TestBelowThresholdDegradedBehavior:
     degraded=True.
     """
 
-    @given(model=model_st, messages=messages_st, content=content_st)
+    @given(model=model_st, prompt=prompt_st, content=content_st)
     @settings(max_examples=30, deadline=None)
-    async def test_l1_hit_not_degraded(self, model, messages, content):
+    async def test_l1_hit_not_degraded(self, model, prompt, content):
         """L1 exact hits are never degraded."""
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
-        await cache.store(model=model, messages=messages, content=content)
-        hit = await cache.lookup(model=model, messages=messages)
+        await cache.store(model=model, prompt=prompt, content=content)
+        hit = await cache.lookup(model=model, prompt=prompt)
 
         assert hit is not None
         assert hit.degraded is False
@@ -192,46 +188,46 @@ class TestBelowThresholdDegradedBehavior:
 class TestCacheKeyDeterminism:
     """Cache keys are deterministic for same inputs."""
 
-    @given(model=model_st, messages=messages_st, content=content_st)
+    @given(model=model_st, prompt=prompt_st, content=content_st)
     @settings(max_examples=30, deadline=None)
-    async def test_same_inputs_same_key(self, model, messages, content):
+    async def test_same_inputs_same_key(self, model, prompt, content):
         """Same model+messages always produces same cache key."""
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
-        await cache.store(model=model, messages=messages, content=content)
+        await cache.store(model=model, prompt=prompt, content=content)
 
         # Second store with same inputs should write to same key
         redis.set_calls.clear()
-        await cache.store(model=model, messages=messages, content="different")
+        await cache.store(model=model, prompt=prompt, content="different")
 
         # Should be using same key
         assert len(redis.set_calls) == 1
         key1 = redis.set_calls[0][0]
 
         redis.set_calls.clear()
-        await cache.store(model=model, messages=messages, content="third")
+        await cache.store(model=model, prompt=prompt, content="third")
         key2 = redis.set_calls[0][0]
 
         assert key1 == key2
 
     @given(
         model=model_st,
-        messages1=messages_st,
-        messages2=messages_st,
+        prompt1=prompt_st,
+        prompt2=prompt_st,
     )
     @settings(max_examples=30, deadline=None)
-    async def test_different_inputs_different_keys(self, model, messages1, messages2):
+    async def test_different_inputs_different_keys(self, model, prompt1, prompt2):
         """Different messages produce different cache keys (with high probability)."""
-        assume(messages1 != messages2)
+        assume(prompt1 != prompt2)
 
         redis = FakeRedis()
         cache = TieredSemanticCache(redis=redis)
 
-        await cache.store(model=model, messages=messages1, content="a")
-        await cache.store(model=model, messages=messages2, content="b")
+        await cache.store(model=model, prompt=prompt1, content="a")
+        await cache.store(model=model, prompt=prompt2, content="b")
 
         # Should have stored with different keys (or same if messages happen to be equal)
-        if messages1 != messages2:
+        if prompt1 != prompt2:
             keys = [call[0] for call in redis.set_calls]
             assert keys[0] != keys[1]

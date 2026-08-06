@@ -14,6 +14,8 @@ from enum import StrEnum
 
 import httpx
 
+from src.secrets.redaction import RedactedPrompt
+
 from .breaker import CircuitBreaker
 from .cache import TieredSemanticCache
 from .endpoints import (
@@ -87,6 +89,7 @@ class ModelRouter:
         *,
         tier: ModelTier,
         request: CompletionRequest,
+        prompt: RedactedPrompt,
     ) -> RoutingResult:
         """Route a completion request through the tier cascade.
 
@@ -97,7 +100,7 @@ class ModelRouter:
         # 1. Check semantic cache first
         cache_hit = await self._cache.lookup(
             model=request.model,
-            messages=request.messages,
+            prompt=prompt,
             params={"temperature": request.temperature, "max_tokens": request.max_tokens},
         )
         if cache_hit is not None:
@@ -194,7 +197,7 @@ class ModelRouter:
                 # Store in cache for future hits
                 await self._cache.store(
                     model=request.model,
-                    messages=request.messages,
+                    prompt=prompt,
                     params={"temperature": request.temperature, "max_tokens": request.max_tokens},
                     content=response.content,
                 )

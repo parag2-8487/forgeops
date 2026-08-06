@@ -664,6 +664,13 @@ CONFINED_NAMES: tuple[ConfinedName, ...] = (
         check_attribute=False,
         reason="commands reach the hub only from governance.chokepoint",
     ),
+    ConfinedName(
+        name="get_value",
+        owner="secrets.store",
+        permitted=frozenset({"secrets.store", "secrets.injection"}),
+        check_attribute=True,
+        reason="get_value is confined to secrets.injection so no route can reveal a value",
+    ),
 )
 
 

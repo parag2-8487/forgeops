@@ -28,4 +28,3 @@ authentik-server
 authentik-worker
 backend
 frontend
-

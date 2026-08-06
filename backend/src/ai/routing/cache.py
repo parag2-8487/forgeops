@@ -12,6 +12,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from src.secrets.redaction import RedactedPrompt
+
 
 @dataclass(frozen=True)
 class CacheHit:
@@ -53,11 +55,11 @@ class TieredSemanticCache:
         self,
         *,
         model: str,
-        messages: list[dict[str, Any]],
+        prompt: RedactedPrompt,
         params: dict[str, Any] | None = None,
     ) -> CacheHit | None:
         """Look up a cached response by exact key match."""
-        cache_key = self._build_key(model, messages, params)
+        cache_key = self._build_key(model, prompt, params)
         raw = await self._redis.get(f"{self._prefix}{cache_key}")
         if raw is None:
             return None
@@ -77,13 +79,13 @@ class TieredSemanticCache:
         self,
         *,
         model: str,
-        messages: list[dict[str, Any]],
+        prompt: RedactedPrompt,
         params: dict[str, Any] | None = None,
         content: str,
         ttl_seconds: int | None = None,
     ) -> None:
         """Store a response in the L1 cache."""
-        cache_key = self._build_key(model, messages, params)
+        cache_key = self._build_key(model, prompt, params)
         ttl = ttl_seconds if ttl_seconds is not None else self._default_ttl
         await self._redis.set(
             f"{self._prefix}{cache_key}",
@@ -94,12 +96,12 @@ class TieredSemanticCache:
     def _build_key(
         self,
         model: str,
-        messages: list[dict[str, Any]],
+        prompt: RedactedPrompt,
         params: dict[str, Any] | None,
     ) -> str:
         """Build a deterministic SHA-256 cache key."""
         canonical = json.dumps(
-            {"model": model, "messages": messages, "params": params or {}},
+            {"model": model, "prompt": prompt, "params": params or {}},
             sort_keys=True,
             separators=(",", ":"),
         )

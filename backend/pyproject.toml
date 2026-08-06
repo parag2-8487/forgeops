@@ -95,6 +95,7 @@ markers = [
     # Same rule, one service along (task 6.4). The RBAC matrix needs the digest-pinned
     # Cerbos sidecar, and it is selected by marker in both the `backend` and `auth` jobs.
     "cerbos: needs the real Cerbos sidecar; selected by the `backend` and `auth` CI jobs",
+    "infisical: needs the real Infisical container; selected by the `secrets` CI job",
 ]
 
 [tool.coverage.run]
@@ -201,6 +202,7 @@ ignore = [
 # above, so `governance/` — which legitimately imports that module — still cannot reach
 # this one function by name.
 "src.auth.devices.envelope_key".msg = "Only governance.chokepoint may fetch a device envelope key (design §2.2.1)"
+"src.secrets.store.get_value".msg = "get_value is confined to secrets.injection so no route can reveal a value"
 
 [tool.ruff.lint.per-file-ignores]
 # The two modules allowed to import ARQ. `core/tasks.py` owns the dispatcher and the
@@ -297,6 +299,7 @@ ignore = [
 # future module in this package, and §2.2.2's claim ("the control plane is the SOLE holder of
 # the per-device envelope signing key") would then be true of a directory rather than of a file.
 "src/governance/chokepoint.py" = ["TID251"]
+"src/secrets/injection.py" = ["TID251"]
 # Alembic's env.py must import every domain's models to build target_metadata;
 # that is migration wiring, not runtime domain coupling.
 "alembic/env.py" = ["TID251"]

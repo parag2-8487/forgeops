@@ -1,14 +1,11 @@
 import io
 import tarfile
-import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
-
 from src.policies.bundle import PolicyBundleService
 from src.policies.models import Policy
+
 
 @pytest.mark.asyncio
 async def test_bundle_digest_stability(
@@ -18,7 +15,7 @@ async def test_bundle_digest_stability(
     # Create some policies
     p1 = Policy(project_id=None, name="p1", rego_rules="package p1\nallow = true")
     p2 = Policy(project_id=None, name="p2", rego_rules="package p2\nallow = false")
-    
+
     async with sessions() as session:
         session.add_all([p1, p2])
         await session.commit()
@@ -38,6 +35,7 @@ async def test_bundle_digest_stability(
 
     # Verify tar contents
     import gzip
+
     unzipped = gzip.decompress(bundle1.bundle)
     with tarfile.open(fileobj=io.BytesIO(unzipped), mode="r") as tar:
         names = tar.getnames()

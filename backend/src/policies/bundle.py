@@ -4,16 +4,14 @@ import io
 import json
 import tarfile
 import uuid
-from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
+from typing import Any
 
-from typing import Sequence, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, update
-
-from src.policies.models import Policy, PolicyBundle
 from src.core.tasks import TaskDispatcher
+from src.policies.models import Policy, PolicyBundle
 
 
 class PolicyBundleService:
@@ -46,14 +44,14 @@ class PolicyBundleService:
             stmt = stmt.where(PolicyBundle.project_id == bundle.project_id)
         else:
             stmt = stmt.where(PolicyBundle.project_id.is_(None))
-        
+
         await self._session.execute(stmt)
-        
+
         # Insert the new active bundle
         bundle.active = True
         self._session.add(bundle)
         await self._session.commit()
-        
+
         if self._tasks:
             await self._tasks.enqueue(
                 "policy.bundle.publish",
@@ -92,14 +90,14 @@ class PolicyBundleService:
 
         # 3. Read rego files and build canonical tar
         tar_buf = io.BytesIO()
-        
+
         # We need paths to be sorted for canonical output
         entries = []
         for path in self._agent_policies_dir.glob("*.rego"):
             if not path.is_file():
                 continue
             entries.append((path.name, path.read_bytes()))
-            
+
         entries.append(("data.json", data_bytes))
         entries.sort(key=lambda x: x[0])
 
@@ -119,9 +117,9 @@ class PolicyBundleService:
         gz_buf = io.BytesIO()
         with gzip.GzipFile(fileobj=gz_buf, mode="wb", mtime=0) as gz:
             gz.write(tar_buf.getvalue())
-            
+
         payload = gz_buf.getvalue()
-        
+
         # 5. Compute sha256
         digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
         return PolicyBundle(digest=digest, bundle=payload, project_id=project_id)

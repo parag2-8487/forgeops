@@ -197,15 +197,22 @@ async def complete(
             headers={"Retry-After": str(int(retry_after))},
         )
 
+    from src.generation.context import assemble_prompt
+    from src.secrets.redaction import create_redacted_chunk, create_redacted_instruction
+
+    redacted_prompt = assemble_prompt(
+        system=create_redacted_chunk(""), chunks=[], instruction=create_redacted_instruction(body.prompt)
+    )
+
     # 5. Route through the model router (cache → cascade → provider)
     request = CompletionRequest(
         model=body.tier,  # router uses tier as model selector
-        messages=[{"role": "user", "content": body.prompt}],
+        messages=[{"role": "user", "content": redacted_prompt}],
         temperature=body.temperature,
         max_tokens=body.max_tokens,
     )
 
-    result: RoutingResult = await deps.model_router.complete(tier=tier, request=request)
+    result: RoutingResult = await deps.model_router.complete(tier=tier, request=request, prompt=redacted_prompt)
 
     return CompletionResponseBody(
         content=result.content,

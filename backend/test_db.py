@@ -1,6 +1,7 @@
 import asyncio
+
 import asyncpg
-from asyncpg.exceptions import InvalidPasswordError
+
 
 async def test_conn():
     urls = [
@@ -20,5 +21,6 @@ async def test_conn():
             return
         except Exception as e:
             print(f"Failed: {type(e).__name__} - {e}")
+
 
 asyncio.run(test_conn())

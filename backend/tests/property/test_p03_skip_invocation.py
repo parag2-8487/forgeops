@@ -29,6 +29,7 @@ from src.ai.routing.tiers import (
     TierChain,
     TierConfig,
 )
+from src.secrets.redaction import create_redacted_chunk
 
 # ---------------------------------------------------------------------------
 # Strategies
@@ -148,7 +149,7 @@ class TestOpenBreakerZeroInvocations:
         )
 
         request = CompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}])
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo"))
 
         # Verify open-breaker endpoints have zero invocations
         for i in range(num_open):
@@ -255,7 +256,7 @@ class TestUnsupportedProtocolZeroInvocations:
         )
 
         request = CompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}])
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo"))
 
         # Verify unsupported endpoints have zero invocations
         for i in range(num_unsupported):

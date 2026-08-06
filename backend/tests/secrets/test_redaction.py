@@ -1,5 +1,5 @@
-import pytest
 from src.secrets.redaction import create_redacted_chunk, create_redacted_instruction
+
 
 def test_redaction_patterns():
     # Tests a pattern (e.g. AWS key or ghp_ token)
@@ -7,6 +7,7 @@ def test_redaction_patterns():
     chunk = create_redacted_chunk(raw)
     assert "ghp_" not in chunk
     assert "FORGEOPS_REDACTED" in chunk
+
 
 def test_project_secrets():
     # Tests specific project secrets injected

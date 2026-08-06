@@ -32,6 +32,7 @@ from src.ai.routing.tiers import (
     TierChain,
     TierConfig,
 )
+from src.secrets.redaction import create_redacted_chunk
 
 # ---------------------------------------------------------------------------
 # Strategies
@@ -169,7 +170,7 @@ class TestCascadeTermination:
             messages=[{"role": "user", "content": "hello"}],
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo"))
 
         # Must terminate (we got here) with at most |chain| attempts
         assert len(result.attempts) <= len(chain)
@@ -184,7 +185,7 @@ class TestCascadeTermination:
             messages=[{"role": "user", "content": "hello"}],
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo"))
         assert result.outcome in (RoutingOutcome.OK, RoutingOutcome.EXHAUSTED)
 
 
@@ -201,7 +202,7 @@ class TestAtMostOnceOrderedInvocation:
             messages=[{"role": "user", "content": "hello"}],
         )
 
-        await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        await router.complete(tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo"))
 
         for eid, count in counts.items():
             assert count <= 1, f"{eid} invoked {count} times"
@@ -216,7 +217,7 @@ class TestAtMostOnceOrderedInvocation:
             messages=[{"role": "user", "content": "hello"}],
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo"))
 
         # Extract invoked endpoint IDs in order from attempts
         invoked_ids = [a.endpoint_id for a in result.attempts]
@@ -247,7 +248,9 @@ class TestUnsupportedEndpointsNeverInvoked:
             messages=[{"role": "user", "content": "hello"}],
         )
 
-        _result = await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        _result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo")
+        )
 
         # Unsupported endpoints (behavior=None) should have 0 invocations
         for name, behavior in chain:
@@ -270,6 +273,6 @@ class TestProviderErrorsSwallowed:
         )
 
         # This must not raise
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request)
+        result = await router.complete(tier=ModelTier.HIGH_CODING, request=request, prompt=create_redacted_chunk("foo"))
         assert isinstance(result, RoutingResult)
         assert result.outcome in (RoutingOutcome.OK, RoutingOutcome.EXHAUSTED)

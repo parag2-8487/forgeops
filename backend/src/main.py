@@ -248,7 +248,20 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # it differently, and the assembly is where a stage would go missing.
     #
     # One of the seven collaborators was a deliberately fail-closed placeholder until leaf 9.2,
-    # and neither placeholder was ever silent about it:
+    # and `DeviceService` took its place.
+    from src.secrets.store import InfisicalStore, LocalSealedStore
+
+    if settings.secret_backend == "infisical":
+        app.state.secret_store = InfisicalStore(
+            http=shared_http,
+            base_url=str(settings.infisical_url),
+            client_id=settings.infisical_client_id,
+            client_secret=settings.infisical_client_secret.get_secret_value(),
+        )
+    else:
+        app.state.secret_store = LocalSealedStore(
+            master_key=settings.local_secret_seal_key.get_secret_value().encode("utf-8")
+        )
     #
     #   * `UnavailableGovernancePolicy` raised on every evaluation, which the chokepoint turns
     #     into a DENY with an audit record (§11.6: "an OPA outage denies"). **Leaf 9.2 replaces
@@ -545,7 +558,12 @@ def create_app() -> FastAPI:
     app.include_router(audit_router)
 
     from .policies.routes import router as policies_router
+
     app.include_router(policies_router, prefix=settings.api_prefix)
+
+    from .secrets.routes import router as secrets_router
+
+    app.include_router(secrets_router)
 
     # MCP Gateway ingress, registry introspection and App hosting (§5.2).
     from .mcp.routes import router as mcp_router

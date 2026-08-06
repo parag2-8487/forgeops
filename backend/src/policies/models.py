@@ -18,10 +18,6 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-# Import related models for SQLAlchemy ForeignKey resolution
-from ..projects.models import Project  # noqa: F401
-from ..governance.models import ChangeSet  # noqa: F401
-
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -34,6 +30,11 @@ from sqlalchemy import (
     text,
 )
 from sqlmodel import Field, SQLModel
+
+from ..governance.models import ChangeSet  # noqa: F401
+
+# Import related models for SQLAlchemy ForeignKey resolution
+from ..projects.models import Project  # noqa: F401
 
 POLICY_ENGINES: tuple[str, ...] = ("rego",)
 EVALUATION_RESULTS: tuple[str, ...] = ("allow", "deny", "require_approval")

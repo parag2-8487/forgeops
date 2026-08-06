@@ -238,6 +238,8 @@ services:
     # release by tag AND digest is the only option that leaves the profile working.
     image: infisical/infisical:v0.162.15@sha256:bcb31ccb2a3784315ad9d9e180a9c53c6423f0daf3087c3bb158093de99617f2
     env_file: *service-env
+    ports:
+      - "127.0.0.1:${INFISICAL_PORT:-8080}:8080"
     depends_on:
       postgres: { condition: service_started }
       redis: { condition: service_started }

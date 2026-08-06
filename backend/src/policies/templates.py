@@ -1,4 +1,3 @@
-from typing import Any
 from .schemas import PolicyTemplateRead
 
 SCHEDULING_TEMPLATE = PolicyTemplateRead(
@@ -21,12 +20,7 @@ _is_blocked_day {
 # Example helper - actual logic would use time module
 _current_weekday = "Saturday" # Simplified for template
 """,
-    parameters={
-        "blocked_weekdays": {
-            "type": "array",
-            "items": {"type": "string"}
-        }
-    }
+    parameters={"blocked_weekdays": {"type": "array", "items": {"type": "string"}}},
 )
 
 FILE_RESTRICTIONS_TEMPLATE = PolicyTemplateRead(
@@ -45,12 +39,7 @@ _touches_protected_file {
     input.change_items[_].path == input.project.protected_globs[_]
 }
 """,
-    parameters={
-        "protected_globs": {
-            "type": "array",
-            "items": {"type": "string"}
-        }
-    }
+    parameters={"protected_globs": {"type": "array", "items": {"type": "string"}}},
 )
 
 TEMPLATES = [SCHEDULING_TEMPLATE, FILE_RESTRICTIONS_TEMPLATE]

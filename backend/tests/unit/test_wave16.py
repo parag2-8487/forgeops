@@ -520,27 +520,29 @@ class TestTieredSemanticCache:
     async def test_cache_miss(self):
         """Lookup returns None on miss."""
         from src.ai.routing.cache import TieredSemanticCache
+        from src.secrets.redaction import create_redacted_chunk
 
         redis = self._make_fake_redis()
         cache = TieredSemanticCache(redis=redis)
 
         result = await cache.lookup(
             model="gpt-4",
-            messages=[{"role": "user", "content": "hello"}],
+            prompt=create_redacted_chunk("hello"),
         )
         assert result is None
 
     async def test_cache_hit(self):
         """Store then lookup returns CacheHit."""
         from src.ai.routing.cache import CacheHit, TieredSemanticCache
+        from src.secrets.redaction import create_redacted_chunk
 
         redis = self._make_fake_redis()
         cache = TieredSemanticCache(redis=redis)
 
-        messages = [{"role": "user", "content": "hello"}]
-        await cache.store(model="gpt-4", messages=messages, content="Hi there!")
+        prompt = create_redacted_chunk("hello")
+        await cache.store(model="gpt-4", prompt=prompt, content="Hi there!")
 
-        hit = await cache.lookup(model="gpt-4", messages=messages)
+        hit = await cache.lookup(model="gpt-4", prompt=prompt)
         assert hit is not None
         assert isinstance(hit, CacheHit)
         assert hit.served_from == "L1_exact"
@@ -550,19 +552,20 @@ class TestTieredSemanticCache:
     async def test_different_params_different_key(self):
         """Different params produce different cache keys."""
         from src.ai.routing.cache import TieredSemanticCache
+        from src.secrets.redaction import create_redacted_chunk
 
         redis = self._make_fake_redis()
         cache = TieredSemanticCache(redis=redis)
 
-        messages = [{"role": "user", "content": "hello"}]
-        await cache.store(model="gpt-4", messages=messages, params={"temperature": 0.5}, content="A")
+        prompt = create_redacted_chunk("hello")
+        await cache.store(model="gpt-4", prompt=prompt, params={"temperature": 0.5}, content="A")
 
         # Different params → miss
-        result = await cache.lookup(model="gpt-4", messages=messages, params={"temperature": 0.9})
+        result = await cache.lookup(model="gpt-4", prompt=prompt, params={"temperature": 0.9})
         assert result is None
 
         # Same params → hit
-        result = await cache.lookup(model="gpt-4", messages=messages, params={"temperature": 0.5})
+        result = await cache.lookup(model="gpt-4", prompt=prompt, params={"temperature": 0.5})
         assert result is not None
         assert result.content == "A"
 
@@ -570,10 +573,11 @@ class TestTieredSemanticCache:
         """TTL is passed to Redis set."""
         redis = self._make_fake_redis()
         from src.ai.routing.cache import TieredSemanticCache
+        from src.secrets.redaction import create_redacted_chunk
 
         cache = TieredSemanticCache(redis=redis, default_ttl_seconds=3600)
-        messages = [{"role": "user", "content": "test"}]
-        await cache.store(model="gpt-4", messages=messages, content="resp", ttl_seconds=120)
+        prompt = create_redacted_chunk("test")
+        await cache.store(model="gpt-4", prompt=prompt, content="resp", ttl_seconds=120)
 
         # Check the stored TTL
         for _key, (_val, ttl) in redis._store.items():

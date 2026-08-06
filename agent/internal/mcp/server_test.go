@@ -263,7 +263,7 @@ func TestTofuValidate_RedactsSecrets(t *testing.T) {
 		validateFn: func(_ context.Context, _ string) (*iac.ValidateResult, error) {
 			rawDiag := `{"detail": "Error matching github token ghp_123456789012345678901234567890123456"}`
 			return &iac.ValidateResult{
-				ExitCode: 1,
+				ExitCode:    1,
 				Diagnostics: json.RawMessage(rawDiag),
 			}, nil
 		},
@@ -272,7 +272,7 @@ func TestTofuValidate_RedactsSecrets(t *testing.T) {
 	result := callTool(t, s, "agent.tofu.validate", map[string]interface{}{
 		"workdir": "/tmp/terraform",
 	})
-	
+
 	if result.IsError {
 		t.Fatal("agent.tofu.validate returned error")
 	}
