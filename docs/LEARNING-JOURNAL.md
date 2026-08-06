@@ -5455,3 +5455,9 @@ underlying source says otherwise.
 **Why this approach**: Minimizes cost and latency by mapping request complexity to appropriate model capacity tiers.
 **What was rejected**: Fixed single model tier routing for all tasks.
 **What cost was accepted**: Tier selection decision boundary evaluation.
+
+### Leaf 13.5: Blocking Gate & Advisory Rubric Isolation
+**What landed**: Created ackend/src/generation/rubric.py with BlockingGate and AdvisoryRubric modules, guaranteeing that advisory rubric scores never affect hard gate pass/fail decisions with unit tests.
+**Why this approach**: Prevents advisory quality or style feedback from compromising strict security and structural compliance gates.
+**What was rejected**: Coupling gate pass/fail decisions to advisory style scores.
+**What cost was accepted**: Independent execution of gate and advisory validation logic.
