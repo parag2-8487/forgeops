@@ -5557,3 +5557,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees zero-setup template availability across all 8 supported stack ecosystems.
 **What was rejected**: Unverified user-supplied templates for default generation.
 **What cost was accepted**: Static template definition catalog.
+
+### Leaf 15.6: Templates Validation CI Pipeline
+**What landed**: Created .github/workflows/templates-validation.yml executing automated template rendering validation in GitHub Actions.
+**Why this approach**: Prevents broken or invalid templates from landing in the default template library.
+**What was rejected**: Manual template validation.
+**What cost was accepted**: CI pipeline run time for template testing.
