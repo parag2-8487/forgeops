@@ -69,9 +69,10 @@ agent/testdata/envelopes/**/*.json text eol=lf
 #
 # scripts/check-lockfile-attrs.sh asserts no lockfile carries `-diff`.
 pnpm-lock.yaml       linguist-generated
-requirements.lock    linguist-generated
-requirements-dev.lock linguist-generated
-requirements-tools.lock linguist-generated
+requirements.lock    linguist-generated text eol=lf
+requirements-dev.lock linguist-generated text eol=lf
+requirements-tools.lock linguist-generated text eol=lf
+
 go.sum               linguist-generated
 # Arrives with task 11.1; listed now so the rule is stated once and the check has a
 # single place to look.
