@@ -5383,3 +5383,9 @@ underlying source says otherwise.
 **Why this approach**: Exposes governed REST endpoints under router-level principal authentication.
 **What was rejected**: Unauthenticated raw socket / IPC endpoints for querying codebase metrics.
 **What cost was accepted**: Temporary static default responses in endpoint handlers ahead of vector DB wiring.
+
+### Leaf 11.9: Embedding Orchestration & Table Selection (D-48)
+**What landed**: Implemented ackend/src/ai/embeddings.py with EmbeddingOrchestrator supporting Voyage AI (oyage-code-2) and local ge-m3 backends, D-48 target table selection (embeddings_voyage vs embeddings_local), and unit tests.
+**Why this approach**: Guarantees strict isolation between embedding models and their respective 1024-dim database tables per decision D-48.
+**What was rejected**: Single shared table for multiple distinct embedding backend outputs.
+**What cost was accepted**: Local mock fallback when external Voyage AI key is set to placeholder value.
