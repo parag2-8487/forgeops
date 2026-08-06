@@ -182,10 +182,10 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 14.8  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the SPIFFE workload identity provider                               | complete  |
 | 14.9  | Implement the agent validators and the Kubernetes CI harness                                       | Add the kind-based `k8s` CI job with the SPIRE attestation harness            | complete  |
 | 15.1  | Implement the Safe Default Template Library and prove every template is verified                   | Implement the template loader and manifest contract                           | complete  |
-| 15.2  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Node.js and Python template sets                                      | pending  |
-| 15.3  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Go and Rust template sets                                             | pending  |
-| 15.4  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Java/Kotlin and Ruby template sets                                    | pending  |
-| 15.5  | Implement the Safe Default Template Library and prove every template is verified                   | Add the PHP and .NET template sets                                            | pending  |
+| 15.2  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Node.js and Python template sets                                      | complete  |
+| 15.3  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Go and Rust template sets                                             | complete  |
+| 15.4  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Java/Kotlin and Ruby template sets                                    | complete  |
+| 15.5  | Implement the Safe Default Template Library and prove every template is verified                   | Add the PHP and .NET template sets                                            | complete  |
 | 15.6  | Implement the Safe Default Template Library and prove every template is verified                   | Add the `templates` CI job that runs the real validation pipeline             | pending  |
 | 15.7  | Implement the Safe Default Template Library and prove every template is verified                   | Write property test Q-21 for template-library validity                        | pending  |
 | 16.1  | Implement the Change Approval Center API surface                                                   | Implement change-set retrieval, approval and the state machine                | pending  |

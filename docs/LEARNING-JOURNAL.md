@@ -5551,3 +5551,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees template parameter contracts are satisfied prior to artifact rendering.
 **What was rejected**: Unchecked Jinja/string replacement without manifest contracts.
 **What cost was accepted**: Strict variable validation on render calls.
+
+### Leaves 15.2 - 15.5: Multi-Language Safe Default Template Library
+**What landed**: Created ackend/src/generation/template_library.py registering safe default templates for Node.js, Python, Go, Rust, Java/SpringBoot, Ruby/Rails, PHP/Laravel, and .NET/ASP.NET with unit tests.
+**Why this approach**: Guarantees zero-setup template availability across all 8 supported stack ecosystems.
+**What was rejected**: Unverified user-supplied templates for default generation.
+**What cost was accepted**: Static template definition catalog.
