@@ -5413,3 +5413,9 @@ underlying source says otherwise.
 **Why this approach**: Restricts token scope to individual GitHub App installations rather than requiring broad user tokens.
 **What was rejected**: Permanent static OAuth tokens for multi-repository scanning.
 **What cost was accepted**: Synthetic token generation fallback during test/development runs.
+
+### Leaf 12.3: Deterministic Readiness Scoring Engine
+**What landed**: Implemented ackend/src/projects/readiness.py with ReadinessEngine calculating readiness scores (0-100), breakdown metrics, and action recommendations with unit tests.
+**Why this approach**: Guarantees deterministic readiness scoring over codebase metadata.
+**What was rejected**: Non-deterministic heuristic scoring logic.
+**What cost was accepted**: Static category weighting rules across project types.
