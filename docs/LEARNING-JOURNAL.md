@@ -5329,3 +5329,9 @@ leaf count; give every new decision from D-59 onward a paragraph in chapter 8 an
 newly found defect a paragraph in chapter 9 with the pattern it belongs to; regenerate the
 comprehension artifact when a group of leaves completes; and never write "verified" where the
 underlying source says otherwise.
+
+### Group 10: Secret Management (Basic)
+**What landed**: Leaves 10.4 through 10.6. Finalized the API endpoints in ackend/src/secrets/routes.py with SecretStore interaction. Implemented deploy-time secret injection as a governed operation in ackend/src/secrets/injection.py. Wrote property test Q-12 for redaction before prompt assembly using Hypothesis to ensure no raw secrets leak into assembled prompts.
+**Decisions**: We mocked the SECRET_BACKEND behavior gracefully in integration tests to ensure tests run reliably when FORGEOPS_TEST_DATABASE_URL is set, avoiding complex local pre-seeding of the Infisical container.
+**Defects**: Found that ci-jobs-baseline.txt needed to be updated to remove secrets as the job is now fully defined in CI.
+**What was not verified**: The actual full round trip against the live Infisical container was not verified locally due to WSL/Docker limitations, relying on CI for execution.
