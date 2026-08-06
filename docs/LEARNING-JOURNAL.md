@@ -5533,3 +5533,9 @@ underlying source says otherwise.
 **Why this approach**: Provides self-healing diagnostic feedback for missing local CLI tools via gent doctor.
 **What was rejected**: Manual environment inspection for missing CLI dependencies.
 **What cost was accepted**: System PATH lookup per CLI tool.
+
+### Leaf 14.8: SPIFFE Workload Identity Provider
+**What landed**: Created gent/internal/identity/spiffe.go with SPIFFEIdentityProvider minting structured SPIFFE IDs for zero-trust workload attestation with unit tests.
+**Why this approach**: Standardizes workload identity format using SPIFFE URI specifications.
+**What was rejected**: Custom unstandardized string identity format for workloads.
+**What cost was accepted**: Trust domain and namespace URI formatting constraints.
