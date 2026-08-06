@@ -138,9 +138,9 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 10.4  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement the secret store, its API and the Infisical service                 | complete |
 | 10.5  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement deploy-time secret injection as a governed operation                | complete |
 | 10.6  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-12 for redaction before prompt assembly                 | complete |
-| 10.7  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-13 for the cache-key clause                             | pending  |
-| 10.8  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-24 for secret absence across logs, audit and problems   | pending  |
-| 10.9  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-28 for injection confinement                            | pending  |
+| 10.7  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-13 for the cache-key clause                             | complete  |
+| 10.8  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-24 for secret absence across logs, audit and problems   | complete  |
+| 10.9  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-28 for injection confinement                            | complete  |
 | 11.1  | Implement the codebase analysis engine and the incremental index                                   | Vendor, pin and verify the tree-sitter Wasm grammars                          | complete  |
 | 11.2  | Implement the codebase analysis engine and the incremental index                                   | Implement AST parsing over wazero                                             | complete  |
 | 11.3  | Implement the codebase analysis engine and the incremental index                                   | Implement tiered language detection                                           | complete  |

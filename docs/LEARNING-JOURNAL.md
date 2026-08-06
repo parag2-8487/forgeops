@@ -5611,3 +5611,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees modular frontend architecture and test coverage across all major platform features.
 **What was rejected**: Monolithic page layout implementations.
 **What cost was accepted**: Component modularization maintenance.
+
+### Leaves 10.7 - 10.9: Property Tests Q-13, Q-24, Q-28
+**What landed**: Created 	est_q13_cache_key.py, 	est_q24_secret_absence.py, and 	est_q28_injection_confinement.py verifying cache determinism, credential absence, and prompt injection confinement.
+**Why this approach**: Guarantees zero credential leaks and prompt boundary preservation under randomized inputs.
+**What was rejected**: Unverified heuristic string checks.
+**What cost was accepted**: Property test execution time.
