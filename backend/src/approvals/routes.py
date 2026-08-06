@@ -52,3 +52,17 @@ def reject_changeset(
         raise HTTPException(status_code=404, detail="ChangeSet not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{cs_id}/rollback", response_model=ChangeSetResponse)
+def rollback_changeset(
+    cs_id: str,
+    service: ApprovalService = Depends(get_approval_service)
+):
+    try:
+        return service.rollback_changeset(cs_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="ChangeSet not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+

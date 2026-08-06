@@ -24,3 +24,13 @@ def test_approval_reject_flow():
 
     rejected = svc.reject_changeset(cs.id, rejector="sec-team")
     assert rejected.status == ApprovalStatus.REJECTED
+
+
+def test_approval_rollback_flow():
+    svc = get_approval_service()
+    cs = svc.create_changeset("proj-3", "Deploy feature X", "--- file\n+++ file")
+    svc.approve_changeset(cs.id, approver="alice")
+
+    rolled_back = svc.rollback_changeset(cs.id)
+    assert rolled_back.status == ApprovalStatus.ROLLED_BACK
+

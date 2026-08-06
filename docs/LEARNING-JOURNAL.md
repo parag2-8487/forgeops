@@ -5575,3 +5575,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees approval gating immutability before pipeline execution.
 **What was rejected**: Unchecked bypass of change approval requirements.
 **What cost was accepted**: In-memory state machine transition enforcement.
+
+### Leaf 16.2: Change Approval Rollback Handles & Revert Path
+**What landed**: Added rollback_changeset() API endpoint and service logic allowing approved or executed ChangeSets to transition to ROLLED_BACK with integration tests.
+**Why this approach**: Guarantees auditable rollback state history for all deployment changes.
+**What was rejected**: Destructive hard-deletion of executed ChangeSet records.
+**What cost was accepted**: Rollback state validation checks.
