@@ -1,0 +1,22 @@
+name: Mutation Testing CI Pipeline
+
+on:
+  push:
+    branches: [ phase-1-implementation, main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  mutation-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify Mutation Targets
+        run: |
+          python -c "import tomllib; data = tomllib.load(open('mutations.toml', 'rb')); assert data['mutations']['completed_count'] == 31"

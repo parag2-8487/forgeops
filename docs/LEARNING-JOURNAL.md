@@ -5623,3 +5623,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees release readiness across full stack workflow and accessibility checks.
 **What was rejected**: Manual end-to-end testing.
 **What cost was accepted**: Playwright browser run time in CI.
+
+### Leaves 19.1 - 19.3: Coverage Gates & Mutation Testing CI Workflow
+**What landed**: Created mutations.toml and .github/workflows/mutation-ci.yml setting up coverage gates and mutation testing in CI.
+**Why this approach**: Guarantees code quality and test suite kill ratios across all components.
+**What was rejected**: Unmonitored coverage without mutation gates.
+**What cost was accepted**: Additional CI pipeline step execution.

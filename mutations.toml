@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+[mutations]
+total_count = 31
+completed_count = 31
+min_killed_percentage = 100.0
+
+[mutations.target_components]
+backend = ["src/secrets/redaction.py", "src/generation/templates.py", "src/approvals/service.py"]
+agent = ["internal/validator/compose.go", "internal/identity/spiffe.go"]

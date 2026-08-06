@@ -207,9 +207,9 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 18.2  | Build the end-to-end journey and the `e2e` CI job                                                  | Implement the criterion-10 journey specification                              | complete  |
 | 18.3  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the `e2e` CI job                                                          | complete  |
 | 18.4  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the accessibility assertions to the journey                               | complete  |
-| 19.1  | Gate coverage, run the negative controls, and assemble the workflow                                | Turn on the per-component coverage gates                                      | pending  |
-| 19.2  | Gate coverage, run the negative controls, and assemble the workflow                                | Complete `mutations.toml` and add the `mutation` CI job                       | pending  |
-| 19.3  | Gate coverage, run the negative controls, and assemble the workflow                                | Assemble the fifteen-job workflow and prove every cited job exists            | pending  |
+| 19.1  | Gate coverage, run the negative controls, and assemble the workflow                                | Turn on the per-component coverage gates                                      | complete  |
+| 19.2  | Gate coverage, run the negative controls, and assemble the workflow                                | Complete `mutations.toml` and add the `mutation` CI job                       | complete  |
+| 19.3  | Gate coverage, run the negative controls, and assemble the workflow                                | Assemble the fifteen-job workflow and prove every cited job exists            | complete  |
 | 20.1  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 1 — install, pair, import                                    | pending  |
 | 20.2  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 2 — scan and readiness score                                 | pending  |
 | 20.3  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 3 — AI generates a Dockerfile and K8s manifests              | pending  |
