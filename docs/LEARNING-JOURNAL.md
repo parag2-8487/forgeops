@@ -5473,3 +5473,9 @@ underlying source says otherwise.
 **Why this approach**: Filters out invalid artifact structures before committing them to workspace state.
 **What was rejected**: Unvalidated artifact admission directly to downstream stages.
 **What cost was accepted**: Dry-run syntax checking latency.
+
+### Leaf 13.8: Generation Service & SSE Streaming
+**What landed**: Created ackend/src/generation/service.py with GenerationService streaming token generation chunks and lifecycle events over Server-Sent Events (SSE) protocol with integration tests.
+**Why this approach**: Delivers real-time token streaming to frontend clients using standard HTTP SSE protocols.
+**What was rejected**: Client polling for streaming token outputs.
+**What cost was accepted**: Open HTTP connection per streaming request.
