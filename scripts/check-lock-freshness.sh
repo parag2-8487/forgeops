@@ -54,20 +54,21 @@ cd "$TMPDIR_LOCK"
 
 run_pip_compile \
 	--generate-hashes \
-	--reuse-hashes \
 	--allow-unsafe \
 	--strip-extras \
 	--output-file=requirements.lock \
+	--quiet \
 	pyproject.toml
 
 run_pip_compile \
 	--generate-hashes \
-	--reuse-hashes \
 	--allow-unsafe \
 	--strip-extras \
 	--extra=dev \
 	--output-file=requirements-dev.lock \
+	--quiet \
 	pyproject.toml
+
 
 
 
@@ -78,15 +79,15 @@ FAILED=0
 for lock in requirements.lock requirements-dev.lock; do
 	# Committed files may be checked out CRLF on Windows; compare content, not
 	# line-ending policy, so a correct lock is never reported stale.
-	DIFF_OUT=$(diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" 2>&1 || true)
-	if [ -z "$DIFF_OUT" ]; then
+	if diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" >/dev/null 2>&1; then
 		printf 'ok:   %s is up to date\n' "$lock"
 	else
 		printf 'ERROR: backend/%s is stale. Run: make lock-backend\n' "$lock" >&2
-		echo "$DIFF_OUT" >&2
+		diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" >&2 || true
 		FAILED=1
 	fi
 done
+
 
 
 if [ "$FAILED" -eq 1 ]; then
