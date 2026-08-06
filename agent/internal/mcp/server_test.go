@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,6 +254,44 @@ func TestTofuValidate_ReturnsDiagnostics(t *testing.T) {
 	}
 	if vr.Diagnostics == nil {
 		t.Error("diagnostics is nil, expected non-nil")
+	}
+}
+
+func TestTofuValidate_RedactsSecrets(t *testing.T) {
+	deps := newTestDeps()
+	deps.Tofu = &fakeRunner{
+		validateFn: func(_ context.Context, _ string) (*iac.ValidateResult, error) {
+			rawDiag := `{"detail": "Error matching github token ghp_123456789012345678901234567890123456"}`
+			return &iac.ValidateResult{
+				ExitCode: 1,
+				Diagnostics: json.RawMessage(rawDiag),
+			}, nil
+		},
+	}
+	s := NewServer(deps, "1.0.0")
+	result := callTool(t, s, "agent.tofu.validate", map[string]interface{}{
+		"workdir": "/tmp/terraform",
+	})
+	
+	if result.IsError {
+		t.Fatal("agent.tofu.validate returned error")
+	}
+
+	text := getToolResultText(t, result)
+	var vr validateResponse
+	if err := json.Unmarshal([]byte(text), &vr); err != nil {
+		t.Fatalf("invalid JSON: %v\ntext: %s", err, text)
+	}
+
+	if vr.Diagnostics == nil {
+		t.Fatal("diagnostics is nil, expected non-nil")
+	}
+	diagStr := string(*vr.Diagnostics)
+	if strings.Contains(diagStr, "ghp_123456789012345678901234567890123456") {
+		t.Errorf("secret leaked in validator diagnostic! diag: %s", diagStr)
+	}
+	if !strings.Contains(diagStr, "FORGEOPS_REDACTED") {
+		t.Errorf("expected redacted marker in diagnostic, got: %s", diagStr)
 	}
 }
 

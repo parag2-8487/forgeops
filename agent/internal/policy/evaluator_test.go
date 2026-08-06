@@ -160,7 +160,7 @@ decision = {"result": "allow"} { input.action == "allow_me" }
 	if err != nil {
 		t.Fatalf("evaluation should still work, got err %v", err)
 	}
-	if result != "allow" {
+	if result["result"] != "allow" {
 		t.Fatalf("prior bundle should still evaluate correctly")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/parag8487/ForgeOps/agent/internal/iac"
+	"github.com/parag8487/ForgeOps/agent/internal/secretscan"
 )
 
 // errorResult creates a CallToolResult indicating a tool-level error.
@@ -117,7 +118,14 @@ func (s *Server) handleTofuValidate(ctx context.Context, req mcp.CallToolRequest
 		ExitCode: result.ExitCode,
 	}
 	if result.Diagnostics != nil {
-		resp.Diagnostics = &result.Diagnostics
+		// Enforce redaction chokepoint before returning validator diagnostics to MCP
+		redacted, err := secretscan.Redact(ctx, secretscan.Chunk{Text: string(result.Diagnostics)}, nil)
+		if err == nil {
+			diag := json.RawMessage(redacted.Text())
+			resp.Diagnostics = &diag
+		} else {
+			resp.Diagnostics = &result.Diagnostics
+		}
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
