@@ -5569,3 +5569,9 @@ underlying source says otherwise.
 **Why this approach**: Mathematically proves rendering completeness and absence of unreplaced mustache placeholders across all template definitions.
 **What was rejected**: Static hand-crafted string matching tests.
 **What cost was accepted**: Randomized property test evaluation.
+
+### Leaf 16.1: Change Approval Center State Machine & API Surface
+**What landed**: Created ackend/src/approvals/ with ApprovalService enforcing strict ChangeSet state machine transitions (PENDING -> APPROVED/REJECTED) with integration tests.
+**Why this approach**: Guarantees approval gating immutability before pipeline execution.
+**What was rejected**: Unchecked bypass of change approval requirements.
+**What cost was accepted**: In-memory state machine transition enforcement.
