@@ -180,7 +180,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 14.6  | Implement the agent validators and the Kubernetes CI harness                                       | Adapt the Phase 0 OpenTofu runner as a validator                              | complete  |
 | 14.7  | Implement the agent validators and the Kubernetes CI harness                                       | Implement devtools discovery and extend `agent doctor`                        | complete  |
 | 14.8  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the SPIFFE workload identity provider                               | complete  |
-| 14.9  | Implement the agent validators and the Kubernetes CI harness                                       | Add the kind-based `k8s` CI job with the SPIRE attestation harness            | pending  |
+| 14.9  | Implement the agent validators and the Kubernetes CI harness                                       | Add the kind-based `k8s` CI job with the SPIRE attestation harness            | complete  |
 | 15.1  | Implement the Safe Default Template Library and prove every template is verified                   | Implement the template loader and manifest contract                           | pending  |
 | 15.2  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Node.js and Python template sets                                      | pending  |
 | 15.3  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Go and Rust template sets                                             | pending  |

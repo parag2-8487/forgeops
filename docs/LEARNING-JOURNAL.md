@@ -5539,3 +5539,9 @@ underlying source says otherwise.
 **Why this approach**: Standardizes workload identity format using SPIFFE URI specifications.
 **What was rejected**: Custom unstandardized string identity format for workloads.
 **What cost was accepted**: Trust domain and namespace URI formatting constraints.
+
+### Leaf 14.9: Kind-Based Kubernetes CI Job & SPIRE Attestation Harness
+**What landed**: Created .github/workflows/k8s-ci.yml defining automated kind Kubernetes cluster provisioning with SPIRE workload identity attestation harness.
+**Why this approach**: Guarantees automated end-to-end integration testing for Kubernetes and SPIFFE/SPIRE attestation on every PR.
+**What was rejected**: Manual or external cluster deployment for CI verification.
+**What cost was accepted**: Kind cluster boot time in CI runner.

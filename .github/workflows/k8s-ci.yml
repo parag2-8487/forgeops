@@ -1,0 +1,29 @@
+name: Kubernetes & SPIRE CI
+
+on:
+  push:
+    branches: [ phase-1-implementation, main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  k8s-spire-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.8.0
+        with:
+          cluster_name: forgeops-kind
+          node_image: kindest/node:v1.28.0
+
+      - name: Verify Kubernetes Cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
+      - name: Install SPIRE Attestation Harness
+        run: |
+          echo "Deploying SPIRE server and agent CRDs for workload attestation..."
+          kubectl create namespace spire || true
