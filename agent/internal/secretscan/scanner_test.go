@@ -91,6 +91,17 @@ func TestRedact(t *testing.T) {
 	}
 }
 
+func TestRedactJSON(t *testing.T) {
+	scanner, _ := secretscan.NewScanner()
+	rawText := `{"detail": "Error matching token ghp_123456789012345678901234567890123456"}`
+	chunk := secretscan.Chunk{Text: rawText}
+	redacted := scanner.Redact(context.Background(), chunk, nil)
+
+	if strings.Contains(redacted.Text(), "ghp_123456789012345678901234567890123456") {
+		t.Errorf("Redacted chunk still contains the raw secret! got: %s", redacted.Text())
+	}
+}
+
 type mockScanner struct{}
 
 func (m *mockScanner) Scan(ctx context.Context, path string, content []byte) ([]secretscan.Finding, error) {

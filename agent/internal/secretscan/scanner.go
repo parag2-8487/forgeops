@@ -89,7 +89,7 @@ func (s *gitleaksScanner) Scan(ctx context.Context, path string, content []byte)
 }
 
 func (s *gitleaksScanner) Redact(ctx context.Context, c Chunk, findings []Finding) RedactedChunk {
-	if len(findings) == 0 {
+	if findings != nil && len(findings) == 0 {
 		return RedactedChunk{text: c.Text}
 	}
 

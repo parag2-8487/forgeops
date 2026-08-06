@@ -132,7 +132,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 9.5   | Implement the policy engine and prove double evaluation agrees                                     | Implement policy CRUD, templates and the dry-run endpoint                     | done    |
 | 9.6   | Implement the policy engine and prove double evaluation agrees                                     | Write property test Q-06 for backend/agent policy agreement                   | done    |
 | 9.7   | Implement the policy engine and prove double evaluation agrees                                     | Write property test Q-07 for fail-closed digest disagreement                  | done    |
-| 10.1  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement agent-side secret scanning and redaction                            | pending |
+| 10.1  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement agent-side secret scanning and redaction                            | done    |
 | 10.2  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement the backend redactor and the single prompt-assembly chokepoint      | pending |
 | 10.3  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Constrain the semantic cache to redacted prompts                              | pending |
 | 10.4  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement the secret store, its API and the Infisical service                 | pending |
