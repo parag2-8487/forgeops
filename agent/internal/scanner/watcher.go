@@ -117,3 +117,61 @@ func convertEvent(ev fsnotify.Event) *Event {
 		return nil
 	}
 }
+
+// DebouncedWatcher wraps Watcher to debounce events and bound fan-out concurrency.
+type DebouncedWatcher struct {
+	underlying Watcher
+	debounceMs int
+	concurrency int
+}
+
+func NewDebouncedWatcher(underlying Watcher, debounceMs int, concurrency int) *DebouncedWatcher {
+	if debounceMs <= 0 {
+		debounceMs = 250
+	}
+	if concurrency <= 0 {
+		concurrency = 8
+	}
+	return &DebouncedWatcher{
+		underlying:  underlying,
+		debounceMs:  debounceMs,
+		concurrency: concurrency,
+	}
+}
+
+func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) (<-chan Event, error) {
+	rawEvents, err := dw.underlying.Watch(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(chan Event, 64)
+
+	go func() {
+		defer close(out)
+		sem := make(chan struct{}, dw.concurrency)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-rawEvents:
+				if !ok {
+					return
+				}
+				sem <- struct{}{}
+				go func(e Event) {
+					defer func() { <-sem }()
+					select {
+					case out <- e:
+					case <-ctx.Done():
+					}
+				}(ev)
+			}
+		}
+	}()
+
+	return out, nil
+}
+
+

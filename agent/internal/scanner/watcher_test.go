@@ -179,3 +179,39 @@ done:
 		t.Error("received event after close")
 	}
 }
+
+func TestDebouncedWatcher_FanOutAndDelivery(t *testing.T) {
+	dir := t.TempDir()
+
+	fw, err := NewFSNotifyWatcher()
+	if err != nil {
+		t.Fatalf("new watcher: %v", err)
+	}
+	defer fw.Close()
+
+	dw := NewDebouncedWatcher(fw, 100, 4)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	events, err := dw.WatchDebounced(ctx, []string{dir})
+	if err != nil {
+		t.Fatalf("watch debounced: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Create test file
+	testFile := filepath.Join(dir, "debounced.txt")
+	os.WriteFile(testFile, []byte("data"), 0o644)
+
+	select {
+	case ev := <-events:
+		if filepath.Base(ev.Path) != "debounced.txt" {
+			t.Errorf("unexpected event path: %s", ev.Path)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for debounced event")
+	}
+}
+

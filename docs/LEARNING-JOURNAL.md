@@ -5371,3 +5371,9 @@ underlying source says otherwise.
 **Why this approach**: Restricts incremental re-indexing solely to modified files and their downstream dependents.
 **What was rejected**: Full-repository re-indexing on minor file modifications.
 **What cost was accepted**: In-memory dependency and dependent relationship tracking per workspace.
+
+### Leaf 11.7: Watch Mode with Debouncing & Bounded Fan-Out
+**What landed**: Implemented DebouncedWatcher in gent/internal/scanner/watcher.go with 250ms event debouncing (SCAN_WATCH_DEBOUNCE_MS) and bounded concurrency semaphore (SCAN_PARSER_CONCURRENCY). Added tests for debounced fan-out and delivery.
+**Why this approach**: Protects system resources during high-frequency file mutations while ensuring all file events are eventually processed.
+**What was rejected**: Unbounded goroutine allocation per incoming snotify event.
+**What cost was accepted**: 250ms debouncing delay prior to incremental index pipeline execution.
