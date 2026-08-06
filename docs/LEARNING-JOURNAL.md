@@ -5353,3 +5353,9 @@ underlying source says otherwise.
 **Why this approach**: Provides explainable language detection per phases.md §10.8.1 so readiness scoring can detail exactly why a language was assigned.
 **What was rejected**: Whole-file parsing for language identification (rejected to keep traversal throughput high).
 **What cost was accepted**: Content heuristics are restricted to the first 8 KiB of file content.
+
+### Leaf 11.4: Filtered Recursive Scanner & Cold-Start Inventory
+**What landed**: Implemented agent/internal/scanner/recursive_scanner.go with FilteredScanner emitting cold-start heuristic inventories (manifests, config files, entry points, language set), skipping .git, node_modules, binary files, and files over SCAN_MAX_FILE_SIZE_BYTES (1MB).
+**Why this approach**: Delivers instant UI feedback on the first round trip per design §11.4.4 before incremental AST indexing completes.
+**What was rejected**: Delaying UI initial state emission until deep AST indexing finishes.
+**What cost was accepted**: Cold-start inventory relies on fast heuristics rather than full AST traversal.
