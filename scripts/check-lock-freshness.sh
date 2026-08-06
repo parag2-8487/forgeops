@@ -57,7 +57,6 @@ run_pip_compile \
 	--allow-unsafe \
 	--strip-extras \
 	--output-file=requirements.lock \
-	--quiet \
 	pyproject.toml
 
 run_pip_compile \
@@ -66,8 +65,8 @@ run_pip_compile \
 	--strip-extras \
 	--extra=dev \
 	--output-file=requirements-dev.lock \
-	--quiet \
 	pyproject.toml
+
 
 cd "$REPO_ROOT"
 
