@@ -5461,3 +5461,9 @@ underlying source says otherwise.
 **Why this approach**: Prevents advisory quality or style feedback from compromising strict security and structural compliance gates.
 **What was rejected**: Coupling gate pass/fail decisions to advisory style scores.
 **What cost was accepted**: Independent execution of gate and advisory validation logic.
+
+### Leaf 13.6: Structurally Bounded Feedback Repair Loop
+**What landed**: Created ackend/src/generation/feedback_loop.py with BoundedFeedbackLoop enforcing max_iterations=3 loop limit on generation feedback repairs with unit tests.
+**Why this approach**: Guarantees termination and prevents runaway LLM repair costs.
+**What was rejected**: Unbounded retry loops for self-healing code generation.
+**What cost was accepted**: Termination with failure status if 3 repair attempts are exhausted.
