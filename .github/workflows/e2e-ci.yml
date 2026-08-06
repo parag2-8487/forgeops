@@ -1,0 +1,43 @@
+name: End-to-End Release Journey CI
+
+on:
+  push:
+    branches: [ phase-1-implementation, main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  e2e-journey:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: '11.17.0'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          pnpm install
+
+      - name: Install Playwright Browsers
+        run: |
+          cd frontend
+          npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          pnpm build
+
+      - name: Run End-to-End Journey Tests
+        run: |
+          cd frontend
+          npx playwright test e2e/journey.spec.ts

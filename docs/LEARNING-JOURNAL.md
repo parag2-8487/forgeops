@@ -5617,3 +5617,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees zero credential leaks and prompt boundary preservation under randomized inputs.
 **What was rejected**: Unverified heuristic string checks.
 **What cost was accepted**: Property test execution time.
+
+### Leaves 18.1 - 18.4: End-to-End Release Journey & CI Workflow
+**What landed**: Created rontend/e2e/journey.spec.ts and .github/workflows/e2e-ci.yml executing Playwright Criterion 10 journey testing in CI.
+**Why this approach**: Guarantees release readiness across full stack workflow and accessibility checks.
+**What was rejected**: Manual end-to-end testing.
+**What cost was accepted**: Playwright browser run time in CI.

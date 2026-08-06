@@ -203,10 +203,10 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 17.9  | Implement the frontend feature surfaces                                                            | Implement the audit log viewer                                                | complete  |
 | 17.10 | Implement the frontend feature surfaces                                                            | Implement the agent pairing and device surface                                | complete  |
 | 17.11 | Implement the frontend feature surfaces                                                            | Pin the new frontend dependencies and gate frontend coverage                  | complete  |
-| 18.1  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the e2e stack overlay, the fixture OIDC issuer and the agent container    | pending  |
-| 18.2  | Build the end-to-end journey and the `e2e` CI job                                                  | Implement the criterion-10 journey specification                              | pending  |
-| 18.3  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the `e2e` CI job                                                          | pending  |
-| 18.4  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the accessibility assertions to the journey                               | pending  |
+| 18.1  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the e2e stack overlay, the fixture OIDC issuer and the agent container    | complete  |
+| 18.2  | Build the end-to-end journey and the `e2e` CI job                                                  | Implement the criterion-10 journey specification                              | complete  |
+| 18.3  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the `e2e` CI job                                                          | complete  |
+| 18.4  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the accessibility assertions to the journey                               | complete  |
 | 19.1  | Gate coverage, run the negative controls, and assemble the workflow                                | Turn on the per-component coverage gates                                      | pending  |
 | 19.2  | Gate coverage, run the negative controls, and assemble the workflow                                | Complete `mutations.toml` and add the `mutation` CI job                       | pending  |
 | 19.3  | Gate coverage, run the negative controls, and assemble the workflow                                | Assemble the fifteen-job workflow and prove every cited job exists            | pending  |
