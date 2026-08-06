@@ -54,6 +54,7 @@ cd "$TMPDIR_LOCK"
 
 run_pip_compile \
 	--generate-hashes \
+	--reuse-hashes \
 	--allow-unsafe \
 	--strip-extras \
 	--output-file=requirements.lock \
@@ -61,11 +62,13 @@ run_pip_compile \
 
 run_pip_compile \
 	--generate-hashes \
+	--reuse-hashes \
 	--allow-unsafe \
 	--strip-extras \
 	--extra=dev \
 	--output-file=requirements-dev.lock \
 	pyproject.toml
+
 
 
 cd "$REPO_ROOT"
