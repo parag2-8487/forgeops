@@ -5365,3 +5365,9 @@ underlying source says otherwise.
 **Why this approach**: Honored Research §C10 density and boundary parameters to optimize LLM retrieval quality.
 **What was rejected**: Character-based fixed-length splitting without AST boundary awareness.
 **What cost was accepted**: Fast word-frequency token estimation (~4 chars/token) instead of expensive full BPE tokenization.
+
+### Leaf 11.6: Dependency Graph & Dirty Closure
+**What landed**: Implemented gent/internal/scanner/depgraph/graph.go with directed dependency tracking and DirtyClosure() transitive downstream resolution with diamond and circular graph tests.
+**Why this approach**: Restricts incremental re-indexing solely to modified files and their downstream dependents.
+**What was rejected**: Full-repository re-indexing on minor file modifications.
+**What cost was accepted**: In-memory dependency and dependent relationship tracking per workspace.

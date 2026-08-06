@@ -146,7 +146,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 11.3  | Implement the codebase analysis engine and the incremental index                                   | Implement tiered language detection                                           | complete  |
 | 11.4  | Implement the codebase analysis engine and the incremental index                                   | Implement the filtered recursive scanner                                      | complete  |
 | 11.5  | Implement the codebase analysis engine and the incremental index                                   | Implement cAST semantic chunking                                              | complete  |
-| 11.6  | Implement the codebase analysis engine and the incremental index                                   | Implement the dependency graph and the dirty closure                          | pending  |
+| 11.6  | Implement the codebase analysis engine and the incremental index                                   | Implement the dependency graph and the dirty closure                          | complete  |
 | 11.7  | Implement the codebase analysis engine and the incremental index                                   | Implement watch mode with debouncing and bounded fan-out                      | pending  |
 | 11.8  | Implement the codebase analysis engine and the incremental index                                   | Implement the backend Codebase Index API                                      | pending  |
 | 11.9  | Implement the codebase analysis engine and the incremental index                                   | Implement embedding orchestration for both backends                           | pending  |
