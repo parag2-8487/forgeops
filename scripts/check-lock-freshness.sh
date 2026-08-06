@@ -79,7 +79,8 @@ for lock in requirements.lock requirements-dev.lock; do
 		printf 'ok:   %s is up to date\n' "$lock"
 	else
 		printf 'ERROR: backend/%s is stale. Run: make lock-backend\n' "$lock" >&2
-		diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock"
+		diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" >&2
+
 		FAILED=1
 	fi
 
