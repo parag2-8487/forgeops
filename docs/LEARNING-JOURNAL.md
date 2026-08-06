@@ -5497,3 +5497,9 @@ underlying source says otherwise.
 **Why this approach**: Eliminates external binary execution overhead during compose file validation.
 **What was rejected**: Shelling out to external docker compose binary.
 **What cost was accepted**: Go-native YAML structure unmarshaling.
+
+### Leaf 14.2: In-Process YAML & JSON Schema Validator
+**What landed**: Created gent/internal/validator/schema.go with ValidateYAMLOrJSON() validating payload keys for both JSON and YAML documents in-process with unit tests.
+**Why this approach**: Provides fast, zero-dependency schema validation for configuration files.
+**What was rejected**: Invoking external schema linters via subprocess.
+**What cost was accepted**: Dual format parsing fallback.
