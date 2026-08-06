@@ -174,7 +174,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 13.13 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-29 for retrieval degradation                            | complete  |
 | 14.1  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the Compose validator in process                                    | complete  |
 | 14.2  | Implement the agent validators and the Kubernetes CI harness                                       | Implement YAML and JSON Schema validation in process                          | complete  |
-| 14.3  | Implement the agent validators and the Kubernetes CI harness                                       | Implement Kubernetes server-side dry-run over client-go                       | pending  |
+| 14.3  | Implement the agent validators and the Kubernetes CI harness                                       | Implement Kubernetes server-side dry-run over client-go                       | complete  |
 | 14.4  | Implement the agent validators and the Kubernetes CI harness                                       | Implement Helm lint and template over the Helm SDK                            | pending  |
 | 14.5  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the Trivy config validator and the availability policy              | pending  |
 | 14.6  | Implement the agent validators and the Kubernetes CI harness                                       | Adapt the Phase 0 OpenTofu runner as a validator                              | pending  |

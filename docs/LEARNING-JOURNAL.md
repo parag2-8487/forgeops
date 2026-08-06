@@ -5503,3 +5503,9 @@ underlying source says otherwise.
 **Why this approach**: Provides fast, zero-dependency schema validation for configuration files.
 **What was rejected**: Invoking external schema linters via subprocess.
 **What cost was accepted**: Dual format parsing fallback.
+
+### Leaf 14.3: Kubernetes Server-Side Dry-Run & Offline Fallback
+**What landed**: Created gent/internal/validator/k8s_dryrun.go with K8sDryRunValidator executing client-go server-side dry-run checks with offline schema fallback and unit tests.
+**Why this approach**: Validates manifests against live cluster OpenAPI schemas when available while maintaining offline validation capabilities.
+**What was rejected**: Hard dependency on live K8s cluster access for dev-loop validation.
+**What cost was accepted**: Offline structural fallback checking.
