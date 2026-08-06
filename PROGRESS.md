@@ -165,7 +165,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 13.4  | Implement the AI generation pipeline on top of proven routing and redaction                        | Wire tier selection and prove every tier is reachable                         | complete  |
 | 13.5  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the blocking gate and the advisory rubric with no path between them | complete  |
 | 13.6  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structurally bounded feedback loop                              | complete  |
-| 13.7  | Implement the AI generation pipeline on top of proven routing and redaction                        | Insert the DryRun stage into the existing validation pipeline                 | pending  |
+| 13.7  | Implement the AI generation pipeline on top of proven routing and redaction                        | Insert the DryRun stage into the existing validation pipeline                 | complete  |
 | 13.8  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the generation service, SSE stream and run records                  | pending  |
 | 13.9  | Implement the AI generation pipeline on top of proven routing and redaction                        | Fill the terminal cascade slot with the template fallback                     | pending  |
 | 13.10 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-08 for iteration-bound termination                      | pending  |

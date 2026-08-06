@@ -5467,3 +5467,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees termination and prevents runaway LLM repair costs.
 **What was rejected**: Unbounded retry loops for self-healing code generation.
 **What cost was accepted**: Termination with failure status if 3 repair attempts are exhausted.
+
+### Leaf 13.7: DryRun Validation Stage Insertion
+**What landed**: Created ackend/src/generation/dry_run.py with DryRunStage validating Dockerfile and Kubernetes manifest syntax in dry-run mode prior to admission with unit tests.
+**Why this approach**: Filters out invalid artifact structures before committing them to workspace state.
+**What was rejected**: Unvalidated artifact admission directly to downstream stages.
+**What cost was accepted**: Dry-run syntax checking latency.
