@@ -5587,3 +5587,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees invalid state transitions raise ValueError and state invariants are preserved under arbitrary API sequences.
 **What was rejected**: Manual hand-written transition test cases.
 **What cost was accepted**: Generated sequence property evaluation.
+
+### Leaf 16.4: Property Test Q-23 for Diff Fidelity
+**What landed**: Created ackend/tests/property/test_q23_diff_fidelity.py verifying Property Q-23 via Hypothesis across 100 generated line modification pairs.
+**Why this approach**: Proves diff fidelity and losslessness across arbitrary content modifications.
+**What was rejected**: Hand-crafted diff string assertion tests.
+**What cost was accepted**: Randomized line pair property evaluation.

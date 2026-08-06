@@ -191,7 +191,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 16.1  | Implement the Change Approval Center API surface                                                   | Implement change-set retrieval, approval and the state machine                | complete  |
 | 16.2  | Implement the Change Approval Center API surface                                                   | Implement rollback handles and the revert path                                | complete  |
 | 16.3  | Implement the Change Approval Center API surface                                                   | Write property test Q-22 for change-set state legality                        | complete  |
-| 16.4  | Implement the Change Approval Center API surface                                                   | Write property test Q-23 for diff fidelity                                    | pending  |
+| 16.4  | Implement the Change Approval Center API surface                                                   | Write property test Q-23 for diff fidelity                                    | complete  |
 | 17.1  | Implement the frontend feature surfaces                                                            | Add session handling, the login route and `proxy.ts`                          | pending  |
 | 17.2  | Implement the frontend feature surfaces                                                            | Implement the typed SSE reader over fetch                                     | pending  |
 | 17.3  | Implement the frontend feature surfaces                                                            | Implement the project list and detail surfaces                                | pending  |
