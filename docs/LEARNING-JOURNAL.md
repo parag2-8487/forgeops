@@ -5527,3 +5527,9 @@ underlying source says otherwise.
 **Why this approach**: Adapts Phase 0 OpenTofu validation patterns into the agent validator interface.
 **What was rejected**: External CLI execution of 	ofu validate for local syntax checks.
 **What cost was accepted**: In-process HCL top-level block validation.
+
+### Leaf 14.7: Devtools Discovery & Agent Doctor Extension
+**What landed**: Created gent/internal/doctor/discovery.go with DiscoverDevTools() probing installation status and paths for docker, kubectl, helm, tofu, trivy, and git with unit tests.
+**Why this approach**: Provides self-healing diagnostic feedback for missing local CLI tools via gent doctor.
+**What was rejected**: Manual environment inspection for missing CLI dependencies.
+**What cost was accepted**: System PATH lookup per CLI tool.
