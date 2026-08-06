@@ -5401,3 +5401,9 @@ underlying source says otherwise.
 **Why this approach**: Validates invariant correctness across 100 randomized inputs per property test.
 **What was rejected**: Example-only testing for cryptographic integrity and state closure safety.
 **What cost was accepted**: Extended test execution time for randomized property generation.
+
+### Leaf 12.1: Project CRUD, Settings & Activity Feed
+**What landed**: Created ackend/src/projects/routes.py exposing project creation, retrieval, and activity feed endpoints with settings validation via alidate_project_settings(). Registered router in main.py and added 	est_projects_api.py integration tests.
+**Why this approach**: Prevents invalid project settings from polluting database state while providing structured activity audit logs.
+**What was rejected**: Unvalidated JSON payload ingestion for project configuration settings.
+**What cost was accepted**: Strict settings key whitelist validation.

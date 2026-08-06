@@ -546,6 +546,10 @@ def create_app() -> FastAPI:
 
     app.include_router(analysis_router)
 
+    from .projects.routes import router as projects_router
+
+    app.include_router(projects_router)
+
     from .ai.routes import router as ai_router
 
     app.include_router(ai_router)
