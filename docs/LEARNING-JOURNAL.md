@@ -5521,3 +5521,9 @@ underlying source says otherwise.
 **Why this approach**: Prevents high-risk security violations from bypassing static validation gates.
 **What was rejected**: Bypassing vulnerability scanning when security tools are offline.
 **What cost was accepted**: In-process rule pattern scanning.
+
+### Leaf 14.6: OpenTofu Validator Adaptation
+**What landed**: Created gent/internal/validator/tofu.go with OpenTofuValidator executing ValidateHCLContent() over OpenTofu/Terraform HCL manifests in-process with unit tests.
+**Why this approach**: Adapts Phase 0 OpenTofu validation patterns into the agent validator interface.
+**What was rejected**: External CLI execution of 	ofu validate for local syntax checks.
+**What cost was accepted**: In-process HCL top-level block validation.
