@@ -5335,3 +5335,9 @@ underlying source says otherwise.
 **Decisions**: We mocked the SECRET_BACKEND behavior gracefully in integration tests to ensure tests run reliably when FORGEOPS_TEST_DATABASE_URL is set, avoiding complex local pre-seeding of the Infisical container.
 **Defects**: Found that ci-jobs-baseline.txt needed to be updated to remove secrets as the job is now fully defined in CI.
 **What was not verified**: The actual full round trip against the live Infisical container was not verified locally due to WSL/Docker limitations, relying on CI for execution.
+
+### Leaf 11.1: Tree-Sitter Wasm Grammar Vendoring & Integrity Guard
+**What landed**: Added gent/internal/scanner/grammars/ containing embedded Wasm grammars for 12 languages (JavaScript, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Ruby, PHP, C#, YAML/Dockerfile/HCL), grammars.lock.json, and LoadGrammars() with load-time SHA-256 digest validation. Added scripts/sbom-merge.py to inject CycloneDX 1.6 components into the SBOM and updated deps_test.go to verify grammar digests and CGO_ENABLED=0 boundary.
+**Why this approach**: Guarantees pure-Go zero-CGO binary builds (CGO_ENABLED=0, decision D-29) while ensuring load-time cryptographic verification prevents tampered or corrupted grammars from executing in wazero.
+**What was rejected**: Runtime dynamic downloading of Wasm modules (rejected due to air-gap compatibility and supply-chain tampering risks).
+**What cost was accepted**: Increased binary size from embedded Wasm artifacts and build-time vendoring maintenance.

@@ -141,7 +141,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 10.7  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-13 for the cache-key clause                             | pending  |
 | 10.8  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-24 for secret absence across logs, audit and problems   | pending  |
 | 10.9  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-28 for injection confinement                            | pending  |
-| 11.1  | Implement the codebase analysis engine and the incremental index                                   | Vendor, pin and verify the tree-sitter Wasm grammars                          | pending  |
+| 11.1  | Implement the codebase analysis engine and the incremental index                                   | Vendor, pin and verify the tree-sitter Wasm grammars                          | complete  |
 | 11.2  | Implement the codebase analysis engine and the incremental index                                   | Implement AST parsing over wazero                                             | pending  |
 | 11.3  | Implement the codebase analysis engine and the incremental index                                   | Implement tiered language detection                                           | pending  |
 | 11.4  | Implement the codebase analysis engine and the incremental index                                   | Implement the filtered recursive scanner                                      | pending  |
