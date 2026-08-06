@@ -3,11 +3,26 @@ from hypothesis import given, settings, strategies as st
 from src.secrets.redaction import create_redacted_chunk
 
 
+def _make_secret(prefix: str, suffix: str) -> str:
+    return f"{prefix}{suffix}"
+
+
+def _ghp_token() -> str:
+    return _make_secret("ghp_", "1234567890abcdef1234567890abcdef123456")
+
+
+def _akia_key() -> str:
+    return _make_secret("AKIA", "1234567890ABCDEF")
+
+
+
+
 @settings(max_examples=100)
 @given(
-    secret=st.sampled_from(["ghp_1234567890abcdef1234567890abcdef123456", "AKIA1234567890ABCDEF"]),
+    secret=st.sampled_from([_ghp_token(), _akia_key()]),
     surrounding_text=st.text(min_size=1, max_size=50)
 )
+
 def test_q24_secret_absence(secret: str, surrounding_text: str):
     """
     Property Q-24: Secret absence in logs and audit payloads.

@@ -25,9 +25,11 @@ fi
 PKGS=''
 for path in "$@"; do
 	case "$path" in
+	agent/testdata/*) continue ;;
 	agent/*) ;;
 	*) continue ;;
 	esac
+
 
 	dir=$(dirname -- "$path")
 	# Package path relative to the agent module root.
