@@ -5395,3 +5395,9 @@ underlying source says otherwise.
 **Why this approach**: Complements dense vector search with sparse keyword scoring for exact code symbol retrieval.
 **What was rejected**: Pure dense vector search for code symbol lookups.
 **What cost was accepted**: In-memory term frequency counter storage per indexed document set.
+
+### Group 11 Property Tests (Q-10, Q-11, Q-25)
+**What landed**: Added rapid property tests: q10_property_test.go verifying incremental rescan inventory matches full cold-start rescan (Q-10), q11_property_test.go verifying debouncing event safety (Q-11), and grammars/q25_property_test.go proving single-byte Wasm mutations trigger SHA-256 validation failure (Q-25).
+**Why this approach**: Validates invariant correctness across 100 randomized inputs per property test.
+**What was rejected**: Example-only testing for cryptographic integrity and state closure safety.
+**What cost was accepted**: Extended test execution time for randomized property generation.

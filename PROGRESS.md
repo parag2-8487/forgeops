@@ -151,9 +151,9 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 11.8  | Implement the codebase analysis engine and the incremental index                                   | Implement the backend Codebase Index API                                      | complete  |
 | 11.9  | Implement the codebase analysis engine and the incremental index                                   | Implement embedding orchestration for both backends                           | complete  |
 | 11.10 | Implement the codebase analysis engine and the incremental index                                   | Implement the Redis BM25 sparse index                                         | complete  |
-| 11.11 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-10 for incremental-equals-full rescan                   | pending  |
-| 11.12 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-11 for coalescing safety                                | pending  |
-| 11.13 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-25 for grammar integrity and closure termination        | pending  |
+| 11.11 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-10 for incremental-equals-full rescan                   | complete  |
+| 11.12 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-11 for coalescing safety                                | complete  |
+| 11.13 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-25 for grammar integrity and closure termination        | complete  |
 | 12.1  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement project CRUD, settings, tags and the activity feed                  | pending  |
 | 12.2  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement GitHub import and the App installation token source                 | pending  |
 | 12.3  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the deterministic readiness scoring engine                          | pending  |
