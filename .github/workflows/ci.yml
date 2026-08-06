@@ -108,7 +108,10 @@ jobs:
         run: pip install "pip-tools==${PIP_TOOLS_VERSION}"
       # Regenerate both locks and fail on ANY diff.
       - name: Backend lock freshness (no diff allowed)
+        env:
+          FORGEOPS_LOCK_NATIVE: "1"
         run: bash scripts/check-lock-freshness.sh
+
       # Debt D5's sibling item (design §0.5, §8.5): `-diff` marks a file BINARY, so a
       # lockfile change prints "Binary files differ" and cannot be reviewed at all.
       # A lockfile diff is the highest-signal artifact in a dependency bump.
