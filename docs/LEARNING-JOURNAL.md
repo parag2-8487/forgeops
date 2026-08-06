@@ -5509,3 +5509,9 @@ underlying source says otherwise.
 **Why this approach**: Validates manifests against live cluster OpenAPI schemas when available while maintaining offline validation capabilities.
 **What was rejected**: Hard dependency on live K8s cluster access for dev-loop validation.
 **What cost was accepted**: Offline structural fallback checking.
+
+### Leaf 14.4: In-Process Helm Chart Validator
+**What landed**: Created gent/internal/validator/helm.go with HelmValidator executing LintChartContent() over Helm Chart.yaml metadata in-process with unit tests.
+**Why this approach**: Validates Helm chart metadata syntax without external binary subprocess invocation.
+**What was rejected**: Shelling out to external helm CLI tool.
+**What cost was accepted**: In-process Chart.yaml metadata parsing.
