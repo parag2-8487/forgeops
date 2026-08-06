@@ -5377,3 +5377,9 @@ underlying source says otherwise.
 **Why this approach**: Protects system resources during high-frequency file mutations while ensuring all file events are eventually processed.
 **What was rejected**: Unbounded goroutine allocation per incoming snotify event.
 **What cost was accepted**: 250ms debouncing delay prior to incremental index pipeline execution.
+
+### Leaf 11.8: Backend Codebase Index API
+**What landed**: Added CodebaseStatusResponse, SymbolQueryResponse, ChunkDetailResponse schemas and endpoints /codebase/status, /codebase/symbols, /codebase/chunks/{chunk_id} in backend/src/analysis/routes.py with integration tests in test_codebase_index_api.py.
+**Why this approach**: Exposes governed REST endpoints under router-level principal authentication.
+**What was rejected**: Unauthenticated raw socket / IPC endpoints for querying codebase metrics.
+**What cost was accepted**: Temporary static default responses in endpoint handlers ahead of vector DB wiring.

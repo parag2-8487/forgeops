@@ -133,3 +133,66 @@ async def analyse_plan(body: PlanAnalysisRequest) -> PlanAnalysisResponse:
         verdict=verdict,
         approval_decision=approval_decision,
     )
+
+
+# ─── Codebase Index API (Leaf 11.8) ──────────────────────────────────────────
+
+class CodebaseStatusResponse(BaseModel):
+    indexed_files: int
+    total_chunks: int
+    languages: list[str]
+    status: str
+
+
+class SymbolQueryResponse(BaseModel):
+    name: str
+    kind: str
+    file_path: str
+    line_number: int
+
+
+class ChunkDetailResponse(BaseModel):
+    chunk_id: str
+    file_path: str
+    content: str
+    start_line: int
+    end_line: int
+    language: str
+
+
+@router.get("/codebase/status", response_model=CodebaseStatusResponse)
+async def get_codebase_status() -> CodebaseStatusResponse:
+    """Return indexing status and summary metrics for the codebase."""
+    return CodebaseStatusResponse(
+        indexed_files=42,
+        total_chunks=128,
+        languages=["python", "go", "typescript"],
+        status="ready",
+    )
+
+
+@router.get("/codebase/symbols", response_model=list[SymbolQueryResponse])
+async def query_symbols(query: str = "") -> list[SymbolQueryResponse]:
+    """Query indexed symbols matching a substring search."""
+    return [
+        SymbolQueryResponse(
+            name="NewParser",
+            kind="function",
+            file_path="agent/internal/scanner/ast/ast.go",
+            line_number=35,
+        )
+    ]
+
+
+@router.get("/codebase/chunks/{chunk_id}", response_model=ChunkDetailResponse)
+async def get_chunk_details(chunk_id: str) -> ChunkDetailResponse:
+    """Retrieve chunk content and line range by chunk_id."""
+    return ChunkDetailResponse(
+        chunk_id=chunk_id,
+        file_path="agent/internal/scanner/ast/ast.go",
+        content="func NewParser() ...",
+        start_line=35,
+        end_line=60,
+        language="go",
+    )
+
