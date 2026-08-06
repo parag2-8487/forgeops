@@ -67,3 +67,14 @@ async def test_get_project_and_activity(client: AsyncClient):
     res_act = await client.get(f"/api/v1/projects/{pid}/activity")
     assert res_act.status_code == 200
     assert isinstance(res_act.json(), list)
+
+async def test_get_project_readiness_endpoint(client: AsyncClient):
+    import uuid
+    pid = str(uuid.uuid4())
+    res = await client.get(f"/api/v1/projects/{pid}/readiness")
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["project_id"] == pid
+    assert "score" in data
+    assert "summary_report" in data
+

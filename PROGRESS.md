@@ -157,8 +157,8 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 12.1  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement project CRUD, settings, tags and the activity feed                  | complete  |
 | 12.2  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement GitHub import and the App installation token source                 | complete  |
 | 12.3  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the deterministic readiness scoring engine                          | complete  |
-| 12.4  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the readiness API and the plain-language report                     | pending  |
-| 12.5  | Implement the multi-project workspace and deployment-readiness analysis                            | Write property test Q-18 for readiness determinism and monotonicity           | pending  |
+| 12.4  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the readiness API and the plain-language report                     | complete  |
+| 12.5  | Implement the multi-project workspace and deployment-readiness analysis                            | Write property test Q-18 for readiness determinism and monotonicity           | complete  |
 | 13.1  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement hybrid retrieval with RRF fusion                                    | pending  |
 | 13.2  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the reranker with explicit degradation                              | pending  |
 | 13.3  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structured artifact schemas and renderers                       | pending  |

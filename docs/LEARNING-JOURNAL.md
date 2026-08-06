@@ -5419,3 +5419,15 @@ underlying source says otherwise.
 **Why this approach**: Guarantees deterministic readiness scoring over codebase metadata.
 **What was rejected**: Non-deterministic heuristic scoring logic.
 **What cost was accepted**: Static category weighting rules across project types.
+
+### Leaf 12.4: Readiness API & Plain-Language Report
+**What landed**: Added ReadinessReportResponse and GET /{project_id}/readiness endpoint in ackend/src/projects/routes.py with plain-language summary reports and integration tests.
+**Why this approach**: Provides clear, actionable human-readable explanations alongside overall readiness scores.
+**What was rejected**: Unformatted numeric score responses without plain-language contextual summaries.
+**What cost was accepted**: Synchronous summary string formatting during endpoint execution.
+
+### Leaf 12.5: Property Test Q-18 for Readiness Determinism & Monotonicity
+**What landed**: Added ackend/tests/property/test_q18_readiness.py using Hypothesis to prove determinism and monotonicity of readiness scores across randomized project configurations.
+**Why this approach**: Proves mathematically that readiness scoring is deterministic and non-decreasing upon adding positive readiness artifacts.
+**What was rejected**: Manual hand-written example cases for monotonicity testing.
+**What cost was accepted**: Hypothesis test generation time during property test runs.

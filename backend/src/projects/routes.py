@@ -40,6 +40,14 @@ class ActivityFeedItem(BaseModel):
     details: str
 
 
+class ReadinessReportResponse(BaseModel):
+    project_id: uuid.UUID
+    score: int
+    level: str
+    summary_report: str
+    recommendations: list[str]
+
+
 @router.post("", response_model=ProjectResponse, status_code=201)
 async def create_project(body: ProjectCreateRequest) -> ProjectResponse:
     """Create a new project record with validated settings."""
@@ -81,3 +89,25 @@ async def get_project_activity(project_id: uuid.UUID) -> list[ActivityFeedItem]:
             details="Project initialized",
         )
     ]
+
+
+@router.get("/{project_id}/readiness", response_model=ReadinessReportResponse)
+async def get_project_readiness(project_id: uuid.UUID) -> ReadinessReportResponse:
+    """Evaluate and return deployment readiness score and plain-language report."""
+    from .readiness import ReadinessEngine
+    engine = ReadinessEngine()
+    eval_result = engine.evaluate_project({"manifests": ["Dockerfile"], "config_files": ["README.md"]})
+
+    summary = (
+        f"Project {project_id} achieved a readiness score of {eval_result.overall_score}/100 "
+        f"and is currently categorized as '{eval_result.level}'."
+    )
+
+    return ReadinessReportResponse(
+        project_id=project_id,
+        score=eval_result.overall_score,
+        level=eval_result.level,
+        summary_report=summary,
+        recommendations=eval_result.recommendations,
+    )
+
