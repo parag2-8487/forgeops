@@ -5485,3 +5485,9 @@ underlying source says otherwise.
 **Why this approach**: Ensures end-to-end system availability even during complete LLM provider outages.
 **What was rejected**: Throwing HTTP 500 or returning empty content when model cascade fails.
 **What cost was accepted**: Default static template generation fallback.
+
+### Group 13 Property Tests (Q-08, Q-09, Q-26, Q-29)
+**What landed**: Added Hypothesis property tests: 	est_q08_iteration_bound.py (Q-08 feedback loop termination limit), 	est_q09_rubric_non_interference.py (Q-09 rubric isolation), 	est_q26_sse_well_formedness.py (Q-26 SSE stream structure), and 	est_q29_retrieval_degradation.py (Q-29 retrieval fallback).
+**Why this approach**: Validates property invariants across randomized inputs per design specification.
+**What was rejected**: Relying solely on example unit tests for generation streaming and loop termination safety.
+**What cost was accepted**: Property test execution time.
