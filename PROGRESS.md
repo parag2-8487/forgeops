@@ -167,7 +167,7 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 13.6  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structurally bounded feedback loop                              | complete  |
 | 13.7  | Implement the AI generation pipeline on top of proven routing and redaction                        | Insert the DryRun stage into the existing validation pipeline                 | complete  |
 | 13.8  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the generation service, SSE stream and run records                  | complete  |
-| 13.9  | Implement the AI generation pipeline on top of proven routing and redaction                        | Fill the terminal cascade slot with the template fallback                     | pending  |
+| 13.9  | Implement the AI generation pipeline on top of proven routing and redaction                        | Fill the terminal cascade slot with the template fallback                     | complete  |
 | 13.10 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-08 for iteration-bound termination                      | pending  |
 | 13.11 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-09 for rubric non-interference                          | pending  |
 | 13.12 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-26 for SSE stream well-formedness                       | pending  |

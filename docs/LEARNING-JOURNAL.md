@@ -5479,3 +5479,9 @@ underlying source says otherwise.
 **Why this approach**: Delivers real-time token streaming to frontend clients using standard HTTP SSE protocols.
 **What was rejected**: Client polling for streaming token outputs.
 **What cost was accepted**: Open HTTP connection per streaming request.
+
+### Leaf 13.9: Terminal Cascade Slot Template Fallback
+**What landed**: Created ackend/src/generation/template_fallback.py with TemplateFallback generating deterministic static Dockerfile and Kubernetes templates when model cascade slots fail with unit tests.
+**Why this approach**: Ensures end-to-end system availability even during complete LLM provider outages.
+**What was rejected**: Throwing HTTP 500 or returning empty content when model cascade fails.
+**What cost was accepted**: Default static template generation fallback.
