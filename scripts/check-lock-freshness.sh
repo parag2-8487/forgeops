@@ -75,12 +75,14 @@ FAILED=0
 for lock in requirements.lock requirements-dev.lock; do
 	# Committed files may be checked out CRLF on Windows; compare content, not
 	# line-ending policy, so a correct lock is never reported stale.
-	if diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" ; then
+	if diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock" >/dev/null 2>&1; then
 		printf 'ok:   %s is up to date\n' "$lock"
 	else
 		printf 'ERROR: backend/%s is stale. Run: make lock-backend\n' "$lock" >&2
+		diff -u --strip-trailing-cr "$BACKEND_DIR/$lock" "$TMPDIR_LOCK/$lock"
 		FAILED=1
 	fi
+
 
 done
 
