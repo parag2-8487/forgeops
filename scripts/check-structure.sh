@@ -137,7 +137,7 @@ printf '%s\n' "$AUTHORITATIVE_DOCS" | {
 			fail "authoritative document missing from the repository root: $doc"
 		fi
 		find . -mindepth 2 -type f -name "$doc" \
-			-not -path './.git/*' -not -path './.kiro/*' 2>/dev/null |
+			-not -path './.git/*' -not -path './.antigravity/*' 2>/dev/null |
 			report_matches 'authoritative document found outside the repository root (moved or copied)'
 	done
 }

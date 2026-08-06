@@ -80,7 +80,7 @@ def checker() -> ModuleType:
 #:
 #: **Assembled at runtime, and that is not cosmetic.** Written inline, these were
 #: `Bearer …`, `Basic <base64>` and an `eyJ`-prefixed JWT literal — three of the exact
-#: patterns `.kiro/steering/secret-safety.md` lists as high-risk, and the pre-push diff grep
+#: patterns `.antigravity/steering/secret-safety.md` lists as high-risk, and the pre-push diff grep
 #: fired on them. None was ever a usable credential, but a scanner cannot tell, and
 #: `tests/synthetic_secrets.py` already records a real GitGuardian incident raised against a
 #: JWT-shaped placeholder in this repository. The bytes sent on the wire are identical; only

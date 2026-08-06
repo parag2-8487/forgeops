@@ -3,7 +3,7 @@
 ## Never delete documentation
 
 - Never delete, move, rename, or truncate any `.md` file unless the user explicitly asks for that specific file.
-- This applies with no exceptions to: the four authoritative root documents (`AI-Powered-DevOps-Platform-Complete-Technical-Research.md`, `PRD.md`, `Tech-Stack-Analysis.md`, `phases.md`), `README.md`, `PROGRESS.md`, everything under `docs/`, everything under `.kiro/specs/`, everything under `.kiro/steering/`, `LICENSE`, `agent/LICENSE`, `agent/NOTICE`, and every structural `README.md` that marks a future-phase directory.
+- This applies with no exceptions to: the four authoritative root documents (`AI-Powered-DevOps-Platform-Complete-Technical-Research.md`, `PRD.md`, `Tech-Stack-Analysis.md`, `phases.md`), `README.md`, `PROGRESS.md`, everything under `docs/`, everything under `.antigravity/specs/`, everything under `.antigravity/steering/`, `LICENSE`, `agent/LICENSE`, `agent/NOTICE`, and every structural `README.md` that marks a future-phase directory.
 - Cleaning up, tidying, reorganising, or "consolidating" is not permission to delete a markdown file. Editing content in place is fine when the task calls for it; removing the file is not.
 - If a markdown file looks redundant, obsolete, or duplicated, report it and let the user decide. Never act on that judgement alone.
 - Never delete a file to make a check pass. Fix the check or report the conflict.

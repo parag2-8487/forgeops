@@ -15,7 +15,7 @@
 | Head SHA (local)                           | `2a61dc6a151e5c0d4a330151ebd624fe7e1bb9dc`                                                                                                        |
 | Head SHA (`origin/phase-0-implementation`) | `2a61dc6a151e5c0d4a330151ebd624fe7e1bb9dc` — matches local                                                                                        |
 | `origin/main`                              | `d16eb0ed644f3a995698340c74f5e4b405598db9` — matches local `main`                                                                                 |
-| Working tree                               | 1 untracked file: `.kiro/steering/agent-autonomy.md`. No staged or unstaged tracked modifications at review start.                                |
+| Working tree                               | 1 untracked file: `.antigravity/steering/agent-autonomy.md`. No staged or unstaged tracked modifications at review start.                                |
 | Docker availability                        | **Available.** `docker version --format '{{.Server.Version}}'` → `29.6.2`; `docker info --format '{{.ServerVersion}}'` → `29.6.2`                 |
 | Reviewer model                             | `claude-opus-5`                                                                                                                                   |
 | Review date                                | 2026-07-30 (IST)                                                                                                                                  |
@@ -29,16 +29,16 @@ git rev-parse main                            -> d16eb0ed644f3a995698340c74f5e4b
 git rev-parse origin/main                     -> d16eb0ed644f3a995698340c74f5e4b405598db9
 git rev-parse origin/phase-0-implementation   -> 2a61dc6a151e5c0d4a330151ebd624fe7e1bb9dc
 git status --porcelain=v1 --branch            -> ## phase-0-implementation...origin/phase-0-implementation
-                                                 ?? .kiro/steering/agent-autonomy.md
+                                                 ?? .antigravity/steering/agent-autonomy.md
 docker version --format '{{.Server.Version}}' -> 29.6.2
 ```
 
 ### Steering files read first, as required
 
-- `.kiro/steering/secret-safety.md` — read. Mandatory pre-push gate, synthetic-token
+- `.antigravity/steering/secret-safety.md` — read. Mandatory pre-push gate, synthetic-token
   rules, redaction rules. No push is performed in this review, so the gate is applied
   only as a review criterion, not as an action.
-- `.kiro/steering/agent-autonomy.md` — read. File-preservation rules honoured: nothing
+- `.antigravity/steering/agent-autonomy.md` — read. File-preservation rules honoured: nothing
   deleted, moved, renamed or truncated. This file is currently **untracked** in the
   working tree (see Pass 1 findings).
 
@@ -108,7 +108,7 @@ f5ad2b0 Phase 0: agent, backend, frontend, MCP gateway, model routing and supply
 | Workflows / config           | `.github/workflows/{ci,release}.yml`, `docker-compose.yml`, `Makefile`, `.gitattributes`, 3 `Dockerfile`, 3 `.dockerignore`, `agent/{.golangci.yml,.goreleaser.yaml}`, frontend tooling configs      |                                                                                                                     |
 | Migrations                   | `backend/alembic/{env.py,script.py.mako,versions/0001_initial.py}`, `alembic.ini`                                                                                                                    | Single revision, as designed                                                                                        |
 | Policies                     | `policies/mcp/{gateway.rego,gateway_test.rego}`                                                                                                                                                      |                                                                                                                     |
-| Documentation / specs        | `README.md`, `PROGRESS.md`, `docs/*.md`, `.kiro/specs/phase-0-foundation/tasks.md`, `tasks.meta.json`, `.kiro/steering/secret-safety.md`, `frontend/public/README.md`                                |                                                                                                                     |
+| Documentation / specs        | `README.md`, `PROGRESS.md`, `docs/*.md`, `.antigravity/specs/phase-0-foundation/tasks.md`, `tasks.meta.json`, `.antigravity/steering/secret-safety.md`, `frontend/public/README.md`                                |                                                                                                                     |
 | Licences / notices           | `agent/NOTICE` (modified)                                                                                                                                                                            | Root `LICENSE`, `agent/LICENSE` already on `main`                                                                   |
 | Locks                        | `agent/go.sum`, `backend/requirements.lock`, `backend/requirements-dev.lock`, `frontend/pnpm-lock.yaml`, `agent/testfixtures/tofu-null/.terraform.lock.hcl`, `agent/go.mod`, `frontend/package.json` |                                                                                                                     |
 | Generated output committed   | **none found**                                                                                                                                                                                       |                                                                                                                     |
@@ -127,19 +127,19 @@ release output, no editor state.
 
 ### Pass 1 findings
 
-**[P2] `.kiro/steering/agent-autonomy.md` is untracked, so the agent-behaviour rules are not part of the PR**
+**[P2] `.antigravity/steering/agent-autonomy.md` is untracked, so the agent-behaviour rules are not part of the PR**
 
-- Evidence: `git status --porcelain=v1` → `?? .kiro/steering/agent-autonomy.md`. The sibling
-  rule file `.kiro/steering/secret-safety.md` _is_ added by this PR
-  (`git diff --name-status` → `A .kiro/steering/secret-safety.md`), and commit `2a61dc6`
+- Evidence: `git status --porcelain=v1` → `?? .antigravity/steering/agent-autonomy.md`. The sibling
+  rule file `.antigravity/steering/secret-safety.md` _is_ added by this PR
+  (`git diff --name-status` → `A .antigravity/steering/secret-safety.md`), and commit `2a61dc6`
   is titled "…track the secret-safety rule". Only one of the two steering files was tracked.
 - Impact: the file-preservation and autonomy rules that the project relies on exist only in
   one developer's working tree. After merge, a fresh clone has `secret-safety.md` but not
   `agent-autonomy.md`, so the guardrails are silently asymmetric and unreviewable.
-- Required fix: `git add .kiro/steering/agent-autonomy.md` and include it in the PR, or
+- Required fix: `git add .antigravity/steering/agent-autonomy.md` and include it in the PR, or
   state explicitly in `PROGRESS.md` that it is intentionally local-only.
-- Validation: `git ls-files .kiro/steering/` lists both files; `scripts/check-hygiene.sh`
-  could assert that every file under `.kiro/steering/` is tracked.
+- Validation: `git ls-files .antigravity/steering/` lists both files; `scripts/check-hygiene.sh`
+  could assert that every file under `.antigravity/steering/` is tracked.
 
 **[P3] `.gitattributes` marks all four lockfiles `-diff`, which hides supply-chain-relevant changes from PR review**
 
@@ -229,7 +229,7 @@ point of view.
   38 characters. A real JWS header segment alone is ≈36 base64url characters and begins
   `eyJ`; a 20-character first segment cannot base64url-decode to a JSON header. So this was
   a **JWT-shaped placeholder, never a signed or usable token**. No rotation is required.
-  It did, however, violate `.kiro/steering/secret-safety.md` ("Never use a value that
+  It did, however, violate `.antigravity/steering/secret-safety.md` ("Never use a value that
   resembles a real provider token format").
 - Fix at HEAD is genuine and non-vacuous. `backend/src/core/logging.py:23` —
   `re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE)` — the character class
@@ -1511,7 +1511,7 @@ outside the repository, and deleted.
 
 ## Pass 10 — Requirements and traceability
 
-Sources: `.kiro/specs/phase-0-foundation/design.md` (§1 scope, §13.4 Makefile contracts,
+Sources: `.antigravity/specs/phase-0-foundation/design.md` (§1 scope, §13.4 Makefile contracts,
 §15 conflict resolutions, §17.1 decisions, Appendix B properties, Appendix E criteria) and
 `PROGRESS.md` lines 84–105 (criteria table) and its chain-of-custody section.
 
@@ -1570,7 +1570,7 @@ Weakened or unproven:
 - **D-19/D-20/D-21/D-22** — D-20's rationale (criterion-16 verification before any provenance
   step) is implemented exactly as recorded.
 - **No `requirements.md` dependency**: the spec directory contains only `design.md`,
-  `tasks.md`, `tasks.meta.json`, `.config.kiro`.
+  `tasks.md`, `tasks.meta.json`, `.config.antigravity`.
 - **No placeholder importable packages** in structural future directories; the surviving
   `.gitkeep` files are non-code.
 
@@ -1648,7 +1648,7 @@ overstated.
    someone should re-run `make verify-release` against a published artifact.
 2. Is criterion 4's local `docker compose up -d --wait` claim accurate? Not reproduced here.
 3. Was the OPA non-rootless image a deliberate choice? No decision record exists.
-4. Is `.kiro/steering/agent-autonomy.md` intentionally local-only, or an oversight?
+4. Is `.antigravity/steering/agent-autonomy.md` intentionally local-only, or an oversight?
 5. Assumption: `git diff --exit-code` returning 0 plus matching blob hashes is sufficient proof
    that this review left tracked content untouched. I did not run `git update-index --refresh`
    because that mutates the index.

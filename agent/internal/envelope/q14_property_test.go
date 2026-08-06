@@ -49,7 +49,7 @@ import (
 	"pgregory.net/rapid"
 )
 
-// q14Key is synthetic and self-labelling, per `.kiro/steering/secret-safety.md`.
+// q14Key is synthetic and self-labelling, per `.antigravity/steering/secret-safety.md`.
 var q14Key = []byte("test-only-not-a-real-secret-q14-envelope-key")
 
 const q14Digest = "sha256:1414141414141414141414141414141414141414141414141414141414141414"

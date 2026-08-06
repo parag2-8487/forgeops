@@ -78,7 +78,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKEND_ROOT = REPO_ROOT / "backend"
 MUTATIONS_TOML = BACKEND_ROOT / "tests" / "mutation" / "mutations.toml"
-DESIGN_DOC = REPO_ROOT / ".kiro" / "specs" / "phase-1-mvp-core" / "design.md"
+DESIGN_DOC = REPO_ROOT / ".antigravity" / "specs" / "phase-1-mvp-core" / "design.md"
 
 #: Rows in Appendix B's property table look like `| **Q-08** ★ | ... |`.
 _APPENDIX_B_ROW = re.compile(r"^\|\s*\*\*(Q-\d{2})\*\*")

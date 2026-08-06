@@ -11,7 +11,7 @@ makes that a build failure.
 Invocation
 ----------
     python scripts/check-ci-jobs.py .github/workflows/ci.yml \\
-        .kiro/specs/phase-1-mvp-core/design.md
+        .antigravity/specs/phase-1-mvp-core/design.md
 
 Input
 -----
@@ -118,7 +118,7 @@ def load_baseline(path: Path) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Assert Appendix E cites only jobs that exist")
     parser.add_argument("workflow", type=Path, nargs="?", default=REPO_ROOT / ".github/workflows/ci.yml")
-    parser.add_argument("design", type=Path, nargs="?", default=REPO_ROOT / ".kiro/specs/phase-1-mvp-core/design.md")
+    parser.add_argument("design", type=Path, nargs="?", default=REPO_ROOT / ".antigravity/specs/phase-1-mvp-core/design.md")
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--no-baseline", action="store_true", help="ignore the staged-jobs file entirely")
     args = parser.parse_args(argv)

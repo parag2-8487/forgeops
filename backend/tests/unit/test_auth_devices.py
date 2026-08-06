@@ -41,7 +41,7 @@ from src.auth.devices import (
 
 pytestmark = pytest.mark.mandatory
 
-#: Obviously synthetic and self-labelling, per `.kiro/steering/secret-safety.md`.
+#: Obviously synthetic and self-labelling, per `.antigravity/steering/secret-safety.md`.
 PEPPER = "test-only-not-a-real-secret-envelope-pepper"
 OTHER_PEPPER = "test-only-not-a-real-secret-different-pepper"
 

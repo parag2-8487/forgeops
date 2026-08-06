@@ -15,7 +15,7 @@ signs device certificates with. This writes them into the **untracked** `.env`, 
 * **it never prints key material.** The private key goes into the file and nowhere else; stdout
   gets the certificate's fingerprint and validity, which are public.
 * **it never touches a tracked file.** `.env.example` keeps its two empty placeholders. `.gitleaks`
-  plus the mandatory pre-push scan in `.kiro/steering/secret-safety.md` are the backstop, and
+  plus the mandatory pre-push scan in `.antigravity/steering/secret-safety.md` are the backstop, and
   §14.2 names production CA custody as **OQ-31**.
 
 Why the generation lives in `backend/src/auth/ca.py` and not here

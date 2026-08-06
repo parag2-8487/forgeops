@@ -28,7 +28,7 @@ WORKFLOW_MISSING = FIXTURES / "workflow-missing-job.yml"
 WORKFLOW_COMPLETE = FIXTURES / "workflow-complete.yml"
 
 REAL_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-REAL_DESIGN = REPO_ROOT / ".kiro" / "specs" / "phase-1-mvp-core" / "design.md"
+REAL_DESIGN = REPO_ROOT / ".antigravity" / "specs" / "phase-1-mvp-core" / "design.md"
 BASELINE = REPO_ROOT / "scripts" / "ci-jobs-baseline.txt"
 
 

@@ -2,7 +2,7 @@
 
 Repository: `github.com/parag8487/ForgeOps`. This document describes what Phase 0
 actually builds, what it deliberately leaves out, and the cross-cutting contracts every
-later phase inherits. Authority: `.kiro/specs/phase-0-foundation/design.md` §1–§6.
+later phase inherits. Authority: `.antigravity/specs/phase-0-foundation/design.md` §1–§6.
 
 ## Scope boundary
 

@@ -20,7 +20,7 @@ import (
 // a git remote leaks a token.
 //
 // Credentials are synthetic, self-labelling and composed at runtime, per
-// .kiro/steering/secret-safety.md, so no contiguous literal here resembles a real token.
+// .antigravity/steering/secret-safety.md, so no contiguous literal here resembles a real token.
 
 const syntheticMarker = "test-only-not-a-real-secret"
 

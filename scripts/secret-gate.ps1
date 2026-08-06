@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  The mandatory pre-push secret gate of .kiro/steering/secret-safety.md, all stages, scripted.
+  The mandatory pre-push secret gate of .antigravity/steering/secret-safety.md, all stages, scripted.
 
 .DESCRIPTION
   Runs the four units docs/development.md "The pre-push gate" requires:
@@ -76,7 +76,7 @@ $Branch = (& git rev-parse --abbrev-ref HEAD).Trim()
 if (-not $Base) { $Base = "origin/$Branch" }
 
 # ---------------------------------------------------------------------------------------------
-# The pattern list of .kiro/steering/secret-safety.md, one row per rule.
+# The pattern list of .antigravity/steering/secret-safety.md, one row per rule.
 #
 # `Case` is per pattern and deliberate. The AWS key-id and private-key-armour rules are
 # provider-literal shapes and only match uppercase; the password-assignment and api-key rules match

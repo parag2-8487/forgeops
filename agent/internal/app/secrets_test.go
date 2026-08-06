@@ -13,7 +13,7 @@ import (
 // The secret set handed to the redacting logger (design §7.2, §14.5, Q-24).
 //
 // Credentials here are synthetic, self-labelling and assembled at runtime, per
-// .kiro/steering/secret-safety.md: no contiguous literal in this file resembles a real
+// .antigravity/steering/secret-safety.md: no contiguous literal in this file resembles a real
 // provider token, so scanners stay quiet on our own content while the assertions keep
 // their full strength.
 

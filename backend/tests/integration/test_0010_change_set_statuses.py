@@ -31,7 +31,7 @@ from .migration_support import conn, head_engine, make_project, schema_at_head  
 
 pytestmark = pytest.mark.mandatory
 
-DESIGN = Path(__file__).resolve().parents[3] / ".kiro" / "specs" / "phase-1-mvp-core" / "design.md"
+DESIGN = Path(__file__).resolve().parents[3] / ".antigravity" / "specs" / "phase-1-mvp-core" / "design.md"
 
 CHECK_VIOLATION = "23514"
 

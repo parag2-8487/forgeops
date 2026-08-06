@@ -1,6 +1,6 @@
 # ForgeOps API — Phase 0
 
-Authority: `.kiro/specs/phase-0-foundation/design.md` §4.2, §4.3, §4.4, §11, §14.2, §15.2.
+Authority: `.antigravity/specs/phase-0-foundation/design.md` §4.2, §4.3, §4.4, §11, §14.2, §15.2.
 Only the surfaces listed here exist in Phase 0.
 
 ## Versioning

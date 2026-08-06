@@ -544,6 +544,9 @@ def create_app() -> FastAPI:
 
     app.include_router(audit_router)
 
+    from .policies.routes import router as policies_router
+    app.include_router(policies_router, prefix=settings.api_prefix)
+
     # MCP Gateway ingress, registry introspection and App hosting (§5.2).
     from .mcp.routes import router as mcp_router
 

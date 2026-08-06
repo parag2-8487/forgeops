@@ -74,7 +74,7 @@ async def populated_tenant(sessions: async_sessionmaker[AsyncSession]) -> uuid.U
 #: environment already provides, so nothing is reconstructed and nothing can be reconstructed
 #: wrongly. And rendering a `URL` into something connectable requires asking SQLAlchemy to include
 #: the credential, via a keyword whose name is one of the high-risk phrases the mandatory pre-push
-#: scan in `.kiro/steering/secret-safety.md` blocks on. It was right to block: a line that unmasks
+#: scan in `.antigravity/steering/secret-safety.md` blocks on. It was right to block: a line that unmasks
 #: a credential is exactly the shape that gate looks for, even when the value is a local test
 #: password. Reading the variable avoids the construct instead of excusing it.
 #:

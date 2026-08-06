@@ -15,7 +15,7 @@ inside the app is replaced, so a signature check that stopped happening would fa
 
 The signing key is generated per test run
 -----------------------------------------
-`.kiro/steering/secret-safety.md` forbids a committed pre-baked signed token. The RSA
+`.antigravity/steering/secret-safety.md` forbids a committed pre-baked signed token. The RSA
 key pair is created in-process at session start, exists only in memory, and every token
 these tests use is minted from it during the run. No value here has ever been a usable
 credential, and the private key never reaches disk.

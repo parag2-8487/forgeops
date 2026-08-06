@@ -205,7 +205,7 @@ func TestCorpus_SignatureMatchesUnderTheSyntheticKey(t *testing.T) {
 		t.Run(fixture.Name, func(t *testing.T) {
 			if !strings.HasPrefix(fixture.KeyUTF8, "test-only-not-a-real-secret") {
 				t.Fatalf("fixture key %q is not self-labelling as synthetic; "+
-					".kiro/steering/secret-safety.md requires that it is", fixture.KeyUTF8)
+					".antigravity/steering/secret-safety.md requires that it is", fixture.KeyUTF8)
 			}
 			env := envelopeFrom(t, fixture.Envelope)
 			signature, err := Sign(fixture.DomainPrefix, env, []byte(fixture.KeyUTF8))

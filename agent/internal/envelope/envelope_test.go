@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// The test key is synthetic and self-labelling, per .kiro/steering/secret-safety.md. It
+// The test key is synthetic and self-labelling, per .antigravity/steering/secret-safety.md. It
 // is not shaped like any real provider credential and says so in its own bytes.
 var testKey = []byte("test-only-not-a-real-secret-envelope-key")
 

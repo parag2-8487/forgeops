@@ -72,7 +72,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
   - [x] 1.7 Add the CI-job existence check that keeps Appendix E honest
 
-    - Implement `scripts/check-ci-jobs.py`: invocation `python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md`; input is the workflow's `jobs:` keys and every backtick-quoted job name inside Appendix E.
+    - Implement `scripts/check-ci-jobs.py`: invocation `python scripts/check-ci-jobs.py .github/workflows/ci.yml .antigravity/specs/phase-1-mvp-core/design.md`; input is the workflow's `jobs:` keys and every backtick-quoted job name inside Appendix E.
     - Failure is exit `1` naming any job Appendix E cites that the workflow does not define, and exit `1` when the extracted set is empty.
     - Register it in `pre-commit` and add a negative fixture workflow proving it detects a missing job. Phase 0's Appendix E cited `build`, `test` and `lint` jobs that never existed; this makes that a build failure.
     - _Design: §8.3, §15.10, Appendix E; Deliverable: 1.11_

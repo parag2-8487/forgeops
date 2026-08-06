@@ -7,7 +7,7 @@
 **Scope:** Phase 1 only, per `phases.md` § "Phase 1: MVP Core — Analysis, Generation, & Approval", deliverables §1.1 – §1.11
 **Design artifacts:** High-Level Design (architecture, components, data model) + Low-Level Design (interfaces, algorithms, formal properties)
 **Reference documents (read-only, never modified by this spec):** `AI-Powered-DevOps-Platform-Complete-Technical-Research.md`, `PRD.md`, `Tech-Stack-Analysis.md`, `phases.md`, `PROGRESS.md`, `REVIEW-PHASE-0.md`
-**Inherited contract:** `.kiro/specs/phase-0-foundation/design.md` in full, plus decisions **D-1 … D-27** and open questions **OQ-3 … OQ-21** as recorded in `PROGRESS.md`
+**Inherited contract:** `.antigravity/specs/phase-0-foundation/design.md` in full, plus decisions **D-1 … D-27** and open questions **OQ-3 … OQ-21** as recorded in `PROGRESS.md`
 **Numbering continuity:** decisions continue at **D-28**; correctness properties use the fresh prefix **Q-01 …** (P-01 … P-15 belong to Phase 0 and are never reused); open questions continue at **OQ-22**
 **Workflow:** design-first. This document is the planning authority; a later `tasks.md` traces to it. **No `requirements.md` exists or is referenced.**
 **Last revised:** 2026-07-30 — initial Phase 1 design, incorporating owner decisions D-28 and D-29
@@ -34,7 +34,7 @@ Every decision in this document cites its authority. Where authorities conflict,
 2. The remainder of the research document.
 3. `Tech-Stack-Analysis.md` — every technology choice and version is validated against this.
 4. `phases.md` and `PRD.md`.
-5. `.kiro/specs/phase-0-foundation/design.md` plus its decision log **D-1 … D-27**, as the **inherited contract**. Any Phase 1 change to a Phase 0 contract requires a **new numbered decision that names what it supersedes** (§17.1). Silent divergence from a Phase 0 contract is a defect.
+5. `.antigravity/specs/phase-0-foundation/design.md` plus its decision log **D-1 … D-27**, as the **inherited contract**. Any Phase 1 change to a Phase 0 contract requires a **new numbered decision that names what it supersedes** (§17.1). Silent divergence from a Phase 0 contract is a defect.
 
 Where all sources are silent or ambiguous, the gap is recorded in **§17.2** as an open question rather than guessed.
 
@@ -296,7 +296,7 @@ Carried forward as smaller items, each with an owner in §8 or §13:
 
 - **`.gitattributes` marks all four lockfiles `-diff`**, hiding supply-chain-relevant diffs from review. Phase 1 drops `-diff` and keeps `linguist-generated` (§8.5). This is a review-integrity fix, not cosmetics: a lockfile diff is the highest-signal artifact in a dependency bump.
 - **GitHub secret scanning is disabled on the repository** — a repository setting only the owner can change (OQ-21, unchanged). Local gitleaks remains the only secret-scanning evidence; §14.5 records the consequence.
-- **`.kiro/steering/agent-autonomy.md` is untracked**, so the file-preservation rules do not survive a fresh clone. Recorded, owner's call; this design does not track it unilaterally because it is a workflow rule rather than product code.
+- **`.antigravity/steering/agent-autonomy.md` is untracked**, so the file-preservation rules do not survive a fresh clone. Recorded, owner's call; this design does not track it unilaterally because it is a workflow rule rather than product code.
 - **P-09's route-level redaction clause** was proven decorative by the review and repaired by D-27. Phase 1's new routes inherit the repaired assertion, and Q-24 extends it to audit records and agent-side logs.
 - **P-07's shutdown-timeout clause is asserted against instantaneous closers**, so the timeout is untested. Phase 1's agent gains long-running subsystems (session manager, watcher, executor); §10.4 tightens the assertion with a deliberately slow closer.
 
@@ -1970,7 +1970,7 @@ This is the part where backend and agent cannot be allowed to disagree about a s
 
 The domain-separation prefix means an envelope signature can never be replayed as a signature over anything else the same key might one day sign (an `approval.response`, for instance, uses `"forgeops-approval-v1"`).
 
-Both sides implement this from the same fixture set: `agent/testdata/envelopes/*.json` holds envelopes with their expected canonical bytes (hex) and expected signature under a **synthetic, self-labelling** test key (`test-only-not-a-real-secret-…`, per `.kiro/steering/secret-safety.md`). The Go test and the Python test read the *same files*, so a divergence fails both suites rather than producing a mystery in production. **Q-14** generates envelopes and asserts cross-runtime byte-identity.
+Both sides implement this from the same fixture set: `agent/testdata/envelopes/*.json` holds envelopes with their expected canonical bytes (hex) and expected signature under a **synthetic, self-labelling** test key (`test-only-not-a-real-secret-…`, per `.antigravity/steering/secret-safety.md`). The Go test and the Python test read the *same files*, so a divergence fails both suites rather than producing a mystery in production. **Q-14** generates envelopes and asserts cross-runtime byte-identity.
 
 **Replay protection — three independent conditions, all required.**
 
@@ -3995,7 +3995,7 @@ Phase 0 §14.2 warned that most of the API was unauthenticated and local-only. *
 - Compose still binds published ports to `127.0.0.1` and `CORS_ALLOW_ORIGINS` still defaults to exactly `http://localhost:3000`.
 - The WSS endpoint requires **both** a valid client certificate from the internal CA and a valid device token. Either alone is insufficient.
 - **This topology is still development-shaped**, and `docs/deployment.md` continues to say so in its first paragraph. Phase 1 authenticates the API; it does not make the local Compose stack a production deployment. TLS termination, a real IdP configuration, secret management for the CA key, and network policy are Phase 2/3 concerns.
-- The internal CA private key is a genuinely new high-value secret. In development it lives in `.env` (git-ignored). It must **never** be committed, and `.gitleaks` plus the mandatory pre-push scan in `.kiro/steering/secret-safety.md` are the gates. Production CA custody is **OQ-31**.
+- The internal CA private key is a genuinely new high-value secret. In development it lives in `.env` (git-ignored). It must **never** be committed, and `.gitleaks` plus the mandatory pre-push scan in `.antigravity/steering/secret-safety.md` are the gates. Production CA custody is **OQ-31**.
 
 ### 14.3 Identity: SPIFFE/SPIRE and the laptop gap, stated honestly
 
@@ -4029,7 +4029,7 @@ All eight exist in Phase 1. That is the first time the full stack is present, an
 
 ### 14.5 Secret-safety practice in this phase's own code and tests
 
-`.kiro/steering/secret-safety.md` is binding and this phase touches credentials constantly, so the practice is restated as concrete obligations on the implementation:
+`.antigravity/steering/secret-safety.md` is binding and this phase touches credentials constantly, so the practice is restated as concrete obligations on the implementation:
 
 - Test credentials are **synthetic and self-labelling**, assembled at runtime — e.g. `"test-only-not-a-real-secret-" + uuid4().hex`. No value resembling a real provider token format appears anywhere, including in fixtures, docs and comments.
 - JWTs needed by tests are **generated at runtime from a throwaway key pair** created in the test session. No pre-baked signed token is committed. This is doubly important here because the OIDC fixture issuer signs tokens: its key is generated per test run.
@@ -4119,7 +4119,7 @@ Resolved in §6.6 and recorded as **D-50**: a constrained `environment TEXT` col
 
 ### 15.10 `ci.yml`'s header comment claims an `e2e` job that does not exist
 
-**Resolution.** Phase 1 creates the job (§8.3.2) rather than editing the comment, and adds `scripts/check-ci-jobs.py`. Invocation: `python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md`. Input: the workflow's `jobs:` keys and every backtick-quoted job name inside this document's Appendix E. Failure condition: exit `1` naming any job Appendix E cites that the workflow does not define, and exit `1` if the extracted set is empty. Phase 0's Appendix E cited `build`, `test` and `lint` jobs that never existed; that class of error is now a build failure rather than a documentation drift.
+**Resolution.** Phase 1 creates the job (§8.3.2) rather than editing the comment, and adds `scripts/check-ci-jobs.py`. Invocation: `python scripts/check-ci-jobs.py .github/workflows/ci.yml .antigravity/specs/phase-1-mvp-core/design.md`. Input: the workflow's `jobs:` keys and every backtick-quoted job name inside this document's Appendix E. Failure condition: exit `1` naming any job Appendix E cites that the workflow does not define, and exit `1` if the extracted set is empty. Phase 0's Appendix E cited `build`, `test` and `lint` jobs that never existed; that class of error is now a build failure rather than a documentation drift.
 
 ---
 

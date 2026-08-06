@@ -23,7 +23,7 @@ import (
 	"github.com/parag8487/ForgeOps/agent/internal/envelope"
 )
 
-// The test key is synthetic and self-labelling (.kiro/steering/secret-safety.md).
+// The test key is synthetic and self-labelling (.antigravity/steering/secret-safety.md).
 var testKey = []byte("test-only-not-a-real-secret-mutate-key")
 
 const testBundleDigest = "sha256:00000000000000000000000000000000000000000000000000000000000000aa"

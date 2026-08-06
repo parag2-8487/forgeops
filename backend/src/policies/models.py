@@ -18,6 +18,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+# Import related models for SQLAlchemy ForeignKey resolution
+from ..projects.models import Project  # noqa: F401
+from ..governance.models import ChangeSet  # noqa: F401
+
 from sqlalchemy import (
     CheckConstraint,
     Column,

@@ -77,7 +77,7 @@ __all__ = [
     "sink",
 ]
 
-#: Obviously synthetic and self-labelling, per `.kiro/steering/secret-safety.md`.
+#: Obviously synthetic and self-labelling, per `.antigravity/steering/secret-safety.md`.
 PEPPER = "test-only-not-a-real-secret-envelope-pepper"
 
 #: A well-formed digest that is deliberately NOT any fixture's active bundle, for the stale-pin

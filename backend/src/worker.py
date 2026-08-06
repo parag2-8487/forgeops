@@ -39,6 +39,7 @@ def _import_task_modules() -> None:
     registry, so a handler added without being imported here fails the build.
     """
     from . import mcp  # noqa: F401 - registers the Phase 0 MCP tasks
+    from .policies import tasks  # noqa: F401 - registers policy.bundle.publish
 
 
 def _startup(ctx: dict[str, Any]) -> None:

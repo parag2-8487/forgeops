@@ -41,7 +41,7 @@ func (s staticSource) ClientCertificatePEM(context.Context) (cert, key, caBundle
 // issueCertificate mints a self-signed leaf for `commonName` valid until notAfter, and
 // returns the leaf PEM, its key PEM, and a CA bundle (itself, since it is self-signed).
 //
-// Generated per test rather than committed as a fixture: .kiro/steering/secret-safety.md
+// Generated per test rather than committed as a fixture: .antigravity/steering/secret-safety.md
 // forbids a committed key, and a per-run key also means a test cannot accidentally
 // depend on a specific serial or fingerprint.
 func issueCertificate(t *testing.T, commonName string, notBefore, notAfter time.Time) (certPEM, keyPEM []byte) {

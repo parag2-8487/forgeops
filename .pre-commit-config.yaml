@@ -80,10 +80,10 @@ repos:
         always_run: true
       - id: check-ci-jobs
         name: every CI job Appendix E cites must exist
-        entry: python scripts/check-ci-jobs.py .github/workflows/ci.yml .kiro/specs/phase-1-mvp-core/design.md
+        entry: python scripts/check-ci-jobs.py .github/workflows/ci.yml .antigravity/specs/phase-1-mvp-core/design.md
         language: system
         pass_filenames: false
-        files: ^(\.github/workflows/ci\.yml|\.kiro/specs/phase-1-mvp-core/design\.md)$
+        files: ^(\.github/workflows/ci\.yml|\.antigravity/specs/phase-1-mvp-core/design\.md)$
       # Debt D4 (design §0.5). A floating tool version means two builds of the same
       # commit can use different tools, and Phase 0 installed its own vulnerability
       # scanner that way.

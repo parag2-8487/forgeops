@@ -20,7 +20,7 @@ source file, the scanners stay quiet on real content, and the assertions are
 unchanged in strength: `redact_secrets` still receives the exact string it must
 match.
 
-Every value is self-labelling per `.kiro/steering/secret-safety.md` and none has
+Every value is self-labelling per `.antigravity/steering/secret-safety.md` and none has
 ever been a usable credential.
 """
 
@@ -85,7 +85,7 @@ def unsigned_jwt() -> str:
     Needed to prove a verifier rejects on its algorithm allowlist rather than decoding and
     trusting the claims. It carries no secret of any kind — the two segments are
     `{"alg":"none"}` and `{}` — but its `eyJ` prefix is the JWT-header pattern
-    `.kiro/steering/secret-safety.md` lists as high-risk, and the module docstring above
+    `.antigravity/steering/secret-safety.md` lists as high-risk, and the module docstring above
     records a real GitGuardian incident for precisely this shape. So it is encoded at
     runtime and no `eyJ`-prefixed literal appears in any source file.
     """

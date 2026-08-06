@@ -52,7 +52,7 @@ from src.governance.envelope import (
 
 pytestmark = pytest.mark.mandatory
 
-#: Synthetic and self-labelling, per `.kiro/steering/secret-safety.md`. Spelled out rather than
+#: Synthetic and self-labelling, per `.antigravity/steering/secret-safety.md`. Spelled out rather than
 #: drawn from a helper so the label travels with the value: anyone grepping this file for a key
 #: finds a string that says what it is.
 Q14_KEY = b"test-only-not-a-real-secret-q14-envelope-key"

@@ -20,7 +20,7 @@ import (
 // test that only ran the backend available on the developer's laptop would assert nothing
 // about the other one.
 //
-// Credentials are synthetic and self-labelling per .kiro/steering/secret-safety.md.
+// Credentials are synthetic and self-labelling per .antigravity/steering/secret-safety.md.
 
 // fakeKeyring is a real in-memory keyring, not a mock: the interface is three methods and
 // a struct cannot drift from it, whereas a mock would accept any call shape (D-23).

@@ -219,7 +219,7 @@ class TestIssuance:
 
         Asserted by **parsing** the result rather than by checking its armour prefix. That is the
         stronger claim — a truncated PEM would have the right prefix — and it keeps the mandatory
-        pre-push shape grep in `.kiro/steering/secret-safety.md` quiet, which matters because a
+        pre-push shape grep in `.antigravity/steering/secret-safety.md` quiet, which matters because a
         permanent match makes a stop-the-push gate into noise.
         """
         issued = ca().sign(csr_for(), device_id=uuid.uuid4())

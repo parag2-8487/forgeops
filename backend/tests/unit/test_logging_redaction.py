@@ -9,7 +9,7 @@ and `httpx` all put the URL in the exception message, and connection URLs carry
 the password.
 
 Every literal below is synthetic and self-labelling, per
-`.kiro/steering/secret-safety.md`. None resembles a real provider token.
+`.antigravity/steering/secret-safety.md`. None resembles a real provider token.
 
 Design authority: §7.2, §14.4 ("the SecretRedactingFilter runs before any handler
 emits"), and P-09's secret clause.

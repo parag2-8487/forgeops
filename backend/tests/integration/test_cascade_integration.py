@@ -151,7 +151,7 @@ def _fake_key_resolver(keys: dict[str, str] | None = None) -> _DictKeyResolver:
     The values carry no provider-shaped prefix on purpose: a literal shaped like a
     real vendor API key makes every secret scanner fire on this repository, and a
     blocked scan everyone learns to wave through is worse than no scan
-    (.kiro/steering/secret-safety.md). The prefix is deliberately not spelled out
+    (.antigravity/steering/secret-safety.md). The prefix is deliberately not spelled out
     here either — a comment explaining the problem should not reproduce it.
     """
     resolver = _DictKeyResolver(

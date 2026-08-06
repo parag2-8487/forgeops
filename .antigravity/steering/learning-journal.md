@@ -29,7 +29,7 @@ Update the header table's **date** and **leaf count** in the same edit.
 
 ## It explains; it is never an authority
 
-`.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` and `PROGRESS.md` are the sources of truth.
+`.antigravity/specs/*/design.md`, `.antigravity/specs/*/tasks.md` and `PROGRESS.md` are the sources of truth.
 The journal must not contradict them. If it would, **the journal is wrong** — fix the journal,
 not the record.
 

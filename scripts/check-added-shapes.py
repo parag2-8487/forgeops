@@ -37,7 +37,7 @@ from dataclasses import dataclass
 
 _GH = "gh"
 
-#: The pattern list of `.kiro/steering/secret-safety.md`, one row per rule, mirroring
+#: The pattern list of `.antigravity/steering/secret-safety.md`, one row per rule, mirroring
 #: `scripts/secret-gate.ps1`'s `$Patterns`. `backend/tests/meta/test_check_added_shapes.py`
 #: asserts the two tables agree row for row, so the pre-commit hook and the pre-push gate cannot
 #: drift apart — a hook that is weaker than the gate it front-runs would restore exactly the

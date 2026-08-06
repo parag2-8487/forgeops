@@ -5,7 +5,7 @@ The hook exists because the push-time gate found a credential shape three times 
 only remedy at that point was a history rewrite. Two things therefore have to hold, and both are
 asserted here rather than assumed:
 
-* the hook flags every shape `.kiro/steering/secret-safety.md` lists, and flags them only in ADDED
+* the hook flags every shape `.antigravity/steering/secret-safety.md` lists, and flags them only in ADDED
   lines — a hook that reported a deleted line would be finding 58 again;
 * its pattern table agrees with `scripts/secret-gate.ps1`'s row for row. A hook weaker than the
   gate it front-runs restores exactly the failure it was added to remove, silently, and the drift

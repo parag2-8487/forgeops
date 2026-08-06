@@ -198,7 +198,7 @@ class TestTheCorpusMatchesThisImplementation:
     @pytest.mark.parametrize("fixture", VALID, ids=_ids(VALID))
     def test_signature_matches_under_the_synthetic_key(self, fixture: dict[str, Any]) -> None:
         assert fixture["key_utf8"].startswith("test-only-not-a-real-secret"), (
-            "the fixture key must be self-labelling as synthetic (.kiro/steering/secret-safety.md)"
+            "the fixture key must be self-labelling as synthetic (.antigravity/steering/secret-safety.md)"
         )
         envelope = CommandEnvelope.from_mapping(fixture["envelope"])
         with signing_key_scope(fixture["key_utf8"].encode("utf-8")):

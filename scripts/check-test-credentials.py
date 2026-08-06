@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""No credential-SHAPED literal in a test source (`.kiro/steering/secret-safety.md`).
+"""No credential-SHAPED literal in a test source (`.antigravity/steering/secret-safety.md`).
 
 Why this exists
 ---------------
@@ -266,7 +266,7 @@ def main() -> int:
         print(
             "\nNone of these need to be real to be a problem: a scanner cannot tell, and a "
             "blocked scan that gets waved through is worse than no scan. See "
-            ".kiro/steering/secret-safety.md and backend/tests/synthetic_secrets.py.",
+            ".antigravity/steering/secret-safety.md and backend/tests/synthetic_secrets.py.",
             file=sys.stderr,
         )
         return 1

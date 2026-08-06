@@ -42,7 +42,7 @@ from tests import synthetic_secrets
 pytestmark = pytest.mark.mandatory
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DESIGN = REPO_ROOT / ".kiro" / "specs" / "phase-1-mvp-core" / "design.md"
+DESIGN = REPO_ROOT / ".antigravity" / "specs" / "phase-1-mvp-core" / "design.md"
 
 #: An Appendix C.1 row: `| `suffix` | 401 | when | detail guidance |`
 _C1_ROW = re.compile(r"^\|\s*`([a-z][a-z0-9-]*)`\s*\|\s*(\d{3})\s*\|")

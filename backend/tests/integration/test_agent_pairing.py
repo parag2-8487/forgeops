@@ -604,7 +604,7 @@ class TestTheCsrIsCheckedBeforeTheCodeIsSpent:
                     # Deliberately not PEM-shaped. `load_pem_x509_csr` refuses these bytes for
                     # exactly the reason under test, and a literal carrying a PEM begin-armour
                     # line would match the mandatory pre-push shape grep in
-                    # `.kiro/steering/secret-safety.md` on every future run — a permanent false
+                    # `.antigravity/steering/secret-safety.md` on every future run — a permanent false
                     # positive in a gate whose value is that a match means stop.
                     csr_pem=b"this is not a certificate request",
                     meta=AgentMeta(agent_version="0.1.0", platform="linux", fingerprint=fingerprint),

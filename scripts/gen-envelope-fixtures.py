@@ -65,7 +65,7 @@ from src.governance.envelope import (  # noqa: E402 - sys.path must be set befor
 CORPUS_DIR = REPO_ROOT / "agent" / "testdata" / "envelopes"
 INVALID_DIR = CORPUS_DIR / "invalid"
 
-#: Synthetic and self-labelling, per `.kiro/steering/secret-safety.md`. The same literal the Go
+#: Synthetic and self-labelling, per `.antigravity/steering/secret-safety.md`. The same literal the Go
 #: suite already uses for `testKey`, so a reader comparing the two sees one value rather than
 #: two that happen to match.
 TEST_KEY_UTF8 = "test-only-not-a-real-secret-envelope-key"

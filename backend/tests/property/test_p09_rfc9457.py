@@ -166,7 +166,7 @@ def app():
     # lists changed nothing and all 13 tests stayed green. A handler that puts a
     # credential-bearing string into `detail` is the realistic leak, and it is
     # the path `_sanitize_detail` exists to guard. Every literal is synthetic and
-    # self-labelling per .kiro/steering/secret-safety.md.
+    # self-labelling per .antigravity/steering/secret-safety.md.
 
     @app.get("/api/v1/leaky-dsn")
     async def _leaky_dsn():

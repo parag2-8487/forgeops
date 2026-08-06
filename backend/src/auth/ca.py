@@ -144,7 +144,7 @@ class CertificateIssuer(Protocol):
 
 #: The PEM begin-armour prefix, assembled rather than written as one literal.
 #:
-#: `.kiro/steering/secret-safety.md`'s mandatory pre-push gate greps the diff for PEM begin-armour,
+#: `.antigravity/steering/secret-safety.md`'s mandatory pre-push gate greps the diff for PEM begin-armour,
 #: and a match there is defined to stop the push. A detection predicate is not key material, but a
 #: permanent match in production source is a permanent false positive in a gate whose whole value is
 #: that a match means stop — and `backend/tests/synthetic_secrets.py` already established this

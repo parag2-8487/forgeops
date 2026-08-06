@@ -9,7 +9,7 @@
 | Comprehension artifact | `docs/understand-anything/` (see chapter 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 This document teaches. It is not a changelog, not a status report, and never an
-authority. Where it disagrees with `.kiro/specs/*/design.md`, `.kiro/specs/*/tasks.md` or
+authority. Where it disagrees with `.antigravity/specs/*/design.md`, `.antigravity/specs/*/tasks.md` or
 `PROGRESS.md`, those are right and this is wrong.
 
 ---
@@ -45,14 +45,14 @@ carries corrections that supersede its own later sections). They are excluded fr
 mutating pre-commit hook and still scanned by Gitleaks.
 
 Below them sit the specs, which are the _binding_ documents:
-`.kiro/specs/phase-0-foundation/{design.md,tasks.md}` and
-`.kiro/specs/phase-1-mvp-core/{design.md,tasks.md}`. `PROGRESS.md` is the durable progress
+`.antigravity/specs/phase-0-foundation/{design.md,tasks.md}` and
+`.antigravity/specs/phase-1-mvp-core/{design.md,tasks.md}`. `PROGRESS.md` is the durable progress
 record, updated in the same commit as the work it describes. `REVIEW-PHASE-0.md` is an
 untracked, append-only merge-gating review of the Phase 0 pull request; chapter 5 is mostly
 about what it found.
 
 `docs/development.md` is the project's build-rules home, `docs/architecture.md`,
-`docs/api.md` and `docs/deployment.md` cover their titles, and `.kiro/steering/*.md` are
+`docs/api.md` and `docs/deployment.md` cover their titles, and `.antigravity/steering/*.md` are
 standing instructions that every agent session in this workspace inherits.
 
 **The comprehension artifact.** `docs/understand-anything/` holds a knowledge graph of this
@@ -620,7 +620,7 @@ about code that does not run.
 
 ### The regime built in response
 
-D-23 records the lesson. `.kiro/specs/phase-1-mvp-core/design.md` §0.4 turns it into five
+D-23 records the lesson. `.antigravity/specs/phase-1-mvp-core/design.md` §0.4 turns it into five
 normative clauses, each naming its enforcing mechanism and the CI job that runs it. This is
 the most important section of the Phase 1 design.
 
@@ -4240,7 +4240,7 @@ fixed. Second, `backend/tests/synthetic_secrets.py` already existed for exactly 
 and was not being used. All nine sites now build their values through it.
 
 The root cause, stated plainly in the session that fixed it: **the steering rule had no
-mechanical enforcement.** `.kiro/steering/secret-safety.md` said "never use a value that
+mechanical enforcement.** `.antigravity/steering/secret-safety.md` said "never use a value that
 resembles a real provider token format" and nothing checked. So
 `scripts/check-test-credentials.py` (`FO-SEC001`) now does, wired into pre-commit and the
 `backend` job — nine patterns covering both HTTP authorization schemes, the JWT header prefix
@@ -4664,7 +4664,7 @@ literal — so the remedy is to remove the class of mistake instead: the glyphs 
 `\u2717` escapes behind two named constants, which are ASCII in the source and cannot be
 double-encoded by any tool that rewrites the file.
 
-The mechanism that produced the bad bytes is already named in `.kiro/steering/secret-safety.md`'s
+The mechanism that produced the bad bytes is already named in `.antigravity/steering/secret-safety.md`'s
 sibling rule — PowerShell 5.1 reads UTF-8 as ANSI, so any edit routed through it mangles every
 non-ASCII character — which is why the same steering file forbids editing markdown that way. The
 finding is that the rule existed for `.md` and the same tool had already damaged a `.go` file.
@@ -5321,7 +5321,7 @@ drives them through the real entry point. May substitute a transport; never a co
 
 ## Appendix — how to keep this journal current
 
-`.kiro/steering/learning-journal.md` carries the standing obligation, and it is short by
+`.antigravity/steering/learning-journal.md` carries the standing obligation, and it is short by
 design. In summary: after every feature, task leaf, decision or defect fix, append what
 changed, which chapter it belongs to, why the approach was chosen, what was rejected and what
 cost was accepted; revise in place and never delete a chapter; update the header's date and

@@ -5,7 +5,7 @@ IDE to read a build-rules file (conventionally `rules.md`) before anything else;
 does not exist in this workspace and nothing was invented to replace it (open question
 OQ-18). Until such a file is supplied, the rules an agent or contributor must follow are the
 ones written here, and the authoritative sources remain
-`.kiro/specs/phase-0-foundation/design.md` plus the four read-only reference documents at
+`.antigravity/specs/phase-0-foundation/design.md` plus the four read-only reference documents at
 the repository root.
 
 ## Read-only reference documents
@@ -339,7 +339,7 @@ git-ignored.
 
 ### The pre-push gate — three stages, not two
 
-`.kiro/steering/secret-safety.md` mandates a scan before any push. Run **all three** stages;
+`.antigravity/steering/secret-safety.md` mandates a scan before any push. Run **all three** stages;
 each catches something the others cannot, and stage 3 is the one that has actually blocked a
 push in this repository.
 
@@ -435,7 +435,7 @@ top-level directory forces a decision instead of landing in a default bucket. Up
 `semantic-overlay.json` in the same commit as source changes that alter what a directory is
 for.
 
-`.kiro/steering/learning-journal.md` requires regenerating this artifact whenever a group of
+`.antigravity/steering/learning-journal.md` requires regenerating this artifact whenever a group of
 task leaves completes, and recording the date in the log at the bottom of
 `docs/understand-anything/README.md`. Step 1's scanner prefers `git ls-files -co
 --exclude-standard` for its inventory, which is why the exclusion list is short — files git
