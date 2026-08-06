@@ -5341,3 +5341,9 @@ underlying source says otherwise.
 **Why this approach**: Guarantees pure-Go zero-CGO binary builds (CGO_ENABLED=0, decision D-29) while ensuring load-time cryptographic verification prevents tampered or corrupted grammars from executing in wazero.
 **What was rejected**: Runtime dynamic downloading of Wasm modules (rejected due to air-gap compatibility and supply-chain tampering risks).
 **What cost was accepted**: Increased binary size from embedded Wasm artifacts and build-time vendoring maintenance.
+
+### Leaf 11.2: AST Parsing over wazero (D-29)
+**What landed**: Implemented gent/internal/scanner/ast with NewParser instantiating wazero runtime once and pre-compiling Wasm modules. Added load-time SHA-256 verification, ErrUnsupportedLanguage fallback, and AST parse tests and benchmarks.
+**Why this approach**: Preserves CGO_ENABLED=0 across all six release targets per decision D-29 and D-1, while providing structured AST traversal over WebAssembly.
+**What was rejected**: Native CGO tree-sitter bindings (rejected to preserve pure-Go static binaries).
+**What cost was accepted**: Small runtime Wasm compilation overhead at startup, mitigated by pooling compiled modules.
