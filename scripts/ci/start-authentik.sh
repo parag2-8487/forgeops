@@ -94,6 +94,7 @@ hdr_name="Authori"$(printf '%s' "zation")
 hdr_val="Bear"$(printf '%s' "er")" $token"
 deadline=$(( $(date +%s) + 300 ))
 until curl -fsS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>/dev/null | grep -q 'default-provider-authorization-implicit-consent'; do
+  docker exec "$worker_name" ak apply_blueprints >/dev/null 2>&1 || docker exec "$server_name" ak apply_blueprints >/dev/null 2>&1 || true
   if [ "$(date +%s)" -ge "$deadline" ]; then
     echo "FAIL: Authentik worker did not apply blueprints within deadline" >&2
     docker logs "$worker_name" 2>&1 | tail -n 200 >&2

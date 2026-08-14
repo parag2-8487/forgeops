@@ -51,7 +51,7 @@ MARKER_ATTRIBUTE: Final[str] = "__forgeops_mutation_primitive__"
 DECORATOR_NAME: Final[str] = "mutation_primitive"
 
 
-def mutation_primitive(func: Callable[P, R]) -> Callable[P, R]:
+def mutation_primitive(func: Callable[P, R]) -> Callable[P, R]:  # noqa: UP047
     """Mark `func` as a mutation primitive.
 
     Returns the function itself rather than a wrapper. A wrapper would change the signature

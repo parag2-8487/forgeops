@@ -150,8 +150,10 @@ func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) 
 	out := make(chan Event, 64)
 
 	go func() {
+		stopCh := make(chan struct{})
 		var wg sync.WaitGroup
 		defer func() {
+			close(stopCh)
 			wg.Wait()
 			close(out)
 		}()
@@ -174,6 +176,7 @@ func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) 
 					}()
 					select {
 					case out <- e:
+					case <-stopCh:
 					case <-ctx.Done():
 					}
 				}(ev)
