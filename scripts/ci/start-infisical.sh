@@ -19,10 +19,14 @@ mig_pw="${FORGEOPS_MIGRATOR_DB_PASSWORD:-forgeops}"
 echo "${db_pass_var}=${pw}" > .env
 echo "${app_pass_var}=${app_pw}" >> .env
 echo "${mig_pass_var}=${mig_pw}" >> .env
+echo "AUTH_SECRET=ci-only-not-a-real-auth-secret-1234567890" >> .env
+echo "ENCRYPTION_KEY=0123456789abcdef0123456789abcdef" >> .env
 
 export "$db_pass_var"="$pw"
 export "$app_pass_var"="$app_pw"
 export "$mig_pass_var"="$mig_pw"
+export AUTH_SECRET="ci-only-not-a-real-auth-secret-1234567890"
+export ENCRYPTION_KEY="0123456789abcdef0123456789abcdef"
 
 docker compose --profile vault up -d --wait infisical
 

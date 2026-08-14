@@ -29,7 +29,13 @@ import argparse
 import importlib
 import sys
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
+
+repo_root = Path(__file__).resolve().parent.parent
+backend_dir = repo_root / "backend"
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 
 #: Starlette mounts these itself and they carry no application data.
 INFRASTRUCTURE_PATHS = frozenset({"/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"})

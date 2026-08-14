@@ -4,6 +4,7 @@ package scanner
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -38,7 +39,7 @@ type Watcher interface {
 // FSNotifyWatcher implements Watcher using github.com/fsnotify/fsnotify.
 type FSNotifyWatcher struct {
 	watcher *fsnotify.Watcher
-	closed  bool
+	closed  atomic.Bool
 }
 
 // NewFSNotifyWatcher creates a new fsnotify-based watcher.
@@ -74,7 +75,7 @@ func (fw *FSNotifyWatcher) Watch(ctx context.Context, paths []string) (<-chan Ev
 				if !ok {
 					return
 				}
-				if fw.closed {
+				if fw.closed.Load() {
 					return
 				}
 				event := convertEvent(ev)
@@ -99,7 +100,7 @@ func (fw *FSNotifyWatcher) Watch(ctx context.Context, paths []string) (<-chan Ev
 
 // Close stops the watcher and releases resources.
 func (fw *FSNotifyWatcher) Close() error {
-	fw.closed = true
+	fw.closed.Store(true)
 	return fw.watcher.Close()
 }
 

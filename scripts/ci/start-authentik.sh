@@ -59,7 +59,7 @@ docker rm -f "$server_name" "$worker_name" >/dev/null 2>&1 || true
 # API calls and every OAuth2 provider it creates has no flow to run, so the browser half
 # of the code flow 404s. That failure looks like a bug in the client.
 docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" server >/dev/null
-docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
+docker run -d --name "$worker_name" --network host "${common_env[@]}" -e "AUTHENTIK_LISTEN__HTTP=0.0.0.0:9001" "$image" worker >/dev/null
 
 echo "waiting for Authentik to answer its own health endpoint..."
 deadline=$(( $(date +%s) + 420 ))
