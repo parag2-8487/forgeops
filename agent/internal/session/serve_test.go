@@ -678,7 +678,7 @@ func TestServe_ASuccessfulHandshakeResetsTheBackoffToTheBase(t *testing.T) {
 	transport.mu.Lock()
 	transport.rejectID = ""
 	transport.mu.Unlock()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > len(grown) })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 	transport.end(errors.New("backend went away"))
 
 	// Drain whatever was already queued, then require the next delay to be the base one.

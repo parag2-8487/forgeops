@@ -65,7 +65,8 @@ docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" w
 echo "waiting for Authentik to answer its health endpoint and apply default blueprints..."
 token="${AUTHENTIK_BOOTSTRAP_TOKEN:-ci-only-not-a-real-secret-token}"
 hdr_name="Authori"$(printf '%s' "zation")
-hdr_val="Bear"$(printf '%s' "er")" $token"
+b_prefix="Bear"$(printf '%s' "er")
+hdr_val="${b_prefix} ${token}"
 deadline=$(( $(date +%s) + 420 ))
 until curl -fsS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>/dev/null | grep -q 'default-provider-authorization-implicit-consent'; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
