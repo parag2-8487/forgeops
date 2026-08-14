@@ -75,7 +75,7 @@ done
 echo "waiting for Authentik worker to apply default blueprints..."
 token="${AUTHENTIK_BOOTSTRAP_TOKEN:-ci-only-not-a-real-secret-token}"
 auth_hdr="Authori"$(printf '%s' "zation: Bear")"er $token"
-until curl -fsS -H "$auth_hdr" "http://localhost:9000/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent" 2>/dev/null | grep -q 'default-provider-authorization-implicit-consent'; do
+until curl -fsS -H "$auth_hdr" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>/dev/null | grep -q 'default-provider-authorization-implicit-consent'; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
     echo "FAIL: Authentik worker did not apply blueprints within deadline" >&2
     docker logs "$worker_name" 2>&1 | tail -n 200 >&2

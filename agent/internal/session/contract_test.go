@@ -4,11 +4,15 @@
 // (design.md §0.4.2, §10.3).
 package session
 
-import "github.com/parag8487/ForgeOps/agent/internal/identity"
+import (
+	"github.com/parag8487/ForgeOps/agent/internal/envelope"
+	"github.com/parag8487/ForgeOps/agent/internal/identity"
+)
 
 var (
 	_ Store   = (*FileStore)(nil)
 	_ Journal = (*FileJournal)(nil)
+	_ Verifier = (*envelope.Verifier)(nil)
 
 	// The mTLS dial reads its credential through this interface. It is declared in
 	// `identity` — the CONSUMER — so neither package imports the other for it; see

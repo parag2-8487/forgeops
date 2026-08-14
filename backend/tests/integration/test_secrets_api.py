@@ -24,16 +24,22 @@ async def secrets_app(
 ) -> AsyncIterator[Any]:
     from src.main import create_app
 
-    apply_committed_baseline_env(monkeypatch)
     import os
+
+    initial_infisical_url = os.environ.get("INFISICAL_URL")
+    initial_backend = os.environ.get("SECRET_BACKEND")
+
+    apply_committed_baseline_env(monkeypatch)
 
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", schema_at_head)
 
-    if os.environ.get("SECRET_BACKEND") == "infisical":
+    if initial_backend == "infisical" or os.environ.get("SECRET_BACKEND") == "infisical":
         monkeypatch.setenv("SECRET_BACKEND", "infisical")
-        # Ensure Infisical env vars exist
-        monkeypatch.setenv("INFISICAL_URL", os.environ.get("INFISICAL_URL", "http://localhost:8080"))
+        target_url = initial_infisical_url or "http://localhost:8080"
+        if target_url == "http://infisical:8080":
+            target_url = "http://localhost:8080"
+        monkeypatch.setenv("INFISICAL_URL", target_url)
         monkeypatch.setenv("INFISICAL_CLIENT_ID", os.environ.get("INFISICAL_CLIENT_ID", "ci-only"))
         monkeypatch.setenv("INFISICAL_CLIENT_SECRET", os.environ.get("INFISICAL_CLIENT_SECRET", "ci-only"))
     else:
