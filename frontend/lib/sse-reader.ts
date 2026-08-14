@@ -7,7 +7,7 @@ export interface SSEMessage<T = unknown> {
 }
 
 export async function* readSSEResponse<T = unknown>(
-  response: Response
+  response: Response,
 ): AsyncGenerator<SSEMessage<T>, void, unknown> {
   if (!response.body) {
     throw new Error("Response body is null");

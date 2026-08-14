@@ -25,8 +25,8 @@ type GrammarMeta struct {
 }
 
 type LockFile struct {
-	Version   string                 `json:"version"`
-	Grammars  map[string]GrammarMeta `json:"grammars"`
+	Version  string                 `json:"version"`
+	Grammars map[string]GrammarMeta `json:"grammars"`
 }
 
 // LoadGrammars parses grammars.lock.json and verifies every embedded .wasm file against its SHA-256 digest.

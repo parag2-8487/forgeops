@@ -14,12 +14,12 @@ import (
 const DefaultMaxFileSize = 1048576 // 1MB per phases.md §1.3
 
 type Inventory struct {
-	Languages     []string          `json:"languages"`
-	Manifests     []string          `json:"manifests"`
-	ConfigFiles   []string          `json:"config_files"`
-	EntryPoints   []string          `json:"entry_points"`
-	FileCount     int               `json:"file_count"`
-	TotalSizeBytes int64            `json:"total_size_bytes"`
+	Languages      []string `json:"languages"`
+	Manifests      []string `json:"manifests"`
+	ConfigFiles    []string `json:"config_files"`
+	EntryPoints    []string `json:"entry_points"`
+	FileCount      int      `json:"file_count"`
+	TotalSizeBytes int64    `json:"total_size_bytes"`
 }
 
 type FilteredScanner struct {

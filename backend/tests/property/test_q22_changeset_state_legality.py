@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-from hypothesis import given, settings, strategies as st
 import pytest
-from src.approvals.service import ApprovalService
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from src.approvals.schemas import ApprovalStatus
+from src.approvals.service import ApprovalService
 
 
 @settings(max_examples=100)
-@given(
-    actions=st.lists(st.sampled_from(["approve", "reject", "rollback"]), min_size=1, max_size=10)
-)
+@given(actions=st.lists(st.sampled_from(["approve", "reject", "rollback"]), min_size=1, max_size=10))
 def test_q22_changeset_state_legality(actions: list[str]):
     """
     Property Q-22: ChangeSet state machine legality.

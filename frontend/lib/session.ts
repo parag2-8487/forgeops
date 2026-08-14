@@ -25,7 +25,10 @@ export function getSession(): Session {
   };
 }
 
-export function setSession(token: string, user: { id: string; username: string; role: string }): void {
+export function setSession(
+  token: string,
+  user: { id: string; username: string; role: string },
+): void {
   if (typeof window !== "undefined") {
     localStorage.setItem("forgeops_auth_token", token);
     localStorage.setItem("forgeops_user", JSON.stringify(user));

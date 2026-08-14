@@ -3,10 +3,9 @@ name: End-to-End Release Journey CI
 on:
   workflow_dispatch:
   push:
-    branches: [ phase-1-implementation, main ]
+    branches: [phase-1-implementation, main]
   pull_request:
-    branches: [ main ]
-
+    branches: [main]
 
 jobs:
   e2e-journey:
@@ -17,13 +16,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-
+          node-version: "22"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
-          version: '11.17.0'
+          version: "11.17.0"
 
       - name: Install dependencies
         run: |

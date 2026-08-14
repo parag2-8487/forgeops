@@ -2,10 +2,12 @@
 """Property test Q-09: Rubric non-interference (Leaf 13.11)."""
 
 import pytest
-from hypothesis import given, strategies as st
-from src.generation.rubric import BlockingGate, AdvisoryRubric
+from hypothesis import given
+from hypothesis import strategies as st
+from src.generation.rubric import AdvisoryRubric, BlockingGate
 
 pytestmark = [pytest.mark.mandatory]
+
 
 @given(text=st.text(min_size=1, max_size=500))
 def test_property_q09_rubric_non_interference(text: str):

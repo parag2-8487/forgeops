@@ -1,27 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
-from typing import Dict, Any, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
 class TemplateManifest(BaseModel):
     name: str
     language: str
-    framework: Optional[str] = None
+    framework: str | None = None
     version: str = "1.0.0"
     required_variables: list[str] = Field(default_factory=list)
 
 
 class TemplateLoader:
-    def __init__(self, templates: Optional[Dict[str, Dict[str, Any]]] = None):
+    def __init__(self, templates: dict[str, dict[str, Any]] | None = None):
         self.templates = templates or {}
 
     def register_template(self, manifest: TemplateManifest, raw_content: str) -> None:
-        self.templates[manifest.name] = {
-            "manifest": manifest,
-            "content": raw_content
-        }
+        self.templates[manifest.name] = {"manifest": manifest, "content": raw_content}
 
-    def render(self, name: str, variables: Dict[str, Any]) -> str:
+    def render(self, name: str, variables: dict[str, Any]) -> str:
         if name not in self.templates:
             raise KeyError(f"Template '{name}' not found")
 

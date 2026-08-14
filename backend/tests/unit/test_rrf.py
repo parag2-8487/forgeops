@@ -4,6 +4,7 @@ from src.ai.rrf import reciprocal_rank_fusion
 
 pytestmark = [pytest.mark.mandatory]
 
+
 def test_rrf_rank_fusion():
     bm25 = ["doc1", "doc2", "doc3"]
     vector = ["doc2", "doc4", "doc1"]
@@ -14,6 +15,7 @@ def test_rrf_rank_fusion():
     # doc1 and doc2 appear in both rank lists, so they score highest
     assert "doc1" in doc_ids[:2]
     assert "doc2" in doc_ids[:2]
+
 
 def test_rrf_score_calculation():
     bm25 = ["docA"]

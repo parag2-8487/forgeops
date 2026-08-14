@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-from hypothesis import given, settings, strategies as st
-from src.generation.template_library import get_default_template_loader, DEFAULT_TEMPLATES
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from src.generation.template_library import DEFAULT_TEMPLATES, get_default_template_loader
 
 
 @settings(max_examples=100)
-@given(
-    template_name=st.sampled_from(list(DEFAULT_TEMPLATES.keys())),
-    port=st.integers(min_value=1024, max_value=65535)
-)
+@given(template_name=st.sampled_from(list(DEFAULT_TEMPLATES.keys())), port=st.integers(min_value=1024, max_value=65535))
 def test_q21_template_validity(template_name: str, port: int):
     """
     Property Q-21: Default template rendering completeness & validity.

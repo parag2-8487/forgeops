@@ -41,10 +41,7 @@ export function GeneratorWizard() {
 
       <div className="flex gap-2">
         {step > 1 && (
-          <button
-            onClick={() => setStep(step - 1)}
-            className="px-4 py-2 border rounded text-sm"
-          >
+          <button onClick={() => setStep(step - 1)} className="px-4 py-2 border rounded text-sm">
             Back
           </button>
         )}

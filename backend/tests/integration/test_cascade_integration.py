@@ -15,7 +15,6 @@ Proves:
 """
 
 from __future__ import annotations
-from src.secrets.redaction import create_redacted_chunk
 
 import httpx
 import pytest
@@ -36,6 +35,7 @@ from src.ai.routing.tiers import (
     TierChain,
     TierConfig,
 )
+from src.secrets.redaction import create_redacted_chunk
 
 from tests import synthetic_secrets
 
@@ -243,7 +243,9 @@ class TestPrimaryTimeoutTriggersSubcascade:
 
     async def test_timeout_cascades(self, setup):
         router, call_count = setup
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo"))
+        result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo")
+        )
 
         assert result.outcome == RoutingOutcome.OK
         assert result.content == "From secondary"
@@ -303,7 +305,6 @@ class TestMalformedResponseTriggersCascade:
             tier=ModelTier.HIGH_CODING,
             request=CompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}]),
             prompt=create_redacted_chunk("foo"),
-            prompt=create_redacted_chunk("foo"),
         )
 
         # A 2xx body with no choices[] is NOT a usable answer. The adapter must
@@ -355,7 +356,9 @@ class TestMalformedResponseTriggersCascade:
             key_resolver=_fake_key_resolver(),
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo"))
+        result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo")
+        )
         assert result.outcome == RoutingOutcome.OK
         assert result.content == "Recovered"
         assert result.endpoint_id == "ep-b"
@@ -404,7 +407,9 @@ class TestCrossProviderFallback:
             ),
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo"))
+        result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo")
+        )
         assert result.outcome == RoutingOutcome.OK
         assert result.content == "XAI response"
         assert result.endpoint_id == "ep-xai"
@@ -456,7 +461,9 @@ class TestSelfHostedSuccessAtEndOfChain:
             key_resolver=_fake_key_resolver(),
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo"))
+        result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo")
+        )
         assert result.outcome == RoutingOutcome.OK
         assert result.content == "Self-hosted OK"
         assert result.endpoint_id == "ep-self"
@@ -538,7 +545,9 @@ class TestErrorRedaction:
             key_resolver=_fake_key_resolver({"openai": secret_key}),
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo"))
+        result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo")
+        )
         assert result.outcome == RoutingOutcome.EXHAUSTED
 
         # The error reason is truncated to 200 chars — verify the key is not
@@ -636,7 +645,9 @@ class TestUnsupportedNativeProtocolSkip:
             key_resolver=_fake_key_resolver(),
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo"))
+        result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo")
+        )
         assert result.outcome == RoutingOutcome.OK
 
         # Anthropic and Google should be skipped with unsupported_protocol reason
@@ -689,7 +700,9 @@ class TestFullExhaustionReturnsExhausted:
             key_resolver=_fake_key_resolver(),
         )
 
-        result = await router.complete(tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo"))
+        result = await router.complete(
+            tier=ModelTier.HIGH_CODING, request=_make_request(), prompt=create_redacted_chunk("foo")
+        )
         assert result.outcome == RoutingOutcome.EXHAUSTED
         assert result.content is None
         assert result.degraded is True

@@ -232,13 +232,8 @@ func (b *fakeBundle) ObserveBackend(digest string, stale bool) {
 	}
 }
 
-func (b *fakeBundle) setCurrent(current bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.current = current
-}
-
 func (b *fakeBundle) observedDigests() []string {
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]string(nil), b.observed...)

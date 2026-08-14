@@ -214,4 +214,3 @@ func TestDebouncedWatcher_FanOutAndDelivery(t *testing.T) {
 		t.Fatal("timeout waiting for debounced event")
 	}
 }
-

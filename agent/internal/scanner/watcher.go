@@ -120,8 +120,8 @@ func convertEvent(ev fsnotify.Event) *Event {
 
 // DebouncedWatcher wraps Watcher to debounce events and bound fan-out concurrency.
 type DebouncedWatcher struct {
-	underlying Watcher
-	debounceMs int
+	underlying  Watcher
+	debounceMs  int
 	concurrency int
 }
 
@@ -173,5 +173,3 @@ func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) 
 
 	return out, nil
 }
-
-

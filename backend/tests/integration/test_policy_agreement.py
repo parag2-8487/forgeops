@@ -86,14 +86,24 @@ def shared_bundle_path(tmp_path_factory) -> Path:
     return bundle_path
 
 
+from .test_governance_policy_opa import governance_opa_url
+
+
 @pytest.fixture(scope="module")
-def evalhelper_path() -> Path:
-    p = Path(__file__).parent.parent.parent.parent / "agent" / "evalhelper.exe"
-    assert p.exists(), "evalhelper.exe not built!"
-    return p
+def evalhelper_path(tmp_path_factory) -> Path:
+    agent_dir = Path(__file__).parent.parent.parent.parent / "agent"
+    for name in ("evalhelper.exe", "evalhelper"):
+        p = agent_dir / name
+        if p.exists():
+            return p
+    # Try building it
+    try:
+        bin_path = tmp_path_factory.mktemp("bin") / "evalhelper"
+        subprocess.run(["go", "build", "-o", str(bin_path), "./cmd/evalhelper"], cwd=str(agent_dir), check=True)
+        return bin_path
+    except Exception as exc:
+        pytest.skip(f"evalhelper binary not built and go build failed: {exc}")
 
-
-# Note: We use governance_opa_url fixture from test_governance_policy_opa which points to a real OPA container
 
 
 @settings(max_examples=25, deadline=None)

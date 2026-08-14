@@ -70,4 +70,3 @@ func TestGrammarDigests(t *testing.T) {
 		t.Errorf("expected 12 entries in lockfile, got %d", len(lock.Grammars))
 	}
 }
-

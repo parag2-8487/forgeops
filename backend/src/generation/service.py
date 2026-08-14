@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+
 from pydantic import BaseModel
 
 
@@ -17,9 +18,7 @@ class RunRecord(BaseModel):
 
 
 class GenerationService:
-    async def stream_generation(
-        self, project_id: uuid.UUID, prompt: str
-    ) -> AsyncGenerator[str, None]:
+    async def stream_generation(self, project_id: uuid.UUID, prompt: str) -> AsyncGenerator[str]:
         """Stream generation progress and events via SSE standard format."""
         run_id = uuid.uuid4()
         yield f"event: run_start\ndata: {json.dumps({'run_id': str(run_id), 'project_id': str(project_id)})}\n\n"

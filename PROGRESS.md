@@ -138,93 +138,93 @@ the work exists is not visible to any check that only inspects `done` rows.
 | 10.4  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement the secret store, its API and the Infisical service                 | complete |
 | 10.5  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Implement deploy-time secret injection as a governed operation                | complete |
 | 10.6  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-12 for redaction before prompt assembly                 | complete |
-| 10.7  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-13 for the cache-key clause                             | complete  |
-| 10.8  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-24 for secret absence across logs, audit and problems   | complete  |
-| 10.9  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-28 for injection confinement                            | complete  |
-| 11.1  | Implement the codebase analysis engine and the incremental index                                   | Vendor, pin and verify the tree-sitter Wasm grammars                          | complete  |
-| 11.2  | Implement the codebase analysis engine and the incremental index                                   | Implement AST parsing over wazero                                             | complete  |
-| 11.3  | Implement the codebase analysis engine and the incremental index                                   | Implement tiered language detection                                           | complete  |
-| 11.4  | Implement the codebase analysis engine and the incremental index                                   | Implement the filtered recursive scanner                                      | complete  |
-| 11.5  | Implement the codebase analysis engine and the incremental index                                   | Implement cAST semantic chunking                                              | complete  |
-| 11.6  | Implement the codebase analysis engine and the incremental index                                   | Implement the dependency graph and the dirty closure                          | complete  |
-| 11.7  | Implement the codebase analysis engine and the incremental index                                   | Implement watch mode with debouncing and bounded fan-out                      | complete  |
-| 11.8  | Implement the codebase analysis engine and the incremental index                                   | Implement the backend Codebase Index API                                      | complete  |
-| 11.9  | Implement the codebase analysis engine and the incremental index                                   | Implement embedding orchestration for both backends                           | complete  |
-| 11.10 | Implement the codebase analysis engine and the incremental index                                   | Implement the Redis BM25 sparse index                                         | complete  |
-| 11.11 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-10 for incremental-equals-full rescan                   | complete  |
-| 11.12 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-11 for coalescing safety                                | complete  |
-| 11.13 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-25 for grammar integrity and closure termination        | complete  |
-| 12.1  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement project CRUD, settings, tags and the activity feed                  | complete  |
-| 12.2  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement GitHub import and the App installation token source                 | complete  |
-| 12.3  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the deterministic readiness scoring engine                          | complete  |
-| 12.4  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the readiness API and the plain-language report                     | complete  |
-| 12.5  | Implement the multi-project workspace and deployment-readiness analysis                            | Write property test Q-18 for readiness determinism and monotonicity           | complete  |
-| 13.1  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement hybrid retrieval with RRF fusion                                    | complete  |
-| 13.2  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the reranker with explicit degradation                              | complete  |
-| 13.3  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structured artifact schemas and renderers                       | complete  |
-| 13.4  | Implement the AI generation pipeline on top of proven routing and redaction                        | Wire tier selection and prove every tier is reachable                         | complete  |
-| 13.5  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the blocking gate and the advisory rubric with no path between them | complete  |
-| 13.6  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structurally bounded feedback loop                              | complete  |
-| 13.7  | Implement the AI generation pipeline on top of proven routing and redaction                        | Insert the DryRun stage into the existing validation pipeline                 | complete  |
-| 13.8  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the generation service, SSE stream and run records                  | complete  |
-| 13.9  | Implement the AI generation pipeline on top of proven routing and redaction                        | Fill the terminal cascade slot with the template fallback                     | complete  |
-| 13.10 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-08 for iteration-bound termination                      | complete  |
-| 13.11 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-09 for rubric non-interference                          | complete  |
-| 13.12 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-26 for SSE stream well-formedness                       | complete  |
-| 13.13 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-29 for retrieval degradation                            | complete  |
-| 14.1  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the Compose validator in process                                    | complete  |
-| 14.2  | Implement the agent validators and the Kubernetes CI harness                                       | Implement YAML and JSON Schema validation in process                          | complete  |
-| 14.3  | Implement the agent validators and the Kubernetes CI harness                                       | Implement Kubernetes server-side dry-run over client-go                       | complete  |
-| 14.4  | Implement the agent validators and the Kubernetes CI harness                                       | Implement Helm lint and template over the Helm SDK                            | complete  |
-| 14.5  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the Trivy config validator and the availability policy              | complete  |
-| 14.6  | Implement the agent validators and the Kubernetes CI harness                                       | Adapt the Phase 0 OpenTofu runner as a validator                              | complete  |
-| 14.7  | Implement the agent validators and the Kubernetes CI harness                                       | Implement devtools discovery and extend `agent doctor`                        | complete  |
-| 14.8  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the SPIFFE workload identity provider                               | complete  |
-| 14.9  | Implement the agent validators and the Kubernetes CI harness                                       | Add the kind-based `k8s` CI job with the SPIRE attestation harness            | complete  |
-| 15.1  | Implement the Safe Default Template Library and prove every template is verified                   | Implement the template loader and manifest contract                           | complete  |
-| 15.2  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Node.js and Python template sets                                      | complete  |
-| 15.3  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Go and Rust template sets                                             | complete  |
-| 15.4  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Java/Kotlin and Ruby template sets                                    | complete  |
-| 15.5  | Implement the Safe Default Template Library and prove every template is verified                   | Add the PHP and .NET template sets                                            | complete  |
-| 15.6  | Implement the Safe Default Template Library and prove every template is verified                   | Add the `templates` CI job that runs the real validation pipeline             | complete  |
-| 15.7  | Implement the Safe Default Template Library and prove every template is verified                   | Write property test Q-21 for template-library validity                        | complete  |
-| 16.1  | Implement the Change Approval Center API surface                                                   | Implement change-set retrieval, approval and the state machine                | complete  |
-| 16.2  | Implement the Change Approval Center API surface                                                   | Implement rollback handles and the revert path                                | complete  |
-| 16.3  | Implement the Change Approval Center API surface                                                   | Write property test Q-22 for change-set state legality                        | complete  |
-| 16.4  | Implement the Change Approval Center API surface                                                   | Write property test Q-23 for diff fidelity                                    | complete  |
-| 17.1  | Implement the frontend feature surfaces                                                            | Add session handling, the login route and `proxy.ts`                          | complete  |
-| 17.2  | Implement the frontend feature surfaces                                                            | Implement the typed SSE reader over fetch                                     | complete  |
-| 17.3  | Implement the frontend feature surfaces                                                            | Implement the project list and detail surfaces                                | complete  |
-| 17.4  | Implement the frontend feature surfaces                                                            | Implement the readiness surface with an accessible radar chart                | complete  |
-| 17.5  | Implement the frontend feature surfaces                                                            | Implement the generation surface with progressive UX                          | complete  |
-| 17.6  | Implement the frontend feature surfaces                                                            | Implement the Change Approval Center surface                                  | complete  |
-| 17.7  | Implement the frontend feature surfaces                                                            | Implement the policy list, editor and violation display                       | complete  |
-| 17.8  | Implement the frontend feature surfaces                                                            | Implement the secret vault surface                                            | complete  |
-| 17.9  | Implement the frontend feature surfaces                                                            | Implement the audit log viewer                                                | complete  |
-| 17.10 | Implement the frontend feature surfaces                                                            | Implement the agent pairing and device surface                                | complete  |
-| 17.11 | Implement the frontend feature surfaces                                                            | Pin the new frontend dependencies and gate frontend coverage                  | complete  |
-| 18.1  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the e2e stack overlay, the fixture OIDC issuer and the agent container    | complete  |
-| 18.2  | Build the end-to-end journey and the `e2e` CI job                                                  | Implement the criterion-10 journey specification                              | complete  |
-| 18.3  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the `e2e` CI job                                                          | complete  |
-| 18.4  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the accessibility assertions to the journey                               | complete  |
-| 19.1  | Gate coverage, run the negative controls, and assemble the workflow                                | Turn on the per-component coverage gates                                      | complete  |
-| 19.2  | Gate coverage, run the negative controls, and assemble the workflow                                | Complete `mutations.toml` and add the `mutation` CI job                       | complete  |
-| 19.3  | Gate coverage, run the negative controls, and assemble the workflow                                | Assemble the fifteen-job workflow and prove every cited job exists            | complete  |
-| 20.1  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 1 — install, pair, import                                    | complete  |
-| 20.2  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 2 — scan and readiness score                                 | complete  |
-| 20.3  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 3 — AI generates a Dockerfile and K8s manifests              | complete  |
-| 20.4  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 4 — generated files pass the validation pipeline             | complete  |
-| 20.5  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 5 — view diff, approve, apply                                | complete  |
-| 20.6  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 6 — atomic application with backup                           | complete  |
-| 20.7  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 7 — policies are enforced                                    | complete  |
-| 20.8  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 8 — secrets stored encrypted and injected                    | complete  |
-| 20.9  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 9 — immutable audit trail                                    | complete  |
-| 20.10 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 10 — the end-to-end journey                                  | complete  |
-| 20.11 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 11 — coverage ≥ 70 % per component                           | complete  |
-| 20.12 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 12 — HNSW indexes on both vector columns                     | complete  |
-| 20.13 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 13 — SSE streaming                                           | complete  |
-| 20.14 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 14 — Redis semantic caching                                  | complete  |
-| 20.15 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Finalise documentation and `PROGRESS.md` from captured evidence               | complete  |
+| 10.7  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-13 for the cache-key clause                             | complete |
+| 10.8  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-24 for secret absence across logs, audit and problems   | complete |
+| 10.9  | Implement secret handling and the redaction chokepoint before the first prompt is assembled        | Write property test Q-28 for injection confinement                            | complete |
+| 11.1  | Implement the codebase analysis engine and the incremental index                                   | Vendor, pin and verify the tree-sitter Wasm grammars                          | complete |
+| 11.2  | Implement the codebase analysis engine and the incremental index                                   | Implement AST parsing over wazero                                             | complete |
+| 11.3  | Implement the codebase analysis engine and the incremental index                                   | Implement tiered language detection                                           | complete |
+| 11.4  | Implement the codebase analysis engine and the incremental index                                   | Implement the filtered recursive scanner                                      | complete |
+| 11.5  | Implement the codebase analysis engine and the incremental index                                   | Implement cAST semantic chunking                                              | complete |
+| 11.6  | Implement the codebase analysis engine and the incremental index                                   | Implement the dependency graph and the dirty closure                          | complete |
+| 11.7  | Implement the codebase analysis engine and the incremental index                                   | Implement watch mode with debouncing and bounded fan-out                      | complete |
+| 11.8  | Implement the codebase analysis engine and the incremental index                                   | Implement the backend Codebase Index API                                      | complete |
+| 11.9  | Implement the codebase analysis engine and the incremental index                                   | Implement embedding orchestration for both backends                           | complete |
+| 11.10 | Implement the codebase analysis engine and the incremental index                                   | Implement the Redis BM25 sparse index                                         | complete |
+| 11.11 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-10 for incremental-equals-full rescan                   | complete |
+| 11.12 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-11 for coalescing safety                                | complete |
+| 11.13 | Implement the codebase analysis engine and the incremental index                                   | Write property test Q-25 for grammar integrity and closure termination        | complete |
+| 12.1  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement project CRUD, settings, tags and the activity feed                  | complete |
+| 12.2  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement GitHub import and the App installation token source                 | complete |
+| 12.3  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the deterministic readiness scoring engine                          | complete |
+| 12.4  | Implement the multi-project workspace and deployment-readiness analysis                            | Implement the readiness API and the plain-language report                     | complete |
+| 12.5  | Implement the multi-project workspace and deployment-readiness analysis                            | Write property test Q-18 for readiness determinism and monotonicity           | complete |
+| 13.1  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement hybrid retrieval with RRF fusion                                    | complete |
+| 13.2  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the reranker with explicit degradation                              | complete |
+| 13.3  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structured artifact schemas and renderers                       | complete |
+| 13.4  | Implement the AI generation pipeline on top of proven routing and redaction                        | Wire tier selection and prove every tier is reachable                         | complete |
+| 13.5  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the blocking gate and the advisory rubric with no path between them | complete |
+| 13.6  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the structurally bounded feedback loop                              | complete |
+| 13.7  | Implement the AI generation pipeline on top of proven routing and redaction                        | Insert the DryRun stage into the existing validation pipeline                 | complete |
+| 13.8  | Implement the AI generation pipeline on top of proven routing and redaction                        | Implement the generation service, SSE stream and run records                  | complete |
+| 13.9  | Implement the AI generation pipeline on top of proven routing and redaction                        | Fill the terminal cascade slot with the template fallback                     | complete |
+| 13.10 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-08 for iteration-bound termination                      | complete |
+| 13.11 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-09 for rubric non-interference                          | complete |
+| 13.12 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-26 for SSE stream well-formedness                       | complete |
+| 13.13 | Implement the AI generation pipeline on top of proven routing and redaction                        | Write property test Q-29 for retrieval degradation                            | complete |
+| 14.1  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the Compose validator in process                                    | complete |
+| 14.2  | Implement the agent validators and the Kubernetes CI harness                                       | Implement YAML and JSON Schema validation in process                          | complete |
+| 14.3  | Implement the agent validators and the Kubernetes CI harness                                       | Implement Kubernetes server-side dry-run over client-go                       | complete |
+| 14.4  | Implement the agent validators and the Kubernetes CI harness                                       | Implement Helm lint and template over the Helm SDK                            | complete |
+| 14.5  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the Trivy config validator and the availability policy              | complete |
+| 14.6  | Implement the agent validators and the Kubernetes CI harness                                       | Adapt the Phase 0 OpenTofu runner as a validator                              | complete |
+| 14.7  | Implement the agent validators and the Kubernetes CI harness                                       | Implement devtools discovery and extend `agent doctor`                        | complete |
+| 14.8  | Implement the agent validators and the Kubernetes CI harness                                       | Implement the SPIFFE workload identity provider                               | complete |
+| 14.9  | Implement the agent validators and the Kubernetes CI harness                                       | Add the kind-based `k8s` CI job with the SPIRE attestation harness            | complete |
+| 15.1  | Implement the Safe Default Template Library and prove every template is verified                   | Implement the template loader and manifest contract                           | complete |
+| 15.2  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Node.js and Python template sets                                      | complete |
+| 15.3  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Go and Rust template sets                                             | complete |
+| 15.4  | Implement the Safe Default Template Library and prove every template is verified                   | Add the Java/Kotlin and Ruby template sets                                    | complete |
+| 15.5  | Implement the Safe Default Template Library and prove every template is verified                   | Add the PHP and .NET template sets                                            | complete |
+| 15.6  | Implement the Safe Default Template Library and prove every template is verified                   | Add the `templates` CI job that runs the real validation pipeline             | complete |
+| 15.7  | Implement the Safe Default Template Library and prove every template is verified                   | Write property test Q-21 for template-library validity                        | complete |
+| 16.1  | Implement the Change Approval Center API surface                                                   | Implement change-set retrieval, approval and the state machine                | complete |
+| 16.2  | Implement the Change Approval Center API surface                                                   | Implement rollback handles and the revert path                                | complete |
+| 16.3  | Implement the Change Approval Center API surface                                                   | Write property test Q-22 for change-set state legality                        | complete |
+| 16.4  | Implement the Change Approval Center API surface                                                   | Write property test Q-23 for diff fidelity                                    | complete |
+| 17.1  | Implement the frontend feature surfaces                                                            | Add session handling, the login route and `proxy.ts`                          | complete |
+| 17.2  | Implement the frontend feature surfaces                                                            | Implement the typed SSE reader over fetch                                     | complete |
+| 17.3  | Implement the frontend feature surfaces                                                            | Implement the project list and detail surfaces                                | complete |
+| 17.4  | Implement the frontend feature surfaces                                                            | Implement the readiness surface with an accessible radar chart                | complete |
+| 17.5  | Implement the frontend feature surfaces                                                            | Implement the generation surface with progressive UX                          | complete |
+| 17.6  | Implement the frontend feature surfaces                                                            | Implement the Change Approval Center surface                                  | complete |
+| 17.7  | Implement the frontend feature surfaces                                                            | Implement the policy list, editor and violation display                       | complete |
+| 17.8  | Implement the frontend feature surfaces                                                            | Implement the secret vault surface                                            | complete |
+| 17.9  | Implement the frontend feature surfaces                                                            | Implement the audit log viewer                                                | complete |
+| 17.10 | Implement the frontend feature surfaces                                                            | Implement the agent pairing and device surface                                | complete |
+| 17.11 | Implement the frontend feature surfaces                                                            | Pin the new frontend dependencies and gate frontend coverage                  | complete |
+| 18.1  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the e2e stack overlay, the fixture OIDC issuer and the agent container    | complete |
+| 18.2  | Build the end-to-end journey and the `e2e` CI job                                                  | Implement the criterion-10 journey specification                              | complete |
+| 18.3  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the `e2e` CI job                                                          | complete |
+| 18.4  | Build the end-to-end journey and the `e2e` CI job                                                  | Add the accessibility assertions to the journey                               | complete |
+| 19.1  | Gate coverage, run the negative controls, and assemble the workflow                                | Turn on the per-component coverage gates                                      | complete |
+| 19.2  | Gate coverage, run the negative controls, and assemble the workflow                                | Complete `mutations.toml` and add the `mutation` CI job                       | complete |
+| 19.3  | Gate coverage, run the negative controls, and assemble the workflow                                | Assemble the fifteen-job workflow and prove every cited job exists            | complete |
+| 20.1  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 1 — install, pair, import                                    | complete |
+| 20.2  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 2 — scan and readiness score                                 | complete |
+| 20.3  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 3 — AI generates a Dockerfile and K8s manifests              | complete |
+| 20.4  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 4 — generated files pass the validation pipeline             | complete |
+| 20.5  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 5 — view diff, approve, apply                                | complete |
+| 20.6  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 6 — atomic application with backup                           | complete |
+| 20.7  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 7 — policies are enforced                                    | complete |
+| 20.8  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 8 — secrets stored encrypted and injected                    | complete |
+| 20.9  | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 9 — immutable audit trail                                    | complete |
+| 20.10 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 10 — the end-to-end journey                                  | complete |
+| 20.11 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 11 — coverage ≥ 70 % per component                           | complete |
+| 20.12 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 12 — HNSW indexes on both vector columns                     | complete |
+| 20.13 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 13 — SSE streaming                                           | complete |
+| 20.14 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Verify criterion 14 — Redis semantic caching                                  | complete |
+| 20.15 | Verify every Phase 1 completion criterion using only earlier implementation, then finalise records | Finalise documentation and `PROGRESS.md` from captured evidence               | complete |
 
 ## Phase 1 leaf evidence
 

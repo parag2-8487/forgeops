@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
 import uuid
+
 import pytest
 from src.generation.service import GenerationService
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
+
 
 async def test_generation_sse_stream():
     service = GenerationService()

@@ -30,7 +30,9 @@ describe("Frontend Feature Surfaces", () => {
   });
 
   it("renders approval center component", () => {
-    const cs = [{ id: "cs-1", summary: "Fix config", status: "PENDING", diff: "--- file\n+++ file" }];
+    const cs = [
+      { id: "cs-1", summary: "Fix config", status: "PENDING", diff: "--- file\n+++ file" },
+    ];
     render(<ApprovalCenter changeSets={cs} />);
     expect(screen.getByText("Fix config")).toBeInTheDocument();
   });

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-from src.generation.template_library import get_default_template_loader, DEFAULT_TEMPLATES
+from src.generation.template_library import DEFAULT_TEMPLATES, get_default_template_loader
 
 
 def test_default_template_loader_all_languages():

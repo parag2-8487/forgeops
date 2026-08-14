@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional, Dict, Any
+
 from pydantic import BaseModel, Field
-from datetime import datetime, timezone
 
 
 class ApprovalStatus(str, Enum):
@@ -19,5 +19,5 @@ class ChangeSetResponse(BaseModel):
     summary: str
     status: ApprovalStatus
     diff: str
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    approved_by: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    approved_by: str | None = None

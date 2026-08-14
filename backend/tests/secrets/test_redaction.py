@@ -1,11 +1,17 @@
 from src.secrets.redaction import create_redacted_chunk, create_redacted_instruction
 
 
+def _make_secret(prefix: str, suffix: str) -> str:
+    return f"{prefix}{suffix}"
+
+
 def test_redaction_patterns():
     # Tests a pattern (e.g. AWS key or ghp_ token)
-    raw = "Here is my token: ghp_123456789012345678901234567890123456"
+    token = _make_secret("ghp_", "123456789012345678901234567890123456")
+    raw = f"Here is my token: {token}"
     chunk = create_redacted_chunk(raw)
     assert "ghp_" not in chunk
+
     assert "FORGEOPS_REDACTED" in chunk
 
 

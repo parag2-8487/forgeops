@@ -4,6 +4,7 @@ from src.analysis.bm25 import BM25Index
 
 pytestmark = [pytest.mark.mandatory]
 
+
 def test_bm25_indexing_and_search():
     idx = BM25Index()
     idx.add_document("doc1", "def parse_ast(): return True")
@@ -14,6 +15,7 @@ def test_bm25_indexing_and_search():
     assert len(results) >= 1
     assert results[0][0] == "doc1"
     assert results[0][1] > 0.0
+
 
 def test_bm25_ranking_relevance():
     idx = BM25Index()

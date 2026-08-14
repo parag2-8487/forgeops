@@ -10,10 +10,10 @@ files_to_fix = [
 for fpath in files_to_fix:
     with open(fpath, "r", encoding="utf-8") as f:
         content = f.read()
-    
+
     if "create_redacted_chunk" not in content:
         content = content.replace("from __future__ import annotations", "from __future__ import annotations\nfrom src.secrets.redaction import create_redacted_chunk")
-    
+
     # regex to match router.complete(..., request=...) and append prompt
     # we can just use a simple regex replacing "request=request)" -> "request=request, prompt=create_redacted_chunk('foo'))"
     # and "request=_make_request())" -> "request=_make_request(), prompt=create_redacted_chunk('foo'))"
@@ -21,7 +21,7 @@ for fpath in files_to_fix:
     content = re.sub(r'request=_make_request\(\)\)', 'request=_make_request(), prompt=create_redacted_chunk("foo"))', content)
     # also for test_cascade_integration.py line 301 it's multi-line
     content = re.sub(r'request=CompletionRequest\((.*?)\),', r'request=CompletionRequest(\1),\n            prompt=create_redacted_chunk("foo"),', content, flags=re.DOTALL)
-    
+
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(content)
 

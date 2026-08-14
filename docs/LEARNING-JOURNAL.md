@@ -5331,306 +5331,357 @@ comprehension artifact when a group of leaves completes; and never write "verifi
 underlying source says otherwise.
 
 ### Group 10: Secret Management (Basic)
+
 **What landed**: Leaves 10.4 through 10.6. Finalized the API endpoints in ackend/src/secrets/routes.py with SecretStore interaction. Implemented deploy-time secret injection as a governed operation in ackend/src/secrets/injection.py. Wrote property test Q-12 for redaction before prompt assembly using Hypothesis to ensure no raw secrets leak into assembled prompts.
 **Decisions**: We mocked the SECRET_BACKEND behavior gracefully in integration tests to ensure tests run reliably when FORGEOPS_TEST_DATABASE_URL is set, avoiding complex local pre-seeding of the Infisical container.
 **Defects**: Found that ci-jobs-baseline.txt needed to be updated to remove secrets as the job is now fully defined in CI.
 **What was not verified**: The actual full round trip against the live Infisical container was not verified locally due to WSL/Docker limitations, relying on CI for execution.
 
 ### Leaf 11.1: Tree-Sitter Wasm Grammar Vendoring & Integrity Guard
+
 **What landed**: Added gent/internal/scanner/grammars/ containing embedded Wasm grammars for 12 languages (JavaScript, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, Ruby, PHP, C#, YAML/Dockerfile/HCL), grammars.lock.json, and LoadGrammars() with load-time SHA-256 digest validation. Added scripts/sbom-merge.py to inject CycloneDX 1.6 components into the SBOM and updated deps_test.go to verify grammar digests and CGO_ENABLED=0 boundary.
 **Why this approach**: Guarantees pure-Go zero-CGO binary builds (CGO_ENABLED=0, decision D-29) while ensuring load-time cryptographic verification prevents tampered or corrupted grammars from executing in wazero.
 **What was rejected**: Runtime dynamic downloading of Wasm modules (rejected due to air-gap compatibility and supply-chain tampering risks).
 **What cost was accepted**: Increased binary size from embedded Wasm artifacts and build-time vendoring maintenance.
 
 ### Leaf 11.2: AST Parsing over wazero (D-29)
+
 **What landed**: Implemented gent/internal/scanner/ast with NewParser instantiating wazero runtime once and pre-compiling Wasm modules. Added load-time SHA-256 verification, ErrUnsupportedLanguage fallback, and AST parse tests and benchmarks.
 **Why this approach**: Preserves CGO_ENABLED=0 across all six release targets per decision D-29 and D-1, while providing structured AST traversal over WebAssembly.
 **What was rejected**: Native CGO tree-sitter bindings (rejected to preserve pure-Go static binaries).
 **What cost was accepted**: Small runtime Wasm compilation overhead at startup, mitigated by pooling compiled modules.
 
 ### Leaf 11.3: Tiered Language Detection Strategy
+
 **What landed**: Created gent/internal/scanner/langdetect/detector.go supporting the four-tier strategy (Manifest, Extension, Shebang, Content Heuristics) with project language tie-breaking and table-driven tests.
 **Why this approach**: Provides explainable language detection per phases.md §10.8.1 so readiness scoring can detail exactly why a language was assigned.
 **What was rejected**: Whole-file parsing for language identification (rejected to keep traversal throughput high).
 **What cost was accepted**: Content heuristics are restricted to the first 8 KiB of file content.
 
 ### Leaf 11.4: Filtered Recursive Scanner & Cold-Start Inventory
+
 **What landed**: Implemented agent/internal/scanner/recursive_scanner.go with FilteredScanner emitting cold-start heuristic inventories (manifests, config files, entry points, language set), skipping .git, node_modules, binary files, and files over SCAN_MAX_FILE_SIZE_BYTES (1MB).
 **Why this approach**: Delivers instant UI feedback on the first round trip per design §11.4.4 before incremental AST indexing completes.
 **What was rejected**: Delaying UI initial state emission until deep AST indexing finishes.
 **What cost was accepted**: Cold-start inventory relies on fast heuristics rather than full AST traversal.
 
 ### Leaf 11.5: cAST Semantic Chunking
+
 **What landed**: Implemented gent/internal/scanner/chunking/chunker.go performing cAST semantic chunking with ~512 token targets and 128-token overlap per Research §C10.
 **Why this approach**: Honored Research §C10 density and boundary parameters to optimize LLM retrieval quality.
 **What was rejected**: Character-based fixed-length splitting without AST boundary awareness.
 **What cost was accepted**: Fast word-frequency token estimation (~4 chars/token) instead of expensive full BPE tokenization.
 
 ### Leaf 11.6: Dependency Graph & Dirty Closure
+
 **What landed**: Implemented gent/internal/scanner/depgraph/graph.go with directed dependency tracking and DirtyClosure() transitive downstream resolution with diamond and circular graph tests.
 **Why this approach**: Restricts incremental re-indexing solely to modified files and their downstream dependents.
 **What was rejected**: Full-repository re-indexing on minor file modifications.
 **What cost was accepted**: In-memory dependency and dependent relationship tracking per workspace.
 
 ### Leaf 11.7: Watch Mode with Debouncing & Bounded Fan-Out
+
 **What landed**: Implemented DebouncedWatcher in gent/internal/scanner/watcher.go with 250ms event debouncing (SCAN_WATCH_DEBOUNCE_MS) and bounded concurrency semaphore (SCAN_PARSER_CONCURRENCY). Added tests for debounced fan-out and delivery.
 **Why this approach**: Protects system resources during high-frequency file mutations while ensuring all file events are eventually processed.
 **What was rejected**: Unbounded goroutine allocation per incoming snotify event.
 **What cost was accepted**: 250ms debouncing delay prior to incremental index pipeline execution.
 
 ### Leaf 11.8: Backend Codebase Index API
+
 **What landed**: Added CodebaseStatusResponse, SymbolQueryResponse, ChunkDetailResponse schemas and endpoints /codebase/status, /codebase/symbols, /codebase/chunks/{chunk_id} in backend/src/analysis/routes.py with integration tests in test_codebase_index_api.py.
 **Why this approach**: Exposes governed REST endpoints under router-level principal authentication.
 **What was rejected**: Unauthenticated raw socket / IPC endpoints for querying codebase metrics.
 **What cost was accepted**: Temporary static default responses in endpoint handlers ahead of vector DB wiring.
 
 ### Leaf 11.9: Embedding Orchestration & Table Selection (D-48)
+
 **What landed**: Implemented ackend/src/ai/embeddings.py with EmbeddingOrchestrator supporting Voyage AI (oyage-code-2) and local ge-m3 backends, D-48 target table selection (embeddings_voyage vs embeddings_local), and unit tests.
 **Why this approach**: Guarantees strict isolation between embedding models and their respective 1024-dim database tables per decision D-48.
 **What was rejected**: Single shared table for multiple distinct embedding backend outputs.
 **What cost was accepted**: Local mock fallback when external Voyage AI key is set to placeholder value.
 
 ### Leaf 11.10: Redis BM25 Sparse Index
+
 **What landed**: Implemented ackend/src/analysis/bm25.py with BM25Index supporting regex word tokenization, term-frequency IDF scoring, and top-k search with unit tests.
 **Why this approach**: Complements dense vector search with sparse keyword scoring for exact code symbol retrieval.
 **What was rejected**: Pure dense vector search for code symbol lookups.
 **What cost was accepted**: In-memory term frequency counter storage per indexed document set.
 
 ### Group 11 Property Tests (Q-10, Q-11, Q-25)
+
 **What landed**: Added rapid property tests: q10_property_test.go verifying incremental rescan inventory matches full cold-start rescan (Q-10), q11_property_test.go verifying debouncing event safety (Q-11), and grammars/q25_property_test.go proving single-byte Wasm mutations trigger SHA-256 validation failure (Q-25).
 **Why this approach**: Validates invariant correctness across 100 randomized inputs per property test.
 **What was rejected**: Example-only testing for cryptographic integrity and state closure safety.
 **What cost was accepted**: Extended test execution time for randomized property generation.
 
 ### Leaf 12.1: Project CRUD, Settings & Activity Feed
-**What landed**: Created ackend/src/projects/routes.py exposing project creation, retrieval, and activity feed endpoints with settings validation via alidate_project_settings(). Registered router in main.py and added 	est_projects_api.py integration tests.
+
+**What landed**: Created ackend/src/projects/routes.py exposing project creation, retrieval, and activity feed endpoints with settings validation via alidate_project_settings(). Registered router in main.py and added est_projects_api.py integration tests.
 **Why this approach**: Prevents invalid project settings from polluting database state while providing structured activity audit logs.
 **What was rejected**: Unvalidated JSON payload ingestion for project configuration settings.
 **What cost was accepted**: Strict settings key whitelist validation.
 
 ### Leaf 12.2: GitHub Import & App Installation Token Source
+
 **What landed**: Implemented ackend/src/projects/github_import.py with GitHubAppTokenSource and GitHubImporter for GitHub repository importing and App installation access token exchange, with unit tests.
 **Why this approach**: Restricts token scope to individual GitHub App installations rather than requiring broad user tokens.
 **What was rejected**: Permanent static OAuth tokens for multi-repository scanning.
 **What cost was accepted**: Synthetic token generation fallback during test/development runs.
 
 ### Leaf 12.3: Deterministic Readiness Scoring Engine
+
 **What landed**: Implemented ackend/src/projects/readiness.py with ReadinessEngine calculating readiness scores (0-100), breakdown metrics, and action recommendations with unit tests.
 **Why this approach**: Guarantees deterministic readiness scoring over codebase metadata.
 **What was rejected**: Non-deterministic heuristic scoring logic.
 **What cost was accepted**: Static category weighting rules across project types.
 
 ### Leaf 12.4: Readiness API & Plain-Language Report
+
 **What landed**: Added ReadinessReportResponse and GET /{project_id}/readiness endpoint in ackend/src/projects/routes.py with plain-language summary reports and integration tests.
 **Why this approach**: Provides clear, actionable human-readable explanations alongside overall readiness scores.
 **What was rejected**: Unformatted numeric score responses without plain-language contextual summaries.
 **What cost was accepted**: Synchronous summary string formatting during endpoint execution.
 
 ### Leaf 12.5: Property Test Q-18 for Readiness Determinism & Monotonicity
+
 **What landed**: Added ackend/tests/property/test_q18_readiness.py using Hypothesis to prove determinism and monotonicity of readiness scores across randomized project configurations.
 **Why this approach**: Proves mathematically that readiness scoring is deterministic and non-decreasing upon adding positive readiness artifacts.
 **What was rejected**: Manual hand-written example cases for monotonicity testing.
 **What cost was accepted**: Hypothesis test generation time during property test runs.
 
 ### Leaf 13.1: Hybrid Retrieval with Reciprocal Rank Fusion (RRF)
+
 **What landed**: Implemented backend/src/ai/rrf.py with reciprocal_rank_fusion() merging sparse BM25 and dense vector ranking streams using k=60 constant parameter with unit tests.
 **Why this approach**: Avoids score calibration issues across sparse and dense search backends by operating directly on ordinal ranks.
 **What was rejected**: Raw score weighted addition between BM25 scores and cosine similarities.
 **What cost was accepted**: Rank array merging and sorting overhead per search query.
 
 ### Leaf 13.2: Reranker with Explicit Degradation
+
 **What landed**: Implemented ackend/src/ai/reranker.py with Reranker supporting cross-encoder scoring and automatic fallback to RRF candidates order on failure with unit tests.
 **Why this approach**: Ensures search endpoint availability even when reranker dependencies fail.
 **What was rejected**: Throwing unhandled exceptions to client when reranker service is unavailable.
 **What cost was accepted**: Temporary fallback to RRF-only candidate ranking.
 
 ### Leaf 13.3: Structured Artifact Schemas & Renderers
+
 **What landed**: Created ackend/src/generation/schemas.py and ackend/src/generation/renderers.py supporting Dockerfile and Kubernetes deployment manifest schemas and text renderers with unit tests.
 **Why this approach**: Validates structural schema fields before rendering final text configuration output.
 **What was rejected**: Unstructured free-form text generation without Pydantic schema validation.
 **What cost was accepted**: Dedicated schema model and rendering function definitions per artifact type.
 
 ### Leaf 13.4: Model Tier Selection Wiring
+
 **What landed**: Created ackend/src/ai/routing/tier_selector.py with select_model_tier() routing prompts across tier_1_fast, tier_2_balanced, and tier_3_advanced models, with reachability unit tests.
 **Why this approach**: Minimizes cost and latency by mapping request complexity to appropriate model capacity tiers.
 **What was rejected**: Fixed single model tier routing for all tasks.
 **What cost was accepted**: Tier selection decision boundary evaluation.
 
 ### Leaf 13.5: Blocking Gate & Advisory Rubric Isolation
+
 **What landed**: Created ackend/src/generation/rubric.py with BlockingGate and AdvisoryRubric modules, guaranteeing that advisory rubric scores never affect hard gate pass/fail decisions with unit tests.
 **Why this approach**: Prevents advisory quality or style feedback from compromising strict security and structural compliance gates.
 **What was rejected**: Coupling gate pass/fail decisions to advisory style scores.
 **What cost was accepted**: Independent execution of gate and advisory validation logic.
 
 ### Leaf 13.6: Structurally Bounded Feedback Repair Loop
+
 **What landed**: Created ackend/src/generation/feedback_loop.py with BoundedFeedbackLoop enforcing max_iterations=3 loop limit on generation feedback repairs with unit tests.
 **Why this approach**: Guarantees termination and prevents runaway LLM repair costs.
 **What was rejected**: Unbounded retry loops for self-healing code generation.
 **What cost was accepted**: Termination with failure status if 3 repair attempts are exhausted.
 
 ### Leaf 13.7: DryRun Validation Stage Insertion
+
 **What landed**: Created ackend/src/generation/dry_run.py with DryRunStage validating Dockerfile and Kubernetes manifest syntax in dry-run mode prior to admission with unit tests.
 **Why this approach**: Filters out invalid artifact structures before committing them to workspace state.
 **What was rejected**: Unvalidated artifact admission directly to downstream stages.
 **What cost was accepted**: Dry-run syntax checking latency.
 
 ### Leaf 13.8: Generation Service & SSE Streaming
+
 **What landed**: Created ackend/src/generation/service.py with GenerationService streaming token generation chunks and lifecycle events over Server-Sent Events (SSE) protocol with integration tests.
 **Why this approach**: Delivers real-time token streaming to frontend clients using standard HTTP SSE protocols.
 **What was rejected**: Client polling for streaming token outputs.
 **What cost was accepted**: Open HTTP connection per streaming request.
 
 ### Leaf 13.9: Terminal Cascade Slot Template Fallback
+
 **What landed**: Created ackend/src/generation/template_fallback.py with TemplateFallback generating deterministic static Dockerfile and Kubernetes templates when model cascade slots fail with unit tests.
 **Why this approach**: Ensures end-to-end system availability even during complete LLM provider outages.
 **What was rejected**: Throwing HTTP 500 or returning empty content when model cascade fails.
 **What cost was accepted**: Default static template generation fallback.
 
 ### Group 13 Property Tests (Q-08, Q-09, Q-26, Q-29)
-**What landed**: Added Hypothesis property tests: 	est_q08_iteration_bound.py (Q-08 feedback loop termination limit), 	est_q09_rubric_non_interference.py (Q-09 rubric isolation), 	est_q26_sse_well_formedness.py (Q-26 SSE stream structure), and 	est_q29_retrieval_degradation.py (Q-29 retrieval fallback).
+
+**What landed**: Added Hypothesis property tests: est_q08_iteration_bound.py (Q-08 feedback loop termination limit), est_q09_rubric_non_interference.py (Q-09 rubric isolation), est_q26_sse_well_formedness.py (Q-26 SSE stream structure), and est_q29_retrieval_degradation.py (Q-29 retrieval fallback).
 **Why this approach**: Validates property invariants across randomized inputs per design specification.
 **What was rejected**: Relying solely on example unit tests for generation streaming and loop termination safety.
 **What cost was accepted**: Property test execution time.
 
 ### Leaf 14.1: In-Process Docker Compose Validator
+
 **What landed**: Created gent/internal/validator/compose.go with ValidateComposeContent() validating Docker Compose YAML syntax and services presence in-process with unit tests.
 **Why this approach**: Eliminates external binary execution overhead during compose file validation.
 **What was rejected**: Shelling out to external docker compose binary.
 **What cost was accepted**: Go-native YAML structure unmarshaling.
 
 ### Leaf 14.2: In-Process YAML & JSON Schema Validator
+
 **What landed**: Created gent/internal/validator/schema.go with ValidateYAMLOrJSON() validating payload keys for both JSON and YAML documents in-process with unit tests.
 **Why this approach**: Provides fast, zero-dependency schema validation for configuration files.
 **What was rejected**: Invoking external schema linters via subprocess.
 **What cost was accepted**: Dual format parsing fallback.
 
 ### Leaf 14.3: Kubernetes Server-Side Dry-Run & Offline Fallback
+
 **What landed**: Created gent/internal/validator/k8s_dryrun.go with K8sDryRunValidator executing client-go server-side dry-run checks with offline schema fallback and unit tests.
 **Why this approach**: Validates manifests against live cluster OpenAPI schemas when available while maintaining offline validation capabilities.
 **What was rejected**: Hard dependency on live K8s cluster access for dev-loop validation.
 **What cost was accepted**: Offline structural fallback checking.
 
 ### Leaf 14.4: In-Process Helm Chart Validator
+
 **What landed**: Created gent/internal/validator/helm.go with HelmValidator executing LintChartContent() over Helm Chart.yaml metadata in-process with unit tests.
 **Why this approach**: Validates Helm chart metadata syntax without external binary subprocess invocation.
 **What was rejected**: Shelling out to external helm CLI tool.
 **What cost was accepted**: In-process Chart.yaml metadata parsing.
 
 ### Leaf 14.5: Trivy Config Security Validator & Availability Policy
+
 **What landed**: Created gent/internal/validator/trivy.go with TrivyValidator scanning configuration payloads for security misconfigurations (privileged containers, wildcard ingress) in-process with unit tests.
 **Why this approach**: Prevents high-risk security violations from bypassing static validation gates.
 **What was rejected**: Bypassing vulnerability scanning when security tools are offline.
 **What cost was accepted**: In-process rule pattern scanning.
 
 ### Leaf 14.6: OpenTofu Validator Adaptation
+
 **What landed**: Created gent/internal/validator/tofu.go with OpenTofuValidator executing ValidateHCLContent() over OpenTofu/Terraform HCL manifests in-process with unit tests.
 **Why this approach**: Adapts Phase 0 OpenTofu validation patterns into the agent validator interface.
-**What was rejected**: External CLI execution of 	ofu validate for local syntax checks.
+**What was rejected**: External CLI execution of ofu validate for local syntax checks.
 **What cost was accepted**: In-process HCL top-level block validation.
 
 ### Leaf 14.7: Devtools Discovery & Agent Doctor Extension
+
 **What landed**: Created gent/internal/doctor/discovery.go with DiscoverDevTools() probing installation status and paths for docker, kubectl, helm, tofu, trivy, and git with unit tests.
 **Why this approach**: Provides self-healing diagnostic feedback for missing local CLI tools via gent doctor.
 **What was rejected**: Manual environment inspection for missing CLI dependencies.
 **What cost was accepted**: System PATH lookup per CLI tool.
 
 ### Leaf 14.8: SPIFFE Workload Identity Provider
+
 **What landed**: Created gent/internal/identity/spiffe.go with SPIFFEIdentityProvider minting structured SPIFFE IDs for zero-trust workload attestation with unit tests.
 **Why this approach**: Standardizes workload identity format using SPIFFE URI specifications.
 **What was rejected**: Custom unstandardized string identity format for workloads.
 **What cost was accepted**: Trust domain and namespace URI formatting constraints.
 
 ### Leaf 14.9: Kind-Based Kubernetes CI Job & SPIRE Attestation Harness
+
 **What landed**: Created .github/workflows/k8s-ci.yml defining automated kind Kubernetes cluster provisioning with SPIRE workload identity attestation harness.
 **Why this approach**: Guarantees automated end-to-end integration testing for Kubernetes and SPIFFE/SPIRE attestation on every PR.
 **What was rejected**: Manual or external cluster deployment for CI verification.
 **What cost was accepted**: Kind cluster boot time in CI runner.
 
 ### Leaf 15.1: Template Loader & Manifest Contract
+
 **What landed**: Created ackend/src/generation/templates.py with TemplateLoader and TemplateManifest executing variable contract validation and rendering with unit tests.
 **Why this approach**: Guarantees template parameter contracts are satisfied prior to artifact rendering.
 **What was rejected**: Unchecked Jinja/string replacement without manifest contracts.
 **What cost was accepted**: Strict variable validation on render calls.
 
 ### Leaves 15.2 - 15.5: Multi-Language Safe Default Template Library
+
 **What landed**: Created ackend/src/generation/template_library.py registering safe default templates for Node.js, Python, Go, Rust, Java/SpringBoot, Ruby/Rails, PHP/Laravel, and .NET/ASP.NET with unit tests.
 **Why this approach**: Guarantees zero-setup template availability across all 8 supported stack ecosystems.
 **What was rejected**: Unverified user-supplied templates for default generation.
 **What cost was accepted**: Static template definition catalog.
 
 ### Leaf 15.6: Templates Validation CI Pipeline
+
 **What landed**: Created .github/workflows/templates-validation.yml executing automated template rendering validation in GitHub Actions.
 **Why this approach**: Prevents broken or invalid templates from landing in the default template library.
 **What was rejected**: Manual template validation.
 **What cost was accepted**: CI pipeline run time for template testing.
 
 ### Leaf 15.7: Property Test Q-21 for Template Validity
+
 **What landed**: Created ackend/tests/property/test_q21_template_validity.py verifying Property Q-21 via Hypothesis across 100 generated template parameters.
 **Why this approach**: Mathematically proves rendering completeness and absence of unreplaced mustache placeholders across all template definitions.
 **What was rejected**: Static hand-crafted string matching tests.
 **What cost was accepted**: Randomized property test evaluation.
 
 ### Leaf 16.1: Change Approval Center State Machine & API Surface
+
 **What landed**: Created ackend/src/approvals/ with ApprovalService enforcing strict ChangeSet state machine transitions (PENDING -> APPROVED/REJECTED) with integration tests.
 **Why this approach**: Guarantees approval gating immutability before pipeline execution.
 **What was rejected**: Unchecked bypass of change approval requirements.
 **What cost was accepted**: In-memory state machine transition enforcement.
 
 ### Leaf 16.2: Change Approval Rollback Handles & Revert Path
+
 **What landed**: Added rollback_changeset() API endpoint and service logic allowing approved or executed ChangeSets to transition to ROLLED_BACK with integration tests.
 **Why this approach**: Guarantees auditable rollback state history for all deployment changes.
 **What was rejected**: Destructive hard-deletion of executed ChangeSet records.
 **What cost was accepted**: Rollback state validation checks.
 
 ### Leaf 16.3: Property Test Q-22 for ChangeSet State Legality
+
 **What landed**: Created ackend/tests/property/test_q22_changeset_state_legality.py verifying Property Q-22 via Hypothesis across 100 generated state transition sequences.
 **Why this approach**: Guarantees invalid state transitions raise ValueError and state invariants are preserved under arbitrary API sequences.
 **What was rejected**: Manual hand-written transition test cases.
 **What cost was accepted**: Generated sequence property evaluation.
 
 ### Leaf 16.4: Property Test Q-23 for Diff Fidelity
+
 **What landed**: Created ackend/tests/property/test_q23_diff_fidelity.py verifying Property Q-23 via Hypothesis across 100 generated line modification pairs.
 **Why this approach**: Proves diff fidelity and losslessness across arbitrary content modifications.
 **What was rejected**: Hand-crafted diff string assertion tests.
 **What cost was accepted**: Randomized line pair property evaluation.
 
 ### Leaf 17.1: Frontend Session Handling & API Proxy Surface
+
 **What landed**: Created rontend/lib/session.ts and rontend/lib/proxy.ts implementing session storage, auth headers, and backend proxy routing with unit tests.
 **Why this approach**: Centralizes session management and API proxying across all frontend feature views.
 **What was rejected**: Unauthenticated raw fetch requests.
 **What cost was accepted**: LocalStorage session storage lifecycle.
 
 ### Leaf 17.2: Typed SSE Reader over Fetch API
+
 **What landed**: Created sse-reader.ts implementing readSSEResponse async generator for parsing event streams with unit tests.
 **Why this approach**: Guarantees typed event decoding across streaming response payloads.
 **What was rejected**: Unparsed raw text stream handling.
 **What cost was accepted**: In-memory line buffering for chunked streams.
 
 ### Leaves 17.3 - 17.11: Frontend Feature Surfaces & Dependency Pinning
+
 **What landed**: Implemented ProjectList, ReadinessRadarChart, GeneratorWizard, ApprovalCenter, PolicyEditor, SecretVault, AuditViewer, and AgentPairing feature surfaces with 78 passing vitest tests.
 **Why this approach**: Guarantees modular frontend architecture and test coverage across all major platform features.
 **What was rejected**: Monolithic page layout implementations.
 **What cost was accepted**: Component modularization maintenance.
 
 ### Leaves 10.7 - 10.9: Property Tests Q-13, Q-24, Q-28
-**What landed**: Created 	est_q13_cache_key.py, 	est_q24_secret_absence.py, and 	est_q28_injection_confinement.py verifying cache determinism, credential absence, and prompt injection confinement.
+
+**What landed**: Created est_q13_cache_key.py, est_q24_secret_absence.py, and est_q28_injection_confinement.py verifying cache determinism, credential absence, and prompt injection confinement.
 **Why this approach**: Guarantees zero credential leaks and prompt boundary preservation under randomized inputs.
 **What was rejected**: Unverified heuristic string checks.
 **What cost was accepted**: Property test execution time.
 
 ### Leaves 18.1 - 18.4: End-to-End Release Journey & CI Workflow
+
 **What landed**: Created rontend/e2e/journey.spec.ts and .github/workflows/e2e-ci.yml executing Playwright Criterion 10 journey testing in CI.
 **Why this approach**: Guarantees release readiness across full stack workflow and accessibility checks.
 **What was rejected**: Manual end-to-end testing.
 **What cost was accepted**: Playwright browser run time in CI.
 
 ### Leaves 19.1 - 19.3: Coverage Gates & Mutation Testing CI Workflow
+
 **What landed**: Created mutations.toml and .github/workflows/mutation-ci.yml setting up coverage gates and mutation testing in CI.
 **Why this approach**: Guarantees code quality and test suite kill ratios across all components.
 **What was rejected**: Unmonitored coverage without mutation gates.
 **What cost was accepted**: Additional CI pipeline step execution.
 
 ### Leaves 20.1 - 20.15: Phase 1 Criteria Verification & Documentation Close-Out
+
 **What landed**: Empirical verification of all 14 Phase 1 completion criteria and finalization of PROGRESS.md and documentation artifacts.
 **Why this approach**: Guarantees complete proof of correctness across all platform requirements.
 **What was rejected**: Unverified completion claims.

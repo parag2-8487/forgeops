@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-from hypothesis import given, settings, strategies as st
 import hashlib
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 
 @settings(max_examples=100)
 @given(
     model_name=st.text(min_size=1, max_size=20),
     prompt=st.text(min_size=1, max_size=100),
-    tenant_id=st.text(min_size=1, max_size=20)
+    tenant_id=st.text(min_size=1, max_size=20),
 )
 def test_q13_cache_key_determinism(model_name: str, prompt: str, tenant_id: str):
     """

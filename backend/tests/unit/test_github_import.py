@@ -4,11 +4,13 @@ from src.projects.github_import import GitHubAppTokenSource, GitHubImporter
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 
+
 async def test_installation_token_source():
     source = GitHubAppTokenSource()
     token = await source.get_installation_token(99)
     assert token.startswith("ghs_mock_installation_token_")
     assert "99" in token
+
 
 async def test_github_importer():
     source = GitHubAppTokenSource()

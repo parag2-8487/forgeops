@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 
 def reciprocal_rank_fusion(
     bm25_ranks: list[str],

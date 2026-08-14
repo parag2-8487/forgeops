@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
 import pytest
-from src.generation.rubric import BlockingGate, AdvisoryRubric
+from src.generation.rubric import AdvisoryRubric, BlockingGate
 
 pytestmark = [pytest.mark.mandatory]
+
 
 def test_blocking_gate_valid():
     gate = BlockingGate()
@@ -10,11 +11,13 @@ def test_blocking_gate_valid():
     assert res.passed is True
     assert len(res.violations) == 0
 
+
 def test_blocking_gate_violation():
     gate = BlockingGate()
     res = gate.evaluate("RUN eval('bad_code')")
     assert res.passed is False
     assert len(res.violations) == 1
+
 
 def test_advisory_rubric_non_interference():
     gate = BlockingGate()

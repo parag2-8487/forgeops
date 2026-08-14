@@ -4,6 +4,7 @@ from src.projects.readiness import ReadinessEngine
 
 pytestmark = [pytest.mark.mandatory]
 
+
 def test_readiness_scoring_determinism():
     engine = ReadinessEngine()
     data = {
@@ -17,6 +18,7 @@ def test_readiness_scoring_determinism():
     assert res1.overall_score == res2.overall_score
     assert res1.level == res2.level
     assert 0 <= res1.overall_score <= 100
+
 
 def test_readiness_recommendations():
     engine = ReadinessEngine()

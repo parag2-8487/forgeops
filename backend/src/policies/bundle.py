@@ -55,9 +55,12 @@ class PolicyBundleService:
         if self._tasks:
             await self._tasks.enqueue(
                 "policy.bundle.publish",
-                bundle_id=bundle.id,
-                project_id=bundle.project_id,
+                payload={
+                    "bundle_id": str(bundle.id),
+                    "project_id": str(bundle.project_id) if bundle.project_id else None,
+                },
             )
+
 
     async def build(self, *, project_id: uuid.UUID | None) -> PolicyBundle:
         # 1. Query policies

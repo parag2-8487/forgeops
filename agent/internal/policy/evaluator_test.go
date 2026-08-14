@@ -74,9 +74,9 @@ func TestEvaluator_NoBundle(t *testing.T) {
 func TestEvaluator_LoadAndEvaluate(t *testing.T) {
 	regoCode := `
 package forgeops.governance
-default decision = {"result": "deny"}
-decision = {"result": "allow"} { input.action == "allow_me" }
-decision = {"result": "require_approval"} { input.action == "approve_me" }
+default decision := {"result": "deny"}
+decision := {"result": "allow"} if { input.action == "allow_me" }
+decision := {"result": "require_approval"} if { input.action == "approve_me" }
 `
 	bundleData, digest := createTestBundle(t, regoCode)
 
@@ -132,9 +132,10 @@ decision = {"result": "require_approval"} { input.action == "approve_me" }
 func TestEvaluator_FailedLoadPreservesPriorBundle(t *testing.T) {
 	regoCode := `
 package forgeops.governance
-default decision = {"result": "deny"}
-decision = {"result": "allow"} { input.action == "allow_me" }
+default decision := {"result": "deny"}
+decision := {"result": "allow"} if { input.action == "allow_me" }
 `
+
 	bundleData, digest := createTestBundle(t, regoCode)
 
 	e := NewEvaluator()

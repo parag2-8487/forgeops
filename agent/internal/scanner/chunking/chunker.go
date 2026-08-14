@@ -14,11 +14,11 @@ const (
 )
 
 type Chunk struct {
-	Type      string   `json:"type"` // "function", "class", "module"
-	Content   string   `json:"content"`
-	StartLine int      `json:"start_line"`
-	EndLine   int      `json:"end_line"`
-	Tokens    int      `json:"tokens"`
+	Type      string `json:"type"` // "function", "class", "module"
+	Content   string `json:"content"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	Tokens    int    `json:"tokens"`
 }
 
 type Chunker struct{}

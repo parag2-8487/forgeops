@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import os
 from typing import Any
+
 import httpx
-from pydantic import BaseModel
 
 
 class GitHubAppTokenSource:
@@ -44,9 +44,7 @@ class GitHubImporter:
     def __init__(self, token_source: GitHubAppTokenSource) -> None:
         self.token_source = token_source
 
-    async def import_repository(
-        self, installation_id: int, owner: str, repo: str
-    ) -> dict[str, Any]:
+    async def import_repository(self, installation_id: int, owner: str, repo: str) -> dict[str, Any]:
         """Import repository metadata using installation token."""
         token = await self.token_source.get_installation_token(installation_id)
         return {

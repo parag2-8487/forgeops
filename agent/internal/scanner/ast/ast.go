@@ -18,10 +18,10 @@ var (
 )
 
 type Node struct {
-	Type     string
+	Type      string
 	StartByte uint32
 	EndByte   uint32
-	Children []*Node
+	Children  []*Node
 }
 
 type Tree struct {
@@ -30,11 +30,11 @@ type Tree struct {
 }
 
 type Parser struct {
-	logger        *zap.Logger
-	runtime       wazero.Runtime
-	grammarBytes  map[string][]byte
-	compiledCode  map[string]wazero.CompiledModule
-	mu            sync.RWMutex
+	logger       *zap.Logger
+	runtime      wazero.Runtime
+	grammarBytes map[string][]byte
+	compiledCode map[string]wazero.CompiledModule
+	mu           sync.RWMutex
 }
 
 // NewParser instantiates the wazero runtime and verifies/compiles embedded Wasm grammars.

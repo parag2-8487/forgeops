@@ -2,11 +2,14 @@
 """Property test Q-26: SSE stream well-formedness (Leaf 13.12)."""
 
 import uuid
+
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 from src.generation.service import GenerationService
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
+
 
 @given(prompt=st.text(min_size=1, max_size=100))
 async def test_property_q26_sse_stream_well_formedness(prompt: str):

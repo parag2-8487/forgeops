@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import pytest
-from src.approvals.service import get_approval_service
 from src.approvals.schemas import ApprovalStatus
+from src.approvals.service import get_approval_service
 
 
 def test_approval_state_machine_flow():
@@ -33,4 +33,3 @@ def test_approval_rollback_flow():
 
     rolled_back = svc.rollback_changeset(cs.id)
     assert rolled_back.status == ApprovalStatus.ROLLED_BACK
-

@@ -86,6 +86,9 @@ async def test_bundle_publish_and_active_digest():
     # Verify task enqueued
     tasks_mock.enqueue.assert_called_once_with(
         "policy.bundle.publish",
-        bundle_id=bundle.id,
-        project_id=project_id,
+        payload={
+            "bundle_id": str(bundle.id),
+            "project_id": str(project_id),
+        },
     )
+

@@ -137,6 +137,7 @@ async def analyse_plan(body: PlanAnalysisRequest) -> PlanAnalysisResponse:
 
 # ─── Codebase Index API (Leaf 11.8) ──────────────────────────────────────────
 
+
 class CodebaseStatusResponse(BaseModel):
     indexed_files: int
     total_chunks: int
@@ -195,4 +196,3 @@ async def get_chunk_details(chunk_id: str) -> ChunkDetailResponse:
         end_line=60,
         language="go",
     )
-

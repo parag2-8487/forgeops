@@ -2,19 +2,19 @@
 """Property test Q-18: Readiness scoring determinism and monotonicity (Leaf 12.5)."""
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 from src.projects.readiness import ReadinessEngine
 
 pytestmark = [pytest.mark.mandatory]
+
 
 @given(
     has_docker=st.booleans(),
     has_ci=st.booleans(),
     has_tests=st.booleans(),
 )
-def test_property_q18_readiness_determinism_and_monotonicity(
-    has_docker: bool, has_ci: bool, has_tests: bool
-):
+def test_property_q18_readiness_determinism_and_monotonicity(has_docker: bool, has_ci: bool, has_tests: bool):
     engine = ReadinessEngine()
 
     manifests = ["Dockerfile"] if has_docker else []

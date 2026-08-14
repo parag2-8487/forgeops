@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/zricethezav/gitleaks/v8/detect"
-	"github.com/zricethezav/gitleaks/v8/sources"
 )
 
 // Chunk represents a piece of text to be scanned.
@@ -64,13 +63,13 @@ func NewScanner() (Scanner, error) {
 }
 
 func (s *gitleaksScanner) Scan(ctx context.Context, path string, content []byte) ([]Finding, error) {
-	fragment := sources.Fragment{
+	fragment := detect.Fragment{
 		Raw:      string(content),
 		Bytes:    content,
 		FilePath: path,
 	}
 
-	reports := s.detector.DetectContext(ctx, detect.Fragment(fragment))
+	reports := s.detector.DetectContext(ctx, fragment)
 	var findings []Finding
 	for _, r := range reports {
 		mac := hmac.New(sha256.New, []byte("forgeops-default-pepper"))
@@ -93,13 +92,14 @@ func (s *gitleaksScanner) Redact(ctx context.Context, c Chunk, findings []Findin
 		return RedactedChunk{text: c.Text}
 	}
 
-	fragment := sources.Fragment{
+	fragment := detect.Fragment{
 		Raw:      c.Text,
 		Bytes:    []byte(c.Text),
 		FilePath: "chunk",
 	}
 
-	reports := s.detector.DetectContext(ctx, detect.Fragment(fragment))
+	reports := s.detector.DetectContext(ctx, fragment)
+
 	redactedText := c.Text
 
 	for _, r := range reports {

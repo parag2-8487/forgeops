@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 from typing import Literal
+
 import httpx
 from pydantic import BaseModel
 
 EmbeddingBackend = Literal["voyage", "bge_m3"]
+
 
 class EmbeddingResult(BaseModel):
     vector: list[float]

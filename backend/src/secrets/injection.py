@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
 """Deploy-time secret injection as a governed operation (Leaf 10.5)."""
 
-from typing import Mapping
+from collections.abc import Mapping
+
 from .models import Secret
 from .store import SecretStore
 
+
 async def inject_secrets(
-    secrets: list[Secret], 
-    store: SecretStore, 
-    base_env: Mapping[str, str] | None = None
+    secrets: list[Secret], store: SecretStore, base_env: Mapping[str, str] | None = None
 ) -> dict[str, str]:
     """Retrieve secret values and inject them into a process environment.
-    
+
     This is a governed operation and the ONLY module permitted to call
     `SecretStore.get_value()`.
     """

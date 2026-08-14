@@ -20,15 +20,26 @@ from .schemas import DryRunInput, PolicyCreate, PolicyRead, PolicyTemplateRead, 
 from .templates import TEMPLATES
 from .validation import validate_rego
 
-router = APIRouter(prefix="/policies", tags=["policies"])
+router = APIRouter(
+    prefix="/policies",
+    tags=["policies"],
+    dependencies=[Depends(require_principal)],
+)
 
 
 async def get_bundle_service(request: Request, session: AsyncSession = Depends(get_session)) -> PolicyBundleService:
-    settings = get_settings()
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        try:
+            settings = get_settings()
+        except Exception:
+            settings = None
     pool = getattr(request.app.state, "arq_pool", None)
-    dispatcher = build_dispatcher(settings, pool=pool)
+    dispatcher = build_dispatcher(settings, pool=pool) if settings is not None else None
     agent_policies_dir = (
-        Path(settings.agent_policies_dir) if hasattr(settings, "agent_policies_dir") else Path("policies/agent")
+        Path(settings.agent_policies_dir)
+        if settings and hasattr(settings, "agent_policies_dir")
+        else Path("policies/agent")
     )
     return PolicyBundleService(session, agent_policies_dir, tasks=dispatcher)
 
@@ -39,6 +50,7 @@ async def publish_bundle(
     service: PolicyBundleService = Depends(get_bundle_service),
     actor: Any = Depends(require_principal),
 ) -> dict[str, Any]:
+
     bundle = await service.build(project_id=project_id)
     await service.publish(bundle, actor=actor)
     return {"digest": bundle.digest, "status": "publishing"}

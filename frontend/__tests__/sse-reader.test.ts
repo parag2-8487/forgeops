@@ -4,7 +4,8 @@ import { readSSEResponse } from "../lib/sse-reader";
 
 describe("Typed SSE Reader", () => {
   it("parses valid SSE event stream losslessly", async () => {
-    const rawStream = "event: progress\ndata: {\"percent\": 50}\n\nevent: complete\ndata: {\"percent\": 100}\n\n";
+    const rawStream =
+      'event: progress\ndata: {"percent": 50}\n\nevent: complete\ndata: {"percent": 100}\n\n';
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {

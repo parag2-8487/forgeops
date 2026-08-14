@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,9 +13,7 @@ class Reranker:
         self.score_threshold = score_threshold
         self.enable_fallback = enable_fallback
 
-    async def rerank(
-        self, query: str, candidates: list[tuple[str, float]]
-    ) -> list[tuple[str, float]]:
+    async def rerank(self, query: str, candidates: list[tuple[str, float]]) -> list[tuple[str, float]]:
         """Rerank candidates using scoring model with graceful degradation fallback."""
         if not candidates:
             return []

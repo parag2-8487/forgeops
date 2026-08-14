@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth.dependencies import require_principal
-from .models import validate_project_settings, ProjectSettingsError
+from .models import ProjectSettingsError, validate_project_settings
 
 router = APIRouter(
     prefix="/api/v1/projects",
@@ -95,6 +96,7 @@ async def get_project_activity(project_id: uuid.UUID) -> list[ActivityFeedItem]:
 async def get_project_readiness(project_id: uuid.UUID) -> ReadinessReportResponse:
     """Evaluate and return deployment readiness score and plain-language report."""
     from .readiness import ReadinessEngine
+
     engine = ReadinessEngine()
     eval_result = engine.evaluate_project({"manifests": ["Dockerfile"], "config_files": ["README.md"]})
 
@@ -110,4 +112,3 @@ async def get_project_readiness(project_id: uuid.UUID) -> ReadinessReportRespons
         summary_report=summary,
         recommendations=eval_result.recommendations,
     )
-
