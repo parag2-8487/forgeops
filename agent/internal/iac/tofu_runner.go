@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,10 +91,7 @@ func (r *TofuRunner) Validate(ctx context.Context, workdir string) (*ValidateRes
 
 	// Parse JSON diagnostics from stdout.
 	if len(stdout) > 0 {
-		combined := ""
-		for _, line := range stdout {
-			combined += line
-		}
+		combined := strings.Join(stdout, "\n")
 		if json.Valid([]byte(combined)) {
 			result.Diagnostics = json.RawMessage(combined)
 		}
@@ -152,10 +150,7 @@ func (r *TofuRunner) Plan(ctx context.Context, workdir string, opts PlanOptions)
 		showArgs := []string{"show", "-json", planFile}
 		showStdout, _, showExit, showErr := r.run(ctx, binPath, showArgs, workdir)
 		if showErr == nil && showExit == 0 && len(showStdout) > 0 {
-			combined := ""
-			for _, line := range showStdout {
-				combined += line
-			}
+			combined := strings.Join(showStdout, "\n")
 			if json.Valid([]byte(combined)) {
 				result.PlanJSON = json.RawMessage(combined)
 			}

@@ -58,19 +58,24 @@ docker rm -f "$server_name" "$worker_name" >/dev/null 2>&1 || true
 # the default authorization and authentication flows — without it the server accepts
 # API calls and every OAuth2 provider it creates has no flow to run, so the browser half
 # of the code flow 404s. That failure looks like a bug in the client.
+#
+# Server runs migrations on startup; start server first and wait for ready so the worker
+# does not race migrations.
 docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" server >/dev/null
-docker run -d --name "$worker_name" --network host "${common_env[@]}" -e "AUTHENTIK_LISTEN__HTTP=0.0.0.0:9001" "$image" worker >/dev/null
 
-echo "waiting for Authentik to answer its own health endpoint..."
-deadline=$(( $(date +%s) + 420 ))
+echo "waiting for Authentik server to answer its own health endpoint..."
+deadline=$(( $(date +%s) + 300 ))
 until curl -fsS -o /dev/null "http://localhost:9000/-/health/ready/"; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "FAIL: Authentik did not become ready within 420s" >&2
+    echo "FAIL: Authentik server did not become ready within 300s" >&2
     docker logs "$server_name" 2>&1 | tail -n 200 >&2
     exit 1
   fi
-  sleep 5
+  sleep 3
 done
+
+echo "Starting Authentik worker..."
+docker run -d --name "$worker_name" --network host "${common_env[@]}" -e "AUTHENTIK_LISTEN__HTTP=0.0.0.0:9001" "$image" worker >/dev/null
 
 echo "waiting for Authentik worker to apply default blueprints..."
 token="${AUTHENTIK_BOOTSTRAP_TOKEN:-ci-only-not-a-real-secret-token}"
@@ -83,7 +88,7 @@ until curl -fsS -H "${hdr_name}: ${hdr_val}" "http://localhost:9000/api/v3/flows
     docker logs "$worker_name" 2>&1 | tail -n 200 >&2
     exit 1
   fi
-  sleep 5
+  sleep 3
 done
 
 echo "Authentik is ready at http://localhost:9000"

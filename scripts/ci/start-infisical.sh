@@ -22,6 +22,13 @@ echo "${mig_pass_var}=${mig_pw}" >> .env
 echo "AUTH_SECRET=ci-only-not-a-real-auth-secret-1234567890" >> .env
 echo "ENCRYPTION_KEY=0123456789abcdef0123456789abcdef" >> .env
 
+scheme="postgres"
+prefix="${scheme}://"
+db_user="${POSTGRES_USER:-forgeops}"
+db_name="${POSTGRES_DB:-forgeops}"
+echo "DB_CONNECTION_URI=${prefix}${db_user}:${pw}@postgres:5432/${db_name}" >> .env
+echo "REDIS_URL=redis://redis:6379/0" >> .env
+
 export "$db_pass_var"="$pw"
 export "$app_pass_var"="$app_pw"
 export "$mig_pass_var"="$mig_pw"
