@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/parag8487/ForgeOps/agent/internal/scanner/grammars"
 	"github.com/tetratelabs/wazero"
 	"go.uber.org/zap"
+
+	"github.com/parag8487/ForgeOps/agent/internal/scanner/grammars"
 )
 
 var (

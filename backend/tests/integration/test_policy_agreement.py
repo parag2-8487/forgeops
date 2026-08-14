@@ -7,6 +7,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from .opa_server import GOVERNANCE_POLICY_DIR, opa_server
+
 
 # Generate policy parameters
 @st.composite
@@ -100,6 +102,12 @@ def evalhelper_path(tmp_path_factory) -> Path:
         return bin_path
     except Exception as exc:
         pytest.skip(f"evalhelper binary not built and go build failed: {exc}")
+
+
+@pytest.fixture(scope="module")
+def governance_opa_url():
+    with opa_server(GOVERNANCE_POLICY_DIR, preset_env=None) as url:
+        yield url
 
 
 @settings(max_examples=25, deadline=None)

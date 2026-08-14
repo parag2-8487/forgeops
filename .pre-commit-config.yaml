@@ -53,6 +53,7 @@ repos:
         entry: python scripts/check-test-doubles.py
         language: system
         files: ^backend/tests/.*\.py$
+        exclude: ^backend/tests/meta/fixtures/.*
       # secret-safety.md already says "never use a value that resembles a real provider
       # token format". Until now that rule had no enforcement, so it held only as long as
       # whoever wrote the test remembered it — and it stopped holding the first time it was
@@ -65,6 +66,7 @@ repos:
         entry: python scripts/check-test-credentials.py
         language: system
         files: ^backend/tests/.*\.py$
+        exclude: ^backend/tests/meta/fixtures/.*
       # The same added-lines shape grep that `scripts/secret-gate.ps1` runs at push time, moved
       # to commit time. It had to move: three times a harmless credential SHAPE reached a commit
       # and the pre-push gate caught it, and the only remedy at that point is a history rewrite.

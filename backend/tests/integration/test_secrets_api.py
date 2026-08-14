@@ -75,7 +75,8 @@ async def test_secrets_crud_round_trip(secrets_app: Any, client: AsyncClient, sc
     engine = create_async_engine(schema_at_head)
     async with engine.begin() as conn:
         await conn.execute(
-            text("INSERT INTO projects (id, name) VALUES (:id, :name)"), {"id": project_id, "name": "Test Project"}
+            text("INSERT INTO projects (id, name, path) VALUES (:id, :name, :path)"),
+            {"id": project_id, "name": "Test Project", "path": "/test/project"},
         )
     await engine.dispose()
 

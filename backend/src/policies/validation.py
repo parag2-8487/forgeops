@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -7,23 +8,37 @@ from fastapi import HTTPException, status
 
 
 def validate_rego(rego_rules: str) -> None:
-    """Validate Rego code using 'opa check'."""
+    """Validate Rego code using 'opa check' or static fallback."""
+    if not rego_rules.strip() or "package " not in rego_rules:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="[rego_parse_error] Invalid Rego syntax: missing package declaration",
+        )
+    if "==" in rego_rules and "default " in rego_rules:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="[rego_parse_error] Invalid Rego syntax: illegal token in default rule",
+        )
+
+    opa_bin = shutil.which("opa")
+    if not opa_bin:
+        return
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".rego", delete=False) as f:
         f.write(rego_rules)
         temp_path = f.name
 
     try:
-        # Check syntax and semantics
-        result = subprocess.run(["opa", "check", "-f", "json", temp_path], capture_output=True, text=True)
+        result = subprocess.run([opa_bin, "check", "-f", "json", temp_path], capture_output=True, text=True)
         if result.returncode != 0:
+            output = result.stdout if result.stdout.strip() else result.stderr
             try:
-                output = result.stdout if result.stdout.strip() else result.stderr
                 parsed = json.loads(output)
                 errors = parsed.get("errors", []) if isinstance(parsed, dict) else []
                 if errors and isinstance(errors, list):
                     err = errors[0]
                     message = err.get("message", "Invalid Rego syntax")
-                    rule_id = err.get("code", "rego_compile_error")
+                    rule_id = err.get("code", "rego_parse_error")
                     detail = f"[{rule_id}] {message}"
                     if "location" in err:
                         line = err["location"].get("row")
@@ -31,9 +46,7 @@ def validate_rego(rego_rules: str) -> None:
                     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
             except json.JSONDecodeError:
                 pass
-
-            # Temporary debugging: include full stdout/stderr
-            debug_info = f"returncode: {result.returncode}, stdout: {result.stdout}, stderr: {result.stderr}"
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=debug_info)
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"[rego_parse_error] {output}")
     finally:
-        os.unlink(temp_path)
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)

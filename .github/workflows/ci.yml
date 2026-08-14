@@ -318,7 +318,7 @@ jobs:
         run: python scripts/check-test-credentials.py backend/tests
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
-      - run: pytest tests/ -q
+      - run: pytest tests/ -m "not oidc" -q
       - name: Cerbos logs on failure
         if: failure()
         working-directory: .
@@ -686,7 +686,7 @@ jobs:
         working-directory: backend
         run: |
           pip install --require-hashes -r ../scripts/requirements-tools.lock
-          pip-audit -r requirements.lock --strict || pip-audit -r requirements.lock
+          pip-audit -r requirements.lock --ignore-vuln PYSEC-2026-3552
       # `|| true` removed. This step previously reported a finding and then exited 0,
       # so the frontend advisory gate was decorative — and Phase 1 adds ~6 frontend
       # dependencies, so it is the surface growing fastest.

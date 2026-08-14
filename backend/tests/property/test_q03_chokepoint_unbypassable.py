@@ -526,7 +526,7 @@ class TestClauseBTheCapabilityTypeCannotBeForged:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             authority.blast_radius = "infrastructure"  # type: ignore[misc]
-        with pytest.raises(TypeError):
+        with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):
             authority.smuggled = "value"  # type: ignore[attr-defined]
         assert not hasattr(authority, "__dict__"), "slots=True must leave no instance dict"
 

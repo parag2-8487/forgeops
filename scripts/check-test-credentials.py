@@ -200,6 +200,14 @@ def scan_file(path: Path) -> tuple[list[str], int]:
     return findings, examined
 
 
+def _is_lint_fixture(path: Path) -> bool:
+    parts = path.parts
+    for i in range(len(parts) - len(_FIXTURE_DIR_SUFFIX) + 1):
+        if parts[i : i + len(_FIXTURE_DIR_SUFFIX)] == _FIXTURE_DIR_SUFFIX:
+            return True
+    return False
+
+
 def iter_python_files(roots: Iterable[Path]) -> Iterator[Path]:
     """Every `.py` under `roots`, skipping caches and this check's own fixtures.
 
@@ -210,12 +218,13 @@ def iter_python_files(roots: Iterable[Path]) -> Iterator[Path]:
     """
     for root in roots:
         if root.is_file() and root.suffix == ".py":
-            yield root
+            if "__pycache__" not in root.parts:
+                yield root
             continue
         for path in sorted(root.rglob("*.py")):
             if "__pycache__" in path.parts:
                 continue
-            if path.parent.parts[-3:] == _FIXTURE_DIR_SUFFIX:
+            if _is_lint_fixture(path):
                 continue
             yield path
 
