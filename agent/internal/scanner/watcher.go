@@ -4,6 +4,7 @@ package scanner
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 
 	"github.com/fsnotify/fsnotify"
@@ -149,7 +150,11 @@ func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) 
 	out := make(chan Event, 64)
 
 	go func() {
-		defer close(out)
+		var wg sync.WaitGroup
+		defer func() {
+			wg.Wait()
+			close(out)
+		}()
 		sem := make(chan struct{}, dw.concurrency)
 
 		for {
@@ -161,8 +166,12 @@ func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) 
 					return
 				}
 				sem <- struct{}{}
+				wg.Add(1)
 				go func(e Event) {
-					defer func() { <-sem }()
+					defer func() {
+						<-sem
+						wg.Done()
+					}()
 					select {
 					case out <- e:
 					case <-ctx.Done():

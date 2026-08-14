@@ -25,7 +25,7 @@ echo "ENCRYPTION_KEY=0123456789abcdef0123456789abcdef" >> .env
 scheme="postgres"
 prefix="${scheme}://"
 db_user="${POSTGRES_USER:-forgeops}"
-db_name="${POSTGRES_DB:-forgeops}"
+db_name="infisical"
 echo "DB_CONNECTION_URI=${prefix}${db_user}:${pw}@postgres:5432/${db_name}" >> .env
 echo "REDIS_URL=redis://redis:6379/0" >> .env
 
@@ -34,6 +34,9 @@ export "$app_pass_var"="$app_pw"
 export "$mig_pass_var"="$mig_pw"
 export AUTH_SECRET="ci-only-not-a-real-auth-secret-1234567890"
 export ENCRYPTION_KEY="0123456789abcdef0123456789abcdef"
+
+docker compose up -d --wait postgres redis
+docker compose exec -T postgres psql -U "${POSTGRES_USER:-forgeops}" -d "${POSTGRES_DB:-forgeops}" -tc "SELECT 1 FROM pg_database WHERE datname = 'infisical'" | grep -q 1 || docker compose exec -T postgres psql -U "${POSTGRES_USER:-forgeops}" -d "${POSTGRES_DB:-forgeops}" -c "CREATE DATABASE infisical;"
 
 docker compose --profile vault up -d --wait infisical
 
