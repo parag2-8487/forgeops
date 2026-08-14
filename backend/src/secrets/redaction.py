@@ -26,3 +26,7 @@ def create_redacted_chunk(text: str, project_secrets: list[str] | None = None) -
 
 def create_redacted_instruction(text: str, project_secrets: list[str] | None = None) -> RedactedInstruction:
     return RedactedInstruction(_redact_text(text, project_secrets))
+
+
+def create_redacted_prompt(text: str, project_secrets: list[str] | None = None) -> RedactedPrompt:
+    return RedactedPrompt(_redact_text(text, project_secrets))

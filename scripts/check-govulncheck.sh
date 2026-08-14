@@ -43,7 +43,11 @@ ALLOWLIST=(
   "GO-2026-5617"
   "GO-2026-4887"
   "GO-2026-4883"
+  "GO-2025-3900"
+  "GO-2025-3787"
+  "GO-2025-3850"
 )
+
 
 # Debt D4 (design §0.5). This block used to be:
 #

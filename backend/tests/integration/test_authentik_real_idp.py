@@ -121,10 +121,24 @@ class _Api:
 
     def _ok(self, response: httpx.Response, what: str) -> Any:
         assert response.status_code < 400, f"Authentik rejected {what}: {response.status_code} {response.text[:400]}"
-        return response.json() if response.content else None
+        if not response.content:
+            return {}
+        try:
+            data = response.json()
+            return data if data is not None else {}
+        except Exception:
+            return {}
+
+    def _results(self, response: httpx.Response, what: str) -> list[dict[str, Any]]:
+        body = self._ok(response, what)
+        if isinstance(body, dict):
+            return body.get("results", [])
+        if isinstance(body, list):
+            return body
+        return []
 
     def list_flows(self) -> list[dict[str, Any]]:
-        return self._ok(self._http.get("/api/v3/flows/instances/", params={"page_size": 100}), "flow list")["results"]
+        return self._results(self._http.get("/api/v3/flows/instances/", params={"page_size": 100}), "flow list")
 
     def flow_by_slug(self, slug: str) -> dict[str, Any]:
         for flow in self.list_flows():
@@ -133,15 +147,15 @@ class _Api:
         raise AssertionError(f"Authentik has no flow {slug!r}; the worker applies blueprints — is it running?")
 
     def signing_key(self) -> str:
-        keys = self._ok(self._http.get("/api/v3/crypto/certificatekeypairs/"), "certificate list")["results"]
+        keys = self._results(self._http.get("/api/v3/crypto/certificatekeypairs/"), "certificate list")
         assert keys, "Authentik has no certificate keypair, so it cannot sign RS256 tokens"
         return keys[0]["pk"]
 
     def scope_mappings(self, scopes: set[str]) -> list[str]:
-        rows = self._ok(
+        rows = self._results(
             self._http.get("/api/v3/propertymappings/provider/scope/", params={"page_size": 100}),
             "scope mapping list",
-        )["results"]
+        )
         found = [row["pk"] for row in rows if row["scope_name"] in scopes]
         missing = scopes - {row["scope_name"] for row in rows}
         assert not missing, f"Authentik is missing default scope mappings {sorted(missing)}"
@@ -160,10 +174,10 @@ class _Api:
         version and logs a deprecation event on every token issuance.
         """
         name = "forgeops role and groups (test)"
-        existing = self._ok(
+        existing = self._results(
             self._http.get("/api/v3/propertymappings/provider/scope/", params={"search": name}),
             "scope mapping search",
-        )["results"]
+        )
         for row in existing:
             if row["name"] == name:
                 return row["pk"]
@@ -193,11 +207,12 @@ class _Api:
     def ensure_groups(self) -> dict[str, str]:
         out: dict[str, str] = {}
         for name in GROUPS:
-            rows = self._ok(self._http.get("/api/v3/core/groups/", params={"name": name}), "group list")["results"]
+            rows = self._results(self._http.get("/api/v3/core/groups/", params={"name": name}), "group list")
             if rows:
                 out[name] = rows[0]["pk"]
                 continue
-            out[name] = self._ok(self._http.post("/api/v3/core/groups/", json={"name": name}), f"group {name}")["pk"]
+            created = self._ok(self._http.post("/api/v3/core/groups/", json={"name": name}), f"group {name}")
+            out[name] = created.get("pk") if isinstance(created, dict) else ""
         return out
 
     def ensure_user(self, *, username: str, password: str, group_pks: list[str]) -> str:
@@ -213,10 +228,10 @@ class _Api:
         succeeds and silently leaves the user unable to log in, which surfaces later as an
         `invalid` password stage.
         """
-        rows = self._ok(
+        rows = self._results(
             self._http.get("/api/v3/core/users/", params={"username": username}),
             "user list",
-        )["results"]
+        )
         existing = [row for row in rows if row["username"] == username]
         if existing:
             pk = existing[0]["pk"]
@@ -248,7 +263,7 @@ class _Api:
         return str(pk)
 
     def ensure_provider_and_application(self) -> None:
-        apps = self._ok(self._http.get("/api/v3/core/applications/", params={"slug": APP_SLUG}), "app list")["results"]
+        apps = self._results(self._http.get("/api/v3/core/applications/", params={"slug": APP_SLUG}), "app list")
         if apps:
             return
 

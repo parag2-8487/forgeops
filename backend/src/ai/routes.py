@@ -197,12 +197,9 @@ async def complete(
             headers={"Retry-After": str(int(retry_after))},
         )
 
-    from src.generation.context import assemble_prompt
-    from src.secrets.redaction import create_redacted_chunk, create_redacted_instruction
+    from src.secrets.redaction import create_redacted_prompt
 
-    redacted_prompt = assemble_prompt(
-        system=create_redacted_chunk(""), chunks=[], instruction=create_redacted_instruction(body.prompt)
-    )
+    redacted_prompt = create_redacted_prompt(body.prompt)
 
     # 5. Route through the model router (cache → cascade → provider)
     request = CompletionRequest(

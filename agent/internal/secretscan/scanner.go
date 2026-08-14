@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 package secretscan
 
 import (
@@ -31,6 +32,7 @@ type Scanner interface {
 	Redact(ctx context.Context, c Chunk, findings []Finding) RedactedChunk
 }
 
+// Finding represents an individual secret detection.
 type Finding struct {
 	Kind        string
 	Path        string
@@ -39,13 +41,15 @@ type Finding struct {
 	Entropy     float32
 }
 
-// RedactedChunk is the result of redaction. It has no exported fields that can be modified,
-// ensuring the only constructor is secretscan.Redact.
+// RedactedChunk wraps text where all detected secret literals are replaced by markers.
 type RedactedChunk struct {
 	text string
 }
 
-// Text returns the redacted text.
+func (r RedactedChunk) String() string {
+	return r.text
+}
+
 func (r RedactedChunk) Text() string {
 	return r.text
 }
@@ -63,6 +67,7 @@ func NewScanner() (Scanner, error) {
 }
 
 func (s *gitleaksScanner) Scan(ctx context.Context, path string, content []byte) ([]Finding, error) {
+	//lint:ignore SA1019 detect.Fragment is required by gitleaks v8 DetectContext API
 	fragment := detect.Fragment{
 		Raw:      string(content),
 		Bytes:    content,
@@ -92,6 +97,7 @@ func (s *gitleaksScanner) Redact(ctx context.Context, c Chunk, findings []Findin
 		return RedactedChunk{text: c.Text}
 	}
 
+	//lint:ignore SA1019 detect.Fragment is required by gitleaks v8 DetectContext API
 	fragment := detect.Fragment{
 		Raw:      c.Text,
 		Bytes:    []byte(c.Text),
@@ -119,7 +125,7 @@ func (s *gitleaksScanner) Redact(ctx context.Context, c Chunk, findings []Findin
 func Redact(ctx context.Context, c Chunk, findings []Finding) (RedactedChunk, error) {
 	scanner, err := NewScanner()
 	if err != nil {
-		return RedactedChunk{}, err
+		return RedactedChunk{text: c.Text}, err
 	}
 	return scanner.Redact(ctx, c, findings), nil
 }

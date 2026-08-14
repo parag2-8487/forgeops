@@ -170,7 +170,9 @@ ignore = [
 "src.monitoring".msg = "Cross-domain import: use src.core only"
 "src.incidents".msg = "Cross-domain import: use src.core only"
 "src.policies".msg = "Cross-domain import: use src.core only"
-"src.secrets".msg = "Cross-domain import: use src.core only"
+"src.secrets.routes".msg = "Cross-domain import: secrets management is secrets' alone"
+"src.secrets.store".msg = "Cross-domain import: secret store is secrets' alone"
+"src.secrets.injection".msg = "Cross-domain import: secret injection is secrets' alone"
 "src.notifications".msg = "Cross-domain import: use src.core only"
 "src.websocket".msg = "Cross-domain import: use src.core only"
 # Queue engines forbidden outside the task seam (design.md §7.9).

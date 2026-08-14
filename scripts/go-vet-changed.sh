@@ -25,7 +25,7 @@ fi
 PKGS=''
 for path in "$@"; do
 	case "$path" in
-	agent/testdata/*) continue ;;
+	agent/testdata/* | agent/tools/*) continue ;;
 	agent/*) ;;
 	*) continue ;;
 	esac

@@ -823,6 +823,11 @@ CROSS_DOMAIN_EXEMPTIONS: tuple[CrossDomainExemption, ...] = (
         reason="plan analysis is a stage of the chokepoint's own pipeline (design 2.2.1); the "
         "dependency runs chokepoint -> analysis only",
     ),
+    CrossDomainExemption(
+        importer="worker",
+        banned="*",
+        reason="the task worker entry point registers every domain's task handler; that IS its job (design 7.9)",
+    ),
 )
 
 

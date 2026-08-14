@@ -475,9 +475,7 @@ jobs:
         working-directory: backend
         run: pip install --require-hashes -r requirements-dev.lock
       - name: Start Postgres, Redis, and Infisical via Compose
-        run: |
-          # Use compose directly to get the whole stack for Infisical
-          docker compose --profile vault up -d --wait infisical
+        run: bash scripts/ci/start-infisical.sh
       - name: CRUD round trips against the container
         working-directory: backend
         run: python -m pytest -m 'mandatory and infisical' --report-log=secrets.jsonl -q

@@ -31,12 +31,8 @@ from sqlalchemy import (
 )
 from sqlmodel import Field, SQLModel
 
-from ..governance.models import ChangeSet  # noqa: F401
-
-# Import related models for SQLAlchemy ForeignKey resolution
-from ..projects.models import Project  # noqa: F401
-
 POLICY_ENGINES: tuple[str, ...] = ("rego",)
+
 EVALUATION_RESULTS: tuple[str, ...] = ("allow", "deny", "require_approval")
 EVALUATION_SIDES: tuple[str, ...] = ("backend", "agent")
 
