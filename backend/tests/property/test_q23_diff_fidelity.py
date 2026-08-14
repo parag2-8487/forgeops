@@ -15,8 +15,8 @@ def test_q23_diff_fidelity(base_lines: list[str], target_lines: list[str]):
     Property Q-23: Unified diff rendering fidelity.
     Unified diff generated between base and target lines must capture all edits losslessly.
     """
-    base_text = [l + "\n" for l in base_lines]
-    target_text = [l + "\n" for l in target_lines]
+    base_text = [line + "\n" for line in base_lines]
+    target_text = [line + "\n" for line in target_lines]
 
     diff = list(difflib.unified_diff(base_text, target_text, fromfile="base", tofile="target"))
     diff_str = "".join(diff)

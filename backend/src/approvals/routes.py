@@ -25,9 +25,9 @@ def approve_changeset(cs_id: str, approver: str = "admin", service: ApprovalServ
     try:
         return service.approve_changeset(cs_id, approver=approver)
     except KeyError:
-        raise HTTPException(status_code=404, detail="ChangeSet not found")
+        raise HTTPException(status_code=404, detail="ChangeSet not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/{cs_id}/reject", response_model=ChangeSetResponse)
@@ -35,9 +35,9 @@ def reject_changeset(cs_id: str, rejector: str = "admin", service: ApprovalServi
     try:
         return service.reject_changeset(cs_id, rejector=rejector)
     except KeyError:
-        raise HTTPException(status_code=404, detail="ChangeSet not found")
+        raise HTTPException(status_code=404, detail="ChangeSet not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/{cs_id}/rollback", response_model=ChangeSetResponse)
@@ -45,6 +45,6 @@ def rollback_changeset(cs_id: str, service: ApprovalService = Depends(get_approv
     try:
         return service.rollback_changeset(cs_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="ChangeSet not found")
+        raise HTTPException(status_code=404, detail="ChangeSet not found") from None
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e

@@ -15,7 +15,7 @@ def test_property_q09_rubric_non_interference(text: str):
     rubric = AdvisoryRubric()
 
     gate_res1 = gate.evaluate(text)
-    rubric_res = rubric.evaluate(text)
+    rubric.evaluate(text)
     gate_res2 = gate.evaluate(text)
 
     # Advisory rubric evaluation MUST NOT mutate or influence gate results

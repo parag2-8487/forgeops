@@ -12,6 +12,7 @@ from src.auth.cerbos import CerbosPrincipal
 from src.auth.dependencies import require_principal
 
 from tests.integration.production_app import apply_committed_baseline_env
+from tests.integration.wiring import wires
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory, pytest.mark.infisical]
 
@@ -67,12 +68,8 @@ async def client(secrets_app: Any) -> AsyncIterator[AsyncClient]:
         yield ac
 
 
-from tests.integration.wiring import wires
-
-
 @wires("secret_store")
 async def test_secrets_crud_round_trip(secrets_app: Any, client: AsyncClient, schema_at_head: str):
-
     project_id = uuid.uuid4()
 
     engine = create_async_engine(schema_at_head)

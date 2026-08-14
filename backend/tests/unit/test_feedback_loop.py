@@ -7,8 +7,12 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 
 async def test_feedback_loop_success_first_try():
     loop = BoundedFeedbackLoop(max_iterations=3)
-    gen = lambda errs: "valid_content"
-    val = lambda out: (True, [])
+
+    def gen(errs):
+        return "valid_content"
+
+    def val(out):
+        return (True, [])
 
     res = await loop.execute_loop(gen, val)
     assert res.success is True
@@ -17,8 +21,12 @@ async def test_feedback_loop_success_first_try():
 
 async def test_feedback_loop_max_iteration_termination():
     loop = BoundedFeedbackLoop(max_iterations=3)
-    gen = lambda errs: "invalid_content"
-    val = lambda out: (False, ["error_found"])
+
+    def gen(errs):
+        return "invalid_content"
+
+    def val(out):
+        return (False, ["error_found"])
 
     res = await loop.execute_loop(gen, val)
     assert res.success is False

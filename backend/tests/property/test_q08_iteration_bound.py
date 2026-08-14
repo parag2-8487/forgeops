@@ -12,8 +12,12 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 @given(max_iters=st.integers(min_value=1, max_value=10))
 async def test_property_q08_iteration_bound_termination(max_iters: int):
     loop = BoundedFeedbackLoop(max_iterations=max_iters)
-    gen = lambda errs: "content"
-    val = lambda out: (False, ["error"])
+
+    def gen(errs):
+        return "content"
+
+    def val(out):
+        return (False, ["error"])
 
     res = await loop.execute_loop(gen, val)
     assert res.iterations_used <= max_iters

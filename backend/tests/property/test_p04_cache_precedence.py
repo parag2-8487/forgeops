@@ -15,15 +15,14 @@ from typing import Any
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 from src.ai.routing.cache import CacheHit, TieredSemanticCache
+from src.secrets.redaction import create_redacted_chunk
 
 # ---------------------------------------------------------------------------
 # Strategies
 # ---------------------------------------------------------------------------
 
 model_st = st.text(min_size=1, max_size=20, alphabet="abcdefghijklmnop-0123456789")
-from src.secrets.redaction import create_redacted_chunk
-
-prompt_st = st.builds(lambda s: create_redacted_chunk(s), st.text(min_size=1, max_size=50))
+prompt_st = st.builds(create_redacted_chunk, st.text(min_size=1, max_size=50))
 content_st = st.text(min_size=1, max_size=200)
 
 

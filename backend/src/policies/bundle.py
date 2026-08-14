@@ -11,7 +11,8 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, update
 from src.core.tasks import TaskDispatcher
-from src.policies.models import Policy, PolicyBundle
+
+from .models import Policy, PolicyBundle
 
 
 class PolicyBundleService:
@@ -29,7 +30,7 @@ class PolicyBundleService:
         self._tasks = tasks
 
     async def active_digest(self, *, project_id: uuid.UUID | None) -> str:
-        stmt = select(PolicyBundle.digest).where(PolicyBundle.active == True)
+        stmt = select(PolicyBundle.digest).where(PolicyBundle.active is True)
         if project_id:
             stmt = stmt.where(PolicyBundle.project_id == project_id)
         else:
@@ -39,7 +40,7 @@ class PolicyBundleService:
 
     async def publish(self, bundle: PolicyBundle, *, actor: Any) -> None:
         # Mark all other bundles as inactive
-        stmt = update(PolicyBundle).where(PolicyBundle.active == True).values(active=False)
+        stmt = update(PolicyBundle).where(PolicyBundle.active is True).values(active=False)
         if bundle.project_id:
             stmt = stmt.where(PolicyBundle.project_id == bundle.project_id)
         else:
@@ -61,10 +62,9 @@ class PolicyBundleService:
                 },
             )
 
-
     async def build(self, *, project_id: uuid.UUID | None) -> PolicyBundle:
         # 1. Query policies
-        stmt = select(Policy).where(Policy.enabled == True)
+        stmt = select(Policy).where(Policy.enabled is True)
         if project_id:
             stmt = stmt.where(Policy.project_id == project_id)
         else:

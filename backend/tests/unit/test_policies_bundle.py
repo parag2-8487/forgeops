@@ -91,4 +91,3 @@ async def test_bundle_publish_and_active_digest():
             "project_id": str(project_id),
         },
     )
-

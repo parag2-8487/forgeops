@@ -13,8 +13,8 @@ from src.core.config import get_settings
 from src.core.db import get_session
 from src.core.tasks import build_dispatcher
 from src.core.tenancy import current_tenant_id
-from src.policies.bundle import PolicyBundleService
 
+from .bundle import PolicyBundleService
 from .models import Policy
 from .schemas import DryRunInput, PolicyCreate, PolicyRead, PolicyTemplateRead, PolicyUpdate
 from .templates import TEMPLATES
@@ -50,7 +50,6 @@ async def publish_bundle(
     service: PolicyBundleService = Depends(get_bundle_service),
     actor: Any = Depends(require_principal),
 ) -> dict[str, Any]:
-
     bundle = await service.build(project_id=project_id)
     await service.publish(bundle, actor=actor)
     return {"digest": bundle.digest, "status": "publishing"}

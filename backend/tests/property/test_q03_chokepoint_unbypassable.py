@@ -447,7 +447,6 @@ class TestClauseBTheCapabilityTypeCannotBeForged:
         confined=st.sampled_from(range(len(ANALYSIS.CONFINED_NAMES))),
         offender=st.sampled_from(("ai.routes", "projects.service", "secrets.routes", "audit.writer")),
     )
-
     def test_a_generated_module_reaching_a_confined_name_is_always_reported(
         self, tmp_path_factory: pytest.TempPathFactory, confined: int, offender: str
     ) -> None:

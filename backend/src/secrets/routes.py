@@ -7,9 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.dependencies import require_principal
 from src.auth.principal import Principal
 from src.core.db import get_session
-from src.secrets.dependencies import get_secret_store
-from src.secrets.models import Secret
-from src.secrets.store import SecretStore
+
+from .dependencies import get_secret_store
+from .models import Secret
+from .store import SecretStore
 
 router = APIRouter(prefix="/api/v1/secrets", tags=["secrets"])
 

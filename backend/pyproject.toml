@@ -247,16 +247,12 @@ ignore = [
 "src/mcp/**/*.py" = ["TID251"]
 "src/analysis/**/*.py" = ["TID251"]
 "src/projects/**/*.py" = ["TID251"]
-# A fifth glob, added by leaf 8.4 when `src/websocket` stopped being an empty placeholder.
-# `websocket/routes.py` imports `websocket/hub.py`, which is its own namespace and not a
-# cross-domain import — but Ruff's banned-api matches on module-path prefix and cannot say
-# "except from within", so the same exemption the four domains above carry is needed here. What it
-# does and does not buy is finding 55's lesson, stated above: the glob unbans the whole rule for
-# these files, and `scripts/chokepoint_graph.py` is what re-asserts both the cross-domain module
-# bans and §2.2.1's private surface by parsing. `src.websocket.hub.send_command` stays confined by
-# that parse, which matters more here than for any other domain: it is the function that makes an
-# agent execute.
+"src/policies/**/*.py" = ["TID251"]
+"src/secrets/**/*.py" = ["TID251"]
+"src/generation/**/*.py" = ["TID251"]
+"src/approvals/**/*.py" = ["TID251"]
 "src/websocket/**/*.py" = ["TID251"]
+
 # `src/auth` is exempted FILE BY FILE rather than by glob, which is the narrower form
 # of the rule above. Only `routes.py` composes the flow — it is the one module that must
 # name `auth.oidc` and `auth.sessions`, both of which the banned-api table forbids

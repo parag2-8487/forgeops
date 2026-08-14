@@ -86,9 +86,6 @@ def shared_bundle_path(tmp_path_factory) -> Path:
     return bundle_path
 
 
-from .test_governance_policy_opa import governance_opa_url
-
-
 @pytest.fixture(scope="module")
 def evalhelper_path(tmp_path_factory) -> Path:
     agent_dir = Path(__file__).parent.parent.parent.parent / "agent"
@@ -103,7 +100,6 @@ def evalhelper_path(tmp_path_factory) -> Path:
         return bin_path
     except Exception as exc:
         pytest.skip(f"evalhelper binary not built and go build failed: {exc}")
-
 
 
 @settings(max_examples=25, deadline=None)

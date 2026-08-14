@@ -118,7 +118,11 @@ async def test_policy_dry_run(client: AsyncClient) -> None:
     # 1. Create a policy
     create_payload = {
         "name": "Dry Run Policy",
-        "rego_rules": 'package forgeops.governance\n\ndefault decision = "deny"\n\ndecision = "allow" if { input.action == "allow_me" }\n',
+        "rego_rules": (
+            "package forgeops.governance\n\n"
+            'default decision = "deny"\n\n'
+            'decision = "allow" if { input.action == "allow_me" }\n'
+        ),
     }
     resp = await client.post("/api/v1/policies", json=create_payload)
     assert resp.status_code == 201
