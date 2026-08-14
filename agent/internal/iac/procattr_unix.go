@@ -25,7 +25,7 @@ func setProcessGroup(cmd *exec.Cmd) {
 // that ignored SIGTERM survived as an orphan. Polling with signal 0 asks the
 // kernel whether the group still exists without consuming the exit status.
 func terminateGroup(cmd *exec.Cmd, grace time.Duration) {
-	if cmd.Process == nil {
+	if cmd.Process == nil || cmd.Process.Pid <= 0 {
 		return
 	}
 	pgid := -cmd.Process.Pid // negative pid targets the whole group

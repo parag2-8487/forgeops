@@ -59,45 +59,21 @@ docker rm -f "$server_name" "$worker_name" >/dev/null 2>&1 || true
 # API calls and every OAuth2 provider it creates has no flow to run, so the browser half
 # of the code flow 404s. That failure looks like a bug in the client.
 #
-# Server runs migrations on startup; start server first and wait for ready so the worker
-# does not race migrations.
 docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" server >/dev/null
+docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
 
-echo "waiting for Authentik server to answer its own health endpoint..."
-deadline=$(( $(date +%s) + 300 ))
-until docker exec "$server_name" ak healthcheck >/dev/null 2>&1 || curl -fsS -o /dev/null "http://localhost:9000/-/health/ready/" 2>/dev/null; do
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "FAIL: Authentik server did not become ready within 300s" >&2
-    docker logs "$server_name" 2>&1 | tail -n 200 >&2
-    exit 1
-  fi
-  sleep 3
-done
-
-echo "Starting Authentik worker..."
-docker run -d --name "$worker_name" --network host "${common_env[@]}" -e "AUTHENTIK_LISTEN__HTTP=0.0.0.0:9001" "$image" worker >/dev/null
-
-echo "waiting for Authentik worker to become ready..."
-deadline=$(( $(date +%s) + 300 ))
-until docker exec "$worker_name" ak healthcheck >/dev/null 2>&1; do
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "FAIL: Authentik worker did not become ready within 300s" >&2
-    docker logs "$worker_name" 2>&1 | tail -n 200 >&2
-    exit 1
-  fi
-  sleep 3
-done
-
-echo "waiting for Authentik worker to apply default blueprints..."
+echo "waiting for Authentik to answer its health endpoint and apply default blueprints..."
 token="${AUTHENTIK_BOOTSTRAP_TOKEN:-ci-only-not-a-real-secret-token}"
 hdr_name="Authori"$(printf '%s' "zation")
 hdr_val="Bear"$(printf '%s' "er")" $token"
-deadline=$(( $(date +%s) + 300 ))
+deadline=$(( $(date +%s) + 420 ))
 until curl -fsS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>/dev/null | grep -q 'default-provider-authorization-implicit-consent'; do
-  docker exec "$worker_name" ak apply_blueprints >/dev/null 2>&1 || docker exec "$server_name" ak apply_blueprints >/dev/null 2>&1 || true
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "FAIL: Authentik worker did not apply blueprints within deadline" >&2
-    docker logs "$worker_name" 2>&1 | tail -n 200 >&2
+    echo "FAIL: Authentik did not become ready with default blueprints within deadline" >&2
+    echo "=== Server logs ===" >&2
+    docker logs "$server_name" 2>&1 | tail -n 100 >&2
+    echo "=== Worker logs ===" >&2
+    docker logs "$worker_name" 2>&1 | tail -n 100 >&2
     exit 1
   fi
   sleep 3
