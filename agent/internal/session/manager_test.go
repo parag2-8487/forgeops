@@ -383,6 +383,7 @@ func TestStatus_DistinguishesDisabledFromUnpaired(t *testing.T) {
 	if _, err := withURL.Status(context.Background()); !errors.Is(err, ErrUnpaired) {
 		t.Errorf("Status with a URL and no token = %v, want ErrUnpaired", err)
 	}
+	//nolint:staticcheck // intentional sentinel distinction test
 	//lint:ignore SA1032 intentional sentinel distinction test
 	if errors.Is(ErrUnpaired, connection.ErrDisabled) || errors.Is(connection.ErrDisabled, ErrUnpaired) {
 		t.Error("ErrUnpaired and connection.ErrDisabled must be distinguishable; §10.3 requires it")

@@ -247,6 +247,7 @@ jobs:
       # pass" pattern D-51 exists to reject.
       DATABASE_URL: postgresql+asyncpg://forgeops_app:ci-only-not-a-real-secret@localhost:5432/forgeops
       REDIS_URL: redis://localhost:6379/0
+      FORGEOPS_TEST_REDIS_URL: redis://localhost:6379/0
       # tests/integration/conftest.py gates the schema tests on this variable.
       # It was never set, so all seven of criterion 14's assertions — vector(1536),
       # the HNSW cosine index, transaction-scoped ef_search, clean autogenerate and

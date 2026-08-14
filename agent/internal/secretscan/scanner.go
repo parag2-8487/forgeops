@@ -67,6 +67,7 @@ func NewScanner() (Scanner, error) {
 }
 
 func (s *gitleaksScanner) Scan(ctx context.Context, path string, content []byte) ([]Finding, error) {
+	//nolint:staticcheck,govet // detect.Fragment is required by gitleaks v8 DetectContext API
 	//lint:ignore SA1019 detect.Fragment is required by gitleaks v8 DetectContext API
 	fragment := detect.Fragment{
 		Raw:      string(content),
@@ -97,6 +98,7 @@ func (s *gitleaksScanner) Redact(ctx context.Context, c Chunk, findings []Findin
 		return RedactedChunk{text: c.Text}
 	}
 
+	//nolint:staticcheck,govet // detect.Fragment is required by gitleaks v8 DetectContext API
 	//lint:ignore SA1019 detect.Fragment is required by gitleaks v8 DetectContext API
 	fragment := detect.Fragment{
 		Raw:      c.Text,

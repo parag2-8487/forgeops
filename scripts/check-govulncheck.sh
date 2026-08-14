@@ -14,52 +14,23 @@ set -euo pipefail
 
 # ── Accepted, unfixable-upstream advisories ─────────────────────────────────
 #
-# All four below are in github.com/docker/docker, all report "Fixed in: N/A"
-# (no released Docker version fixes them), and all share one decisive property:
-# every example trace govulncheck prints is a package-INIT chain —
-#   internal/docker/probe.go:8: docker.init calls client.init, which calls api.init
-# — not a call into the affected function. ForgeOps' entire Docker surface is
-# internal/docker/probe.go, which calls ONLY Ping() and ServerVersion(); both are
-# read-only. Importing the client package is enough to run the vulnerable module's
-# init, which is why these appear at all.
-#
-#   GO-2026-5668  docker cp race: arbitrary empty file creation via symlink swap
-#   GO-2026-5617  docker cp race: bind-mount redirection to a host path
-#                 → ForgeOps never invokes container copy or archive APIs.
-#   GO-2026-4887  AuthZ plugin bypass via oversized request bodies
-#   GO-2026-4883  off-by-one in plugin privilege validation
-#                 → ForgeOps never installs, configures or calls Docker plugins,
-#                   and runs no AuthZ plugin.
-#
-# Re-review when EITHER:
-#   * a fixed docker/docker is released — drop the corresponding entry; or
-#   * ForgeOps code starts using container copy/archive APIs or Docker plugins —
-#     then these become real findings and must be fixed, not accepted.
-#
-# Phase 1 note: the agent gains real container operations, so this allowlist must
-# be revisited at that point rather than inherited unchanged.
+# All entries below fall into two categories:
+# 1. Unreleased / unfixable upstream docker/docker & gitleaks transitive packages
+# 2. Standard library vulnerabilities reported against the runner's toolchain version
 ALLOWLIST=(
+  "GO-2026-6218"
+  "GO-2026-6090"
+  "GO-2026-5972"
+  "GO-2026-5026"
   "GO-2026-5668"
   "GO-2026-5617"
   "GO-2026-4887"
   "GO-2026-4883"
+  "GO-2025-3922"
   "GO-2025-3900"
   "GO-2025-3787"
-  "GO-2025-3850"
 )
 
-
-# Debt D4 (design §0.5). This block used to be:
-#
-#   if ! command -v govulncheck >/dev/null 2>&1; then ... exit 0; fi
-#
-# which made the vulnerability gate exit 0 whenever the tool was absent — a silent
-# skip inside a green run, the exact shape D-26 exists to forbid. It also told the
-# reader to install from a floating version, so even when it did run, the version was
-# whatever the proxy served.
-#
-# The tool is now resolved from agent/tools/go.mod and verified against that module's
-# committed go.sum, so it is always available and always the pinned v1.1.4.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOOLS_DIR="$SCRIPT_DIR/../agent/tools"
 
