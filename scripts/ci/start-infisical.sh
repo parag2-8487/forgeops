@@ -25,3 +25,15 @@ export "$app_pass_var"="$app_pw"
 export "$mig_pass_var"="$mig_pw"
 
 docker compose --profile vault up -d --wait infisical
+
+echo "waiting for Infisical to accept connections..."
+deadline=$(( $(date +%s) + 120 ))
+until curl -fsS -o /dev/null "http://127.0.0.1:8080/api/status" 2>/dev/null || curl -fsS -o /dev/null "http://127.0.0.1:8080/" 2>/dev/null; do
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "FAIL: Infisical did not become ready within 120s" >&2
+    docker compose logs infisical 2>&1 | tail -n 200 >&2
+    exit 1
+  fi
+  sleep 2
+done
+echo "Infisical is ready at http://127.0.0.1:8080"

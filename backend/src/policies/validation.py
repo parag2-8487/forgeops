@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -14,7 +15,6 @@ def validate_rego(rego_rules: str) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="[rego_parse_error] Invalid Rego syntax: missing package declaration",
         )
-    import re
 
     if re.search(r"^\s*default\s+\w+\s*==", rego_rules, re.MULTILINE):
         raise HTTPException(

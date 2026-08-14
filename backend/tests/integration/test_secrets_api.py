@@ -1,3 +1,4 @@
+import os
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -10,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from src.auth.cerbos import CerbosPrincipal
 from src.auth.dependencies import require_principal
+from src.main import create_app
 
 from tests.integration.production_app import apply_committed_baseline_env
 from tests.integration.wiring import wires
@@ -22,10 +24,6 @@ async def secrets_app(
     monkeypatch: pytest.MonkeyPatch,
     schema_at_head: str,
 ) -> AsyncIterator[Any]:
-    from src.main import create_app
-
-    import os
-
     initial_infisical_url = os.environ.get("INFISICAL_URL")
     initial_backend = os.environ.get("SECRET_BACKEND")
 

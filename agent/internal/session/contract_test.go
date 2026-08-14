@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	_ Store   = (*FileStore)(nil)
-	_ Journal = (*FileJournal)(nil)
+	_ Store    = (*FileStore)(nil)
+	_ Journal  = (*FileJournal)(nil)
 	_ Verifier = (*envelope.Verifier)(nil)
 
 	// The mTLS dial reads its credential through this interface. It is declared in
