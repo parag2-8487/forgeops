@@ -88,7 +88,7 @@ while time.time() < deadline:
             else:
                 results = []
             slugs = {f.get("slug") for f in results if isinstance(f, dict)}
-            
+
             # Check scope mappings as well
             scopes = set()
             try:
@@ -107,10 +107,16 @@ while time.time() < deadline:
 
             now = time.time()
             if now - last_apply >= 5.0:
-                subprocess.run(
-                    ["docker", "exec", server_name, "sh", "-c", 'for bp in $(find /blueprints -name "*.yaml" 2>/dev/null); do ak apply_blueprint "$bp" || true; done'],
-                    capture_output=True,
-                )
+                for bp in [
+                    "system/default-property-mappings.yaml",
+                    "system/default-tenant.yaml",
+                    "system/default-flows.yaml",
+                    "system/default-crypto.yaml",
+                    "default/flow-default-provider-authorization-implicit-consent.yaml",
+                    "default/flow-default-authentication-flow.yaml",
+                    "default/flow-default-invalidation-flow.yaml",
+                ]:
+                    subprocess.run(["docker", "exec", server_name, "ak", "apply_blueprint", bp], capture_output=True)
                 last_apply = now
             if now - last_log >= 10.0:
                 print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
