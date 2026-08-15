@@ -20,8 +20,16 @@ import (
 )
 
 func findTofu() string {
-	// Try PATH first
+	// Try real binary tofu-bin first (bypasses Node.js wrapper in CI)
+	if p, err := exec.LookPath("tofu-bin"); err == nil {
+		return p
+	}
+	// Try PATH
 	if p, err := exec.LookPath("tofu"); err == nil {
+		dir := filepath.Dir(p)
+		if _, err := os.Stat(filepath.Join(dir, "tofu-bin")); err == nil {
+			return filepath.Join(dir, "tofu-bin")
+		}
 		return p
 	}
 	// Try known install location
