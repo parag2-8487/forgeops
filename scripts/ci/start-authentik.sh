@@ -77,6 +77,8 @@ until curl -fsS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http
     docker logs "$worker_name" 2>&1 | tail -n 100 >&2
     exit 1
   fi
+  docker exec "$server_name" ak apply_blueprint default/ >/dev/null 2>&1 || true
+  docker exec "$worker_name" ak apply_blueprint default/ >/dev/null 2>&1 || true
   sleep 3
 done
 

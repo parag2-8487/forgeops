@@ -334,19 +334,44 @@ func (r *TofuRunner) drainGrace() time.Duration {
 
 // scanPipe reads lines from a pipe, capping each line at MaxLineBytes.
 func (r *TofuRunner) scanPipe(pipe io.Reader, stream string) []string {
-	scanner := bufio.NewScanner(pipe)
-	scanner.Buffer(make([]byte, r.cfg.MaxLineBytes), r.cfg.MaxLineBytes)
+	maxLine := r.cfg.MaxLineBytes
+	if maxLine <= 0 {
+		maxLine = 1024 * 1024
+	}
 
+	reader := bufio.NewReaderSize(pipe, 64*1024)
 	var lines []string
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Truncate overlong lines that exactly fill the buffer.
-		if len(line) > r.cfg.MaxLineBytes {
-			line = line[:r.cfg.MaxLineBytes]
+	var current strings.Builder
+
+	for {
+		chunk, isPrefix, err := reader.ReadLine()
+		if len(chunk) > 0 {
+			if current.Len() < maxLine {
+				remaining := maxLine - current.Len()
+				if len(chunk) > remaining {
+					current.Write(chunk[:remaining])
+				} else {
+					current.Write(chunk)
+				}
+			}
 		}
-		lines = append(lines, line)
-		if r.sink != nil {
-			r.sink(stream, line)
+		if err != nil {
+			if current.Len() > 0 {
+				line := current.String()
+				lines = append(lines, line)
+				if r.sink != nil {
+					r.sink(stream, line)
+				}
+			}
+			break
+		}
+		if !isPrefix {
+			line := current.String()
+			current.Reset()
+			lines = append(lines, line)
+			if r.sink != nil {
+				r.sink(stream, line)
+			}
 		}
 	}
 	return lines
