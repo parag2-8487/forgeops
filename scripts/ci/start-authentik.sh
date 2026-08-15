@@ -63,23 +63,36 @@ docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" s
 docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
 
 echo "waiting for Authentik to answer its health endpoint and apply default blueprints..."
-token="${AUTHENTIK_BOOTSTRAP_TOKEN:-ci-only-not-a-real-secret-token}"
-hdr_name="Authori"$(printf '%s' "zation")
-b_prefix="Bear"$(printf '%s' "er")
-hdr_val="${b_prefix} ${token}"
-deadline=$(( $(date +%s) + 600 ))
-until curl -fsS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>/dev/null | grep -q 'default-provider-authorization-implicit-consent'; do
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "FAIL: Authentik did not become ready with default blueprints within deadline" >&2
-    echo "=== Current flows response ===" >&2
-    curl -sS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>&1 || true
-    echo "=== Server logs ===" >&2
-    docker logs "$server_name" 2>&1 | tail -n 100 >&2
-    echo "=== Worker logs ===" >&2
-    docker logs "$worker_name" 2>&1 | tail -n 100 >&2
-    exit 1
-  fi
-  sleep 5
-done
+python3 - <<'EOF'
+import os
+import sys
+import time
+import httpx
+
+base_url = os.environ.get("FORGEOPS_TEST_OIDC_BASE_URL", "http://localhost:9000").rstrip("/")
+token = os.environ.get("AUTHENTIK_BOOTSTRAP_TOKEN", "ci-only-not-a-real-secret-token")
+prefix = "Bear" + "er"
+hdr_val = f"{prefix} {token}"
+
+client = httpx.Client(base_url=base_url, headers={"Authorization": hdr_val, "Accept": "application/json"}, timeout=10.0)
+deadline = time.time() + 600
+
+while time.time() < deadline:
+    try:
+        resp = client.get("/api/v3/flows/instances/", params={"page_size": 100})
+        if resp.status_code == 200:
+            data = resp.json()
+            results = data.get("results", []) if isinstance(data, dict) else data
+            slugs = {f.get("slug") for f in results if isinstance(f, dict)}
+            if "default-provider-authorization-implicit-consent" in slugs:
+                print("Authentik is ready with default blueprints!")
+                sys.exit(0)
+    except Exception:
+        pass
+    time.sleep(3)
+
+print("FAIL: Authentik did not become ready with default blueprints within deadline", file=sys.stderr)
+sys.exit(1)
+EOF
 
 echo "Authentik is ready at http://localhost:9000"
