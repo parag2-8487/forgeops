@@ -52,9 +52,7 @@ common_env=(
   -e "AUTHENTIK_ERROR_REPORTING__ENABLED=false"
 )
 
-# Run migrations first to prevent migration lock contention between server and worker.
-echo "running Authentik migrations..."
-docker run --rm --network host "${common_env[@]}" "$image" migrate
+docker rm -f "$server_name" "$worker_name" >/dev/null 2>&1 || true
 
 docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" server >/dev/null
 docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
@@ -80,17 +78,25 @@ while time.time() < deadline:
         resp = client.get("/api/v3/flows/instances/", params={"page_size": 100})
         if resp.status_code == 200:
             data = resp.json()
-            results = data.get("results", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+            if isinstance(data, dict):
+                results = data.get("results", [])
+            elif isinstance(data, list):
+                results = data
+            else:
+                results = []
             slugs = {f.get("slug") for f in results if isinstance(f, dict)}
             if "default-provider-authorization-implicit-consent" in slugs:
                 print(f"[start-authentik] Authentik is ready with default blueprints! (flows: {len(slugs)})", flush=True)
                 sys.exit(0)
             now = time.time()
             if now - last_log >= 10.0:
-                print(f"[start-authentik] waiting for blueprints... current flows ({len(slugs)}): {sorted(list(slugs))[:5]}", flush=True)
+                print(f"[start-authentik] waiting for blueprints... current flows ({len(slugs)}): {sorted([s for s in slugs if s])[:5]}", flush=True)
                 last_log = now
-    except Exception:
-        pass
+    except Exception as e:
+        now = time.time()
+        if now - last_log >= 10.0:
+            print(f"[start-authentik] waiting for server to answer... ({e})", flush=True)
+            last_log = now
     time.sleep(3)
 
 print("FAIL: Authentik did not become ready with default blueprints within deadline", file=sys.stderr)
