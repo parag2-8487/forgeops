@@ -58,14 +58,16 @@ docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" s
 docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
 
 echo "waiting for Authentik to answer its health endpoint and apply default blueprints..."
-python3 - <<'EOF'
+SERVER_NAME="$server_name" python3 - <<'EOF'
 import os
+import subprocess
 import sys
 import time
 import httpx
 
 base_url = os.environ.get("FORGEOPS_TEST_OIDC_BASE_URL", "http://localhost:9000").rstrip("/")
 token = os.environ.get("AUTHENTIK_BOOTSTRAP_TOKEN", "ci-only-not-a-real-secret-token")
+server_name = os.environ.get("SERVER_NAME", "forgeops-ci-authentik-server")
 prefix = "Bear" + "er"
 hdr_val = f"{prefix} {token}"
 
@@ -73,6 +75,7 @@ client = httpx.Client(base_url=base_url, headers={"Authorization": hdr_val, "Acc
 deadline = time.time() + 600
 
 last_log = 0.0
+last_apply = 0.0
 while time.time() < deadline:
     try:
         resp = client.get("/api/v3/flows/instances/", params={"page_size": 100})
@@ -89,6 +92,15 @@ while time.time() < deadline:
                 print(f"[start-authentik] Authentik is ready with default blueprints! (flows: {len(slugs)})", flush=True)
                 sys.exit(0)
             now = time.time()
+            if now - last_apply >= 5.0:
+                subprocess.run(["docker", "exec", server_name, "ak", "blueprints_apply"], capture_output=True)
+                for bp in [
+                    "default/flow-default-provider-authorization-implicit-consent.yaml",
+                    "default/flow-default-authentication-flow.yaml",
+                    "default/flow-default-invalidation-flow.yaml",
+                ]:
+                    subprocess.run(["docker", "exec", server_name, "ak", "apply_blueprint", bp], capture_output=True)
+                last_apply = now
             if now - last_log >= 10.0:
                 print(f"[start-authentik] waiting for blueprints... current flows ({len(slugs)}): {sorted([s for s in slugs if s])[:5]}", flush=True)
                 last_log = now
