@@ -166,14 +166,14 @@ func (r *TofuRunner) resolvedBinary() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", ErrTofuNotFound, r.cfg.BinaryPath)
 	}
-	// If opentofu/setup-opentofu created a wrapper, prefer the real binary tofu-bin if present.
-	dir := filepath.Dir(path)
-	realBin := filepath.Join(dir, "tofu-bin")
-	if info, err := os.Stat(realBin); err == nil && !info.IsDir() {
-		return realBin, nil
-	}
-	if realPath, err := exec.LookPath("tofu-bin"); err == nil {
-		return realPath, nil
+	base := filepath.Base(path)
+	if base == "tofu" || base == "tofu.exe" {
+		// If opentofu/setup-opentofu created a wrapper, prefer the real binary tofu-bin if present next to it.
+		dir := filepath.Dir(path)
+		realBin := filepath.Join(dir, "tofu-bin")
+		if info, err := os.Stat(realBin); err == nil && !info.IsDir() {
+			return realBin, nil
+		}
 	}
 	return path, nil
 }
