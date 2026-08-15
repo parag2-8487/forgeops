@@ -78,9 +78,9 @@ last_log = 0.0
 last_apply = 0.0
 while time.time() < deadline:
     now = time.time()
-    if now - last_apply >= 5.0:
+    if now - last_apply >= 10.0:
         apply_cmd = (
-            'find / -path "*/blueprints/*.yaml" -o -path "*/blueprints/*.yml" 2>/dev/null | '
+            'find /blueprints -name "*.yaml" -o -name "*.yml" 2>/dev/null | '
             'while read -r bp; do ak apply_blueprint "$bp" || true; done'
         )
         subprocess.run(["docker", "exec", server_name, "sh", "-c", apply_cmd], capture_output=True)
@@ -88,7 +88,7 @@ while time.time() < deadline:
 
     try:
         resp = client.get("/api/v3/flows/instances/", params={"page_size": 100}, follow_redirects=True)
-        if resp.status_code == 200:
+        if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
             data = resp.json()
             results = data.get("results", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
             slugs = {f.get("slug") for f in results if isinstance(f, dict)}
@@ -96,7 +96,7 @@ while time.time() < deadline:
             scopes = set()
             try:
                 s_resp = client.get("/api/v3/propertymappings/provider/scope/", params={"page_size": 100}, follow_redirects=True)
-                if s_resp.status_code == 200:
+                if s_resp.status_code == 200 and "application/json" in s_resp.headers.get("content-type", ""):
                     s_data = s_resp.json()
                     s_results = s_data.get("results", []) if isinstance(s_data, dict) else (s_data if isinstance(s_data, list) else [])
                     scopes = {r.get("scope_name") for r in s_results if isinstance(r, dict)}
@@ -113,7 +113,7 @@ while time.time() < deadline:
                 last_log = now
         else:
             if now - last_log >= 10.0:
-                print(f"[start-authentik] HTTP {resp.status_code}: {resp.text[:100]}", flush=True)
+                print(f"[start-authentik] HTTP {resp.status_code}", flush=True)
                 last_log = now
     except Exception as e:
         if now - last_log >= 10.0:
