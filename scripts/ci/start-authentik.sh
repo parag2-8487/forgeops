@@ -107,16 +107,14 @@ while time.time() < deadline:
 
             now = time.time()
             if now - last_apply >= 5.0:
-                for bp in [
-                    "system/default-property-mappings.yaml",
-                    "system/default-tenant.yaml",
-                    "system/default-flows.yaml",
-                    "system/default-crypto.yaml",
-                    "default/flow-default-provider-authorization-implicit-consent.yaml",
-                    "default/flow-default-authentication-flow.yaml",
-                    "default/flow-default-invalidation-flow.yaml",
-                ]:
-                    subprocess.run(["docker", "exec", server_name, "ak", "apply_blueprint", bp], capture_output=True)
+                apply_script = (
+                    "import os; from django.core.management import call_command; "
+                    "[call_command('apply_blueprint', os.path.join(r, f)) "
+                    "for b in ['/blueprints', '/authentik', '/ak-root'] if os.path.exists(b) "
+                    "for r, d, files in os.walk(b) "
+                    "for f in files if f.endswith('.yaml') or f.endswith('.yml')]"
+                )
+                subprocess.run(["docker", "exec", server_name, "ak", "shell", "-c", apply_script], capture_output=True)
                 last_apply = now
             if now - last_log >= 10.0:
                 print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
