@@ -1024,7 +1024,7 @@ func TestServe_AVerifiedCommandReachesTheRunnerAndItsResultIsReported(t *testing
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	transport.push(mustJSON(connection.Request{
 		JSONRPC: "2.0", Method: "command.execute",
@@ -1065,7 +1065,7 @@ func TestServe_ARefusedEnvelopeNeverReachesTheRunner(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	// A real envelope whose args were changed after signing: the signature is well formed and
 	// covers different bytes, which is what a tampered frame actually looks like.
@@ -1107,7 +1107,7 @@ func TestServe_WithNoVerifierEveryFrameIsRefused(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	transport.push(mustJSON(connection.Request{
 		JSONRPC: "2.0", Method: "command.execute",
@@ -1135,7 +1135,7 @@ func TestServe_AStaleBundleRefusesEveryMutation(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	transport.push(mustJSON(connection.Request{
 		JSONRPC: "2.0", Method: "command.execute",
@@ -1167,7 +1167,7 @@ func TestServe_CommandsRunOneAtATime(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	for i, id := range []string{"cmd-1", "cmd-2"} {
 		transport.push(mustJSON(connection.Request{
@@ -1215,7 +1215,7 @@ func TestServe_ARevocationWipesTheJournalAndTheCredentials(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	transport.push(mustJSON(connection.Request{
 		JSONRPC: "2.0", Method: "agent.error",
@@ -1250,7 +1250,7 @@ func TestServe_ACloseOf4403IsRevocation(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	transport.end(websocket.CloseError{Code: 4403, Reason: "device revoked"})
 
@@ -1276,7 +1276,7 @@ func TestServe_AnOrdinaryCloseIsNotRevocation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	transport.end(websocket.CloseError{Code: websocket.StatusGoingAway, Reason: "backend restart"})
 	time.Sleep(50 * time.Millisecond)

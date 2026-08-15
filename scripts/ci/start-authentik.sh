@@ -67,19 +67,19 @@ token="${AUTHENTIK_BOOTSTRAP_TOKEN:-ci-only-not-a-real-secret-token}"
 hdr_name="Authori"$(printf '%s' "zation")
 b_prefix="Bear"$(printf '%s' "er")
 hdr_val="${b_prefix} ${token}"
-deadline=$(( $(date +%s) + 420 ))
+deadline=$(( $(date +%s) + 600 ))
 until curl -fsS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>/dev/null | grep -q 'default-provider-authorization-implicit-consent'; do
   if [ "$(date +%s)" -ge "$deadline" ]; then
     echo "FAIL: Authentik did not become ready with default blueprints within deadline" >&2
+    echo "=== Current flows response ===" >&2
+    curl -sS -H "${hdr_name}: ${hdr_val}" -H "Accept: application/json" "http://localhost:9000/api/v3/flows/instances/?page_size=100" 2>&1 || true
     echo "=== Server logs ===" >&2
     docker logs "$server_name" 2>&1 | tail -n 100 >&2
     echo "=== Worker logs ===" >&2
     docker logs "$worker_name" 2>&1 | tail -n 100 >&2
     exit 1
   fi
-  docker exec "$server_name" ak apply_blueprint default/ >/dev/null 2>&1 || true
-  docker exec "$worker_name" ak apply_blueprint default/ >/dev/null 2>&1 || true
-  sleep 3
+  sleep 5
 done
 
 echo "Authentik is ready at http://localhost:9000"
