@@ -202,7 +202,9 @@ jobs:
       # stops meaning anything: `-tags=integration` widens the selection beyond the step above,
       # so a failure here is a failure nothing else would have caught.
       - name: Record what actually ran
-        run: go test -json -tags=integration ./... > ../agent.jsonl
+        run: |
+          set -o pipefail
+          go test -json -tags=integration ./... | tee ../agent.jsonl
       - name: The Go selection recorded zero skips
         working-directory: .
         # No `--os`: the script reads `go env GOOS` and prints it, so the platform the verdict
