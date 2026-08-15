@@ -61,7 +61,7 @@ func TestIntegration_ValidateFixture(t *testing.T) {
 	copyDir(t, fixtureSrc, tempDir)
 
 	// Init first
-	cmd := exec.Command(tofuBin, "init")
+	cmd := exec.Command(tofuBin, "init", "-lockfile=readonly")
 	cmd.Dir = tempDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("init failed: %v\n%s", err, out)
@@ -70,6 +70,7 @@ func TestIntegration_ValidateFixture(t *testing.T) {
 	// Now use the runner
 	cfg := iac.TofuConfig{
 		BinaryPath:     tofuBin,
+		PluginCacheDir: os.Getenv("TF_PLUGIN_CACHE_DIR"),
 		DefaultTimeout: 60 * time.Second,
 		KillGrace:      5 * time.Second,
 		MaxLineBytes:   65536,
@@ -81,7 +82,7 @@ func TestIntegration_ValidateFixture(t *testing.T) {
 		t.Fatalf("validate failed: %v", err)
 	}
 	if result.ExitCode != 0 {
-		t.Fatalf("expected exit 0, got %d", result.ExitCode)
+		t.Fatalf("expected exit 0, got %d\nstdout: %s\nstderr: %s", result.ExitCode, strings.Join(result.Stdout, "\n"), strings.Join(result.Stderr, "\n"))
 	}
 }
 
@@ -96,7 +97,7 @@ func TestIntegration_PlanFixture(t *testing.T) {
 	copyDir(t, fixtureSrc, tempDir)
 
 	// Init
-	cmd := exec.Command(tofuBin, "init")
+	cmd := exec.Command(tofuBin, "init", "-lockfile=readonly")
 	cmd.Dir = tempDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("init failed: %v\n%s", err, out)
@@ -104,6 +105,7 @@ func TestIntegration_PlanFixture(t *testing.T) {
 
 	cfg := iac.TofuConfig{
 		BinaryPath:     tofuBin,
+		PluginCacheDir: os.Getenv("TF_PLUGIN_CACHE_DIR"),
 		DefaultTimeout: 60 * time.Second,
 		KillGrace:      5 * time.Second,
 		MaxLineBytes:   65536,
@@ -116,7 +118,7 @@ func TestIntegration_PlanFixture(t *testing.T) {
 	}
 	// null_resource.test will be created => exit code 2
 	if result.ExitCode != 2 {
-		t.Fatalf("expected exit 2 (has changes), got %d", result.ExitCode)
+		t.Fatalf("expected exit 2 (has changes), got %d\nstdout: %s\nstderr: %s", result.ExitCode, strings.Join(result.Stdout, "\n"), strings.Join(result.Stderr, "\n"))
 	}
 	if !result.HasChanges {
 		t.Fatal("expected HasChanges=true")
