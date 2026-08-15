@@ -444,7 +444,11 @@ jobs:
         run: python scripts/check-no-skips.py backend/auth.jsonl
       - name: Authentik logs on failure
         if: failure()
-        run: docker logs forgeops-ci-authentik-server 2>&1 | tail -n 200
+        run: |
+          echo "=== Authentik Server Logs ==="
+          docker logs forgeops-ci-authentik-server 2>&1 | tail -n 100 || true
+          echo "=== Authentik Worker Logs ==="
+          docker logs forgeops-ci-authentik-worker 2>&1 | tail -n 100 || true
       - name: Cerbos logs on failure
         if: failure()
         run: docker logs forgeops-ci-cerbos 2>&1 | tail -n 100

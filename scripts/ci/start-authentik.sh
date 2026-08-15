@@ -52,13 +52,10 @@ common_env=(
   -e "AUTHENTIK_ERROR_REPORTING__ENABLED=false"
 )
 
-docker rm -f "$server_name" "$worker_name" >/dev/null 2>&1 || true
+# Run migrations first to prevent migration lock contention between server and worker.
+echo "running Authentik migrations..."
+docker run --rm --network host "${common_env[@]}" "$image" migrate
 
-# The worker is not optional. It applies Authentik's blueprints, which is what creates
-# the default authorization and authentication flows — without it the server accepts
-# API calls and every OAuth2 provider it creates has no flow to run, so the browser half
-# of the code flow 404s. That failure looks like a bug in the client.
-#
 docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" server >/dev/null
 docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
 
@@ -77,16 +74,21 @@ hdr_val = f"{prefix} {token}"
 client = httpx.Client(base_url=base_url, headers={"Authorization": hdr_val, "Accept": "application/json"}, timeout=10.0)
 deadline = time.time() + 600
 
+last_log = 0.0
 while time.time() < deadline:
     try:
         resp = client.get("/api/v3/flows/instances/", params={"page_size": 100})
         if resp.status_code == 200:
             data = resp.json()
-            results = data.get("results", []) if isinstance(data, dict) else data
+            results = data.get("results", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
             slugs = {f.get("slug") for f in results if isinstance(f, dict)}
             if "default-provider-authorization-implicit-consent" in slugs:
-                print("Authentik is ready with default blueprints!")
+                print(f"[start-authentik] Authentik is ready with default blueprints! (flows: {len(slugs)})", flush=True)
                 sys.exit(0)
+            now = time.time()
+            if now - last_log >= 10.0:
+                print(f"[start-authentik] waiting for blueprints... current flows ({len(slugs)}): {sorted(list(slugs))[:5]}", flush=True)
+                last_log = now
     except Exception:
         pass
     time.sleep(3)
