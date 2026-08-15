@@ -12,15 +12,18 @@ db_pass_var="POSTGRES_${p_name}"
 app_pass_var="FORGEOPS_APP_DB_${p_name}"
 mig_pass_var="FORGEOPS_MIGRATOR_DB_${p_name}"
 
-pw="${PGPASSWORD:-forgeops}"
-app_pw="${FORGEOPS_APP_DB_PASSWORD:-forgeops}"
-mig_pw="${FORGEOPS_MIGRATOR_DB_PASSWORD:-forgeops}"
+pw="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
+app_pw="${FORGEOPS_APP_DB_PASSWORD:-$pw}"
+mig_pw="${FORGEOPS_MIGRATOR_DB_PASSWORD:-$pw}"
+
+auth_sec="${AUTH_SECRET:-$(head -c 32 /dev/urandom 2>/dev/null | base64 | tr -dc 'a-zA-Z0-9' | head -c 32 || printf 'ci-test-auth-secret-%s' "$$")}"
+enc_key="${ENCRYPTION_KEY:-$(head -c 16 /dev/urandom 2>/dev/null | od -A n -v -t x1 | tr -d ' \n' || printf '0123456789abcdef0123456789abcdef')}"
 
 echo "${db_pass_var}=${pw}" > .env
 echo "${app_pass_var}=${app_pw}" >> .env
 echo "${mig_pass_var}=${mig_pw}" >> .env
-echo "AUTH_SECRET=ci-only-not-a-real-auth-secret-1234567890" >> .env
-echo "ENCRYPTION_KEY=0123456789abcdef0123456789abcdef" >> .env
+echo "AUTH_SECRET=${auth_sec}" >> .env
+echo "ENCRYPTION_KEY=${enc_key}" >> .env
 
 scheme="postgres"
 prefix="${scheme}://"
@@ -32,8 +35,8 @@ echo "REDIS_URL=redis://redis:6379/0" >> .env
 export "$db_pass_var"="$pw"
 export "$app_pass_var"="$app_pw"
 export "$mig_pass_var"="$mig_pw"
-export AUTH_SECRET="ci-only-not-a-real-auth-secret-1234567890"
-export ENCRYPTION_KEY="0123456789abcdef0123456789abcdef"
+export AUTH_SECRET="$auth_sec"
+export ENCRYPTION_KEY="$enc_key"
 
 docker compose up -d --wait postgres redis
 docker compose exec -T postgres psql -U "${POSTGRES_USER:-forgeops}" -d "${POSTGRES_DB:-forgeops}" -tc "SELECT 1 FROM pg_database WHERE datname = 'infisical'" | grep -q 1 || docker compose exec -T postgres psql -U "${POSTGRES_USER:-forgeops}" -d "${POSTGRES_DB:-forgeops}" -c "CREATE DATABASE infisical;"
