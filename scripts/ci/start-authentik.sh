@@ -77,22 +77,25 @@ deadline = time.time() + 600
 last_log = 0.0
 last_apply = 0.0
 while time.time() < deadline:
+    now = time.time()
+    if now - last_apply >= 5.0:
+        apply_cmd = (
+            'find / -path "*/blueprints/*.yaml" -o -path "*/blueprints/*.yml" 2>/dev/null | '
+            'while read -r bp; do ak apply_blueprint "$bp" || true; done'
+        )
+        subprocess.run(["docker", "exec", server_name, "sh", "-c", apply_cmd], capture_output=True)
+        last_apply = now
+
     try:
-        resp = client.get("/api/v3/flows/instances/", params={"page_size": 100})
+        resp = client.get("/api/v3/flows/instances/", params={"page_size": 100}, follow_redirects=True)
         if resp.status_code == 200:
             data = resp.json()
-            if isinstance(data, dict):
-                results = data.get("results", [])
-            elif isinstance(data, list):
-                results = data
-            else:
-                results = []
+            results = data.get("results", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
             slugs = {f.get("slug") for f in results if isinstance(f, dict)}
 
-            # Check scope mappings as well
             scopes = set()
             try:
-                s_resp = client.get("/api/v3/propertymappings/provider/scope/", params={"page_size": 100})
+                s_resp = client.get("/api/v3/propertymappings/provider/scope/", params={"page_size": 100}, follow_redirects=True)
                 if s_resp.status_code == 200:
                     s_data = s_resp.json()
                     s_results = s_data.get("results", []) if isinstance(s_data, dict) else (s_data if isinstance(s_data, list) else [])
@@ -105,45 +108,16 @@ while time.time() < deadline:
                 print(f"[start-authentik] Authentik is ready with blueprints and scopes! (flows: {len(slugs)}, scopes: {len(scopes)})", flush=True)
                 sys.exit(0)
 
-            now = time.time()
-            if now - last_apply >= 5.0:
-                apply_code = (
-                    "import os, django\n"
-                    "os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'authentik.root.settings')\n"
-                    "try:\n"
-                    "    django.setup()\n"
-                    "except Exception:\n"
-                    "    pass\n"
-                    "from django.core.management import call_command\n"
-                    "for b in ['/blueprints', '/authentik/blueprints', '/ak-root/blueprints']:\n"
-                    "    if os.path.exists(b):\n"
-                    "        for r, d, files in os.walk(b):\n"
-                    "            for f in files:\n"
-                    "                if f.endswith('.yaml') or f.endswith('.yml'):\n"
-                    "                    p = os.path.join(r, f)\n"
-                    "                    try:\n"
-                    "                        call_command('apply_blueprint', p)\n"
-                    "                        print('Applied:', p, flush=True)\n"
-                    "                    except Exception as e:\n"
-                    "                        pass\n"
-                )
-                proc = subprocess.run(
-                    ["docker", "exec", "-i", server_name, "python3", "-c", apply_code],
-                    capture_output=True,
-                    text=True,
-                )
-                if proc.stdout:
-                    print(f"[start-authentik] {proc.stdout.strip()}", flush=True)
-                if proc.stderr:
-                    print(f"[start-authentik] stderr: {proc.stderr.strip()}", flush=True)
-                last_apply = now
             if now - last_log >= 10.0:
                 print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
                 last_log = now
+        else:
+            if now - last_log >= 10.0:
+                print(f"[start-authentik] HTTP {resp.status_code}: {resp.text[:100]}", flush=True)
+                last_log = now
     except Exception as e:
-        now = time.time()
         if now - last_log >= 10.0:
-            print(f"[start-authentik] waiting for server to answer... ({e})", flush=True)
+            print(f"[start-authentik] waiting for server... ({e})", flush=True)
             last_log = now
     time.sleep(3)
 

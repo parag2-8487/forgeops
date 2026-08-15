@@ -858,7 +858,7 @@ func TestServe_SilencePastTheTimeoutDropsTheSession(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- harness.manager.Serve(ctx) }()
 
-	waitFor(t, func() bool { return len(transport.frames("session.connect")) > 0 })
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
 	// 91 seconds of silence against a 90-second timeout. Driven by the injected clock, not
 	// by waiting: the test measures the rule, not the duration.
