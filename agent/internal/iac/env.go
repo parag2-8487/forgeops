@@ -12,7 +12,9 @@ var platformAllowlist = []string{
 	"PATH", "HOME", "USERPROFILE",
 	"TMPDIR", "TEMP", "TMP",
 	"SystemRoot", "SystemDrive", "ComSpec",
-	"PATHEXT", // Required on Windows for command/script extension resolution
+	"PATHEXT",           // Required on Windows for command/script extension resolution
+	"RUNNER_TEMP",       // Required on GitHub Actions runners for tool wrappers (setup-opentofu)
+	"RUNNER_TOOL_CACHE", // Required on GitHub Actions runners for tool wrappers (setup-opentofu)
 }
 
 // buildEnv returns the ONLY environment the tofu subprocess sees. Anything not
