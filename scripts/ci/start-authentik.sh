@@ -88,21 +88,32 @@ while time.time() < deadline:
             else:
                 results = []
             slugs = {f.get("slug") for f in results if isinstance(f, dict)}
-            if "default-provider-authorization-implicit-consent" in slugs:
-                print(f"[start-authentik] Authentik is ready with default blueprints! (flows: {len(slugs)})", flush=True)
+            
+            # Check scope mappings as well
+            scopes = set()
+            try:
+                s_resp = client.get("/api/v3/propertymappings/provider/scope/", params={"page_size": 100})
+                if s_resp.status_code == 200:
+                    s_data = s_resp.json()
+                    s_results = s_data.get("results", []) if isinstance(s_data, dict) else (s_data if isinstance(s_data, list) else [])
+                    scopes = {r.get("scope_name") for r in s_results if isinstance(r, dict)}
+            except Exception:
+                pass
+
+            required_scopes = {"openid", "email", "profile", "offline_access"}
+            if "default-provider-authorization-implicit-consent" in slugs and required_scopes.issubset(scopes):
+                print(f"[start-authentik] Authentik is ready with blueprints and scopes! (flows: {len(slugs)}, scopes: {len(scopes)})", flush=True)
                 sys.exit(0)
+
             now = time.time()
             if now - last_apply >= 5.0:
-                subprocess.run(["docker", "exec", server_name, "ak", "blueprints_apply"], capture_output=True)
-                for bp in [
-                    "default/flow-default-provider-authorization-implicit-consent.yaml",
-                    "default/flow-default-authentication-flow.yaml",
-                    "default/flow-default-invalidation-flow.yaml",
-                ]:
-                    subprocess.run(["docker", "exec", server_name, "ak", "apply_blueprint", bp], capture_output=True)
+                subprocess.run(
+                    ["docker", "exec", server_name, "sh", "-c", 'for bp in $(find /blueprints -name "*.yaml" 2>/dev/null); do ak apply_blueprint "$bp" || true; done'],
+                    capture_output=True,
+                )
                 last_apply = now
             if now - last_log >= 10.0:
-                print(f"[start-authentik] waiting for blueprints... current flows ({len(slugs)}): {sorted([s for s in slugs if s])[:5]}", flush=True)
+                print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
                 last_log = now
     except Exception as e:
         now = time.time()
