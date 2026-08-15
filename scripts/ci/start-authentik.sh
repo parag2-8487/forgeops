@@ -107,14 +107,35 @@ while time.time() < deadline:
 
             now = time.time()
             if now - last_apply >= 5.0:
-                apply_script = (
-                    "import os; from django.core.management import call_command; "
-                    "[call_command('apply_blueprint', os.path.join(r, f)) "
-                    "for b in ['/blueprints', '/authentik', '/ak-root'] if os.path.exists(b) "
-                    "for r, d, files in os.walk(b) "
-                    "for f in files if f.endswith('.yaml') or f.endswith('.yml')]"
+                apply_code = (
+                    "import os, django\n"
+                    "os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'authentik.root.settings')\n"
+                    "try:\n"
+                    "    django.setup()\n"
+                    "except Exception:\n"
+                    "    pass\n"
+                    "from django.core.management import call_command\n"
+                    "for b in ['/blueprints', '/authentik/blueprints', '/ak-root/blueprints']:\n"
+                    "    if os.path.exists(b):\n"
+                    "        for r, d, files in os.walk(b):\n"
+                    "            for f in files:\n"
+                    "                if f.endswith('.yaml') or f.endswith('.yml'):\n"
+                    "                    p = os.path.join(r, f)\n"
+                    "                    try:\n"
+                    "                        call_command('apply_blueprint', p)\n"
+                    "                        print('Applied:', p, flush=True)\n"
+                    "                    except Exception as e:\n"
+                    "                        pass\n"
                 )
-                subprocess.run(["docker", "exec", server_name, "ak", "shell", "-c", apply_script], capture_output=True)
+                proc = subprocess.run(
+                    ["docker", "exec", "-i", server_name, "python3", "-c", apply_code],
+                    capture_output=True,
+                    text=True,
+                )
+                if proc.stdout:
+                    print(f"[start-authentik] {proc.stdout.strip()}", flush=True)
+                if proc.stderr:
+                    print(f"[start-authentik] stderr: {proc.stderr.strip()}", flush=True)
                 last_apply = now
             if now - last_log >= 10.0:
                 print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
