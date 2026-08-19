@@ -5096,6 +5096,49 @@ for testability, and the cost is that "implemented" and "enabled" became two fac
 first one tested. A wiring assertion belongs with the feature, not with the leaf that finally
 notices; Q-27 exists because the same reasoning applied to tier configuration.
 
+**Finding 79, RESOLVED 2026-08-20 in `1ce7267`.** `create_app` now constructs the cache
+with the embedder and reads the threshold from `settings.semantic_cache_threshold`, so a deployment's
+`SEMANTIC_CACHE_THRESHOLD` is what the cache admits on. Criterion 14 moved to `done` on that evidence
+and Phase 1 to `completed`.
+
+Two things are worth carrying forward, and neither is "L2 got wired".
+
+The first is the **shape of the defect**, which the fix does not remove from the codebase's future: a
+tested capability with an untested construction site is not a shipped feature. L2 had five passing
+integration tests and zero tests of its own wiring, and that combination reads as "done" in every
+artifact a reviewer looks at — the module, the test file, the criteria table — because each of them is
+locally true. The only thing that would have caught it is an assertion at the composition root, which
+is now there: `TestTheSemanticCacheIsWiredForL2` reads the CONSTRUCTED object out of `app.state` and
+would fail if the embedder stopped being passed. It was proved falsifiable before being trusted —
+embedder removed, test red with "this is finding 79 recurring"; restored, green. Note the symmetry
+with Q-27, which exists because the same reasoning applied to tier configuration one debt earlier.
+The generalisation: **for every optional dependency, the interesting test is not "does it work" but
+"is it plugged in", and only the second one notices D1's shape.**
+
+The second is a hazard found while fixing it, which is worse than the original bug and would have
+shipped if the wiring had been done naively. `EmbeddingOrchestrator.generate_embedding` falls back to
+
+```python
+mock_vector = [0.01 * (i % 100) for i in range(1024)]
+```
+
+on every path that is not Voyage-with-a-real-key — including `bge_m3`, whose local model does not
+exist yet. **That vector does not depend on its input.** Two unrelated prompts embed to the identical
+vector, cosine similarity is 1.0, and an L2 cache built over it would treat every prompt as a
+near-duplicate of every other and serve an arbitrary stored completion for any question asked. Passing
+`embed=` unconditionally would therefore have turned a dormant tier into a correctness catastrophe
+that every existing test would have passed, because no test asked whether the embedder distinguishes
+its inputs. So the wiring gates on an input-sensitive embedder and a placeholder key yields L1 only.
+The lesson: **a stub that returns a plausible value rather than raising is a liability the moment
+something starts trusting it**, and "it falls back gracefully" is not a property — it is a claim that
+needs an assertion of its own, which `test_the_embedder_the_cache_holds_is_input_sensitive` now is.
+
+Also fixed while here: `check-progress.sh` allowed the phase row to read `completed` while a criterion
+was `pending`, because a `pending` criterion is in-vocabulary and raises no violation. Criterion 14 sat
+`pending` beside a `completed` phase and nothing objected. The clause now requires every criterion
+`done`, verified in both directions. A gate that enumerates the leaves but not the criteria is
+measuring the work rather than the outcome.
+
 **Finding 80 — the two unaccepted advisories were a patch bump away, and the allowlist is what made
 that legible.** `govulncheck` reported eleven vulnerabilities across four modules and the standard
 library; `scripts/check-govulncheck.sh` accepted nine with recorded rationale and failed on

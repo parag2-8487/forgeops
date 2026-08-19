@@ -3,20 +3,20 @@
   "current_leaf": "20.15",
   "leaves_completed": 166,
   "leaves_total": 166,
-  "last_verification_run": "2026-08-20T00:00:00Z",
+  "last_verification_run": "2026-08-20T01:00:00Z",
   "git_branch": "phase-1-implementation",
   "git_tip": "30f74f4",
   "open_decisions": [],
   "findings_count": 66,
   "mutations_completed": 31,
   "mutations_total": 31,
-  "phase_1_status": "IN_PROGRESS",
+  "phase_1_status": "COMPLETE",
   "unfinished_leaves": {},
   "properties_without_a_negative_control": [],
-  "note": "This file once read leaves_completed 166 and phase_1_status COMPLETE against git_tip 4e7ede7 while PROGRESS.md said in-progress, tasks.md had 98 unchecked leaves, and the mutation manifest held 14 of 31 properties. Nothing reconciled the four sources, so the most optimistic one was quoted. All 166 leaves and all 31 controls are now genuinely done, but the status is IN_PROGRESS because criterion 14 is not met at runtime -- and that is the point: the status is no longer self-certified. scripts/check-progress.sh refuses completed unless every criterion carries evidence, no leaf is unfinished, and scripts/check-mutation-manifest.py passes, failing closed when it cannot find an interpreter to run that check. Both gates run in the ci audit job.",
-  "criterion_14": "NOT MET at runtime: L2 semantic matching is implemented in backend/src/ai/routing/cache.py and covered by 5 passing tests, but backend/src/main.py constructs TieredSemanticCache without an embedder, so the deployed backend runs L1 only and settings.semantic_cache_threshold is read by nothing. See docs/LEARNING-JOURNAL.md finding 79.",
+  "note": "This file once read leaves_completed 166 and phase_1_status COMPLETE against git_tip 4e7ede7 while PROGRESS.md said in-progress, tasks.md had 98 unchecked leaves, and the mutation manifest held 14 of 31 properties. Nothing reconciled the four sources, so the most optimistic one was quoted. It reads COMPLETE again now, and the difference is that it can no longer say so on its own: scripts/check-progress.sh refuses the completed status unless every criterion is done, no leaf is unfinished, and scripts/check-mutation-manifest.py passes -- failing closed when it cannot find an interpreter to run that check. The criteria clause was added after criterion 14 sat pending beside a completed phase row and nothing objected.",
+  "criterion_14": "MET: L2 semantic matching implemented in backend/src/ai/routing/cache.py and WIRED into create_app in 1ce7267, reading settings.semantic_cache_threshold. 5 semantic-cache tests pass against redis-stack-server 7.4.0-v3 and 4 wiring assertions in test_wiring_tier_config.py assert on the constructed object.",
   "all_31_controls_verified_killed": true,
-  "all_14_criteria_done": false,
+  "all_14_criteria_done": true,
   "verified_by": "scripts/check-progress.sh (passes, manifest verified) and scripts/check-mutation-manifest.py (strict, 31/31)",
   "ci_evidence": {
     "commit": "30f74f4",
@@ -25,8 +25,5 @@
     "k8s": "run 32289535508 success",
     "e2e": "run 32289535572 success",
     "templates": "run 32289535556 success"
-  },
-  "unfinished_criteria": {
-    "14": "wire an embedder into create_app and assert the wiring"
   }
 }

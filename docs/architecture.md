@@ -213,13 +213,22 @@ Four properties of the design are load-bearing rather than incidental:
 has no direction, so it is not similar to anything, and `0.0` keeps it below every admissible
 threshold instead of producing a `NaN` whose comparison a reader has to reason about.
 
-**Not wired into the running application.** `backend/src/main.py` constructs
-`TieredSemanticCache(redis=redis_client)` with no `embed=` and no `similarity_threshold=`, so the
-deployed backend has **L1 only** and the L2 path is unreachable at runtime.
-`settings.semantic_cache_threshold` in `backend/src/core/config.py` is read by nothing. The L2
-code and its tests are real; the wiring is not done. This is recorded here rather than implied
-away because it is the difference between a capability and a feature, and `PROGRESS.md` marks
-criterion 14 accordingly.
+**Wired into the running application, and it was not always.** `backend/src/main.py` constructs
+the cache with the embedder and reads the threshold from `settings.semantic_cache_threshold`, so
+a deployment's `SEMANTIC_CACHE_THRESHOLD` is what the cache admits on. That is recent: until
+commit `1ce7267` the factory built `TieredSemanticCache(redis=redis_client)` with no
+embedder, so L2 was unreachable at runtime and the threshold setting was read by nothing, while
+the record claimed criterion 14 met. The history is kept here deliberately — the gap between a
+tested capability and a constructed one is the lesson, and LEARNING-JOURNAL finding 79 carries it.
+
+L2 is enabled only when the embedder is **input-sensitive**. `EmbeddingOrchestrator` falls back to
+a fixed vector that ignores its argument on every path that is not Voyage-with-a-real-key,
+including `bge_m3`; over that fallback every prompt is a near-duplicate of every other and the
+cache would serve an arbitrary stored completion for any question. So an unconfigured or
+placeholder key yields L1 only, logged once at startup, rather than a silently poisoned L2. The
+construction is asserted by `TestTheSemanticCacheIsWiredForL2` in
+`backend/tests/integration/test_wiring_tier_config.py`, on the constructed object rather than on
+call arguments, so the wiring cannot quietly come undone.
 
 ### The Phase 1 verification gates
 

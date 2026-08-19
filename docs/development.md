@@ -254,6 +254,19 @@ Two mechanisms address it, and the precedence is deliberately **not** one of the
 2. `alembic/env.py` catches `socket.gaierror` and re-raises naming the host, the variable it came
    from, and the remedy. Credentials are never printed, only which variable was chosen.
 
+### `.evidence/` is not purely scratch
+
+Most of `.evidence/` is captured command output and is safe to delete — a cleanup on 2026-08-19
+removed 202 such files. **Two entries are load-bearing and must not be deleted:**
+
+| Path               | Consumed by                                                                           | Consequence of deleting it                                                                                        |
+| :----------------- | :------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------- |
+| `.evidence/ak.env` | `scripts/local-env.ps1`                                                               | the two Authentik bootstrap keys disappear and the OIDC integration path loses its configuration; not regenerable |
+| `.evidence/tools/` | `scripts/install-pre-commit.ps1` installs it, `scripts/pre-commit-run.ps1` invokes it | the tracked hook entry point breaks until you re-run the installer                                                |
+
+The directory is gitignored, which makes it look disposable, and the name reinforces that. It is not.
+Anything else under it may be removed freely.
+
 ### Test container ports
 
 Five containers, all published on loopback only, all named `forgeops-test-*`. Ports are
