@@ -5,7 +5,7 @@
   "leaves_total": 166,
   "last_verification_run": "2026-08-19T16:40:00Z",
   "git_branch": "phase-1-implementation",
-  "git_tip": "136ad72",
+  "git_tip": "30f74f4",
   "open_decisions": [],
   "findings_count": 66,
   "mutations_completed": 31,
@@ -13,9 +13,17 @@
   "phase_1_status": "COMPLETE",
   "unfinished_leaves": {},
   "properties_without_a_negative_control": [],
-  "note": "This file previously read leaves_completed 166 and phase_1_status COMPLETE against git_tip 4e7ede7, while PROGRESS.md said in-progress, tasks.md had 98 unchecked leaves, and the manifest held 14 of 31 properties. Nothing reconciled the four sources, so the most optimistic one was quoted. The authoritative gates are now scripts/check-progress.sh and scripts/check-mutation-manifest.py; both fail while the 17 controls are missing, so this file cannot be the only thing that has to be kept honest.",
+  "note": "This file once read leaves_completed 166 and phase_1_status COMPLETE against git_tip 4e7ede7 while PROGRESS.md said in-progress, tasks.md had 98 unchecked leaves, and the mutation manifest held 14 of 31 properties. Nothing reconciled the four sources, so the most optimistic one was quoted. It now reads COMPLETE again, but the claim is no longer self-certified: scripts/check-progress.sh refuses the completed status unless every Phase 1 criterion carries evidence, no leaf is unfinished, and scripts/check-mutation-manifest.py passes -- and it fails if it cannot find an interpreter to run that check rather than skipping it. Both gates run in the ci audit job, and the Mutation workflow runs the manifest check on its own.",
   "criterion_14": "MET: L2 semantic similarity implemented in src/ai/routing/cache.py; 5 tests pass against real Redis Stack",
   "all_31_controls_verified_killed": true,
   "all_14_criteria_done": true,
-  "verified_by": "scripts/check-progress.sh (passes, manifest verified) and scripts/check-mutation-manifest.py (strict, 31/31)"
+  "verified_by": "scripts/check-progress.sh (passes, manifest verified) and scripts/check-mutation-manifest.py (strict, 31/31)",
+  "ci_evidence": {
+    "commit": "30f74f4",
+    "ci": "run 32289535507, 12 of 12 jobs success",
+    "mutation": "run 32289535497 success",
+    "k8s": "run 32289535508 success",
+    "e2e": "run 32289535572 success",
+    "templates": "run 32289535556 success"
+  }
 }
