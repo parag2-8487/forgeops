@@ -210,6 +210,196 @@ else
 	ok 'no unregistered FSL alias'
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 1 (design §18, Appendix B, Appendix E; task 20.15)
+#
+# Everything above this line reads Phase 0 and only Phase 0. That was the whole defect:
+# `BAD_TASK_STATUS` greps `^\| 0\.[1-9]` and `progress record`, so 90 Phase 1 rows carried
+# the status `complete` -- a value this file's own header says does not exist -- and the
+# check passed. A gate blind to the phase it is asked about is pattern B, and task 20.15
+# names extending this script as its own deliverable, which had not been done.
+#
+# Task 20.15 requires: every deliverable §1.1-§1.11, all fourteen criteria with non-empty
+# evidence, all thirty-one properties with a location AND a control, every decision row, and
+# Phase 1 marked `completed` only when all of it holds.
+# ─────────────────────────────────────────────────────────────────────────────
+echo 'Checking the Phase 1 record (design Appendix B, Appendix E; task 20.15)...'
+
+PHASE1_SECTIONS='## current phase task list — phase 1
+## completion criteria — phase 1
+## deliverable coverage — phase 1
+## property test coverage — q-01 to q-31'
+
+printf '%s\n' "$PHASE1_SECTIONS" | {
+	while IFS= read -r section; do
+		[ -n "$section" ] || continue
+		if has "$section"; then
+			ok "section present: $section"
+		else
+			fail "required Phase 1 section is missing: $section (task 20.15)"
+		fi
+	done
+}
+
+# ── Phase 1 task statuses: the blind spot ───────────────────────────────────
+# Any leaf id whose group is 1..20. Phase 0 ids are `0.x` and are excluded by the pattern,
+# so this adds a check rather than duplicating one.
+#
+# Three guards, each earned. `NF == 6` keeps the four-column status table and drops the
+# three-column evidence table, whose prose contains `|` characters and therefore splits into
+# far more fields. The length and space guards are belt-and-braces for the same reason: a
+# status is a single short token, so anything long or containing a space is prose that
+# happened to land in field 5, and reporting it produces a screenful of noise in place of the
+# one-word answer -- which is what the first version of this check did.
+BAD_P1_STATUS=$(grep -E '^\|[[:space:]]*(1?[0-9]|20)\.[0-9]+[[:space:]]*\|' "$LOWER" |
+	awk -F'|' 'NF == 6 { s=$5; gsub(/^[ \t]+|[ \t]+$/, "", s);
+		if (s != "" && length(s) <= 15 && s !~ / / &&
+		    s != "done" && s != "in-progress" && s != "pending" && s != "blocked") print s }' |
+	sort -u)
+if [ -z "$BAD_P1_STATUS" ]; then
+	ok 'every Phase 1 leaf status is done | in-progress | pending | blocked'
+else
+	fail "invalid Phase 1 leaf status(es): $BAD_P1_STATUS (design §18 allows exactly these)"
+fi
+
+# ── Deliverables §1.1 – §1.11 ───────────────────────────────────────────────
+# Scoped to the deliverable-coverage section. An earlier version matched `^| 1.9 |` anywhere
+# in the file, which silently answered the question with GROUP 1's leaf rows: 1.1 through 1.8
+# "passed" because leaves of that number exist, and 1.9 through 1.11 failed because no leaf
+# has that number. It was checking the wrong table and agreeing with itself for eight rows.
+P1_DELIV=$(awk '
+	tolower($0) ~ /^## deliverable coverage — phase 1/ { inside = 1; next }
+	inside && /^## / { inside = 0 }
+	inside { print }
+' "$LOWER")
+
+for d in 1 2 3 4 5 6 7 8 9 10 11; do
+	if printf '%s\n' "$P1_DELIV" | grep -E "^\|[[:space:]]*\*?\*?1\.$d\*?\*?[[:space:]]*\|" >/dev/null 2>&1; then
+		ok "Phase 1 deliverable covered: 1.$d"
+	else
+		fail "Phase 1 deliverable 1.$d has no coverage row (task 20.15, Appendix E)"
+	fi
+done
+
+# ── The fourteen completion criteria, each with non-empty evidence ──────────
+# Rows are `| C<n> | <criterion> | <status> | <evidence> |`. The `C` prefix is load-bearing:
+# a bare number collides with the phase status table (`| 0 | … | completed |` through
+# `| 5 | … |`), and the phase-status vocabulary check above greps any row whose first cell is
+# a lone digit -- so criteria 1 through 5 were read as PHASE rows and their `done` status was
+# reported as an invalid phase status.
+P1_CRIT=$(awk '
+	tolower($0) ~ /^## completion criteria — phase 1/ { inside = 1; next }
+	inside && /^## / { inside = 0 }
+	inside && /^\|[[:space:]]*[Cc][0-9]+[[:space:]]*\|/ { print }
+' "$FILE")
+
+P1_CRIT_COUNT=$(printf '%s\n' "$P1_CRIT" | grep -c '^|' 2>/dev/null || printf '0')
+if [ "$P1_CRIT_COUNT" -eq 14 ]; then
+	ok 'exactly 14 numbered Phase 1 completion-criteria rows'
+else
+	fail "expected 14 Phase 1 completion-criteria rows, found $P1_CRIT_COUNT (Appendix E)"
+fi
+
+for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+	row=$(printf '%s\n' "$P1_CRIT" | awk -F'|' -v want="c$n" '{
+		id = $2; gsub(/^[ \t]+|[ \t]+$/, "", id)
+		if (tolower(id) == want) print $0
+	}')
+	if [ -z "$row" ]; then
+		fail "Phase 1 completion criterion $n is missing (Appendix E)"
+		continue
+	fi
+	status=$(printf '%s\n' "$row" | awk -F'|' '{ s=$4; gsub(/^[ \t]+|[ \t]+$/, "", s); print tolower(s) }')
+	evidence=$(printf '%s\n' "$row" | awk -F'|' '{ e=$5; gsub(/^[ \t]+|[ \t]+$/, "", e); print e }')
+	if [ -z "$evidence" ]; then
+		fail "Phase 1 criterion $n has an empty evidence column (task 20.15)"
+	elif [ "$status" != "done" ] && [ "$status" != "in-progress" ] && [ "$status" != "pending" ]; then
+		fail "Phase 1 criterion $n has status '$status' (design §18 allows three)"
+	else
+		ok "Phase 1 criterion $n carries a status and evidence"
+	fi
+done
+
+# ── Q-01 … Q-31: a location AND a negative control, per property ────────────
+# Appendix B's rule is that a property which cannot fail is not a property, so a row with a
+# location but no control is reported. `scripts/check-mutation-manifest.py` enforces the same
+# thing against the manifest; this enforces that the RECORD does not overstate it.
+P1_PROPS=$(awk '
+	tolower($0) ~ /^## property test coverage — q-01 to q-31/ { inside = 1; next }
+	inside && /^## / { inside = 0 }
+	inside && /^\|[[:space:]]*\*?\*?[Qq]-[0-9][0-9]/ { print }
+' "$FILE")
+
+for n in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+	row=$(printf '%s\n' "$P1_PROPS" | grep -E "^\|[[:space:]]*\*?\*?[Qq]-$n\b" | head -n 1)
+	if [ -z "$row" ]; then
+		fail "property Q-$n has no coverage row (Appendix B declares 31, task 20.15)"
+		continue
+	fi
+	location=$(printf '%s\n' "$row" | awk -F'|' '{ v=$3; gsub(/^[ \t]+|[ \t]+$/, "", v); print v }')
+	control=$(printf '%s\n' "$row" | awk -F'|' '{ v=$4; gsub(/^[ \t]+|[ \t]+$/, "", v); print tolower(v) }')
+	# A placeholder is not a control. Without this clause the row `| Q-06 | ... | none | ...`
+	# satisfies "non-empty" and the gate certifies an uncontrolled property -- which is the
+	# same class of defect as the counter that said 31, one column over. The `*absent*` and
+	# `*no manifest row*` globs are here because the honest wording this record uses to
+	# DECLARE the gap would otherwise pass the check that measures it.
+	case "$control" in
+	'' | none | n/a | na | tbd | todo | outstanding | missing | pending | '—' | '-' | '–' | \
+		'none yet' | 'not yet' | 'to do' | 'not written' | 'no control')
+		control='' ;;
+	*absent* | *'no manifest row'* | *'no control'* | *'not registered'* | *'to be written'*)
+		control='' ;;
+	esac
+	if [ -z "$location" ]; then
+		fail "property Q-$n has no location (task 20.15)"
+	elif [ -z "$control" ]; then
+		fail "property Q-$n has no negative control (Appendix B: a property that cannot fail is not one)"
+	else
+		ok "property Q-$n has a location and a control"
+	fi
+done
+
+# ── Decisions D-28 … D-50 ───────────────────────────────────────────────────
+MISSING_DECISIONS=''
+for n in 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50; do
+	if has "d-$n —" || has "d-$n -" || has "d-$n |"; then
+		:
+	else
+		MISSING_DECISIONS="$MISSING_DECISIONS d-$n"
+	fi
+done
+if [ -z "$MISSING_DECISIONS" ]; then
+	ok 'decision rows D-28 through D-50 are all present'
+else
+	fail "decision log is missing:$MISSING_DECISIONS (task 20.15, design §17.1)"
+fi
+
+# ── Phase 1 may only be `completed` when the record supports it ─────────────
+# This is the clause task 20.15 states outright, and the reason the whole block exists: the
+# phase row is the one line a reader trusts, and nothing was stopping it from saying
+# `completed` over an incomplete record.
+P1_PHASE_STATUS=$(grep -E '^\|[[:space:]]*1[[:space:]]*\|' "$LOWER" |
+	awk -F'|' '{ s=$4; gsub(/^[ \t]+|[ \t]+$/, "", s); print s }' | head -n 1)
+P1_UNFINISHED=$(grep -E '^\|[[:space:]]*(1?[0-9]|20)\.[0-9]+[[:space:]]*\|' "$LOWER" |
+	awk -F'|' '{ s=$5; gsub(/^[ \t]+|[ \t]+$/, "", s);
+		if (s == "pending" || s == "in-progress" || s == "blocked") print s }' | wc -l | tr -d ' \t')
+
+if [ "$P1_PHASE_STATUS" = 'completed' ]; then
+	CLAIM_VIOLATIONS=$(wc -l <"$FAILFILE" | tr -d ' \t')
+	if [ "${CLAIM_VIOLATIONS:-0}" -ne 0 ]; then
+		fail 'Phase 1 is marked `completed` while this check reports violations above (task 20.15)'
+	elif [ "${P1_UNFINISHED:-0}" -ne 0 ]; then
+		fail "Phase 1 is marked \`completed\` while $P1_UNFINISHED leaf row(s) are not done"
+	elif [ -f mutations.toml ] && command -v python3 >/dev/null 2>&1 &&
+		! python3 scripts/check-mutation-manifest.py >/dev/null 2>&1; then
+		fail 'Phase 1 is marked `completed` but check-mutation-manifest.py fails (Appendix B)'
+	else
+		ok 'Phase 1 is `completed` and the record supports the claim'
+	fi
+else
+	ok "Phase 1 is \`$P1_PHASE_STATUS\`, and $P1_UNFINISHED leaf row(s) are not yet done"
+fi
+
 VIOLATIONS=$(wc -l <"$FAILFILE" | tr -d ' \t')
 if [ "${VIOLATIONS:-0}" -ne 0 ]; then
 	printf '\nPROGRESS.md structure check failed with %s violation(s)\n' "$VIOLATIONS" >&2
