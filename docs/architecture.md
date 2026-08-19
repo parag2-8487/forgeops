@@ -175,6 +175,82 @@ since the licence a change lands under depends on the directory it touches.
 | D-14     | Project identity ForgeOps; module path `github.com/parag8487/ForgeOps/agent`                                                                                 |
 | D-19     | `FSL-1.1-ALv2` for the repository, `Apache-2.0` for the agent and CLI                                                                                        |
 
+## Phase 1 additions
+
+Everything above describes Phase 0. This section covers the Phase 1 structures that a reader
+of the current tree will otherwise not find documented anywhere. Authority:
+`.antigravity/specs/phase-1-mvp-core/design.md`.
+
+### The tiered semantic cache, L1 and L2
+
+`backend/src/ai/routing/cache.py` implements two tiers behind one `lookup`.
+
+| Tier | Key                                                                  | Admission                                  | `served_from` |
+| :--- | :------------------------------------------------------------------- | :----------------------------------------- | :------------ |
+| L1   | SHA-256 over canonical JSON of `{model, prompt, params}`             | exact match                                | `L1_exact`    |
+| L2   | cosine similarity against a per-model index of stored prompt vectors | `similarity >= threshold` (default `0.95`) | `L2_semantic` |
+
+`lookup` tries L1 first and returns immediately on a hit, so an exact repeat costs no
+embedding call. Only on an L1 miss does it embed the prompt and scan the L2 index.
+
+Four properties of the design are load-bearing rather than incidental:
+
+- **L2 is opt-in.** The embedder is injected as `embed=`. Omit it and the class behaves exactly
+  as the L1-only version did, against the same two-method `AsyncRedisLike` surface. That is what
+  lets `Q-13`'s property test drive the cache with a dict double instead of a mock.
+- **The extra Redis surface is a separate protocol.** L2 needs `hset`/`hgetall` for the vector
+  index, declared on `AsyncRedisWithHashes`. Passing `embed=` with a client that lacks them
+  raises at construction, not on the first miss — a cache that accepted an embedder and then
+  silently never used the index would look like a threshold problem.
+- **The threshold is inclusive.** The comparison is `score < threshold` → reject, so a score of
+  exactly `0.95` is admitted. A strict comparison would make the configured value itself
+  unreachable.
+- **The vector is computed from the `RedactedPrompt`, never from raw text** (D-44), so no
+  unredacted value reaches the embedding provider or the stored index. `Q-13` asserts the key
+  half of that and the same argument covers the vector, which is derived from the same input.
+
+`cosine_similarity` returns `0.0` for a zero-magnitude vector rather than raising: a zero vector
+has no direction, so it is not similar to anything, and `0.0` keeps it below every admissible
+threshold instead of producing a `NaN` whose comparison a reader has to reason about.
+
+**Not wired into the running application.** `backend/src/main.py` constructs
+`TieredSemanticCache(redis=redis_client)` with no `embed=` and no `similarity_threshold=`, so the
+deployed backend has **L1 only** and the L2 path is unreachable at runtime.
+`settings.semantic_cache_threshold` in `backend/src/core/config.py` is read by nothing. The L2
+code and its tests are real; the wiring is not done. This is recorded here rather than implied
+away because it is the difference between a capability and a feature, and `PROGRESS.md` marks
+criterion 14 accordingly.
+
+### The Phase 1 verification gates
+
+Two scripts decide whether Phase 1 may call itself finished. Both run in the `audit` job of
+`.github/workflows/ci.yml`, and the first also runs as the whole of
+`.github/workflows/mutation-ci.yml`.
+
+| Script                               | Question it answers                                                                                                                                                                                                       |
+| :----------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `scripts/check-mutation-manifest.py` | Does `backend/tests/mutation/mutations.toml` describe every property design Appendix B declares — with a real file behind each row — and do the counters in the root `mutations.toml` match the rows that actually exist? |
+| `scripts/check-progress.sh`          | Does `PROGRESS.md` describe Phase 1 — 14 criteria with non-empty evidence, deliverables 1.1–1.11, `Q-01`…`Q-31` each with a location **and** a control, decisions D-28…D-50 — and is the phase status defensible?         |
+
+Three details are worth knowing before trusting either:
+
+- **`check-progress.sh` used to read Phase 0 only.** Its status-vocabulary check for leaf rows greps
+  rows matching `0.x`, so 90 Phase 1 rows once carried a status the file's own header forbids and the
+  check passed. The Phase 1 block was added by leaf 20.15, which had named it as a deliverable.
+- **The control column rejects placeholders.** `absent`, `blocked`, `does not test`,
+  `imports no production code`, `unreachable` and `tautolog` are all refused, because the honest
+  wording used to _declare_ a missing control had otherwise satisfied the check that _measures_
+  it.
+- **The `completed` clause fails closed.** Before allowing the Phase 1 row to read `completed`
+  the script runs `check-mutation-manifest.py`, and if it cannot find an interpreter it FAILS
+  rather than skipping. An earlier version guarded that call with `command -v python3`, so on a
+  host where the interpreter is named `python` — Git Bash on Windows — the guard short-circuited
+  and the phase was certified on a check that never ran.
+
+Neither script is a formality: `scripts/mutation-harness.py` applies each declared mutation and
+reports a property that survives its own control as `VACUOUS`, and the manifest check is what
+stops a row being declared without one.
+
 ## Reference documents
 
 `AI-Powered-DevOps-Platform-Complete-Technical-Research.md`, `PRD.md`,

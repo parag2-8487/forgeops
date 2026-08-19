@@ -208,10 +208,12 @@ the next. Dot-source first, in the same process:
 python scripts\mutation-harness.py --all --allow-incomplete --skip-git-check
 ```
 
-With the environment exported, all nine rows report `EXPECTED FAIL / OBSERVED OK` (leaf 8.5,
-2026-08-02). Making the harness distinguish a skip from a pass is the real fix and is not done: it
-would mean parsing the mutated run's report for a skip and reporting a third verdict. Until then,
-read a `VACUOUS` verdict together with the skip count before believing it.
+With the environment exported, every row reports `EXPECTED FAIL / OBSERVED OK`. That was nine rows
+when this note was written (leaf 8.5, 2026-08-02) and is **31** now that Appendix B is fully
+covered — see "Running the mutation harness" below for the current invocation. Making the harness
+distinguish a skip from a pass is the real fix and is not done: it would mean parsing the mutated
+run's report for a skip and reporting a third verdict. Until then, read a `VACUOUS` verdict together
+with the skip count before believing it.
 
 ### The `.env` and `ALEMBIC_DATABASE_URL` trap
 
@@ -297,6 +299,76 @@ powershell -File scripts\leaf-gate.ps1
 
 `check-no-skips.py` consumes a `--report-log` JSONL or `go test -json` events, so it is a
 property of a test **run** and cannot be part of the static gate.
+
+### Running the mutation harness
+
+The harness applies each declared mutation, runs the owning property test, and requires it to
+**fail**. A property that survives its own control is reported `VACUOUS`. All 31 Appendix B
+properties are covered, so `--allow-incomplete` is no longer needed.
+
+```powershell
+. .\scripts\local-env.ps1
+$env:GOFLAGS = "-p=1"
+$env:GOMAXPROCS = "2"
+backend\.venv\Scripts\python.exe scripts\mutation-harness.py --all
+```
+
+**`GOFLAGS=-p=1` is not optional on a 16-core Windows box.** `go build` defaults to one compiler
+process per CPU, and sixteen of them exhaust the Windows page file rather than RAM. The failure does
+not look like resource exhaustion — it looks like a broken toolchain:
+
+```
+fatal error: pageAlloc: out of memory
+compile.exe: fork/exec ...: The paging file is too small for this operation to complete.
+```
+
+With `-p=1` the whole agent module builds in about 364 s. Eleven of the 31 rows are Go rows that
+each rebuild the package under a `-overlay`, so this setting decides whether the run completes at
+all. Raising the page file also works and is the heavier option; limiting parallelism changes
+nothing outside the process.
+
+**Containers the run needs.** Twenty of the 31 rows are Python rows whose property tests are
+Postgres- or Redis-backed. Start the documented test containers first (see "Test container ports"
+above) — a stopped container produces a `VACUOUS` verdict with a high skip count, not an error:
+
+```powershell
+docker start forgeops-test-pg forgeops-test-redis forgeops-test-cerbos
+```
+
+**Redis Stack, not plain Redis.** The L2 semantic-cache tests in
+`backend/tests/integration/test_semantic_cache.py` and the BM25 sparse index both need
+`redis/redis-stack-server`. Plain `redis` starts, answers `PING`, and then fails those tests for
+reasons that read like application bugs. `forgeops-test-redis` is already the Stack image; if you
+substitute your own, match it.
+
+**Selecting rows.** `--only Q-13 Q-23` runs a subset, which is how a single new control is verified
+before it is committed. `--skip-git-check` suppresses the clean-tree assertion and exists for a
+working tree that is legitimately dirty mid-task; it must never reach CI, and
+`tests/meta/test_mutation_harness.py::test_the_clean_tree_clause_is_enabled_in_ci` asserts that.
+
+### Regenerating the Q-06 governance corpus
+
+`Q-06` is cross-runtime: the backend maps its stage-1 payload through
+`src.policies.opa.governance_input` and asks an OPA **server**, while the agent evaluates the same
+bundle in-process through OPA's Go Rego library. They cannot both be called from one process, so
+`scripts/gen-governance-fixtures.py` drives the Python side and commits the mapped inputs together
+with the decisions OPA returned; `agent/internal/policy/q06_property_test.go` re-derives the agent
+side and compares. Same asymmetric two-way lock as `Q-14`'s envelope corpus.
+
+Regenerate only when the bundle or the mapping changes. It needs an OPA server holding
+`policies/agent`, which is **not** what the Compose `opa` service serves — that one carries the MCP
+gateway policy and answers this document as undefined:
+
+```powershell
+$pol = (Resolve-Path policies\agent).Path
+docker run -d --name fo-opa-agent -p 8182:8181 -v "${pol}:/policies:ro" `
+  openpolicyagent/opa:1.4.2 run --server --addr 0.0.0.0:8181 /policies
+backend\.venv\Scripts\python.exe scripts\gen-governance-fixtures.py --opa-url http://127.0.0.1:8182
+```
+
+The generator refuses to write a corpus whose decisions are all identical — such a corpus cannot
+tell an agreeing agent from one that returns a constant — and the Go test carries both a
+corpus-size floor and a distinct-decision floor that may be raised but never lowered.
 
 ## Error and API conventions
 

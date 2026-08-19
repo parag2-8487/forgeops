@@ -1,5 +1,18 @@
 # Leaf 10.1 Agent Secret Scanning Implementation Plan
 
+> **Status: leaf 10.1 landed. Recorded 2026-08-19.**
+>
+> `PROGRESS.md` marks 10.1 `done`. The implementation is `agent/internal/secretscan/` — `Scanner`
+> over `gitleaks/v8` returning `Finding` metadata and never values, plus `Redact` producing the
+> `FORGEOPS_REDACTED:<kind>:<hash8>` form, with validator diagnostics routed through it.
+>
+> The step checkboxes below are left unticked on purpose: the leaf landing is verifiable from the
+> tree and `PROGRESS.md`, the individual sub-steps are not, and ticking them would assert something
+> this note cannot support.
+>
+> Later relevant change: `go-git` moved v5.19.1 → v5.19.2 on 2026-08-19 for `GO-2026-6213` and
+> `GO-2026-6214`. `secretscan` reaches go-git through gitleaks, so it is in that dependency path.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement agent-side secret scanning and redaction via `agent/internal/secretscan` wrapping `gitleaks/v8`.

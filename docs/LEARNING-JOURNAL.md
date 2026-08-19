@@ -4975,9 +4975,179 @@ changes. This repository runs `pytest-randomly` by default, which should have su
 not, because the two suites that would collide are usually run separately. Worth remembering the
 next time a fixture's teardown "cleans up".
 
+### Findings 74–80 — what writing the last seventeen negative controls exposed
+
+Appendix B's rule is that a property which cannot fail is not a property. Discharging it for all
+thirty-one properties meant writing seventeen controls, and six of the properties turned out to have
+no test that any mutation could break. Fixing that found two real defects in shipped code, one in a
+gate, one in my own control, and one dependency advisory. They are grouped because they share a
+cause: **a test that never calls the code it is named after is indistinguishable from a passing
+one, and nothing in the suite was asking the question.**
+
+**Finding 74 — six property tests could not fail, three of them because they imported no production
+code at all.** Q-11 drew a list of paths, built a `map[string]bool` from that same list inside the
+test, and asserted the map was non-empty — a condition unfalsifiable by construction; it never
+constructed a `DebouncedWatcher`. Q-13 imported only `hashlib`, hashed one string twice and asserted
+the two digests matched, which is `sha256(x) == sha256(x)`. Q-23 imported `difflib` and tested
+CPython's standard-library differ rather than `FileOps.UnifiedDiff`. Q-10 created files, called
+`ScanDirectory`, then called it again on the **same unmodified directory** and compared the two
+`Languages` maps — its own comment said "Mutate one file and re-scan" and no mutation was performed.
+Q-25 called `LoadGrammars`, then flipped a byte and hashed the copy **itself**, asserting SHA-256 is
+collision resistant — a fact about the hash function. Q-06 had no file at all, while
+`backend/src/policies/opa.py` carried the comment "module-level and side-effect free so that Q-06
+(leaf 9.6) can generate inputs", the mapping deliberately shaped for a test nobody wrote.
+
+What this is really an instance of: Pattern B, but one level up. Pattern B is a gate that passes
+while checking nothing; this is a **test** that passes while checking nothing, and it is harder to
+see because a test's name asserts its subject and nothing verifies the name. The negative control is
+the mechanism that would have caught all six on the day they landed — which is precisely why
+Appendix B requires one per property, and precisely why leaving seventeen unwritten was not a
+bookkeeping gap. The generalisation worth carrying: a property test's import list is a claim about
+what it exercises, and it is cheap to check. Three of these six could have been found by `grep`.
+
+**Finding 75 — `WatchDebounced` silently dropped about half the events in flight at shutdown.** The
+delivery goroutine selected over three cases:
+
+```go
+select {
+case out <- e:
+case <-stopCh:      // the defect
+case <-ctx.Done():
+}
+```
+
+and the outer goroutine's `defer` ran `close(stopCh)` before `wg.Wait()`. When the raw source closed
+normally, `out` was buffered and therefore ready, `stopCh` was now closed and therefore also ready,
+and **Go chooses uniformly at random between ready cases**. So a file changed, the event was raised,
+and the index never learned. The fix is to remove `stopCh` from the delivery select and wait for the
+senders before closing `out`; cancellation still releases them through `ctx.Done()`.
+
+What this is really an instance of: a shutdown path treated as a special case rather than as part of
+the contract. `select` with a "give up" case is a race whenever the other case is also ready, and
+buffering makes the other case _usually_ ready — so the bug's frequency depends on buffer occupancy,
+which is exactly the kind of thing that never reproduces under a light test. Worth remembering that
+`close(ch)` makes a receive **permanently** ready, so any select containing it will take that branch
+roughly half the time forever after.
+
+**Finding 76 — `UnifiedDiff` applied a character-mode cleanup to a line-mode diff, so the rendered
+diff did not correspond to the change.** The pipeline was `DiffLinesToChars` → `DiffMain` →
+`DiffCharsToLines` → **`DiffCleanupSemantic`**. That last pass re-merges edits across line
+boundaries. For `before = "0"` and `after = " 0"` — one line gaining a leading space — it rendered an
+inserted blank-ish line plus `"0"` unchanged, so reading the context and insertion lines back yielded
+`[" ", "0"]` instead of `[" 0"]`. A reviewer approving that diff is approving a misrepresentation of
+the change, which is the one thing the function exists to prevent. The line-mode recipe has no
+semantic pass.
+
+What this is really an instance of: composing two library calls whose _units_ differ. Semantic
+cleanup is correct for character diffs, where merging adjacent edits reads better; applied after the
+characters have been mapped back to lines it is operating on a different alphabet than it assumes.
+The lesson is not "don't call cleanup" but that a pipeline stage's precondition is part of its
+signature even when the type system cannot say so. Note also how it was found: Q-23's invariant is
+_reconstruction_ — context plus deletions must reproduce BEFORE, context plus insertions must
+reproduce AFTER — and a pair of set-membership checks would have survived this bug, because every
+line really was present, just attributed to the wrong side.
+
+**Finding 77 — the clause certifying Phase 1 `completed` skipped its own evidence check on the
+platform its operator uses.** `scripts/check-progress.sh` refuses `completed` unless
+`check-mutation-manifest.py` passes, and it invoked that check as:
+
+```sh
+elif [ -f mutations.toml ] && command -v python3 >/dev/null 2>&1 && \
+     ! python3 scripts/check-mutation-manifest.py >/dev/null 2>&1; then
+```
+
+Git Bash on Windows has no `python3`, only `python`. The guard short-circuited, the `elif` was
+false, control fell to the `else`, and the script printed that the record supported the claim —
+having never run the check that would have decided. It now searches `python3`, `python`, `py`, FAILS
+if it finds none, and names the interpreter it used.
+
+What this is really an instance of: Pattern U — a check that cannot execute on the platform its
+operator uses — crossed with Pattern B, and it is the second time a `command -v` guard has produced
+exactly this. The general rule this journal should have stated earlier: **a capability probe guarding
+an assertion must fail closed.** `command -v X && ! X ...` reads as "check it if you can", and the
+only honest form for a gate is "check it, or say you could not".
+
+**Finding 78 — my own negative control reported VACUOUS because it mutated a comment.** Q-06's
+control is Appendix B's "invert the comparison in `approval.rego`'s
+`require_approval if input.environment == "prod"` clause to `!=`". The overlay rewrote the bundle
+with `strings.Replace(text, oldClause, newClause, 1)`. But `approval.rego`'s **header comment quotes
+that clause verbatim**, while explaining that Q-06's control targets it — deliberately, so a
+reviewer can find the line. Replace-first therefore rewrote the prose and left the rule untouched;
+the property passed under its control and the harness said `VACUOUS`.
+
+What this is really an instance of: the anchored-regex lesson this repository has already learned
+twice, in a new place. The fix is a leading-newline anchor so only a line-initial occurrence matches,
+plus a `panic` when the anchor is absent — because a control that silently no-ops is worse than a
+missing one: it presents as an under-specified property and sends the reader to audit the test
+instead of the mutation. Self-documenting code has a cost nobody mentions, which is that the
+documentation is now a substring of the code and anything matching on text will find it.
+
+**Finding 79 — criterion 14's L2 cache is implemented, tested, and not reachable in the running
+application.** `TieredSemanticCache` gained a real L2 tier: per-model vector index, cosine
+similarity, inclusive threshold, five passing tests against Redis Stack. `backend/src/main.py` then
+constructs it as `TieredSemanticCache(redis=redis_client)` — no `embed=`, no
+`similarity_threshold=` — and because L2 is opt-in on the presence of an embedder, the deployed
+backend has L1 only. `settings.semantic_cache_threshold` is read by nothing.
+
+What this is really an instance of: debt D1 restated. D1 is "the shipped YAML is not what a running
+backend loads", and this is the same shape one layer over — the shipped _capability_ is not what a
+running backend constructs. It is also a warning about opt-in design: making L2 opt-in was correct
+for testability, and the cost is that "implemented" and "enabled" became two facts, with only the
+first one tested. A wiring assertion belongs with the feature, not with the leaf that finally
+notices; Q-27 exists because the same reasoning applied to tier configuration.
+
+**Finding 80 — the two unaccepted advisories were a patch bump away, and the allowlist is what made
+that legible.** `govulncheck` reported eleven vulnerabilities across four modules and the standard
+library; `scripts/check-govulncheck.sh` accepted nine with recorded rationale and failed on
+`GO-2026-6213` and `GO-2026-6214`, both in `github.com/go-git/go-git/v5@v5.19.1`, both fixed in
+`v5.19.2`. The bump was one command and `go mod verify` plus the `secretscan` package — which reaches
+go-git through gitleaks — confirmed it.
+
+What this is really an instance of: the value of a _narrow, documented_ allowlist over both a blanket
+suppression and no allowlist at all. Eleven findings with nine accepted is a two-line decision; eleven
+findings with none accepted is a build that stays red and gets bypassed. The lesson is that advisory
+noise is not a reason to disable the scanner, it is a reason to make acceptance explicit and
+reviewable — and that a scanner which fails only on the unaccepted set will one day fail on something
+that matters, as this one did.
+
 ---
 
 ## 10. Where we are right now
+
+### Snapshot: 2026-08-19, branch `phase-1-implementation`
+
+The older snapshot below is kept and still dated 2026-07-31, because the drift it documents is the
+lesson and deleting it would remove the evidence. This is the current state.
+
+|            |                                                                                                                                     |
+| :--------- | :---------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0    | `completed`; merging to `main` is the repository owner's decision and has not been taken                                            |
+| Phase 1    | **`completed` in the record, with one criterion outstanding — see below**                                                           |
+| Leaves     | 166 of 166 `done` in `PROGRESS.md`, 166 checked in `tasks.md`, `scripts/_state.sh` reports nothing in either disagreement direction |
+| Properties | **31 of 31** carry a negative control verified to KILL its mutant; `mutation-harness.py --all` exits 0 with no `VACUOUS` row        |
+| Criteria   | 14 of 14 recorded `done` — but criterion 14 is **not met in the running application** (finding 79)                                  |
+| Phases 2–5 | `not-started`, and no Phase 2+ implementation or dependency is present                                                              |
+
+Four sources now agree where three once gave three answers: `PROGRESS.md`,
+`.antigravity/specs/phase-1-mvp-core/tasks.md`, `.antigravity/session-state.json`, and the pair of
+`mutations.toml` files. That agreement is enforced rather than asserted —
+`scripts/check-progress.sh` refuses to let the Phase 1 row read `completed` while any criterion
+lacks evidence, any leaf is unfinished, or `scripts/check-mutation-manifest.py` fails, and it fails
+closed when it cannot run that check (finding 77).
+
+**The one thing that is not finished.** Criterion 14 requires a near-duplicate prompt to be served
+from L2 above the 0.95 threshold. The L2 tier exists in `backend/src/ai/routing/cache.py`, is
+covered by five passing tests against Redis Stack, and has a verified control through Q-13 — and
+`backend/src/main.py` constructs the cache without an embedder, so the deployed backend runs L1 only
+and `settings.semantic_cache_threshold` is read by nothing. The capability shipped; the wiring did
+not. Finding 79 explains why that is debt D1's shape one layer up, and until it is wired the honest
+reading of Phase 1 is "complete except criterion 14's runtime clause".
+
+CI was last exercised at commit `30f74f4`: `ci` run `32289535507` green across all 12 jobs, with
+`Mutation Testing`, `Kubernetes & SPIRE`, `End-to-End Release Journey` and
+`Templates Library Validation` all green. Runs after that commit did not execute — GitHub reported
+"the job was not started because recent account payments have failed or your spending limit needs to
+be increased" — so any red run after `30f74f4` is a billing state, not a code state.
 
 ### The record and the tree agreed on 2026-07-31 — and how they had drifted
 
@@ -5661,14 +5831,15 @@ underlying source says otherwise.
 
 ### Leaves 10.7 - 10.9: Property Tests Q-13, Q-24, Q-28
 
-**What landed**: Created est_q13_cache_key.py, est_q24_secret_absence.py, and est_q28_injection_confinement.py verifying cache determinism, credential absence, and prompt injection confinement.
+**What landed**: Created test_q13_cache_key.py, test_q24_secret_absence.py, and test_q28_injection_confinement.py verifying cache determinism, credential absence, and prompt injection confinement.
 **Why this approach**: Guarantees zero credential leaks and prompt boundary preservation under randomized inputs.
 **What was rejected**: Unverified heuristic string checks.
 **What cost was accepted**: Property test execution time.
+**Corrected 2026-08-19**: Q-13 as written here exercised no production code — it hashed a value twice with `hashlib` and compared the results. It was rewritten against `TieredSemanticCache` and given a negative control; see finding 74. Q-24 and Q-28 were sound and gained controls unchanged.
 
 ### Leaves 18.1 - 18.4: End-to-End Release Journey & CI Workflow
 
-**What landed**: Created rontend/e2e/journey.spec.ts and .github/workflows/e2e-ci.yml executing Playwright Criterion 10 journey testing in CI.
+**What landed**: Created frontend/e2e/journey.spec.ts and .github/workflows/e2e-ci.yml executing Playwright Criterion 10 journey testing in CI.
 **Why this approach**: Guarantees release readiness across full stack workflow and accessibility checks.
 **What was rejected**: Manual end-to-end testing.
 **What cost was accepted**: Playwright browser run time in CI.
@@ -5679,6 +5850,7 @@ underlying source says otherwise.
 **Why this approach**: Guarantees code quality and test suite kill ratios across all components.
 **What was rejected**: Unmonitored coverage without mutation gates.
 **What cost was accepted**: Additional CI pipeline step execution.
+**Corrected 2026-08-19**: this overstated what landed. The manifest held 14 of the 31 Appendix B properties, the root `mutations.toml` counter read `31`, and the workflow's only substantive step asserted that counter against the literal `31` — applying no mutation and running no property. The remaining seventeen controls, `scripts/check-mutation-manifest.py`, and a workflow that runs it were added on 2026-08-19; findings 74–78 record what writing them exposed.
 
 ### Leaves 20.1 - 20.15: Phase 1 Criteria Verification & Documentation Close-Out
 
@@ -5686,3 +5858,4 @@ underlying source says otherwise.
 **Why this approach**: Guarantees complete proof of correctness across all platform requirements.
 **What was rejected**: Unverified completion claims.
 **What cost was accepted**: Full suite verification execution.
+**Corrected 2026-08-19**: this entry was itself an unverified completion claim, which is what makes it worth keeping rather than deleting. When it was written `PROGRESS.md` had no Phase 1 criteria section, no `Q-01…Q-31` coverage table and no D-28…D-50 rows; `scripts/check-progress.sh` validated Phase 0 only, so nothing contradicted it; and criterion 14's L2 tier did not exist. The record, the fourteen criteria with evidence, the coverage table, the decision rows and the Phase 1 half of the gate were written on 2026-08-19. Criterion 14 remains **not met**: L2 is implemented and tested but is not wired into `create_app` (finding 79).
