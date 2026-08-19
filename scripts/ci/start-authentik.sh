@@ -35,8 +35,25 @@ worker_name="forgeops-ci-authentik-worker"
 # Reachability: in CI the runner's services are published on localhost, and a container
 # reaches them through the host gateway. `--network host` is the simplest correct answer
 # on a Linux runner and keeps the published port trivially available to pytest.
+# The Django signing key is generated per run, not carried as a literal. It was previously
+# defaulted, via `:-`, to a fixed placeholder constant spelled inline, and CI sets no such
+# variable, so that constant WAS the key on every run -- a hardcoded secret on the only
+# path that ever executes. Nothing outside this script needs the value: it signs sessions for
+# two containers that are destroyed with the job, so generating it is strictly better than
+# agreeing on it. Generated once and shared, because the server and the worker must sign
+# compatibly.
+if command -v openssl >/dev/null 2>&1; then
+  ak_signing_key="${AUTHENTIK_SECRET_KEY:-$(openssl rand -hex 32)}"
+else
+  ak_signing_key="${AUTHENTIK_SECRET_KEY:-$(od -A n -v -t x1 -N 32 /dev/urandom | tr -d ' \n')}"
+fi
+if [ "${#ak_signing_key}" -lt 32 ]; then
+  echo "FAIL: could not generate a signing key (need openssl or a readable /dev/urandom)" >&2
+  exit 1
+fi
+
 common_env=(
-  -e "AUTHENTIK_SECRET_KEY=${AUTHENTIK_SECRET_KEY:-ci-only-not-a-real-secret-key-0123456789abcdef}"
+  -e "AUTHENTIK_SECRET_KEY=${ak_signing_key}"
   -e "AUTHENTIK_POSTGRESQL__HOST=${PGHOST:-localhost}"
   -e "AUTHENTIK_POSTGRESQL__PORT=${PGPORT:-5432}"
   -e "AUTHENTIK_POSTGRESQL__NAME=${AUTHENTIK_POSTGRESQL__NAME:-authentik}"
@@ -66,7 +83,10 @@ import time
 import httpx
 
 base_url = os.environ.get("FORGEOPS_TEST_OIDC_BASE_URL", "http://localhost:9000").rstrip("/")
-token = os.environ.get("AUTHENTIK_BOOTSTRAP_TOKEN", "ci-only-not-a-real-secret-token")
+# Not `.get(..., "<literal>")`. The `:?` on AUTHENTIK_BOOTSTRAP_TOKEN above has already
+# aborted the script if this is unset, so a default here is unreachable code that reads as
+# a second, weaker contract -- and it spelled a token literal to do it.
+token = os.environ["AUTHENTIK_BOOTSTRAP_TOKEN"]
 server_name = os.environ.get("SERVER_NAME", "forgeops-ci-authentik-server")
 prefix = "Bear" + "er"
 hdr_val = f"{prefix} {token}"

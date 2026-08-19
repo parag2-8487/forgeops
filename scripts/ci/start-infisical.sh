@@ -12,12 +12,56 @@ db_pass_var="POSTGRES_${p_name}"
 app_pass_var="FORGEOPS_APP_DB_${p_name}"
 mig_pass_var="FORGEOPS_MIGRATOR_DB_${p_name}"
 
-pw="${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"
+# The database credential is REQUIRED and is never defaulted. An earlier revision of this
+# script read `"${PGPASSWORD:-${POSTGRES_PASSWORD:-}}"`, which removed the literal fallback
+# but kept the failure it was hiding: with neither variable set the expansion yields the
+# empty string, the `.env` below is written with an empty credential, and Infisical starts
+# against a passwordless DSN. The job then fails somewhere downstream with a message that
+# names nothing. `:?` is the idiom `start-authentik.sh` already uses for exactly this, and
+# it fails here, loudly, at the line that knows what is missing.
+#
+# Only the credential is mandatory. The role and database NAMES below keep defaults on
+# purpose: they are not secrets, they are fixed by `docker-compose.yml`, and requiring the
+# caller to restate them would be ceremony rather than safety.
+if [ -z "${PGPASSWORD:-}" ] && [ -z "${POSTGRES_PASSWORD:-}" ]; then
+  echo "FAIL: neither PGPASSWORD nor POSTGRES_PASSWORD is set in the environment." >&2
+  echo "FAIL: this script reads the database credential from the environment and never" >&2
+  echo "FAIL: defaults it -- an empty credential would start Infisical against a" >&2
+  echo "FAIL: passwordless DSN and fail later with a message that names nothing." >&2
+  exit 1
+fi
+pw="${PGPASSWORD:-${POSTGRES_PASSWORD}}"
+
+# Both derived roles fall back to the verified-present credential above, never to a literal.
 app_pw="${FORGEOPS_APP_DB_PASSWORD:-$pw}"
 mig_pw="${FORGEOPS_MIGRATOR_DB_PASSWORD:-$pw}"
 
-auth_sec="${AUTH_SECRET:-$(head -c 32 /dev/urandom 2>/dev/null | base64 | tr -dc 'a-zA-Z0-9' | head -c 32 || printf 'ci-test-auth-secret-%s' "$$")}"
-enc_key="${ENCRYPTION_KEY:-$(head -c 16 /dev/urandom 2>/dev/null | od -A n -v -t x1 | tr -d ' \n' || printf '0123456789abcdef0123456789abcdef')}"
+# Generated, never literal. The previous revision carried `|| printf 'ci-test-...'` and
+# `|| printf '0123...'` tails, so a failure of the generator silently substituted a known
+# constant -- a hardcoded secret reachable on exactly the path where entropy was wanted.
+# Generation failure is now fatal instead.
+gen_hex() {
+  n="$1"
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$n"
+  else
+    od -A n -v -t x1 -N "$n" /dev/urandom | tr -d ' \n'
+  fi
+}
+
+auth_sec="${AUTH_SECRET:-$(gen_hex 32)}"
+enc_key="${ENCRYPTION_KEY:-$(gen_hex 16)}"
+
+# 32 bytes rendered as hex is 64 characters; 16 bytes is 32. Anything shorter means the
+# generator failed and returned a truncated value, which must not be used.
+if [ "${#auth_sec}" -lt 32 ]; then
+  echo "FAIL: could not generate AUTH_SECRET (need openssl or a readable /dev/urandom)" >&2
+  exit 1
+fi
+if [ "${#enc_key}" -ne 32 ]; then
+  echo "FAIL: ENCRYPTION_KEY must be exactly 32 hex characters, got ${#enc_key}" >&2
+  exit 1
+fi
 
 echo "${db_pass_var}=${pw}" > .env
 echo "${app_pass_var}=${app_pw}" >> .env
