@@ -347,7 +347,9 @@ for n in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
 	'' | none | n/a | na | tbd | todo | outstanding | missing | pending | '—' | '-' | '–' | \
 		'none yet' | 'not yet' | 'to do' | 'not written' | 'no control')
 		control='' ;;
-	*absent* | *'no manifest row'* | *'no control'* | *'not registered'* | *'to be written'*)
+	*absent* | *'no manifest row'* | *'no control'* | *'not registered'* | *'to be written'* | \
+		*blocked* | *'does not test'* | *'imports no production code'* | *unreachable* | \
+		*'cannot be failed'* | *'never invoked'* | *tautolog*)
 		control='' ;;
 	esac
 	if [ -z "$location" ]; then

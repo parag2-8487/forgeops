@@ -20,12 +20,11 @@ total_count = 31
 
 # Rows present in backend/tests/mutation/mutations.toml, every one of them verified to KILL
 # its mutant by `scripts/mutation-harness.py` (OBSERVED OK = the property failed under the
-# mutation). The seven properties still without a control are Q-06, Q-07, Q-10, Q-11, Q-13,
-# Q-23 and Q-25, and none of them is blocked on writing a mutation: Q-06 and Q-07 have no
-# property test at all, and the tests for Q-10, Q-11, Q-13, Q-23 and Q-25 do not exercise the
+# mutation). The seven properties still without a control are Q-06, Q-10, Q-11, Q-13, Q-23
+# and Q-25, and none of them is blocked on writing a mutation: Q-06 has no property test at all, and the tests for Q-10, Q-11, Q-13, Q-23 and Q-25 do not exercise the
 # property they are named for -- Q-11, Q-13 and Q-23 import no production code whatsoever.
 # A control cannot be added to a test that cannot fail; the test has to be written first.
-completed_count = 24
+completed_count = 25
 
 min_killed_percentage = 100.0
 
