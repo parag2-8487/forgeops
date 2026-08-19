@@ -75,7 +75,7 @@ docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" s
 docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
 
 echo "waiting for Authentik to answer its health endpoint and apply default blueprints..."
-SERVER_NAME="$server_name" python3 - <<'EOF'
+SERVER_NAME="$server_name" WORKER_NAME="$worker_name" python3 - <<'EOF'
 import os
 import subprocess
 import sys
@@ -94,26 +94,32 @@ hdr_val = f"{prefix} {token}"
 client = httpx.Client(base_url=base_url, headers={"Authorization": hdr_val, "Accept": "application/json"}, timeout=10.0)
 deadline = time.time() + 600
 
-# Authentik applies its own default blueprints during startup, once migrations finish. The
-# previous revision of this loop ALSO ran `ak apply_blueprint` over every discovered file
-# every 10 seconds, concurrently with that, and kept doing it for the whole 600s window. The
-# result is in the `auth` job's Postgres log on the runs that failed:
+# Authentik applies its own default blueprints during startup, once migrations finish. An earlier
+# revision of this loop ALSO ran `ak apply_blueprint` over every discovered file every 10 seconds
+# and kept doing it for the whole 600s window. The result is in the `auth` job's Postgres log on
+# the runs that failed then:
 #
 #   duplicate key value violates unique constraint "authentik_flows_flow_slug_key"
 #   duplicate key value violates unique constraint "authentik_policies_policy_name_..._uniq"
 #   deadlock detected
 #
-# Two writers inserting the same fixtures on overlapping transactions. The job failed on
-# 58ecf54, 56a244d and dea4757 and passed on 894ce8d and e81448d -- the signature of a race,
-# not of a missing step, and three commits in a row tried to fix it by making the search
-# faster rather than by making it stop repeating.
+# Two writers inserting the same fixtures on overlapping transactions.
 #
-# So: wait for Authentik to do its own work, and intervene at most ONCE, only if the flow is
-# still missing after a grace period long enough for migrations plus the default blueprints.
-# A second apply is never useful -- if one did not produce the flow, a hundred will not.
-GRACE_BEFORE_MANUAL_APPLY = 150.0
+# Replacing that storm with a SINGLE apply at 150s was also wrong, in the other direction. It
+# passed twice and then failed with `flows (0)` for the entire 600s: one attempt has to land in
+# the window after migrations finish and before the deadline, and nothing guarantees it does.
+#
+# So: bounded retry. Attempts are spaced a minute apart and capped, which keeps concurrent-write
+# pressure far below the original (5 attempts rather than ~60) while not betting the job on a
+# single moment. `ak apply_blueprint` is idempotent per file, so a repeat that races the worker
+# loses a transaction rather than corrupting anything.
+GRACE_BEFORE_MANUAL_APPLY = 60.0
+APPLY_INTERVAL = 60.0
+MAX_APPLY_ATTEMPTS = 5
+
 started = time.time()
-applied_once = False
+apply_attempts = 0
+last_apply = 0.0
 
 last_log = 0.0
 while time.time() < deadline:
@@ -147,16 +153,30 @@ while time.time() < deadline:
                 print(f"[start-authentik] Authentik is ready with blueprints and scopes! (flows: {len(slugs)}, scopes: {len(scopes)})", flush=True)
                 sys.exit(0)
 
-            # The one manual apply, and only once the server is answering -- applying while it
+            # The bounded manual apply, and only once the server is answering -- applying while it
             # is still migrating is what produced the "column ... does not exist" errors.
-            if not applied_once and (now - started) >= GRACE_BEFORE_MANUAL_APPLY:
-                print("[start-authentik] flow still absent after grace; applying blueprints once", flush=True)
+            if (
+                apply_attempts < MAX_APPLY_ATTEMPTS
+                and (now - started) >= GRACE_BEFORE_MANUAL_APPLY
+                and (now - last_apply) >= APPLY_INTERVAL
+            ):
+                apply_attempts += 1
+                print(
+                    f"[start-authentik] flow still absent; applying blueprints "
+                    f"(attempt {apply_attempts}/{MAX_APPLY_ATTEMPTS})",
+                    flush=True,
+                )
                 apply_cmd = (
-                    'find /blueprints /authentik -name "*.yaml" -path "*blueprint*" 2>/dev/null | '
+                    'find / -xdev -name "*.yaml" -path "*blueprint*" 2>/dev/null | head -n 200 | '
                     'while read -r bp; do ak apply_blueprint "$bp" 2>/dev/null || true; done'
                 )
-                subprocess.run(["docker", "exec", server_name, "sh", "-c", apply_cmd], capture_output=True)
-                applied_once = True
+                proc = subprocess.run(
+                    ["docker", "exec", server_name, "sh", "-c", apply_cmd], capture_output=True
+                )
+                if proc.returncode != 0:
+                    tail = (proc.stderr or b"").decode("utf-8", "replace")[-400:]
+                    print(f"[start-authentik] apply attempt returned {proc.returncode}: {tail}", flush=True)
+                last_apply = now
 
             if now - last_log >= 10.0:
                 print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
@@ -172,6 +192,20 @@ while time.time() < deadline:
     time.sleep(3)
 
 print("FAIL: Authentik did not become ready with default blueprints within deadline", file=sys.stderr)
+
+# Diagnostics, because the previous failure produced NONE. The job logged
+# "waiting for blueprints & scopes... flows (0)" thirteen times and then died, which says the API
+# answered and no blueprint was ever applied -- and nothing about why. Blueprints are applied by
+# the WORKER in current Authentik, so its log is the first place to look and it was never shown.
+for container in (server_name, os.environ.get("WORKER_NAME", "forgeops-ci-authentik-worker")):
+    print(f"\n===== docker logs (tail) {container} =====", file=sys.stderr, flush=True)
+    proc = subprocess.run(
+        ["docker", "logs", "--tail", "120", container], capture_output=True
+    )
+    for stream in (proc.stdout, proc.stderr):
+        if stream:
+            print(stream.decode("utf-8", "replace"), file=sys.stderr, flush=True)
+
 sys.exit(1)
 EOF
 
