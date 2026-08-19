@@ -1,8 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
+#
+# Counters only. The real manifest -- the one `scripts/mutation-harness.py` reads and the one
+# that carries a mutation, an overlay or a patch, and a description per property -- is
+# `backend/tests/mutation/mutations.toml`.
+#
+# `completed_count` read 31 while that manifest carried 14 rows, and the only CI step that
+# looked at this file asserted the integer against itself:
+#
+#     assert data['mutations']['completed_count'] == 31
+#
+# So the number was wrong by 17 and the pipeline was green on it. Both numbers are now
+# enforced against reality by `scripts/check-mutation-manifest.py`: `total_count` must equal
+# the property count design.md Appendix B declares, and `completed_count` must equal the
+# number of rows that actually exist. Editing either one without doing the work fails CI.
 
 [mutations]
+# Appendix B declares Q-01 … Q-31.
 total_count = 31
-completed_count = 31
+
+# Rows present in backend/tests/mutation/mutations.toml. The seventeen properties still
+# without a negative control are Q-06, Q-07, Q-08, Q-09, Q-10, Q-11, Q-12, Q-13, Q-18,
+# Q-21, Q-22, Q-23, Q-24, Q-25, Q-26, Q-28 and Q-29; Q-06 and Q-07 have no property test
+# either. Until all 31 carry a control, Phase 1 is not complete and `PROGRESS.md` says so.
+completed_count = 14
+
 min_killed_percentage = 100.0
 
 [mutations.target_components]

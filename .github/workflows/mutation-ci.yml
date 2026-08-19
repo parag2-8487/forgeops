@@ -1,5 +1,18 @@
 name: Mutation Testing CI Pipeline
 
+# This pipeline used to consist of one step that loaded `mutations.toml` and asserted
+# `completed_count == 31`. It applied no mutation, ran no property and opened no other file,
+# so it passed in 11 seconds on commits where the real manifest carried 14 rows. The integer
+# was wrong by 17 and the green tick said otherwise.
+#
+# `scripts/check-mutation-manifest.py` replaces it with a check that reads the real manifest,
+# counts the rows, verifies every file each row points at, and compares the set against the
+# properties design.md Appendix B declares. It runs STRICT: an Appendix B property with no
+# negative control fails the job by name. That is deliberate -- design Appendix B's rule is
+# "a property that cannot fail is not a property", and an uncontrolled property is
+# indistinguishable from one that always passes. While this job is red, Phase 1 is not
+# complete, and `PROGRESS.md` records the same thing.
+
 on:
   workflow_dispatch:
   push:
@@ -18,6 +31,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify Mutation Targets
-        run: |
-          python -c "import tomllib; data = tomllib.load(open('mutations.toml', 'rb')); assert data['mutations']['completed_count'] == 31"
+      - name: The manifest must describe Appendix B and its counters must match reality
+        run: python scripts/check-mutation-manifest.py
+
+      # The harness itself needs a Go toolchain, Postgres and Redis, which is why the
+      # per-property mutation runs live in the `backend` and `agent` jobs that already stand
+      # those up. This job's contribution is that the manifest cannot misdescribe them.
