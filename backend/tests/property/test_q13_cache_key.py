@@ -68,11 +68,19 @@ class _DictRedis:
         return True
 
 
-#: A synthetic secret assembled from fragments, so no line of this file carries a credential
-#: shape. `backend/tests/synthetic_secrets.py` and `scripts/check-added-shapes.py` use the same
-#: idiom for the same reason: the shape is the violation, not the sensitivity.
+#: A synthetic secret with NO provider shape, deliberately.
+#:
+#: The first version of this helper returned a classic-PAT-shaped value assembled with `+`.
+#: `scripts/check-test-credentials.py` constant-folds adjacent string literals, so the assembly did
+#: not hide anything and CI failed with "literal resembling a GitHub token" (FO-SEC001) — the gate
+#: working exactly as intended.
+#:
+#: The shape bought nothing here. Q-13's assertions turn on a secret that was DECLARED to the
+#: redactor through `project_secrets`, which is replaced by exact match whatever it looks like; the
+#: provider-pattern half of redaction is Q-24's subject and is tested there. So the value carries the
+#: repository's synthetic marker and resembles no vendor's credential.
 def _synthetic_secret() -> str:
-    return "gh" + "p_" + ("a1b2c3d4" * 4) + "e5f6g7h8"
+    return "test-only-not-a-real-secret-" + ("a1b2c3d4" * 3)
 
 
 @settings(max_examples=100)

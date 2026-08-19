@@ -61,7 +61,24 @@ func (f *FileOps) UnifiedDiff(before, after, label string) string {
 	a, b, c := dmp.DiffLinesToChars(before, after)
 	diffs := dmp.DiffMain(a, b, false)
 	diffs = dmp.DiffCharsToLines(diffs, c)
-	diffs = dmp.DiffCleanupSemantic(diffs)
+
+	// NO `DiffCleanupSemantic` here, and that is a fix rather than an omission.
+	//
+	// `DiffCleanupSemantic` is a CHARACTER-mode cleanup. Applied after `DiffCharsToLines` it
+	// re-merges edits across line boundaries, so the rendered diff stops corresponding to the
+	// change. Q-23 found it immediately: for `before = "0"` and `after = " 0"` — one line gaining a
+	// leading space — the cleanup produced
+	//
+	//	+ ⟨space⟩
+	//	 0
+	//
+	// an INSERTED blank-ish line plus "0" unchanged, where the file actually has a single line that
+	// changed. Reading the context and insertion lines back yields ["⟨space⟩", "0"] instead of
+	// [" 0"], so the diff is not a faithful edit script — and a reviewer approving it is approving a
+	// misrepresentation of the change, which is the one thing this function exists to prevent.
+	//
+	// The line-mode recipe is LinesToChars → Main → CharsToLines, with no semantic pass. Cleanup
+	// belongs to character diffs, where merging adjacent edits genuinely reads better.
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("--- a/%s\n+++ b/%s\n", label, label))
