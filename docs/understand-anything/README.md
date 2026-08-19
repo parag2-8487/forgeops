@@ -4,30 +4,30 @@ An interactive map of this repository, generated with
 [Understand-Anything](https://github.com/Egonex-AI/Understand-Anything) pinned at **v2.9.0**
 (commit `f08763d11d0202a8a8f52b5dedda6d1b2e2ebac8`).
 
-| Field          | Value                                                                                      |
-| :------------- | :----------------------------------------------------------------------------------------- |
-| Generated      | **2026-08-02**, regenerated at group 8's close-out with all twelve of its leaves landed    |
-| Tool           | Understand-Anything v2.9.0, installed at user level (see below)                            |
-| Files analysed | 463 of 467 in the inventory (4 excluded)                                                   |
-| Graph          | 2,070 nodes · 2,118 edges · 14 layers · 15 tour steps                                      |
-| Edges          | 1,607 `contains` (file to function/class) · 511 `imports` (resolved project-internal)      |
-| Validation     | 0 issues, 168 orphan warnings (documents, configs and scripts that no source file imports) |
+| Field          | Value                                                                                 |
+| :------------- | :------------------------------------------------------------------------------------ |
+| Generated      | **2026-08-19**, rebuilt after the seventeen remaining mutation controls landed        |
+| Tool           | Understand-Anything v2.9.0, installed at user level (see below)                       |
+| Files analysed | 757 of 761 in the inventory (4 excluded)                                              |
+| Graph          | 3,649 nodes · 3,883 edges · 14 layers · 15 tour steps                                 |
+| Edges          | 2,892 `contains` (file to function/class) · 991 `imports` (resolved project-internal) |
+| Validation     | 0 issues, 227 orphan warnings (documents, configs and scripts that no source imports) |
 
 ## Open it
 
-Node.js �?� 18 is the only requirement. Nothing is sent anywhere; the viewer serves the graph
+Node.js ≥ 18 is the only requirement. Nothing is sent anywhere; the viewer serves the graph
 read-only from local disk and makes no LLM calls.
 
 ```sh
 npx https://github.com/Egonex-AI/Understand-Anything/releases/download/v2.9.0/understand-anything-viewer.tgz docs/understand-anything
 ```
 
-It prints a tokenised `http://127.0.0.1:5173/?token=�?�` URL. What you get:
+It prints a tokenised `http://127.0.0.1:5173/?token=≥` URL. What you get:
 
 - **The structural graph.** Every analysed file, function and class as a node you can click,
   search or filter, colour-coded by architectural layer.
 - **Layers.** Fourteen of them, listed below. Selecting one isolates its members.
-- **Search.** By name, and semantically over the node summaries �?" "which parts handle auth?"
+- **Search.** By name, and semantically over the node summaries — "which parts handle auth?"
   returns the auth package, the route-auth checker and the Cerbos policies.
 - **A guided tour.** Fifteen steps ordered so each one only depends on earlier ones. Step 1 is
   the learning journal, step 2 is the Phase 0 review, and the rest walk the composition roots
@@ -36,7 +36,7 @@ It prints a tokenised `http://127.0.0.1:5173/?token=�?�` URL. What you get:
 **Source snippets will not resolve in this layout.** The dashboard's file-content endpoint
 resolves a node's `filePath` relative to the directory you pass it, and these paths are
 relative to the repository root. To get clickable source, point the viewer at the repository
-root with the data directory beside it �?" copy `docs/understand-anything/.ua` to `./.ua` first
+root with the data directory beside it — copy `docs/understand-anything/.ua` to `./.ua` first
 and delete it afterwards. It is kept under `docs/` by default so that a generated artifact
 never appears as untracked noise at the repository root.
 
@@ -44,20 +44,20 @@ never appears as untracked noise at the repository root.
 
 | Layer                 | Nodes | What belongs in it                                                        |
 | :-------------------- | ----: | :------------------------------------------------------------------------ |
-| Governance & Trust    |    22 | the mutation chokepoint, the audit chain, policy, identity, authorization |
-| API Surface           |    26 | routers, the app factory, middleware, RFC 9457, the MCP gateway           |
-| AI & Generation       |    19 | six-tier routing, breaker, cascade, cache, rate limiting                  |
-| Analysis              |    12 | the codebase index, plan analyzer, blast radius, readiness                |
-| Data                  |    14 | tables, the nine migrations, HNSW indexes, the two-role split             |
-| Agent Core            |    35 | the agent's composition root, config, redacting logger, session transport |
-| Agent Execution       |    39 | the mutation path, IaC runner, git client, scanner, MCP server            |
-| Frontend              |    27 | the App Router shell, the API client, the env contract, UI state          |
+| Governance & Trust    |    49 | the mutation chokepoint, the audit chain, policy, identity, authorization |
+| API Surface           |    29 | routers, the app factory, middleware, RFC 9457, the MCP gateway           |
+| AI & Generation       |    33 | six-tier routing, breaker, cascade, cache, rate limiting                  |
+| Analysis              |    16 | the codebase index, plan analyzer, blast radius, readiness                |
+| Data                  |    15 | tables, the nine migrations, HNSW indexes, the two-role split             |
+| Agent Core            |    44 | the agent's composition root, config, redacting logger, session transport |
+| Agent Execution       |    83 | the mutation path, IaC runner, git client, scanner, MCP server            |
+| Frontend              |    30 | the App Router shell, the API client, the env contract, UI state          |
 | Policy as Code        |    11 | Rego for the gateway, Cerbos YAML for RBAC                                |
-| Test Integrity        |   122 | the regime built after 419 green tests shipped over a broken gateway      |
-| Verification & Checks |    50 | the scripts that turn a design claim into a build failure                 |
-| Build & Supply Chain  |    38 | CI, Compose, pinned toolchains, signing and provenance                    |
-| Documentation & Specs |    24 | the four read-only documents, the phase specs, steering rules             |
-| Future-Phase Seams    |    12 | README-only markers for behaviour a later phase owns                      |
+| Test Integrity        |   220 | the regime built after 419 green tests shipped over a broken gateway      |
+| Verification & Checks |    72 | the scripts that turn a design claim into a build failure                 |
+| Build & Supply Chain  |    73 | CI, Compose, pinned toolchains, signing and provenance                    |
+| Documentation & Specs |    30 | the four read-only documents, the phase specs, steering rules             |
+| Future-Phase Seams    |    52 | README-only markers for behaviour a later phase owns                      |
 
 ## How it was generated, and what is and is not machine-derived
 
@@ -66,7 +66,7 @@ Be clear about this when reading the graph.
 **Machine-derived, deterministic, reproducible.** The file inventory, languages, categories and
 line counts come from the plugin's `scan-project.mjs`. The import edges come from
 `extract-import-map.mjs`, which parses each file with tree-sitter and applies per-language
-resolution rules �?" 517 raw edges, 511 surviving after both endpoints were required to be in
+resolution rules — 998 raw edges, 991 surviving after both endpoints were required to be in
 scope. The function and class nodes, with their line ranges, come from
 `extract-structure.mjs`, also tree-sitter. Re-running these on unchanged source produces
 identical output.
@@ -92,7 +92,7 @@ and is part of the configuration surface a reader needs. No credential, token or
 reaches this graph.
 
 The inventory itself came from `git ls-files -co --exclude-standard`, which the scanner prefers
-because it respects `.gitignore` �?" which is why only 4 files needed excluding here. Files
+because it respects `.gitignore` — which is why only 4 files needed excluding here. Files
 already ignored by git (`backend/.venv/`, `.evidence/`, `scripts/_*` scratch files) never
 entered the inventory.
 
@@ -109,8 +109,15 @@ node "$HOME/.understand-anything/Understand-Anything-2.9.0/understand-anything-p
 node docs/understand-anything/build-graph.mjs
 ```
 
+**Expected warnings on rebuild.** `extract-import-map` prints one
+`has no ancestor go.mod — module-prefix imports skipped` warning per file in
+`backend/tests/mutation/overlays/`. That is correct and deliberate: those files are negative-control
+overlays substituted into a build by `scripts/mutation-harness.py` via `go build -overlay`, and they
+live outside the `agent/` module precisely so they can never be compiled into the agent. Their
+standard-library imports are unresolvable from where they sit, and nothing depends on resolving them.
+
 `build-graph.mjs` refuses to write `knowledge-graph.json` if validation finds any issue, and
-dies if the inventory is empty or if any path has no overlay rule �?" a new top-level directory
+dies if the inventory is empty or if any path has no overlay rule — a new top-level directory
 therefore forces a decision rather than silently landing in a default bucket.
 
 When source changes materially, update `semantic-overlay.json` in the same commit. The steering
