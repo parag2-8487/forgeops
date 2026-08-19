@@ -686,6 +686,22 @@ jobs:
       # scan itself, so it is checked in the same job that owns the other gates.
       - name: The gitleaks allowlist must stay narrow
         run: bash scripts/check-gitleaks-config.sh
+      # `check-progress.sh` existed for the whole of Phase 0 and ran in NO workflow and no
+      # hook, so the record's structure was gated by whoever remembered to run it. That is
+      # how PROGRESS.md came to carry 90 leaf rows with the status `complete`, a value its
+      # own header says does not exist, and a Phase 1 section with no criteria, no property
+      # coverage table and no D-28..D-50 rows -- while a green tick sat next to the commit
+      # that claimed 166 of 166. A gate nobody runs is not a gate.
+      #
+      # Both of these are STRICT and both currently FAIL, on purpose: seventeen of the
+      # thirty-one Appendix B properties have no negative control, and Appendix B's own rule
+      # is that a property which cannot fail is not a property. The red is the accurate
+      # state of Phase 1, and it clears when the controls land -- not when the check is
+      # loosened.
+      - name: The progress record must describe Phase 1 (task 20.15)
+        run: bash scripts/check-progress.sh
+      - name: The mutation manifest must describe Appendix B
+        run: python scripts/check-mutation-manifest.py
       - name: go mod verify + govulncheck (pinned v1.1.4 via agent/tools)
         run: |
           cd agent && go mod verify && cd ..
