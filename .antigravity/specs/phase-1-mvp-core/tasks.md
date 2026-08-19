@@ -328,7 +328,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row making the gateway read the env var when a principal is present.
     - _Design: §11.2, §13.1, §17.1 D-39, Appendix B Q-30; Deliverable: 1.10, 1.11; Property: Q-30_
 
-- [ ] 7. Build the governance chokepoint and the mutation boundary before any mutating operation
+- [x] 7. Build the governance chokepoint and the mutation boundary before any mutating operation
 
   - [x] 7.1 Implement the mint-only capability type and the primitive marker
 
@@ -419,7 +419,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row making `Revert` skip entries marked `NO_PREVIOUS`.
     - _Design: §10.5, §11.6, Appendix B Q-02; Deliverable: 1.6; Criterion: 6; Property: Q-02_
 
-- [ ] 8. Implement agent pairing, the session protocol and the named-operation executor
+- [x] 8. Implement agent pairing, the session protocol and the named-operation executor
 
   - [x] 8.1 Implement pairing-code issue and single-use exchange
 
@@ -539,21 +539,21 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `opa` service to `/health/ready`, register the `opa` capability, and add integration tests for allow, deny, require-approval, undefined document and transport failure.
     - _Design: §5.5, §11.7, §17.1 D-25 lineage; Deliverable: 1.7; Criterion: 7_
 
-  - [ ] 9.3 Implement bundle build, digest and publication
+  - [x] 9.3 Implement bundle build, digest and publication
 
     - Implement `PolicyBundleService.build`/`.publish`/`.active_digest` producing a **canonical** gzip tar (sorted paths, fixed mtimes, fixed permissions) so identical inputs always yield an identical `sha256` digest.
     - Deliver the bundle inside a signed command envelope so it inherits envelope integrity and needs no second signature scheme; record the digest in `policy_context` on every subsequent envelope.
     - Add `POST /api/v1/policies/publish`, the `policy.bundle.publish` task, drift detection from `agent.status`, and tests proving digest stability across rebuilds.
     - _Design: §11.7, §7.6, §3.7; Deliverable: 1.7, 1.10; Criterion: 7; Property: Q-07_
 
-  - [ ] 9.4 Implement the agent's in-process Rego evaluator
+  - [x] 9.4 Implement the agent's in-process Rego evaluator
 
     - Implement `agent/internal/policy` over `github.com/open-policy-agent/opa/rego` at the same OPA version as the server, exposing `Evaluate`, `BundleDigest` and an atomic `Load` that leaves the previous bundle in place on failure.
     - Never contact the network during evaluation; treat `ErrNoBundle` as **deny**, and refuse every mutation while the loaded digest differs from the envelope's `policy_context` digest.
     - Add tests for allow/deny/require-approval, offline evaluation, failed load preserving the prior bundle, and no-bundle denial.
     - _Design: §5.5, §10.6, §10.6.1, §17.1 D-30; Deliverable: 1.7, 1.10; Criterion: 7; Property: Q-06, Q-07_
 
-  - [ ] 9.5 Implement policy CRUD, templates and the dry-run endpoint
+  - [x] 9.5 Implement policy CRUD, templates and the dry-run endpoint
 
     - Implement `GET|POST /api/v1/policies`, `GET|PATCH|DELETE /api/v1/policies/{id}`, `POST /api/v1/policies/{id}/test` and `GET /api/v1/policies/templates` with Cerbos-scoped authorization.
     - Ship the scheduling and file-restriction templates as data, validate submitted Rego with `opa check` server-side before persisting, and surface violations with rule id and reason.
@@ -571,9 +571,9 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row making the agent's digest comparison a warning.
     - _Design: §10.6, §11.6, §11.7, Appendix B Q-07; Deliverable: 1.7, 1.10; Property: Q-07_
 
-- [ ] 10. Implement secret handling and the redaction chokepoint before the first prompt is assembled
+- [x] 10. Implement secret handling and the redaction chokepoint before the first prompt is assembled
 
-  - [ ] 10.1 Implement agent-side secret scanning and redaction
+  - [x] 10.1 Implement agent-side secret scanning and redaction
 
     - Implement `agent/internal/secretscan` over `github.com/zricethezav/gitleaks/v8 v8.30.1` plus project-configured patterns, returning findings with `kind`, `path`, `line`, `entropy` and a keyed fingerprint — **never** the matched value.
     - Make `Redact` the only constructor of `RedactedChunk`, replacing findings with `FORGEOPS_REDACTED:<kind>:<hash8>` where `hash8` is `HMAC-SHA256(project_pepper, value)` truncated, so the same secret is recognisable across chunks without being recoverable.
@@ -581,60 +581,60 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests over synthetic self-labelling credentials in fixture files asserting no value is ever returned, logged or transmitted, including credentials injected into validator diagnostic output.
     - _Design: §7.2, §7.11, §10.7, §10.9, §14.5, §16.1; Deliverable: 1.8; Criterion: 8; Property: Q-24_
 
-  - [ ] 10.2 Implement the backend redactor and the single prompt-assembly chokepoint
+  - [x] 10.2 Implement the backend redactor and the single prompt-assembly chokepoint
 
     - Implement `secrets/redaction.py` as the only constructor of `RedactedChunk`, `RedactedPrompt` and `RedactedInstruction`, redacting both by pattern and by the project's known secret values.
     - Implement `generation/context.py::assemble_prompt(*, system, chunks, instruction) -> RedactedPrompt` with **no `str` overload**, so forgetting to redact is a call that neither type-checks nor binds under task 1.2's conformance test.
     - Add tests proving the retriever cannot bypass it — the store holds redacted text only — and that no prompt reaching a `ModelEndpoint` contains a synthetic secret.
     - _Design: §7.11, §11.5, §11.8, Appendix A.7; Deliverable: 1.8; Criterion: 8; Property: Q-12_
 
-  - [ ] 10.3 Constrain the semantic cache to redacted prompts
+  - [x] 10.3 Constrain the semantic cache to redacted prompts
 
     - Change `TieredSemanticCache.lookup`/`.store` to accept `RedactedPrompt` rather than `str`, leaving L1→L2→L3 precedence, the 0.95 threshold and the staleness/resilience behaviour unchanged.
     - Assert no cache key can be computed from raw text and that no cached completion is reachable from an unredacted prompt.
     - Add integration tests against real Redis Stack: identical prompt served from L1 with zero provider calls, near-duplicate served from L2 above threshold.
     - _Design: §7.11, §11.5, §17.1 D-44; Deliverable: 1.5, 1.8; Criterion: 14; Property: Q-13_
 
-  - [ ] 10.4 Implement the secret store, its API and the Infisical service
+  - [x] 10.4 Implement the secret store, its API and the Infisical service
 
     - Implement the `SecretStore` Protocol with `InfisicalStore` over the shared `httpx` client (no new SDK) and `LocalSealedStore` using AES-256-GCM for `SECRET_BACKEND=local`.
     - Implement `GET|POST|PATCH|DELETE /api/v1/secrets` exposing metadata only; confine `get_value` to `secrets.injection` with a banned-api rule so no route can reveal a value.
     - Add the digest-pinned `infisical` service under the `vault` profile **with this task**, register the `infisical` capability, and add the `secrets` CI job exercising CRUD round trips against the container.
     - _Design: §8.3, §11.8, §13.3, §16.4; Deliverable: 1.8; Criterion: 8_
 
-  - [ ] 10.5 Implement deploy-time secret injection as a governed operation
+  - [x] 10.5 Implement deploy-time secret injection as a governed operation
 
     - Implement the `secrets.inject` named operation: it travels only in a signed envelope, materialises values into a process environment for the duration of one command, zeroes the buffers afterwards, and never writes to a file, a change-item or a log.
     - Record an audit row naming the injected **keys** only.
     - Add tests proving no value reaches disk, a change-set, a log line or an audit row, and that injection without an `approval_id` is refused.
     - _Design: §7.7, §11.8, §14.1; Deliverable: 1.8; Criterion: 8; Property: Q-28_
 
-  - [ ] 10.6 Write property test Q-12 for redaction before prompt assembly
+  - [x] 10.6 Write property test Q-12 for redaction before prompt assembly
 
     - Generate chunk sets containing synthetic secrets; prove `assemble_prompt` accepts only redacted types and that no prompt reaching a `ModelEndpoint` contains a secret value.
     - Add the `mutations.toml` row adding a `str` overload to `assemble_prompt`.
     - _Design: §7.11, §11.5, Appendix A.7, Appendix B Q-12; Deliverable: 1.8; Criterion: 8; Property: Q-12_
 
-  - [ ] 10.7 Write property test Q-13 for the cache-key clause
+  - [x] 10.7 Write property test Q-13 for the cache-key clause
 
     - Generate prompts; prove every cache key is computed over a `RedactedPrompt`, that no cached completion is retrievable using unredacted text, and that no stored key material contains a synthetic secret.
     - Add the `mutations.toml` row widening `lookup`/`store` back to `str`.
     - _Design: §11.5, §17.1 D-44, Appendix B Q-13; Deliverable: 1.5, 1.8; Criterion: 14; Property: Q-13_
 
-  - [ ] 10.8 Write property test Q-24 for secret absence across logs, audit and problems
+  - [x] 10.8 Write property test Q-24 for secret absence across logs, audit and problems
 
     - Inject synthetic secrets into file content, validator output and exception paths; prove no secret value appears in any log line, any `audit_events` row, or any RFC 9457 `detail`.
     - Add the `mutations.toml` row emptying the redaction pattern list — the exact experiment `REVIEW-PHASE-0.md` Pass 8 ran against P-09.
     - _Design: §7.2, §11.2, §11.9, §14.5, Appendix B Q-24; Deliverable: 1.8, 1.9; Criterion: 8, 9; Property: Q-24_
 
-  - [ ] 10.9 Write property test Q-28 for injection confinement
+  - [x] 10.9 Write property test Q-28 for injection confinement
     - Generate `secrets.inject` envelopes; prove no injected value is written to any file, change-item, log or audit row, and that the audit row names only the keys.
     - Add the `mutations.toml` row logging the injected environment map at debug level.
     - _Design: §11.8, §10.5, Appendix B Q-28; Deliverable: 1.8; Criterion: 8; Property: Q-28_
 
-- [ ] 11. Implement the codebase analysis engine and the incremental index
+- [x] 11. Implement the codebase analysis engine and the incremental index
 
-  - [ ] 11.1 Vendor, pin and verify the tree-sitter Wasm grammars
+  - [x] 11.1 Vendor, pin and verify the tree-sitter Wasm grammars
 
     - Add `agent/internal/scanner/grammars/` with the twelve §10.8.2 grammar `.wasm` artifacts and `grammars.lock.json` carrying `name`, `version`, `sha256`, `licence`, `source_url` and `purl` per entry; embed them with `go:embed`.
     - Where no prebuilt artifact exists, build it with a digest-pinned container running the pinned tree-sitter CLI and commit the resulting digest; extend `lock-integrity` to reproduce and compare.
@@ -642,35 +642,35 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Rewrite the D-1 guard in `agent/internal/app/deps_test.go` and `scripts/check-go-module.sh` in the same change: assert no cgo-requiring module is in the graph and that every grammar digest matches the embedded bytes.
     - _Design: §4.7, §8.1, §8.6, §16.1, §16.5, §17.1 D-29; Deliverable: 1.3; Criterion: 2; Property: Q-25_
 
-  - [ ] 11.2 Implement AST parsing over wazero
+  - [x] 11.2 Implement AST parsing over wazero
 
     - Implement `agent/internal/scanner/ast` with `NewParser` instantiating the wazero runtime once, compiling each embedded grammar once and pooling modules per language.
     - Verify each grammar's SHA-256 **at load time**, not only in CI, so a tampered binary fails closed at first parse rather than producing plausible wrong ASTs; return `ErrUnsupportedLanguage` when no grammar is embedded.
     - Add tests parsing real fixture files in every embedded language, a corrupted-blob fail-closed test, and a benchmark recording parse throughput for Appendix D.
     - _Design: §8.2, §10.8.2, §17.1 D-29; Deliverable: 1.3; Criterion: 2; Property: Q-25_
 
-  - [ ] 11.3 Implement tiered language detection
+  - [x] 11.3 Implement tiered language detection
 
     - Implement `Detect` with the four `phases.md` tiers in order — package manager/manifest, extension, shebang, then content heuristics bounded to the first 8 KiB — stopping at the first confident answer and recording which tier decided.
     - Break ties toward the manifest-derived project language so the readiness report can explain itself.
     - Add table tests covering each tier, ambiguous extensions, and files with no signal.
     - _Design: §10.8.1; Deliverable: 1.3; Criterion: 2_
 
-  - [ ] 11.4 Implement the filtered recursive scanner
+  - [x] 11.4 Implement the filtered recursive scanner
 
     - Implement traversal honouring `.gitignore` and `.dockerignore`, skipping binaries and files above `SCAN_MAX_FILE_SIZE_BYTES`, and excluding `node_modules` and `.git`.
     - Emit a cold-start heuristic inventory (languages, manifests, existing config files, entry points) in the first round trip so the UI has real content immediately, then continue to full indexing.
     - Add tests for ignore-rule precedence, size and binary filters, symlink handling, and inventory shape.
     - _Design: §10.8, §11.4.4; Deliverable: 1.3; Criterion: 2_
 
-  - [ ] 11.5 Implement cAST semantic chunking
+  - [x] 11.5 Implement cAST semantic chunking
 
     - Implement bottom-up grouping (statements → functions → classes) with constraint-based splitting at the highest syntactic boundary and density optimisation, honouring ~512 target tokens, 128-token overlap and ~1024-token module summaries.
     - Carry `Kind`, `Symbol`, `ParentSymbol`, `Signature`, line span, token count and the file's import block on every chunk so a retrieved chunk is self-contained.
     - Add tests asserting chunk sizes stay within target ± overlap, that a declaration larger than target splits into sibling parts, and that metadata is populated for every kind.
     - _Design: §10.8.3, §0.2; Deliverable: 1.3; Criterion: 2_
 
-  - [ ] 11.6 Implement the dependency graph and the dirty closure
+  - [x] 11.6 Implement the dependency graph and the dirty closure
 
     - Implement `Graph` with forward and reverse adjacency keyed by relative path, keeping unresolved edges with `resolved=false` so a later scan can resolve them without re-parsing the importer.
     - Implement `Dirty` exactly as §10.8.4 states: changed, plus dependants of files whose **exported surface** changed, plus files whose own imports changed, plus dependants of deleted files; invalidate summaries for the dirty set plus direct importers.
@@ -678,420 +678,420 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add tests for cycles, export-only changes, implementation-only changes and deletions.
     - _Design: §10.8.4, Appendix A.5; Deliverable: 1.3; Property: Q-10, Q-25_
 
-  - [ ] 11.7 Implement watch mode with debouncing and bounded fan-out
+  - [x] 11.7 Implement watch mode with debouncing and bounded fan-out
 
     - Wire the Phase 0 fsnotify `Watcher` into a 250 ms debouncer that coalesces per path and drops ignored paths, then a bounded parser fan-out at `min(GOMAXPROCS, 8)` and a fan-in aggregator batching upserts and deletions.
     - Handle rename as delete+create on both paths, walk newly created directories, and degrade to periodic polling on inotify exhaustion while reporting the degraded mode in `agent.status`.
     - Add tests proving coalescing never shrinks the dirty set and that polling mode still produces the same batches.
     - _Design: §3.3, §10.8.5; Deliverable: 1.3; Property: Q-11_
 
-  - [ ] 11.8 Implement the backend Codebase Index API
+  - [x] 11.8 Implement the backend Codebase Index API
 
     - Implement `IndexService.replace_full` and `.patch_incremental` with idempotent upserts keyed on `(file_id, chunk_index)` and `(from_file_id, raw_specifier)`, and optimistic concurrency on `base_version` returning `index-version-conflict`.
     - Delete embeddings for vanished chunk pairs, nullify edges to deleted files, and invalidate module summaries for the dirty set plus direct importers.
     - Add the `index.full` and `index.incremental` tasks behind `TaskDispatcher`, SSE `PROGRESS` emission, and integration tests for retry-after-drop idempotency and version conflict.
     - _Design: §3.3, §11.4.1, §11.4.4; Deliverable: 1.3; Criterion: 2; Property: Q-10_
 
-  - [ ] 11.9 Implement embedding orchestration for both backends
+  - [x] 11.9 Implement embedding orchestration for both backends
 
     - Implement the `embed.batch` task calling Voyage Code 3 over `httpx` for `EMBEDDING_BACKEND=voyage` and the local BGE-M3 endpoint for `bge_m3`, writing to `embeddings` (1536-d) or `embeddings_local` (1024-d) accordingly and never mixing.
     - Record `model_id` on every row (D-2) and set `hnsw.ef_search` per query transaction through the Phase 0 helper, never on the index.
     - Lock `projects.settings.embedding_backend` once embeddings exist, returning `project-embedding-backend-locked`; add batching, 429 backoff and budget checks before a run starts.
     - _Design: §6.3, §11.3, §11.4.2, §17.1 D-48; Deliverable: 1.3; Criterion: 12_
 
-  - [ ] 11.10 Implement the Redis BM25 sparse index
+  - [x] 11.10 Implement the Redis BM25 sparse index
 
     - Create `idx:code:<project_id>` with the §11.4.3 schema and weighted `path`/`symbol`/`text` fields, searching with the BM25 scorer explicitly rather than the default.
     - Treat the index as derived: add the `index.reindex_sparse` task rebuilding it from `file_contents`, keep it out of `/health/ready`, and degrade retrieval to dense-only with a recorded `retrieval_degraded` flag when it is missing.
     - Add integration tests against real Redis Stack for index creation, BM25 ordering, rebuild, and the degraded path.
     - _Design: §11.4.3, §17.1 D-49; Deliverable: 1.3; Property: Q-29_
 
-  - [ ] 11.11 Write property test Q-10 for incremental-equals-full rescan
+  - [x] 11.11 Write property test Q-10 for incremental-equals-full rescan
 
     - Generate edit sequences (create, modify, delete, rename, import changes, cycles) over a synthetic project and prove the incrementally maintained index equals `FullRescan(final_tree)` — same chunks, same edges, same summary invalidation, no orphans.
     - Add the `mutations.toml` row dropping the `Dependants(deleted)` term from `DirtySet`.
     - _Design: §10.8.4, §11.4.4, Appendix A.5, Appendix B Q-10; Deliverable: 1.3; Criterion: 2; Property: Q-10_
 
-  - [ ] 11.12 Write property test Q-11 for coalescing safety
+  - [x] 11.12 Write property test Q-11 for coalescing safety
 
     - Generate raw watcher event sequences and prove the debounced stream produces the same dirty set as the un-coalesced sequence, so an optimisation cannot lose a change.
     - Add the `mutations.toml` row coalescing a delete followed by a create into a no-op.
     - _Design: §10.8.5, Appendix B Q-11; Deliverable: 1.3; Property: Q-11_
 
-  - [ ] 11.13 Write property test Q-25 for grammar integrity and closure termination
+  - [x] 11.13 Write property test Q-25 for grammar integrity and closure termination
     - Prove a grammar digest mismatch refuses to load and fails the scan closed with a typed error, and that closure computation terminates for every generated cyclic dependency graph.
     - Add the `mutations.toml` row skipping digest verification when the blob loads successfully.
     - _Design: §10.8.2, §10.8.4, §16.5, Appendix B Q-25; Deliverable: 1.3; Criterion: 2; Property: Q-25_
 
-- [ ] 12. Implement the multi-project workspace and deployment-readiness analysis
+- [x] 12. Implement the multi-project workspace and deployment-readiness analysis
 
-  - [ ] 12.1 Implement project CRUD, settings, tags and the activity feed
+  - [x] 12.1 Implement project CRUD, settings, tags and the activity feed
 
     - Implement `POST|GET /api/v1/projects`, `GET|PATCH|DELETE /api/v1/projects/{id}`, `PUT /settings`, `POST|DELETE /tags/{tag}` and `GET /activity`, all behind `require_principal` and Cerbos.
     - Implement `ProjectSettings` as a strict Pydantic model with `extra="forbid"`, and make the activity feed a **projection over `audit_events`** filtered to the project rather than a second log.
     - Add search, tag filtering, favourites and cursor pagination; add integration tests for authorization, settings validation and activity ordering.
     - _Design: §11.3, §6.3; Deliverable: 1.2; Criterion: 1_
 
-  - [ ] 12.2 Implement GitHub import and the App installation token source
+  - [x] 12.2 Implement GitHub import and the App installation token source
 
     - Implement local-path registration and GitHub import, driving `project.register` on the agent to start the watcher.
     - Add `AppInstallationTokenSource` using `bradleyfalzon/ghinstallation/v2` behind the unchanged Phase 0 `TokenSource` interface, selected by configuration, with `EnvTokenSource` retained for development.
     - Add tests against a recorded-response server for installation-token minting, expiry refresh, and that no call site changed — discharging D-5's promise.
     - _Design: §1.4, §11.3, §16.1, §17.1 D-38; Deliverable: 1.2; Criterion: 1_
 
-  - [ ] 12.3 Implement the deterministic readiness scoring engine
+  - [x] 12.3 Implement the deterministic readiness scoring engine
 
     - Implement `ReadinessEngine` with the six `phases.md` categories, weights loaded from `config/readiness-weights.yaml` summing to 100, integer-only arithmetic, and `applies_to` so an inapplicable check is excluded from its category denominator rather than scored zero.
     - Implement roughly thirty checks covering the `phases.md` and FR-20 examples: Dockerfile existence/multi-stage/non-root/pinned base/`HEALTHCHECK`, `.dockerignore`, CI existence/tests/SHA-pinned actions, K8s manifests/limits/probes/no-`latest`, `.env.example`, scan-clean, and IaC presence/state backend.
     - Involve no LLM anywhere in the score; add unit tests for weight redistribution, exclusion behaviour and integer stability between a partial and a full inventory.
     - _Design: §11.4.5, Appendix A.6; Deliverable: 1.4; Criterion: 2; Property: Q-18_
 
-  - [ ] 12.4 Implement the readiness API and the plain-language report
+  - [x] 12.4 Implement the readiness API and the plain-language report
 
     - Implement `POST /api/v1/projects/{id}/readiness` persisting `analysis_reports` with `score`, `categories`, `inventory_hash` and `report_version`, and supporting a `partial: true` result from the cold-start inventory that is recomputed when full indexing completes.
     - Add `config/report_templates.yaml` keyed by check id with `title`, `why_it_matters`, `how_to_fix` and `severity`; no LLM writes the report, for the same reason none computes the score.
     - Add integration tests proving the same inventory always yields the same report bytes and that every check id has a template entry.
     - _Design: §11.4.4, §11.4.5; Deliverable: 1.4; Criterion: 2; Property: Q-18_
 
-  - [ ] 12.5 Write property test Q-18 for readiness determinism and monotonicity
+  - [x] 12.5 Write property test Q-18 for readiness determinism and monotonicity
     - Generate inventories and prove the score is deterministic, independent of file iteration order, and monotone — making an applicable failing check pass never lowers it — and that `inventory_hash` identifies the producing inventory.
     - Add the `mutations.toml` row replacing the integer division in `Score`'s per-category term with float division.
     - _Design: §11.4.5, Appendix A.6, Appendix B Q-18; Deliverable: 1.4; Criterion: 2; Property: Q-18_
 
-- [ ] 13. Implement the AI generation pipeline on top of proven routing and redaction
+- [x] 13. Implement the AI generation pipeline on top of proven routing and redaction
 
-  - [ ] 13.1 Implement hybrid retrieval with RRF fusion
+  - [x] 13.1 Implement hybrid retrieval with RRF fusion
 
     - Implement `HybridRetriever.retrieve`: dense pgvector HNSW cosine with a per-transaction `ef_search`, sparse Redis BM25, and Reciprocal Rank Fusion with the committed constant `k = 60` so no score normalisation between incomparable scales is needed.
     - Over-retrieve `RETRIEVAL_OVERFETCH_FACTOR × k` (default 3×) per Research §C10 and return `RedactedChunk` only, reading exactly one embedding table per project.
     - Add integration tests for fusion ordering, dense-only degradation, sparse-only degradation, and the `retrieval_degraded` flag.
     - _Design: §11.4.3, §11.5.2, Appendix A.10; Deliverable: 1.5; Criterion: 3; Property: Q-29_
 
-  - [ ] 13.2 Implement the reranker with explicit degradation
+  - [x] 13.2 Implement the reranker with explicit degradation
 
     - Implement `VoyageReranker` calling `voyage-rerank-2` over the shared `httpx` client with a BYO key, taking top-`k` after the 3× over-retrieve.
     - On timeout or unavailability, fall back to the fused order and record `retrieval_degraded=True` on the run; never raise, because retrieval is a read path.
     - Add tests for reranked ordering against a local fixture endpoint, timeout degradation, and per-project budget refusal before the call.
     - _Design: §11.5.2, §17.2 OQ-22; Deliverable: 1.5; Criterion: 3; Property: Q-29_
 
-  - [ ] 13.3 Implement the structured artifact schemas and renderers
+  - [x] 13.3 Implement the structured artifact schemas and renderers
 
     - Implement `DockerfileSpec`, `ComposeSpec`, `K8sManifestSet`, `GitHubActionsSpec`, `HelmChartSpec`, `TofuModuleSpec`, `EnvExampleSpec`, `DocsSpec` and `ArtifactSet` under Pydantic v2 `strict=True, extra="forbid", frozen=True`, with non-root user as a **type** requirement rather than a lint.
     - Render files from the validated structure in ForgeOps code, never from free-form model text; use JSON-Schema-constrained output where the endpoint supports it, tool-calling where it does not, and a single schema-repair attempt that counts against the 3-iteration budget.
     - Add tests for schema rejection of a root user, a missing entrypoint, an unpinned base image where required, and deterministic rendering from a fixed spec.
     - _Design: §11.5.3; Deliverable: 1.5; Criterion: 3, 4_
 
-  - [ ] 13.4 Wire tier selection and prove every tier is reachable
+  - [x] 13.4 Wire tier selection and prove every tier is reachable
 
     - Map artifact work to tiers per §11.5.4: `high_coding` for multi-file architecture, `medium` for single artifacts, `low_logs` for prose, `medium_value` for the judge, `self_hosted` for air-gapped projects.
     - Add the two D-42 endpoint descriptors pointing at the vendor OpenAI-compatible surfaces, keeping the native descriptors present and marked unavailable as honest data.
     - Add a wiring test asserting `GET /api/v1/ai/tiers` reports **no tier whose primary is unavailable**, and cascade tests against local fixture endpoints with no vendor key or network.
     - _Design: §1.5, §11.5.4, §13.2, §17.1 D-42; Deliverable: 1.5; Criterion: 3_
 
-  - [ ] 13.5 Implement the blocking gate and the advisory rubric with no path between them
+  - [x] 13.5 Implement the blocking gate and the advisory rubric with no path between them
 
     - Implement `generation/gate.py::decide(findings) -> GateDecision` accepting **only** deterministic findings, so no rubric value can reach it — the separation is structural, not procedural.
     - Implement `generation/judge/rubric.py` with integer 0–5 anchors, temperature 0, a versioned prompt, and the judging model id recorded on `generation_runs.rubric`; add a CI stability probe that judges one fixture twice and **reports** variance without gating.
     - Add tests proving an all-zero rubric and an all-five rubric produce the identical `GateDecision`.
     - _Design: §11.5.5; Deliverable: 1.5; Criterion: 3, 4; Property: Q-09_
 
-  - [ ] 13.6 Implement the structurally bounded feedback loop
+  - [x] 13.6 Implement the structurally bounded feedback loop
 
     - Implement `LoopState` as a frozen dataclass and `FeedbackLoop._next` as the only producer of a new state, always decrementing `attempts_remaining` and returning the closed union `Continue | Accepted | FallbackToTemplate`, with `Continue` unreachable at the bound.
     - Feed **all** blocking findings from a pass back into the next attempt, not the first, so a file with four problems does not exhaust the budget one fix at a time.
     - Add no `while True`, no resettable counter and no configuration that raises the bound; add tests asserting at most three model calls for every failure sequence and the `<= 1` boundary behaviour.
     - _Design: §3.8, §7.1, §11.5.6; Deliverable: 1.5; Criterion: 3, 4; Property: Q-08_
 
-  - [ ] 13.7 Insert the DryRun stage into the existing validation pipeline
+  - [x] 13.7 Insert the DryRun stage into the existing validation pipeline
 
     - Implement `DryRunStage` delegating to the agent hub and insert it **before** `SemanticStage`, leaving `ValidationPipeline.run` and the `Stage` Protocol untouched — the stage list is data.
     - Run every validator rather than short-circuiting on the first failure, and return a single fatal blocking `dryrun_unavailable` finding when no agent is connected, so an un-dry-run change-set can never be presented as validated.
     - Add integration tests for the stage order, the no-agent path, and aggregation of findings across validators.
     - _Design: §11.12, §1.4; Deliverable: 1.5; Criterion: 4_
 
-  - [ ] 13.8 Implement the generation service, SSE stream and run records
+  - [x] 13.8 Implement the generation service, SSE stream and run records
 
     - Implement `GenerationService.run` orchestrating retrieve → assemble → generate → validate (≤3) → judge → `chokepoint.submit`, and `POST /api/v1/generation/runs` returning `EventSourceResponse`.
     - Emit exactly the six `core/sse.py` event types with monotonic `PROGRESS` and exactly one terminal event, including on client disconnect; the run continues behind `TaskDispatcher` when the client drops.
     - Persist `generation_runs` with iterations used, `served_from`, tier, endpoint, rubric, retrieval provenance and token counts; the service must never write a file or contact the hub directly.
     - _Design: §4.5, §7.5, §11.5.1, §11.11; Deliverable: 1.5; Criterion: 3, 13; Property: Q-26_
 
-  - [ ] 13.9 Fill the terminal cascade slot with the template fallback
+  - [x] 13.9 Fill the terminal cascade slot with the template fallback
 
     - Implement `TemplateLibraryFallback.render` and install it at the `TerminalFallback` slot **without modifying the router**, marking results `served_from="template"` with the reason recorded.
     - Return `generation-unavailable` when no template exists for the detected language rather than substituting a wrong-language template.
     - Add tests for the exhausted-router path, the iteration-bound path, and the no-template path.
     - _Design: §11.5.7, §17.1 D-43; Deliverable: 1.5; Criterion: 3, 4; Property: Q-21_
 
-  - [ ] 13.10 Write property test Q-08 for iteration-bound termination
+  - [x] 13.10 Write property test Q-08 for iteration-bound termination
 
     - Generate sequences of validation outcomes and prove the loop performs at most three model calls and terminates in `Accepted`, `TemplateFallback` or `Unavailable`, with `attempts_remaining` strictly decreasing on every `Continue`.
     - Add the `mutations.toml` row making `_next` return `Continue` without decrementing.
     - _Design: §3.8, §11.5.6, Appendix A.4, Appendix B Q-08; Deliverable: 1.5; Criterion: 3; Property: Q-08_
 
-  - [ ] 13.11 Write property test Q-09 for rubric non-interference
+  - [x] 13.11 Write property test Q-09 for rubric non-interference
 
     - Generate rubric values including all-zero and all-five and prove `GateDecision` is identical for every one, and that no rubric field appears among `decide`'s inputs.
     - Add the `mutations.toml` row adding a `rubric` parameter to `decide` and letting a low score block.
     - _Design: §11.5.5, Appendix B Q-09; Deliverable: 1.5; Criterion: 4; Property: Q-09_
 
-  - [ ] 13.12 Write property test Q-26 for SSE stream well-formedness
+  - [x] 13.12 Write property test Q-26 for SSE stream well-formedness
 
     - Generate generation and analysis streams and prove only the six `SSEEventType` names are emitted, `PROGRESS.percent` is non-decreasing, and exactly one of `COMPLETE`/`ERROR` terminates every stream including on disconnect.
     - Add the `mutations.toml` row emitting a second `COMPLETE` after an `ERROR`; add the `fast-check` counterpart asserting the client drops an unknown event name.
     - _Design: §4.5, §11.11, §12.4, Appendix B Q-26; Deliverable: 1.5; Criterion: 13; Property: Q-26_
 
-  - [ ] 13.13 Write property test Q-29 for retrieval degradation
+  - [x] 13.13 Write property test Q-29 for retrieval degradation
     - Generate retrieval requests and prove that with the reranker unavailable the result is the RRF-fused order with `retrieval_degraded` recorded, that with the sparse index absent the result is dense-only with the same flag, and that neither raises.
     - Add the `mutations.toml` row letting a reranker timeout propagate as a 500.
     - _Design: §11.5.2, §11.4.3, Appendix B Q-29; Deliverable: 1.5; Criterion: 3; Property: Q-29_
 
-- [ ] 14. Implement the agent validators and the Kubernetes CI harness
+- [x] 14. Implement the agent validators and the Kubernetes CI harness
 
-  - [ ] 14.1 Implement the Compose validator in process
+  - [x] 14.1 Implement the Compose validator in process
 
     - Implement the `docker compose config` equivalent over `github.com/compose-spec/compose-go/v2`, loading and validating generated compose files without requiring the Docker CLI.
     - Return findings with the §10.7 shape, redacted before they leave the process, and expose `Available` reporting truthfully.
     - Add tests over the repository's own `docker-compose.yml` plus valid and invalid generated fixtures.
     - _Design: §10.7; Deliverable: 1.5; Criterion: 4_
 
-  - [ ] 14.2 Implement YAML and JSON Schema validation in process
+  - [x] 14.2 Implement YAML and JSON Schema validation in process
 
     - Implement YAML syntax validation over `sigs.k8s.io/yaml` and schema validation over `santhosh-tekuri/jsonschema/v6` against bundled Kubernetes and GitHub Actions schemas.
     - Bundle the schemas as pinned assets with their own digests so validation does not depend on network access.
     - Add tests for malformed YAML, schema violations with correct path/line, and a clean pass.
     - _Design: §10.7; Deliverable: 1.5; Criterion: 4_
 
-  - [ ] 14.3 Implement Kubernetes server-side dry-run over client-go
+  - [x] 14.3 Implement Kubernetes server-side dry-run over client-go
 
     - Implement server-side apply with `DryRun: [All]` using the existing `k8s.io/client-go` dependency, exercising the same admission, defaulting and pruning path `kubectl --dry-run=server` uses.
     - Report `Available=false` with a reason when no cluster is reachable, and surface the distinction between shape validity and cluster acceptance in the finding codes.
     - Add `//go:build integration` tests run under `KUBECONFIG` from the `k8s` job, covering admission rejection, defaulting, pruning and an unavailable `apiVersion`.
     - _Design: §10.7, §8.3.1, §17.1 D-28; Deliverable: 1.5; Criterion: 4_
 
-  - [ ] 14.4 Implement Helm lint and template over the Helm SDK
+  - [x] 14.4 Implement Helm lint and template over the Helm SDK
 
     - Implement `helm lint` and `helm template` using `helm.sh/helm/v3`, and `--validate` behaviour against a cluster when one is available.
     - Report the embedded SDK version through `agent doctor`, and record the binary-size impact for OQ-27.
     - Add tests over the template library's charts for lint findings, rendered output stability, and the unavailable-cluster path.
     - _Design: §10.7, §8.2, §17.2 OQ-27; Deliverable: 1.5; Criterion: 4_
 
-  - [ ] 14.5 Implement the Trivy config validator and the availability policy
+  - [x] 14.5 Implement the Trivy config validator and the availability policy
 
     - Invoke `trivy config` as a subprocess when the binary is present, parsing findings into the common shape.
     - Implement the §10.7 unavailable-validator rule: a `Fatal, Blocking` `validator_unavailable` finding at `infrastructure` blast radius, and a non-blocking warning otherwise.
     - Add `trivy` to the `agent-dev` devtools image with a pinned version, register the `trivy` capability, and add tests for both availability branches.
     - _Design: §10.7, §13.3, §16.4, §17.2 OQ-25; Deliverable: 1.5; Criterion: 4_
 
-  - [ ] 14.6 Adapt the Phase 0 OpenTofu runner as a validator
+  - [x] 14.6 Adapt the Phase 0 OpenTofu runner as a validator
 
     - Wrap the existing `iac.Runner` `Validate` and `Plan` behind the `Validator` interface, feeding plan JSON to the Plan Analyzer as the semantic input.
     - Add **no `apply`** and no new subprocess surface; treat `-detailed-exitcode` 2 as success-with-changes as Phase 0 established.
     - Add integration tests over the pinned null-provider fixture for validate, plan-with-changes and plan-with-error.
     - _Design: §1.4, §10.7; Deliverable: 1.5; Criterion: 4_
 
-  - [ ] 14.7 Implement devtools discovery and extend `agent doctor`
+  - [x] 14.7 Implement devtools discovery and extend `agent doctor`
 
     - Implement `internal/devtools` discovering and version-reporting optional external tools without installing anything.
     - Add `doctor` rows for session state and credential-store backend, certificate expiry, policy bundle digest and staleness, embedded grammar inventory with digests, embedded validator versions, external tool availability, clock skew, watcher mode and journal backlog.
     - Add tests asserting every degraded mode is reported rather than silent.
     - _Design: §10.10, §10.3, §10.7; Deliverable: 1.1, 1.5_
 
-  - [ ] 14.8 Implement the SPIFFE workload identity provider
+  - [x] 14.8 Implement the SPIFFE workload identity provider
 
     - Implement `identity.SpiffeWorkload` fetching an X.509-SVID over the SPIFFE Workload API with `github.com/spiffe/go-spiffe/v2`, selected by `AGENT_IDENTITY_PROVIDER=spiffe_workload`.
     - Use JWT-SVID only for crossing an L7 proxy, never as the primary credential; persist no credential.
     - Add `//go:build integration` tests exercised from the `k8s` job against a real SPIRE deployment; state in code comments that the laptop path is pairing-derived and is not platform attestation.
     - _Design: §10.2, §14.3, §16.1, §17.1 D-36; Deliverable: 1.10_
 
-  - [ ] 14.9 Add the kind-based `k8s` CI job with the SPIRE attestation harness
+  - [x] 14.9 Add the kind-based `k8s` CI job with the SPIRE attestation harness
     - Add the `k8s` job using `kind v0.27.x` via a SHA-pinned action with a digest-pinned `kindest/node` image, running server-side dry-run validation, `helm template --validate`, and the backend tests marked `kubernetes`.
     - Add `scripts/k8s/spire-attest-test.sh` deploying pinned SPIRE manifests and performing a real attestation plus mTLS handshake on namespace + service-account + image-digest.
     - Pipe results through `check-no-skips.py`, gate the job on the `agent`/`backend` change filters plus `main`, and add `make k8s-up` / `make k8s-down`.
     - _Design: §8.3.1, §13.4, §14.3, §16.4, §17.1 D-28; Deliverable: 1.5, 1.10; Criterion: 4, 10_
 
-- [ ] 15. Implement the Safe Default Template Library and prove every template is verified
+- [x] 15. Implement the Safe Default Template Library and prove every template is verified
 
-  - [ ] 15.1 Implement the template loader and manifest contract
+  - [x] 15.1 Implement the template loader and manifest contract
 
     - Create `backend/src/generation/templates/` with a per-language `manifest.yaml` schema and a substitution-only renderer (`string.Template`-level), deliberately not an expression-evaluating engine inside a security-relevant fallback.
     - Implement `TemplateLibrary.load` validating every manifest at import time and failing startup on a malformed or incomplete language set.
     - Add tests for manifest validation, missing artifact classes, and deterministic rendering from a fixed parameter set.
     - _Design: §11.5.7; Deliverable: 1.5; Criterion: 4; Property: Q-21_
 
-  - [ ] 15.2 Add the Node.js and Python template sets
+  - [x] 15.2 Add the Node.js and Python template sets
 
     - Add Dockerfile, K8s Deployment + Service + Ingress, GitHub Actions CI, Helm chart and OpenTofu module for each, with pinned base images, non-root users, resource limits and probes.
     - Add a fixture project per language under `backend/tests/fixtures/templates/` for rendering and validation.
     - Add rendering tests asserting the parameter surface is complete and no placeholder survives.
     - _Design: §11.5.7; Deliverable: 1.5; Criterion: 4; Property: Q-21_
 
-  - [ ] 15.3 Add the Go and Rust template sets
+  - [x] 15.3 Add the Go and Rust template sets
 
     - Add the same five artifact classes for each language with static-binary-appropriate multi-stage builds and pinned toolchain images.
     - Add fixture projects and rendering tests as in task 15.2.
     - _Design: §11.5.7; Deliverable: 1.5; Criterion: 4; Property: Q-21_
 
-  - [ ] 15.4 Add the Java/Kotlin and Ruby template sets
+  - [x] 15.4 Add the Java/Kotlin and Ruby template sets
 
     - Add the same five artifact classes for each, with JVM memory flags appropriate to container limits and Ruby bundler caching in the build stage.
     - Add fixture projects and rendering tests as in task 15.2.
     - _Design: §11.5.7; Deliverable: 1.5; Criterion: 4; Property: Q-21_
 
-  - [ ] 15.5 Add the PHP and .NET template sets
+  - [x] 15.5 Add the PHP and .NET template sets
 
     - Add the same five artifact classes for each, completing the eight languages `phases.md` §1.5 names.
     - Add fixture projects and rendering tests as in task 15.2.
     - _Design: §11.5.7; Deliverable: 1.5; Criterion: 4; Property: Q-21_
 
-  - [ ] 15.6 Add the `templates` CI job that runs the real validation pipeline
+  - [x] 15.6 Add the `templates` CI job that runs the real validation pipeline
 
     - Add the `templates` job rendering all 8 × 5 artifact sets against their fixture projects and driving them through the **same** `ValidationPipeline` the AI output traverses — `SyntaxStage`, `SchemaStage`, `DryRunStage` (including server-side dry-run from the `k8s` job) and `SemanticStage`.
     - Fail the build on any blocking finding; "verified" means this job is green and nothing else.
     - Add `make templates-verify` and pipe the job through `check-no-skips.py`.
     - _Design: §8.3, §11.5.7, §13.4; Deliverable: 1.5; Criterion: 4; Property: Q-21_
 
-  - [ ] 15.7 Write property test Q-21 for template-library validity
+  - [x] 15.7 Write property test Q-21 for template-library validity
     - Parametrise over the 8 × 5 matrix and prove every rendered artifact set produces **zero blocking findings** from the same pipeline the AI output traverses.
     - Add the `mutations.toml` row corrupting one template's Dockerfile `FROM` line.
     - _Design: §11.5.7, Appendix B Q-21; Deliverable: 1.5; Criterion: 4; Property: Q-21_
 
-- [ ] 16. Implement the Change Approval Center API surface
+- [x] 16. Implement the Change Approval Center API surface
 
-  - [ ] 16.1 Implement change-set retrieval, approval and the state machine
+  - [x] 16.1 Implement change-set retrieval, approval and the state machine
 
     - Implement `GET /api/v1/change-sets`, `GET /{id}`, `GET /{id}/diff`, `POST /{id}/approve`, `POST /{id}/reject` and `POST /{id}/apply`, all routed through `governance` and authorized by Cerbos.
     - Enforce the §3.6 state machine with terminal absorption and optimistic concurrency on `version`, returning `change-set-conflict` to the loser of two concurrent approvals and `approval-expired` past `APPROVAL_TTL_SECONDS`.
     - Add integration tests over `production_app` for every legal transition, every rejected illegal transition, and concurrent approval.
     - _Design: §3.6, §11.6, §12.1; Deliverable: 1.6; Criterion: 5; Property: Q-22_
 
-  - [ ] 16.2 Implement rollback handles and the revert path
+  - [x] 16.2 Implement rollback handles and the revert path
 
     - Persist the agent's `BackupManifest` into `rollback_handles` on a successful apply, expose `POST /api/v1/change-sets/{id}/revert`, and mark the handle consumed exactly once.
     - Run revert through the full chokepoint with its own authority mint, and return `revert-unavailable` for a consumed or expired handle.
     - Add integration tests for a successful revert, a double revert, and a revert after handle expiry.
     - _Design: §3.6, §10.5, §11.6; Deliverable: 1.6; Criterion: 6; Property: Q-02, Q-22_
 
-  - [ ] 16.3 Write property test Q-22 for change-set state legality
+  - [x] 16.3 Write property test Q-22 for change-set state legality
 
     - Generate transition sequences and prove only §3.6 edges are accepted, terminal states are absorbing, `applied` leaves only via `reverted`, and two concurrent approvals yield exactly one winner and one 409.
     - Add the `mutations.toml` row removing the optimistic-concurrency `version` predicate.
     - _Design: §3.6, §6.5, §11.6, Appendix B Q-22; Deliverable: 1.6; Criterion: 5; Property: Q-22_
 
-  - [ ] 16.4 Write property test Q-23 for diff fidelity
+  - [x] 16.4 Write property test Q-23 for diff fidelity
     - Generate `(old, new)` content pairs and prove applying the compiled `change_items` reproduces `new_content` exactly, that the unified diff applied to old yields new, and that the frontend renders the hunk count the backend computed.
     - Add the `mutations.toml` row compiling change items with `old_content` from the wrong revision; add the `fast-check` counterpart on the client side.
     - _Design: §11.6, §12.2, Appendix B Q-23; Deliverable: 1.6; Criterion: 5; Property: Q-23_
 
-- [ ] 17. Implement the frontend feature surfaces
+- [x] 17. Implement the frontend feature surfaces
 
-  - [ ] 17.1 Add session handling, the login route and `proxy.ts`
+  - [x] 17.1 Add session handling, the login route and `proxy.ts`
 
     - Add `frontend/proxy.ts` (Next.js 16's `middleware.ts` successor) redirecting unauthenticated navigation to `/login` and refreshing an expiring session cookie; keep the existing "no `middleware.ts`" package-policy assertion passing.
     - Add `app/(shell)/login/page.tsx` initiating the OIDC redirect and handling the callback return path.
     - Add tests for redirect behaviour, return-path preservation and silent refresh.
     - _Design: §12.1, §12.5; Deliverable: 1.11; Criterion: 1_
 
-  - [ ] 17.2 Implement the typed SSE reader over fetch
+  - [x] 17.2 Implement the typed SSE reader over fetch
 
     - Implement `lib/api/sse.ts` reading the stream with `fetch` + `ReadableStream` so an `Authorization` header can be sent, adding **no** SSE dependency and putting no token in a query string.
     - Accept only the six event names, dropping an unknown name with a console warning so a seventh type fails loudly in development.
     - Add unit tests for chunk-boundary splitting, abort handling, and unknown-event rejection.
     - _Design: §4.5, §12.4; Deliverable: 1.5; Criterion: 13; Property: Q-26_
 
-  - [ ] 17.3 Implement the project list and detail surfaces
+  - [x] 17.3 Implement the project list and detail surfaces
 
     - Add `app/(shell)/projects/page.tsx` with search, tag filtering and favourites, and `[projectId]/page.tsx` with the recent-activity feed, both owned by TanStack Query.
     - Keep Zustand to client-ephemeral UI only and selection in `searchParams`, per the inherited state-ownership rule.
     - Add component tests for search, tag filtering, favourite toggling and activity ordering.
     - _Design: §12.1, §12.3; Deliverable: 1.2; Criterion: 1_
 
-  - [ ] 17.4 Implement the readiness surface with an accessible radar chart
+  - [x] 17.4 Implement the readiness surface with an accessible radar chart
 
     - Add `readiness/page.tsx` rendering the score, the category breakdown with expandable items and the recommendations list.
     - Import ECharts through `echarts/core` registering only `RadarChart` + `CanvasRenderer`; mark the canvas `aria-hidden` and pair it with a visually-hidden `<table>` of category scores as the accessible source of truth.
     - Add tests asserting the accessible table matches the chart data and that colour is never the only signal.
     - _Design: §12.2, §12.5, §16.3; Deliverable: 1.4; Criterion: 2_
 
-  - [ ] 17.5 Implement the generation surface with progressive UX
+  - [x] 17.5 Implement the generation surface with progressive UX
 
     - Add `generate/page.tsx` streaming tokens through the task 17.2 reader, accumulating deltas in a `useRef` flushed on an animation frame, and invalidating TanStack Query on every non-token event.
     - Show partial results as they arrive (cold-start inventory, then full index, then artifacts) and recover state from REST after a dropped stream.
     - Add tests for token accumulation, phase announcements via `role="status"`, and reconnection recovery.
     - _Design: §7.5, §12.3, §12.5; Deliverable: 1.5; Criterion: 3, 13_
 
-  - [ ] 17.6 Implement the Change Approval Center surface
+  - [x] 17.6 Implement the Change Approval Center surface
 
     - Add `changes/page.tsx` (history timeline) and `changes/[changeSetId]/page.tsx` with `react-diff-viewer-continued` in both side-by-side and unified modes, an approve/reject control with a comment field, and a confirmation step before apply.
     - Render the diff in a `<table>` with row headers, an accessible change summary, per-hunk screen-reader descriptions, `+`/`−` glyphs, and a real radio group for the view toggle.
     - Add tests for both view modes, hunk-count parity with the backend, keyboard reachability of approve/reject, and the live-region outcome announcement.
     - _Design: §12.1, §12.2, §12.5, §16.3; Deliverable: 1.6; Criterion: 5; Property: Q-23_
 
-  - [ ] 17.7 Implement the policy list, editor and violation display
+  - [x] 17.7 Implement the policy list, editor and violation display
 
     - Add `policies/page.tsx` with a list, a CodeMirror 6 plain-text Rego editor (three packages, no language mode), and server-side `opa check` validation surfaced as inline problems.
     - Render violations with the rule id and the policy's own reason, satisfying FR-37's explanation requirement.
     - Add tests for editor mount, validation error placement and violation rendering.
     - _Design: §12.1, §12.2, §16.3; Deliverable: 1.7; Criterion: 7_
 
-  - [ ] 17.8 Implement the secret vault surface
+  - [x] 17.8 Implement the secret vault surface
 
     - Add `secrets/page.tsx` listing key, environment, rotation date and last-updated — **metadata only**, with no reveal affordance anywhere in the UI.
     - Support add, edit and delete with React Hook Form + Zod, mapping server field errors through the existing `ApiProblemError.fieldErrors` path.
     - Add tests asserting no code path requests or renders a secret value.
     - _Design: §11.8, §12.1; Deliverable: 1.8; Criterion: 8; Property: Q-20_
 
-  - [ ] 17.9 Implement the audit log viewer
+  - [x] 17.9 Implement the audit log viewer
 
     - Add `audit/page.tsx` using `@tanstack/react-table` with sorting, column filtering and cursor pagination over `GET /api/v1/audit`.
     - Show who, what, when, why and the before/after summary, and expose the chain-verification result for admins.
     - Add tests for pagination, filtering and the redaction expectation that no cell can contain a secret pattern.
     - _Design: §11.9, §12.1, §16.3; Deliverable: 1.9; Criterion: 9; Property: Q-24_
 
-  - [ ] 17.10 Implement the agent pairing and device surface
+  - [x] 17.10 Implement the agent pairing and device surface
 
     - Add `agents/page.tsx` minting a pairing code with a visible 5-minute countdown, showing the copy-paste CLI command, and listing devices with status, last seen, certificate expiry and policy-bundle staleness.
     - Add a revoke control with confirmation, and surface journal backlog when a device is offline.
     - Add tests for countdown expiry, code single-use messaging, and the revoked-state rendering.
     - _Design: §3.1, §3.7, §12.1; Deliverable: 1.1; Criterion: 1_
 
-  - [ ] 17.11 Pin the new frontend dependencies and gate frontend coverage
+  - [x] 17.11 Pin the new frontend dependencies and gate frontend coverage
     - Add `echarts`, `react-diff-viewer-continued`, `@tanstack/react-table` and the three CodeMirror 6 packages at exact versions with a regenerated `pnpm-lock.yaml`.
     - Extend `frontend/__tests__/package-policy.test.ts` to assert the four additions are exact-pinned and that no unsanctioned library (xterm.js, React Flow, Monaco, a date library, an SSE library) has appeared.
     - Configure `vitest --coverage` with the v8 provider at 70/70/70 thresholds and wire it into the `frontend` job.
     - _Design: §12.2, §16.3, §17.1 D-31; Deliverable: 1.11; Criterion: 11_
 
-- [ ] 18. Build the end-to-end journey and the `e2e` CI job
+- [x] 18. Build the end-to-end journey and the `e2e` CI job
 
-  - [ ] 18.1 Add the e2e stack overlay, the fixture OIDC issuer and the agent container
+  - [x] 18.1 Add the e2e stack overlay, the fixture OIDC issuer and the agent container
 
     - Add a Compose overlay starting the built `backend` and `frontend` images plus a small signed-JWT fixture issuer, keeping the real Authentik flow in the `auth` job so the journey does not pay its cold start.
     - Add an `agent-e2e` service running the **real** `forgeops-agent` binary with a fixture Node.js project mounted, and a harness step that pairs it with a code minted through the API.
     - Generate the fixture issuer's signing key per run; commit no key material and register the `agent_binary` capability.
     - _Design: §8.3.2, §12.6, §17.2 OQ-28; Deliverable: 1.11; Criterion: 10_
 
-  - [ ] 18.2 Implement the criterion-10 journey specification
+  - [x] 18.2 Implement the criterion-10 journey specification
 
     - Implement `frontend/e2e/journey.spec.ts` executing the thirteen §12.6 steps: log in, create the project, mint and consume a pairing code, assert the device is active and heartbeating, wait for the readiness score and radar chart, generate, observe the SSE sequence, inspect the diff in both modes, approve with a comment, assert the applied state.
     - Assert **on the filesystem through the agent container** that the Dockerfile and the three K8s manifests exist with the expected content hashes, that a backup exists for every overwritten pre-existing file, that the audit viewer lists the full transit, and that a revert restores every pre-image byte-for-byte.
     - Keep the spec free of implementation: it may only drive behaviour built in earlier tasks.
     - _Design: §12.6; Deliverable: 1.1, 1.2, 1.4, 1.5, 1.6, 1.9; Criterion: 10_
 
-  - [ ] 18.3 Add the `e2e` CI job
+  - [x] 18.3 Add the `e2e` CI job
 
     - Add the `e2e` job building both images, starting the overlay, building the agent binary, running Playwright, and uploading traces plus agent logs on failure — an e2e failure with no artifacts is a rerun, not a diagnosis.
     - Gate it on the change filters plus `main`, pipe it through `check-no-skips.py`, and extend `make e2e` to run the same journey locally.
     - This closes inherited debt D3: `ci.yml`'s header comment claimed an `e2e` stage that did not exist.
     - _Design: §0.5 debt D3, §8.3, §8.3.2, §13.4; Deliverable: 1.11; Criterion: 10_
 
-  - [ ] 18.4 Add the accessibility assertions to the journey
+  - [x] 18.4 Add the accessibility assertions to the journey
     - Assert the skip link, landmark structure, one `<h1>` per route, keyboard reachability and activation of approve/reject, the radar chart's accessible table, and focus management when the diff route loads.
     - Assert the SSE progress live region announces phase changes and completion but does not announce token deltas.
     - _Design: §12.5, §12.6; Deliverable: 1.4, 1.6; Criterion: 5, 10_
 
 - [ ] 19. Gate coverage, run the negative controls, and assemble the workflow
 
-  - [ ] 19.1 Turn on the per-component coverage gates
+  - [x] 19.1 Turn on the per-component coverage gates
 
     - Set `--cov=src --cov-branch --cov-fail-under=70` in the backend `addopts`, add `scripts/check-coverage.sh 70` over `agent/./internal/...`, and keep the frontend thresholds from task 17.11.
     - Commit the exclusion list for vendored `.wasm` artifacts and generated code as explicit paths rather than wildcards, and never aggregate the three numbers.
@@ -1105,7 +1105,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add `make mutation` and assert the harness's temp directory is outside the repository on every run.
     - _Design: §0.4.5, §8.3.3, §13.4, Appendix B; Deliverable: 1.11; Criterion: 11; Property: Q-01–Q-31_
 
-  - [ ] 19.3 Assemble the fifteen-job workflow and prove every cited job exists
+  - [x] 19.3 Assemble the fifteen-job workflow and prove every cited job exists
     - Extend `.github/workflows/ci.yml` to the §8.3 job set — `changes`, `pre-commit`, `lock-integrity`, `agent`, `backend`, `frontend`, `compose-smoke`, `audit`, `supply`, `k8s`, `e2e`, `mutation`, `policy`, `templates`, `secrets`, `auth` — with all actions SHA-pinned and `changes` filters extended for `policies/**` and `agent/internal/scanner/grammars/**`.
     - Add the OPA, Cerbos and fixture-issuer services to the `backend` job, set `FORGEOPS_REQUIRE_INTEGRATION=1` everywhere tests run, and gate the three heavy jobs on filters plus `main` with a nightly full run.
     - Run `scripts/check-ci-jobs.py` in `pre-commit` so no Appendix E evidence string can name a job the workflow does not define.
@@ -1113,73 +1113,73 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
 
 - [ ] 20. Verify every Phase 1 completion criterion using only earlier implementation, then finalise records
 
-  - [ ] 20.1 Verify criterion 1 — install, pair, import
+  - [x] 20.1 Verify criterion 1 — install, pair, import
 
     - Execute the `e2e` journey's install/pair/import steps, the `agent` pairing and journal round-trip tests, and the `supply` step extracting the `linux_amd64` archive and running `forgeops-agent version`.
     - Implement nothing here; a failure returns to tasks 8.1–8.5, 4.6 or 12.1 and then reruns only the affected checks.
     - _Design: Appendix E criterion 1; Deliverable: 1.1, 1.2, 1.11; Criterion: 1; Property: Q-17, Q-31_
 
-  - [ ] 20.2 Verify criterion 2 — scan and readiness score
+  - [x] 20.2 Verify criterion 2 — scan and readiness score
 
     - Execute the `agent` wazero parse and chunk-size assertions, the dependency-edge resolution tests, `test_readiness_determinism.py` with Q-18, and the `e2e` step rendering a non-zero score with a category breakdown.
     - _Design: Appendix E criterion 2; Deliverable: 1.3, 1.4; Criterion: 2; Property: Q-10, Q-18, Q-25_
 
-  - [ ] 20.3 Verify criterion 3 — AI generates a Dockerfile and K8s manifests
+  - [x] 20.3 Verify criterion 3 — AI generates a Dockerfile and K8s manifests
 
     - Execute `test_generation_integration.py` against local HTTP fixture endpoints with no vendor key or network, assert a schema-valid `ArtifactSet` with a Dockerfile and Deployment + Service + Ingress, and confirm Q-27 proves the tier chain came from the YAML.
     - _Design: Appendix E criterion 3; Deliverable: 1.5; Criterion: 3; Property: Q-08, Q-27, Q-29_
 
-  - [ ] 20.4 Verify criterion 4 — generated files pass the validation pipeline
+  - [x] 20.4 Verify criterion 4 — generated files pass the validation pipeline
 
     - Execute the `agent` validator suite, the `k8s` server-side dry-run and `helm template --validate` runs, and the `templates` job proving all 8 × 5 template artifacts traverse the identical pipeline with zero blocking findings.
     - _Design: Appendix E criterion 4; Deliverable: 1.5; Criterion: 4; Property: Q-09, Q-21_
 
-  - [ ] 20.5 Verify criterion 5 — view diff, approve, apply
+  - [x] 20.5 Verify criterion 5 — view diff, approve, apply
 
     - Execute the `e2e` diff/approve/apply steps in both view modes, the frontend diff-fidelity tests with Q-23, and the backend Q-22 state-machine and concurrent-approval assertions.
     - _Design: Appendix E criterion 5; Deliverable: 1.6; Criterion: 5; Property: Q-22, Q-23_
 
-  - [ ] 20.6 Verify criterion 6 — atomic application with backup
+  - [x] 20.6 Verify criterion 6 — atomic application with backup
 
     - Execute Q-01 and Q-02 in the `agent` job and the `e2e` on-disk hash, backup-existence and byte-exact revert steps.
     - _Design: Appendix E criterion 6; Deliverable: 1.6; Criterion: 6; Property: Q-01, Q-02_
 
-  - [ ] 20.7 Verify criterion 7 — policies are enforced
+  - [x] 20.7 Verify criterion 7 — policies are enforced
 
     - Execute `opa test policies/ -v` and `opa check --strict` in the `policy` job, the Friday-clock integration test returning `403 policy-denied` with an audit record and no minted envelope, and Q-06/Q-07.
     - _Design: Appendix E criterion 7; Deliverable: 1.7, 1.10; Criterion: 7; Property: Q-06, Q-07_
 
-  - [ ] 20.8 Verify criterion 8 — secrets stored encrypted and injected
+  - [x] 20.8 Verify criterion 8 — secrets stored encrypted and injected
 
     - Execute the `secrets` job's Infisical CRUD round trip, the no-value-read assertions with Q-20, the injection confinement checks with Q-28, and Q-12/Q-13/Q-24 in the `backend` job.
     - _Design: Appendix E criterion 8; Deliverable: 1.8; Criterion: 8; Property: Q-12, Q-13, Q-20, Q-24, Q-28_
 
-  - [ ] 20.9 Verify criterion 9 — immutable audit trail
+  - [x] 20.9 Verify criterion 9 — immutable audit trail
 
     - Execute the `0007` migration test proving UPDATE, DELETE and TRUNCATE raise `42501` and the app role holds no UPDATE privilege, `check-db-roles.py`, Q-04, Q-05, and the `e2e` audit-viewer step showing the full transit.
     - _Design: Appendix E criterion 9; Deliverable: 1.9; Criterion: 9; Property: Q-04, Q-05_
 
-  - [ ] 20.10 Verify criterion 10 — the end-to-end journey
+  - [x] 20.10 Verify criterion 10 — the end-to-end journey
 
     - Execute the `e2e` job's full thirteen-step journey against built containers with a real paired agent, with the `k8s` job supplying the server-side dry-run, and confirm traces and agent logs upload on failure.
     - _Design: Appendix E criterion 10; Deliverable: 1.1–1.9; Criterion: 10_
 
-  - [ ] 20.11 Verify criterion 11 — coverage ≥ 70 % per component
+  - [x] 20.11 Verify criterion 11 — coverage ≥ 70 % per component
 
     - Execute the three coverage gates independently, confirm none is aggregated, and confirm the `mutation` job reports no `VACUOUS` row and `check-no-skips.py` reports zero skips in the mandatory selection.
     - _Design: Appendix E criterion 11; Deliverable: 1.11; Criterion: 11; Property: Q-01–Q-31_
 
-  - [ ] 20.12 Verify criterion 12 — HNSW indexes on both vector columns
+  - [x] 20.12 Verify criterion 12 — HNSW indexes on both vector columns
 
     - Execute the `0003` migration test asserting `vector(1536)` and `vector(1024)`, both HNSW indexes with `vector_cosine_ops` and `m='16', ef_construction='64'`, and the per-transaction `ef_search` behaviour, all under `FORGEOPS_REQUIRE_INTEGRATION=1`.
     - _Design: Appendix E criterion 12; Deliverable: 1.3; Criterion: 12_
 
-  - [ ] 20.13 Verify criterion 13 — SSE streaming
+  - [x] 20.13 Verify criterion 13 — SSE streaming
 
     - Execute `test_sse_generation.py`, assert `sse-starlette` is absent from `requirements.lock`, confirm only the six event names appear with monotonic `PROGRESS` and one terminal event (Q-26), run the frontend reader tests, and confirm the `e2e` step observes the live sequence.
     - _Design: Appendix E criterion 13; Deliverable: 1.5; Criterion: 13; Property: Q-26_
 
-  - [ ] 20.14 Verify criterion 14 — Redis semantic caching
+  - [x] 20.14 Verify criterion 14 — Redis semantic caching
 
     - Execute the real-Redis integration test proving a repeated prompt is served from L1 with zero provider calls and a near-duplicate from L2 above the 0.95 threshold, together with Q-13's cache-key clause.
     - _Design: Appendix E criterion 14; Deliverable: 1.5; Criterion: 14; Property: Q-13_
