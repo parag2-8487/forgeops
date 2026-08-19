@@ -386,12 +386,24 @@ P1_UNFINISHED=$(grep -E '^\|[[:space:]]*(1?[0-9]|20)\.[0-9]+[[:space:]]*\|' "$LO
 	awk -F'|' '{ s=$5; gsub(/^[ \t]+|[ \t]+$/, "", s);
 		if (s == "pending" || s == "in-progress" || s == "blocked") print s }' | wc -l | tr -d ' \t')
 
+# Criteria that are not `done`. The completed clause needs this alongside the leaf count, and it
+# was missing: a `pending` criterion is in-vocabulary, so the criteria loop above raises no
+# violation for it, and the phase row could therefore read `completed` while a criterion was
+# openly unmet. That is exactly what happened -- criterion 14 sat `pending` for the L2 tier being
+# implemented but not wired, and nothing in this file objected to `completed` beside it. A phase is
+# its criteria; the leaves are only how they were built.
+P1_CRIT_UNMET=$(printf '%s\n' "$P1_CRIT" |
+	awk -F'|' 'NF >= 5 { s=$4; gsub(/^[ \t]+|[ \t]+$/, "", s); s=tolower(s)
+		if (s != "" && s != "done") print s }' | wc -l | tr -d ' \t')
+
 if [ "$P1_PHASE_STATUS" = 'completed' ]; then
 	CLAIM_VIOLATIONS=$(wc -l <"$FAILFILE" | tr -d ' \t')
 	if [ "${CLAIM_VIOLATIONS:-0}" -ne 0 ]; then
 		fail 'Phase 1 is marked `completed` while this check reports violations above (task 20.15)'
 	elif [ "${P1_UNFINISHED:-0}" -ne 0 ]; then
 		fail "Phase 1 is marked \`completed\` while $P1_UNFINISHED leaf row(s) are not done"
+	elif [ "${P1_CRIT_UNMET:-0}" -ne 0 ]; then
+		fail "Phase 1 is marked \`completed\` while $P1_CRIT_UNMET completion criterion/criteria are not \`done\`"
 	else
 		# The mutation manifest must be checked, and being UNABLE to check it is a failure rather
 		# than a pass. The first version of this clause was guarded by
@@ -417,7 +429,7 @@ if [ "$P1_PHASE_STATUS" = 'completed' ]; then
 		fi
 	fi
 else
-	ok "Phase 1 is \`$P1_PHASE_STATUS\`, and $P1_UNFINISHED leaf row(s) are not yet done"
+	ok "Phase 1 is \`$P1_PHASE_STATUS\`, with $P1_UNFINISHED leaf row(s) and $P1_CRIT_UNMET criterion/criteria not yet done"
 fi
 
 VIOLATIONS=$(wc -l <"$FAILFILE" | tr -d ' \t')
