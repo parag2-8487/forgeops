@@ -1,0 +1,2775 @@
+{
+  "decision_path": "data.forgeops.governance.decision",
+  "fixtures": [
+    {
+      "decision": {
+        "reason": "environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "apply",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "revert",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "deploy",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "dev",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "",
+        "result": "allow",
+        "rule": "governance.allow"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "staging",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "change_items": [],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"ALLOW\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "ALLOW"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T02:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is \"BLOCK\", not \"allow\"; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {
+          "verdict": "BLOCK"
+        },
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-18T11:00:00Z",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    },
+    {
+      "decision": {
+        "reason": "blast-radius verdict is absent; environment is \"prod\"",
+        "result": "require_approval",
+        "rule": "approval.required"
+      },
+      "input": {
+        "blast_radius": {},
+        "change_items": [
+          {
+            "action": "modify",
+            "path": "src/app.py"
+          },
+          {
+            "action": "delete",
+            "path": "package.json"
+          }
+        ],
+        "context": {
+          "bundle_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "change_set_id": null,
+          "device_id": "33333333-3333-3333-3333-333333333333",
+          "principal": null,
+          "project_id": "11111111-1111-1111-1111-111111111111",
+          "tenant_id": "22222222-2222-2222-2222-222222222222"
+        },
+        "environment": "prod",
+        "now_rfc3339": "2026-08-21T15:30:00+05:30",
+        "operation": "restart",
+        "project": {
+          "blocked_operations": [
+            "deploy"
+          ],
+          "blocked_weekdays": [
+            "friday"
+          ],
+          "blocked_window": {
+            "end": "23:59",
+            "start": "12:00"
+          },
+          "protected_globs": [
+            "package.json"
+          ],
+          "timezone": "Europe/London"
+        }
+      }
+    }
+  ],
+  "generated_by": "scripts/gen-governance-fixtures.py",
+  "property": "Q-06"
+}
