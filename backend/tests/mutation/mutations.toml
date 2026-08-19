@@ -1098,3 +1098,224 @@ def _pattern_table_only(text, project_secrets=None):
 
 redaction._redact_text = _pattern_table_only
 """
+
+[Q-18]
+runtime     = "python"
+property    = "backend/tests/property/test_q18_readiness.py"
+target      = "src.projects.readiness.ReadinessEngine.evaluate_project"
+mutation    = "Invert the test-coverage term so declaring tests LOWERS the score"
+description = """
+Appendix B's control is "replace the integer division in `Score`'s per-category term with
+float division". Leaf 12.3 implemented scoring as five flat integer constants summed -- there
+is no division anywhere in `evaluate_project` -- so that control has nothing to change. The
+mutation delivers the same class of defect against the shape that exists: one per-category
+term is computed the wrong way round.
+
+Q-18 asserts monotonicity directly: it re-evaluates with `has_tests` forced True and requires
+`res_more.overall_score >= res1.overall_score`. Inverting the term makes adding tests subtract
+25, so every example generated with `has_tests=False` violates it, and Hypothesis reaches that
+half of a boolean on essentially the first example.
+
+Determinism and the 0..100 bound are left intact on purpose. A mutation that broke all three
+clauses at once would pass this control while telling us nothing about WHICH clause the test
+depends on; monotonicity is the one this row proves is load-bearing.
+"""
+patch = """
+from src.projects import readiness
+
+_original = readiness.ReadinessEngine.evaluate_project
+
+
+def _inverted_test_term(self, project_data):
+    flipped = dict(project_data)
+    # The term is read the wrong way round: declaring tests now scores as if there were none.
+    flipped["has_tests"] = not project_data.get("has_tests", True)
+    return _original(self, flipped)
+
+
+readiness.ReadinessEngine.evaluate_project = _inverted_test_term
+"""
+
+[Q-21]
+runtime     = "python"
+property    = "backend/tests/property/test_q21_template_validity.py"
+target      = "src.generation.template_library.get_default_template_loader"
+mutation    = "Corrupt one template so it carries a placeholder the renderer never substitutes"
+description = """
+Appendix B's control is "corrupt one template's Dockerfile `FROM` line". Taken literally that
+does not kill leaf 15.7's test: the test asserts the port is present and that no `{{` or `}}`
+survives, and a wrong base image satisfies both. So the corruption here is the one the test
+can see, and it is the corruption that matters for this property -- an unresolved mustache
+placeholder reaching a rendered artifact.
+
+`{{UNSUBSTITUTED}}` is appended to whichever template is drawn, so the renderer leaves it in
+place and both placeholder assertions fail. Q-21 samples every registered template, so the
+mutation is reachable for all of them rather than for one.
+"""
+patch = """
+from src.generation import template_library
+
+_original_loader = template_library.get_default_template_loader
+
+
+def _loader_with_a_corrupt_template():
+    loader = _original_loader()
+    _original_render = loader.render
+
+    def _render_leaving_a_placeholder(name, params):
+        rendered = _original_render(name, params)
+        # A placeholder the renderer was never told about, so nothing substitutes it.
+        return rendered + "\\n# LABEL unresolved={{UNSUBSTITUTED}}\\n"
+
+    loader.render = _render_leaving_a_placeholder
+    return loader
+
+
+template_library.get_default_template_loader = _loader_with_a_corrupt_template
+"""
+
+[Q-22]
+runtime     = "python"
+property    = "backend/tests/property/test_q22_changeset_state_legality.py"
+target      = "src.approvals.service.ApprovalService.approve_changeset"
+mutation    = "Let an already-approved change-set be approved again, so a terminal state stops absorbing"
+description = """
+Appendix B's control is "remove the optimistic-concurrency `version` predicate". Leaf 16.1
+implemented the state machine over an in-memory dict with no `version` column and no
+optimistic-concurrency predicate to remove, so that control has no target. The mutation
+removes the guard that IS there -- the `status != PENDING` check in `approve_changeset` -- which
+is the same defect the version predicate exists to prevent: a second approval landing on a
+change-set that has already left `PENDING`.
+
+Q-22 generates action sequences up to length 10 over approve/reject/rollback and asserts with
+`pytest.raises(ValueError)` that a second approval on an APPROVED change-set is refused. With
+the guard gone that call returns normally, `pytest.raises` fails, and any sequence containing
+two approvals kills the mutant -- which a 10-long draw from a 3-symbol alphabet reaches
+quickly.
+
+Only `approve_changeset` is mutated. `reject` and `rollback` keep their guards, so the control
+isolates one transition rather than dissolving the whole machine.
+"""
+patch = """
+from src.approvals import service as approvals_service
+from src.approvals.schemas import ApprovalStatus
+
+
+def _approve_without_the_terminal_guard(self, cs_id, approver):
+    cs = self._changesets.get(cs_id)
+    if cs is None:
+        raise ValueError(f"ChangeSet '{cs_id}' not found")
+    # The `status != PENDING` guard is gone: a terminal state no longer absorbs.
+    cs.status = ApprovalStatus.APPROVED
+    cs.approver = approver
+    return cs
+
+
+approvals_service.ApprovalService.approve_changeset = _approve_without_the_terminal_guard
+"""
+
+[Q-26]
+runtime     = "python"
+property    = "backend/tests/property/test_q26_sse_well_formedness.py"
+target      = "src.generation.service.GenerationService.stream_generation"
+mutation    = "Emit frames terminated by a single newline instead of the blank line SSE requires"
+description = """
+Appendix B's control is "emit a second `COMPLETE` after an `ERROR`". Leaf 13.12's test does not
+check terminal-event uniqueness at all -- it asserts only the framing of each event -- so that
+control cannot fail it. Recorded rather than worked around: **Q-26's test does not cover the
+one-terminal-event clause Appendix B states**, and closing that gap means extending the test,
+not adjusting this mutation.
+
+What the test does constrain is the wire format, and this mutation breaks it in the way that
+actually strands a browser: the event/data block is terminated by one newline instead of the
+blank line the SSE grammar requires, so `EventSource` never dispatches. Every frame of every
+generated prompt trips `event_str.endswith("\\n\\n")`.
+"""
+patch = """
+from src.generation import service as generation_service
+
+_original_stream = generation_service.GenerationService.stream_generation
+
+
+def _single_newline_frames(self, project_id, prompt):
+    async def _generate():
+        async for frame in _original_stream(self, project_id, prompt):
+            # One newline, not two: the frame never terminates for a real SSE client.
+            if frame.endswith("\\n\\n"):
+                yield frame[:-1]
+            else:
+                yield frame
+
+    return _generate()
+
+
+generation_service.GenerationService.stream_generation = _single_newline_frames
+"""
+
+[Q-28]
+runtime     = "python"
+property    = "backend/tests/property/test_q28_injection_confinement.py"
+target      = "src.generation.context.assemble_prompt"
+mutation    = "Drop the instruction section, so confined user input never reaches the prompt intact"
+description = """
+Appendix B's control is "log the injected environment map at debug level", which belongs to
+Q-28's secrets-injection half in `secrets/injection` and `executor`. Leaf 10.9's test covers
+only the prompt-assembly half: it asserts the system chunk and the instruction both appear in
+the assembled prompt. The prescribed control cannot fail that, so this row mutates the clause
+the test does depend on.
+
+Recorded as a finding rather than smoothed over: **Q-28's test does not assert confinement.**
+It checks that both strings are present, which an assembler that concatenated everything into
+one undifferentiated blob would also satisfy. Proving the injection stays inside its section
+requires the test to assert on the BOUNDARY, and it does not.
+
+The mutation drops the instruction section entirely, so `payload in assembled` fails for every
+generated input.
+"""
+patch = """
+from src.generation import context as generation_context
+
+_original_assemble = generation_context.assemble_prompt
+
+
+def _assemble_without_the_instruction(system, chunks, instruction):
+    # The instruction section is dropped: whatever the user sent is not in the prompt at all.
+    return _original_assemble(system=system, chunks=chunks, instruction=type(instruction)(""))
+
+
+generation_context.assemble_prompt = _assemble_without_the_instruction
+"""
+
+[Q-29]
+runtime     = "python"
+property    = "backend/tests/property/test_q29_retrieval_degradation.py"
+target      = "src.ai.reranker.Reranker.rerank"
+mutation    = "Let the reranker return more documents than it was given"
+description = """
+Appendix B's control is "let a reranker timeout propagate as a 500". It is unreachable from
+leaf 13.13's test, and that is itself the finding: `Reranker.rerank`'s `try` block does pure
+arithmetic over the candidate list and cannot raise for any generated input, so the `except`
+branch -- the fallback the property is named for -- is never entered. **Q-29's test therefore
+does not exercise graceful degradation at all**; it exercises the happy path and checks its
+shape. Closing that needs an injectable failure in the reranker, which this row does not
+invent.
+
+The clause the test does constrain is the length bound, `len(res) <= len(candidates)`, and it
+is a real invariant: a reranker that returns more documents than it was handed has invented
+retrieval results, which is worse than degrading. The mutation emits each candidate twice, so
+every non-empty draw fails.
+"""
+patch = """
+from src.ai import reranker as reranker_module
+
+_original_rerank = reranker_module.Reranker.rerank
+
+
+async def _rerank_inventing_documents(self, query, candidates):
+    result = await _original_rerank(self, query, candidates)
+    # Each surviving document is emitted twice: more results out than candidates in.
+    return list(result) + list(result)
+
+
+reranker_module.Reranker.rerank = _rerank_inventing_documents
+"""
