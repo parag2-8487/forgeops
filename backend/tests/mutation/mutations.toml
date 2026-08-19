@@ -1485,3 +1485,36 @@ The test asserts both halves. The committed tree must VERIFY before the tamperin
 otherwise a mutation that rejected everything would also "pass" a test that only checked that
 tampered blobs are refused, while the agent refused to start.
 """
+
+
+[Q-10]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/scanner/depgraph"
+test_run    = "TestPropertyQ10"
+original    = "agent/internal/scanner/depgraph/graph.go"
+overlay     = "backend/tests/mutation/overlays/q10_dependants_term_dropped.go"
+property    = "agent/internal/scanner/depgraph/q10_property_test.go"
+mutation    = "Drop the Dependants term from DirtyClosure"
+description = """
+Appendix B's control verbatim. `DirtyClosure` stops enqueueing a changed file's dependents, so it
+returns only the files it was handed and every transitively affected file stays clean -- an
+incremental pass then reindexes strictly less than a full rescan.
+
+The property file moved in the same commit, and the reason is recorded there. The old
+`agent/internal/scanner/q10_property_test.go` created files, called `ScanDirectory`, then called
+`ScanDirectory` again on the SAME unmodified directory and compared the two `Languages` maps. Its
+own comment said "Mutate one file and re-scan" and no mutation was performed, so it compared a
+scan to itself -- true of any deterministic scanner -- and it never touched the dependency closure
+that this control mutates.
+
+Two implementations of one rule, which is what makes "incremental equals full" mean something
+here: `DirtyClosure` walks the graph's maintained `dependents` index, while the test recomputes the
+closure from the raw edge list by fixpoint. The mutation breaks the first and not the second.
+Cycles and self-loops are drawn deliberately, because a closure that only terminates on a DAG
+hangs on a real import graph.
+
+Scope is stated in the property file rather than implied: this covers the dirty closure, not
+chunk-level or summary-level equality, because `analysis/index_service` has no incremental path to
+compare against a full rescan yet.
+"""
