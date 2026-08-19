@@ -1111,7 +1111,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Run `scripts/check-ci-jobs.py` in `pre-commit` so no Appendix E evidence string can name a job the workflow does not define.
     - _Design: §8.3, §8.4, §15.10; Deliverable: 1.11; Criterion: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14_
 
-- [ ] 20. Verify every Phase 1 completion criterion using only earlier implementation, then finalise records
+- [x] 20. Verify every Phase 1 completion criterion using only earlier implementation, then finalise records
 
   - [x] 20.1 Verify criterion 1 — install, pair, import
 
@@ -1184,7 +1184,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Execute the real-Redis integration test proving a repeated prompt is served from L1 with zero provider calls and a near-duplicate from L2 above the 0.95 threshold, together with Q-13's cache-key clause.
     - _Design: Appendix E criterion 14; Deliverable: 1.5; Criterion: 14; Property: Q-13_
 
-  - [ ] 20.15 Finalise documentation and `PROGRESS.md` from captured evidence
+  - [x] 20.15 Finalise documentation and `PROGRESS.md` from captured evidence
     - Update project-owned `README.md`, `docs/{architecture,api,development,deployment}.md` and `PROGRESS.md` **in place**: add the Phase 1 task list, the fourteen criteria with real evidence, the `Q-01 … Q-31` coverage table including each negative-control row, decisions D-28 … D-50, open questions OQ-22 … OQ-32 and the Phase 0 dispositions, and the inherited-debt closure table for D1–D5.
     - Preserve the entire Phase 0 record: no Phase 0 row, criterion, decision or deviation is deleted or reworded, closed items are marked closed and dated, and the four authoritative root documents plus `REVIEW-PHASE-0.md` stay byte-identical.
     - Extend `scripts/check-progress.sh` to require every Phase 1 deliverable §1.1–§1.11, all fourteen criteria with non-empty evidence, all thirty-one properties with locations and controls, and every decision row; mark Phase 1 `completed` only when all of that holds and no Phase 2+ implementation or dependency is present.

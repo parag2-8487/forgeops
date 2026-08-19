@@ -392,11 +392,29 @@ if [ "$P1_PHASE_STATUS" = 'completed' ]; then
 		fail 'Phase 1 is marked `completed` while this check reports violations above (task 20.15)'
 	elif [ "${P1_UNFINISHED:-0}" -ne 0 ]; then
 		fail "Phase 1 is marked \`completed\` while $P1_UNFINISHED leaf row(s) are not done"
-	elif [ -f mutations.toml ] && command -v python3 >/dev/null 2>&1 &&
-		! python3 scripts/check-mutation-manifest.py >/dev/null 2>&1; then
-		fail 'Phase 1 is marked `completed` but check-mutation-manifest.py fails (Appendix B)'
 	else
-		ok 'Phase 1 is `completed` and the record supports the claim'
+		# The mutation manifest must be checked, and being UNABLE to check it is a failure rather
+		# than a pass. The first version of this clause was guarded by
+		# `command -v python3 >/dev/null 2>&1 &&`, so on a host where the interpreter is named
+		# `python` -- Git Bash on Windows, for one -- the guard short-circuited, the manifest was
+		# never read, and the phase was certified `completed` on the strength of a check that had
+		# not run. That is the same defect this whole file exists to correct, reproduced inside the
+		# clause that certifies the claim, so it now searches for an interpreter and fails if it
+		# cannot find one.
+		PY=''
+		for candidate in python3 python py; do
+			if command -v "$candidate" >/dev/null 2>&1; then
+				PY="$candidate"
+				break
+			fi
+		done
+		if [ -z "$PY" ]; then
+			fail 'Phase 1 is marked `completed` but no Python interpreter was found to run scripts/check-mutation-manifest.py; the claim cannot be verified'
+		elif ! "$PY" scripts/check-mutation-manifest.py >/dev/null 2>&1; then
+			fail 'Phase 1 is marked `completed` but scripts/check-mutation-manifest.py fails: not every Appendix B property has a verified negative control'
+		else
+			ok "Phase 1 is \`completed\`, and the record supports the claim (manifest verified via $PY)"
+		fi
 	fi
 else
 	ok "Phase 1 is \`$P1_PHASE_STATUS\`, and $P1_UNFINISHED leaf row(s) are not yet done"
