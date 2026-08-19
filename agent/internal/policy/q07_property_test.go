@@ -21,7 +21,7 @@ import (
 // `policy_context.bundle_digest` is required, so an envelope with no digest cannot be minted
 // and therefore cannot be presented here at all.
 //
-// WHY THIS FILE DID NOT EXIST, AND WHAT THAT COST
+// # WHY THIS FILE DID NOT EXIST, AND WHAT THAT COST
 //
 // Leaf 9.7 was recorded `done` in PROGRESS.md with no file behind it. `verify.go` carries the
 // comment "Q-07 is the property" against the comparison, and `evaluator.go`'s `ErrDrift` was
@@ -29,7 +29,7 @@ import (
 // drift comparison — the single line that stops an agent evaluating a policy bundle the
 // backend did not authorise — had no property-level coverage and no negative control.
 //
-// THE POSITIVE CONTROL IS LOAD-BEARING
+// # THE POSITIVE CONTROL IS LOAD-BEARING
 //
 // A test that only checks "mismatch ⇒ deny" passes just as well against a bundle that denies
 // everything, or against an evaluator that has failed to load at all: both produce a deny for
