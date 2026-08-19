@@ -94,17 +94,30 @@ hdr_val = f"{prefix} {token}"
 client = httpx.Client(base_url=base_url, headers={"Authorization": hdr_val, "Accept": "application/json"}, timeout=10.0)
 deadline = time.time() + 600
 
+# Authentik applies its own default blueprints during startup, once migrations finish. The
+# previous revision of this loop ALSO ran `ak apply_blueprint` over every discovered file
+# every 10 seconds, concurrently with that, and kept doing it for the whole 600s window. The
+# result is in the `auth` job's Postgres log on the runs that failed:
+#
+#   duplicate key value violates unique constraint "authentik_flows_flow_slug_key"
+#   duplicate key value violates unique constraint "authentik_policies_policy_name_..._uniq"
+#   deadlock detected
+#
+# Two writers inserting the same fixtures on overlapping transactions. The job failed on
+# 58ecf54, 56a244d and dea4757 and passed on 894ce8d and e81448d -- the signature of a race,
+# not of a missing step, and three commits in a row tried to fix it by making the search
+# faster rather than by making it stop repeating.
+#
+# So: wait for Authentik to do its own work, and intervene at most ONCE, only if the flow is
+# still missing after a grace period long enough for migrations plus the default blueprints.
+# A second apply is never useful -- if one did not produce the flow, a hundred will not.
+GRACE_BEFORE_MANUAL_APPLY = 150.0
+started = time.time()
+applied_once = False
+
 last_log = 0.0
-last_apply = 0.0
 while time.time() < deadline:
     now = time.time()
-    if now - last_apply >= 10.0:
-        apply_cmd = (
-            'find /authentik /web /opt /blueprints /usr/local -path "*/blueprints/*.yaml" -o -path "*/blueprints/*.yml" 2>/dev/null | '
-            'while read -r bp; do ak apply_blueprint "$bp" 2>/dev/null || true; done'
-        )
-        subprocess.run(["docker", "exec", server_name, "sh", "-c", apply_cmd], capture_output=True)
-        last_apply = now
 
     try:
         resp = client.get("/api/v3/flows/instances/", params={"page_size": 100}, follow_redirects=True)
@@ -133,6 +146,17 @@ while time.time() < deadline:
             if "default-provider-authorization-implicit-consent" in slugs and required_scopes.issubset(scopes):
                 print(f"[start-authentik] Authentik is ready with blueprints and scopes! (flows: {len(slugs)}, scopes: {len(scopes)})", flush=True)
                 sys.exit(0)
+
+            # The one manual apply, and only once the server is answering -- applying while it
+            # is still migrating is what produced the "column ... does not exist" errors.
+            if not applied_once and (now - started) >= GRACE_BEFORE_MANUAL_APPLY:
+                print("[start-authentik] flow still absent after grace; applying blueprints once", flush=True)
+                apply_cmd = (
+                    'find /blueprints /authentik -name "*.yaml" -path "*blueprint*" 2>/dev/null | '
+                    'while read -r bp; do ak apply_blueprint "$bp" 2>/dev/null || true; done'
+                )
+                subprocess.run(["docker", "exec", server_name, "sh", "-c", apply_cmd], capture_output=True)
+                applied_once = True
 
             if now - last_log >= 10.0:
                 print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
