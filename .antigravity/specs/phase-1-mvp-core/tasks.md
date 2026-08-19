@@ -566,7 +566,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row inverting `approval.rego`'s prod clause in the agent's copy of the bundle only.
     - _Design: §11.7, §10.6, Appendix A.11, Appendix B Q-06; Deliverable: 1.7, 1.10; Criterion: 7; Property: Q-06_
 
-  - [ ] 9.7 Write property test Q-07 for fail-closed digest disagreement
+  - [x] 9.7 Write property test Q-07 for fail-closed digest disagreement
     - Generate digest pairs; prove that when the agent's bundle digest differs from the envelope's `policy_context` digest the agent denies **and** the chokepoint refuses to mint, and that no mutation occurs on either path.
     - Add the `mutations.toml` row making the agent's digest comparison a warning.
     - _Design: §10.6, §11.6, §11.7, Appendix B Q-07; Deliverable: 1.7, 1.10; Property: Q-07_
