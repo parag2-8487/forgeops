@@ -46,8 +46,19 @@ def _committed_document() -> dict:
     return yaml.safe_load(COMMITTED_TIER_YAML.read_text(encoding="utf-8"))
 
 
-async def _app_from(tier_yaml: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FastAPI]:
-    """Build the app through the production factory against `tier_yaml`."""
+async def _app_from(
+    tier_yaml: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    env: dict[str, str] | None = None,
+) -> Iterator[FastAPI]:
+    """Build the app through the production factory against `tier_yaml`.
+
+    `env` is applied AFTER `apply_committed_baseline_env`, which is the only order that
+    works: the baseline replays every key from `.env.example`, so anything a caller sets
+    beforehand is silently overwritten by the committed default. The L2 wiring tests below
+    found that the hard way — they set `LLM_KEY_VOYAGE` first and watched it come back as
+    `placeholder`.
+    """
     from src.main import create_app
 
     apply_committed_baseline_env(monkeypatch)
@@ -55,6 +66,8 @@ async def _app_from(tier_yaml: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     monkeypatch.setenv("REDIS_URL", UNREACHABLE_REDIS_URL)
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("MODEL_TIER_CONFIG_PATH", str(tier_yaml))
+    for key, value in (env or {}).items():
+        monkeypatch.setenv(key, value)
 
     app = create_app()
     async with LifespanManager(app):
@@ -185,6 +198,100 @@ class TestTheTiersRouteServesTheLoadedConfig:
         by_name = {tier["name"]: tier for tier in response.json()["tiers"]}
         for tier, chain in production_app.state.tier_config.tiers.items():
             assert by_name[tier.value]["primary_endpoint"] == chain.primary
+
+
+class TestTheSemanticCacheIsWiredForL2:
+    """Criterion 14's L2 tier must be CONSTRUCTED, not merely implemented.
+
+    This class exists because of finding 79. `ai/routing/cache.py` grew a real L2 tier —
+    per-model vector index, cosine similarity, inclusive threshold — and five passing
+    integration tests, and `create_app` went on building the cache as
+    `TieredSemanticCache(redis=redis_client)`. L2 was therefore unreachable in the running
+    backend and `settings.semantic_cache_threshold` was read by nothing, while `PROGRESS.md`
+    recorded criterion 14 as met. A tested capability with an untested construction site is
+    not a shipped feature.
+
+    Every assertion below reads the CONSTRUCTED object out of `app.state`, never a mock's
+    call arguments. A refactor that stopped passing the embedder would satisfy a call-args
+    assertion by simply not being called; it cannot satisfy these.
+    """
+
+    #: A Voyage key that is not the `.env.example` placeholder.
+    #:
+    #: `EmbeddingOrchestrator` treats the literal `placeholder` as "no key" and answers from
+    #: an input-INDEPENDENT fallback vector, so `_build_cache_embedder` refuses to enable L2
+    #: over it. Any other value counts as configured. Nothing here contacts Voyage: these
+    #: tests assert on composition and perform no lookup.
+    L2_ENABLED_ENV = {
+        "EMBEDDING_BACKEND": "voyage",
+        "LLM_KEY_VOYAGE": "test-only-not-a-real-voyage-key",
+    }
+
+    async def test_a_configured_embedder_is_actually_passed_to_the_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The assertion finding 79 needed and did not have.
+
+        Comment out the `embed=` argument in `create_app` and this fails.
+        """
+        shutil.copyfile(COMMITTED_TIER_YAML, tmp_path / "model-tiers.yaml")
+
+        async for app in _app_from(tmp_path / "model-tiers.yaml", monkeypatch, env=self.L2_ENABLED_ENV):
+            cache = app.state.semantic_cache
+            assert cache._embed is not None, (
+                "create_app built the semantic cache WITHOUT an embedder while an embedding "
+                "backend was configured, so criterion 14's L2 tier is unreachable at runtime "
+                "-- this is finding 79 recurring"
+            )
+            assert callable(cache._embed)
+
+    async def test_the_threshold_comes_from_settings_not_a_literal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-default value must reach the constructed cache.
+
+        Asserting against 0.95 would pass whether the setting was read or the default was
+        re-literalled, which is exactly how the unread setting survived. So the environment
+        is set to a value the default cannot produce.
+        """
+        shutil.copyfile(COMMITTED_TIER_YAML, tmp_path / "model-tiers.yaml")
+        env = {**self.L2_ENABLED_ENV, "SEMANTIC_CACHE_THRESHOLD": "0.83"}
+
+        async for app in _app_from(tmp_path / "model-tiers.yaml", monkeypatch, env=env):
+            assert app.state.semantic_cache._threshold == pytest.approx(0.83), (
+                "the cache's threshold did not follow SEMANTIC_CACHE_THRESHOLD, so it is a "
+                "literal rather than configuration"
+            )
+
+    async def test_the_embedder_the_cache_holds_is_input_sensitive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """L2 over an input-independent embedder would serve any prompt from any entry.
+
+        `EmbeddingOrchestrator`'s fallback is `[0.01 * (i % 100) for i in range(1024)]`,
+        which ignores its argument: two unrelated prompts embed identically, cosine
+        similarity is 1.0, and every prompt becomes a near-duplicate of every other. So the
+        wiring must refuse that path, and this asserts the refusal rather than trusting it.
+        """
+        shutil.copyfile(COMMITTED_TIER_YAML, tmp_path / "model-tiers.yaml")
+        env = {"EMBEDDING_BACKEND": "voyage", "LLM_KEY_VOYAGE": "placeholder"}
+
+        async for app in _app_from(tmp_path / "model-tiers.yaml", monkeypatch, env=env):
+            assert app.state.semantic_cache._embed is None, (
+                "L2 was enabled over the placeholder key, whose embedding fallback ignores "
+                "its input -- the cache would serve an arbitrary completion for any prompt"
+            )
+
+    async def test_an_unconfigured_backend_leaves_the_cache_l1_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """L2 is optional by design: no embedder means exact-match, not a startup failure."""
+        shutil.copyfile(COMMITTED_TIER_YAML, tmp_path / "model-tiers.yaml")
+
+        async for app in _app_from(tmp_path / "model-tiers.yaml", monkeypatch, env={"EMBEDDING_BACKEND": "bge_m3"}):
+            cache = app.state.semantic_cache
+            assert cache is not None, "no cache was constructed at all"
+            assert cache._embed is None
 
 
 class TestALoadFailureIsNotMasked:

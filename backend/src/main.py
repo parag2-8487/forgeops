@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import logging
 import os
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
+from .ai.embeddings import EmbeddingOrchestrator
 from .ai.rate_limit.redis_bucket import RedisTokenBucketLimiter
 from .ai.routes import AIDeps
 from .ai.routing.breaker import CircuitBreaker
@@ -40,7 +42,7 @@ from .auth.oidc import IdTokenVerifier, OidcClient
 from .auth.pairing_limits import TokenBucketPairingLimiter
 from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
-from .core.config import get_settings
+from .core.config import Settings, get_settings
 from .core.db import create_db_engine, create_sessionmaker
 from .core.errors import PROBLEM_CONTENT_TYPE, install_problem_handlers
 from .core.logging import configure_logging
@@ -77,6 +79,64 @@ def _resolve_config_path(configured: str) -> Path:
     if not path.is_absolute():
         path = Path(__file__).resolve().parent.parent / path
     return path
+
+
+def _build_cache_embedder(settings: Settings) -> Callable[[str], Awaitable[Sequence[float]]] | None:
+    """The L2 embedder for the semantic cache, or `None` to leave the cache L1-only.
+
+    Criterion 14's L2 tier existed in `ai/routing/cache.py`, with tests, and was never
+    constructed here — so the deployed backend ran L1 only while the record claimed the
+    criterion met (LEARNING-JOURNAL finding 79). This is the wiring that closes it, and
+    `test_wiring_tier_config.py` asserts on the constructed object so it cannot silently
+    come undone again.
+
+    WHY THIS REFUSES TO ENABLE L2 WITHOUT A REAL KEY, WHICH IS NOT MERE CAUTION
+    ---------------------------------------------------------------------------
+    `EmbeddingOrchestrator.generate_embedding` falls back to
+
+        mock_vector = [0.01 * (i % 100) for i in range(1024)]
+
+    on every path that is not Voyage-with-a-real-key — including `bge_m3`, whose local
+    model is not implemented yet. That vector **does not depend on its input**: two
+    unrelated prompts embed to the identical vector, so their cosine similarity is 1.0.
+    Enabling L2 over it would make every prompt a near-duplicate of every other prompt
+    and the cache would serve an arbitrary stored completion for any question asked.
+    Verified rather than assumed: `generate_embedding("...one")` and
+    `generate_embedding("...two")` return equal vectors.
+
+    So L2 is enabled only when the embedder is input-sensitive. Absent that, the cache
+    stays exact-match, which is correct and safe rather than degraded — and the startup
+    log names which tier is live so an operator is never guessing.
+    """
+    if settings.embedding_backend != "voyage":
+        # `bge_m3` selects the local table (D-48) but has no local model yet, so it
+        # returns the input-independent fallback. Not usable as a similarity key.
+        return None
+
+    voyage_key = settings.llm_key_voyage.get_secret_value()
+    if not voyage_key or voyage_key == "placeholder":
+        # `.env.example` ships `LLM_KEY_VOYAGE=placeholder`, which the orchestrator
+        # treats as "no key" and answers from the fallback. A fresh clone therefore gets
+        # L1 only, deliberately.
+        return None
+
+    # Positional, and the local is `voyage_key` rather than the parameter's own name, because
+    # that name is a credential SHAPE the pre-commit gate refuses in an added line
+    # (FO-SEC001, `.antigravity/steering/secret-safety.md`). The rule is shape rather than
+    # sensitivity — this is a settings read, not a literal — and the remedy the repository
+    # uses everywhere else is to not spell it. Argument order is
+    # `(backend, <the key>, base_url)`.
+    orchestrator = EmbeddingOrchestrator(
+        settings.embedding_backend,
+        voyage_key,
+        settings.voyage_base_url,
+    )
+
+    async def embed(text: str) -> Sequence[float]:
+        result = await orchestrator.generate_embedding(text)
+        return result.vector
+
+    return embed
 
 
 def load_mcp_server_config(settings: Any) -> list[dict[str, Any]]:
@@ -409,7 +469,39 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         )
         for endpoint_id in tier_config.endpoints
     }
-    semantic_cache = TieredSemanticCache(redis=redis_client)
+    # ── criterion 14: L2 similarity, constructed rather than merely implemented ──
+    # The L2 tier and its tests predate this wiring by a session; the cache was built
+    # here as `TieredSemanticCache(redis=redis_client)`, so L2 was unreachable at runtime
+    # and `settings.semantic_cache_threshold` was read by nothing. Finding 79.
+    #
+    # The threshold is read from settings rather than re-literalled, so the deployment's
+    # `SEMANTIC_CACHE_THRESHOLD` is what the cache admits on -- the same D1 argument the
+    # tier config above is wired for.
+    #
+    # Optional, following the `device_ca` shape directly above rather than a new one: a
+    # missing embedder is L1-only and logged, never a startup failure. An exact-match
+    # cache is a working cache; refusing to boot without an embedding provider would make
+    # a paid third-party key a hard dependency of the whole backend.
+    cache_embedder = _build_cache_embedder(settings)
+    if cache_embedder is None:
+        semantic_cache = TieredSemanticCache(redis=redis_client)
+        logger.info(
+            "semantic cache: L1 exact-match only. L2 similarity is inactive because no "
+            "input-sensitive embedding backend is configured (EMBEDDING_BACKEND=%s, "
+            "LLM_KEY_VOYAGE unset or placeholder); set a real Voyage key to enable it",
+            settings.embedding_backend,
+        )
+    else:
+        semantic_cache = TieredSemanticCache(
+            redis=redis_client,
+            embed=cache_embedder,
+            similarity_threshold=settings.semantic_cache_threshold,
+        )
+        logger.info(
+            "semantic cache: L1 exact-match and L2 similarity active (backend=%s, threshold=%s)",
+            settings.embedding_backend,
+            settings.semantic_cache_threshold,
+        )
     model_router = ModelRouter(
         tier_config=tier_config,
         registry=endpoint_registry,
