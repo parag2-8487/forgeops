@@ -251,21 +251,46 @@ class TestAppendixBCompleteness:
         assert ids[0] == "Q-01"
         assert ids[-1] == "Q-31"
 
-    def test_a_missing_row_fails_the_real_manifest_run(self) -> None:
-        """Until every property lands, `--all` on the real manifest must fail."""
-        result = _run("--all", "--skip-git-check")
+    def test_the_real_manifest_covers_every_appendix_b_property(self) -> None:
+        """Every Appendix B property has a row. This replaces two tests that asserted the negation.
+
+        `test_a_missing_row_fails_the_real_manifest_run` asserted `--all` on the real manifest exits
+        1, with the docstring "Until every property lands, `--all` on the real manifest must fail",
+        and its sibling asserted the string "INCOMPLETE (allowed)" appeared. Both encoded the
+        repository's own incompleteness as an expectation, so both broke the moment leaf 19.2 landed
+        the last of the 31 controls — passing only while work was outstanding is the opposite of what
+        a regression test is for.
+
+        Neither could be salvaged by pointing at a fixture: the completeness clause in
+        `mutation-harness.py` is guarded by `if args.manifest == MUTATIONS_TOML`, deliberately, so a
+        constructed shortfall is not reachable through `--manifest`. What remains worth asserting is
+        the invariant itself, and it is read from the manifest rather than by executing it — running
+        31 mutations to answer a coverage question would put a quarter of an hour inside a meta test.
+
+        `scripts/check-mutation-manifest.py` enforces the same rule in CI, and
+        `scripts/check-progress.sh` refuses to let Phase 1 read `completed` while that check fails.
+        """
+        declared = set(HARNESS.appendix_b_ids())
+        present = set(HARNESS.load_rows(HARNESS.MUTATIONS_TOML))
+        missing = sorted(declared - present)
+        assert not missing, (
+            f"{len(missing)} Appendix B propert{'y' if len(missing) == 1 else 'ies'} have no row in "
+            f"the real manifest: {', '.join(missing)}. A property with no negative control cannot be "
+            "shown to fail, so it is not evidence."
+        )
+
+    def test_allow_incomplete_cannot_hide_a_vacuous_row(self, tmp_path: Path) -> None:
+        """`--allow-incomplete` suppresses the completeness clause and nothing else.
+
+        This is the load-bearing half of the flag's contract and the half that survives the manifest
+        being complete: a flag that also swallowed a VACUOUS row would let a property that cannot
+        fail be reported as covered, which is the whole failure mode the harness exists to prevent.
+        """
+        manifest = _manifest(tmp_path, "Q-98", "test_vacuous_property.py", _NO_DECREMENT_PATCH)
+        result = _run("--manifest", str(manifest), "--all", "--allow-incomplete", "--skip-git-check")
         combined = result.stdout + result.stderr
         assert result.returncode == 1, combined
-        assert "have no control" in combined, combined
-
-    def test_allow_incomplete_suppresses_only_that_clause(self) -> None:
-        result = _run("--all", "--allow-incomplete", "--skip-git-check")
-        combined = result.stdout + result.stderr
-        assert "INCOMPLETE (allowed)" in result.stdout, combined
-        # With no rows to run there is nothing vacuous, so this must pass; the
-        # flag must not be capable of hiding a VACUOUS row, which the test above
-        # demonstrates independently.
-        assert result.returncode == 0, combined
+        assert "VACUOUS" in result.stdout, combined
 
     def test_the_clean_tree_clause_is_enabled_in_ci(self) -> None:
         """`--skip-git-check` is a test affordance and must never reach CI."""
