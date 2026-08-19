@@ -1,10 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 package scanner
 
+// NEGATIVE CONTROL for Q-11. Applied by `scripts/mutation-harness.py` via `go build -overlay`,
+// which substitutes this file for `agent/internal/scanner/watcher.go` for the duration of one
+// test run. It is never compiled into the agent.
+//
+// Byte-for-byte the committed `watcher.go` except for `WatchDebounced`'s goroutine, which now
+// implements Appendix B's prescribed defect: a delete followed by a create on the same path
+// becomes a no-op, so that path leaves the dirty set entirely.
+//
+// This file is GENERATED, so it cannot drift from the original it replaces.
+//
+// With this applied, TestPropertyQ11_DebouncingPreservesTheDirtySet must FAIL as soon as a
+// generated sequence contains a delete and a create for one path -- which the deliberately small
+// path alphabet makes common rather than rare.
+
 import (
 	"context"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 
 	"github.com/fsnotify/fsnotify"
@@ -150,35 +163,16 @@ func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) 
 	out := make(chan Event, 64)
 
 	go func() {
-		var wg sync.WaitGroup
-		defer func() {
-			// `wg.Wait()` BEFORE `close(out)`, and no `stopCh`. Finding: this function used to
-			// close a `stopCh` here and offer it as a third case in the delivery select below:
-			//
-			//	defer func() { close(stopCh); wg.Wait(); close(out) }()
-			//	...
-			//	select {
-			//	case out <- e:
-			//	case <-stopCh:      // <- the defect
-			//	case <-ctx.Done():
-			//	}
-			//
-			// When `rawEvents` closes normally, this defer ran while sends were still in
-			// flight. `out` is buffered, so `out <- e` was ready; `stopCh` was now closed, so
-			// that case was ready too; and Go chooses uniformly at random between ready cases.
-			// So roughly HALF of the events in flight at shutdown were discarded — a file
-			// changed, the event was raised, and the index never learned. Q-11 exists to
-			// exclude exactly that, and its previous test could not see it because it never
-			// constructed a DebouncedWatcher.
-			//
-			// Waiting for the senders is the whole fix: on a normal source close every
-			// in-flight event lands, and on cancellation the `ctx.Done()` case below still
-			// releases them. `ctx` is the documented lifecycle control, so a consumer that
-			// wants to stop early cancels it rather than abandoning the channel.
-			wg.Wait()
-			close(out)
-		}()
-		sem := make(chan struct{}, dw.concurrency)
+		defer close(out)
+
+		// THE MUTATION (Q-11 negative control, Appendix B: "coalesce a delete followed by a
+		// create into a no-op"). The raw stream is drained first, then any path that saw BOTH a
+		// Delete and a Create is treated as a no-op and emitted for neither -- so the path leaves
+		// the dirty set altogether and a rescan never visits it.
+		var order []string
+		sawDelete := map[string]bool{}
+		sawCreate := map[string]bool{}
+		events := map[string][]Event{}
 
 		for {
 			select {
@@ -186,20 +180,32 @@ func (dw *DebouncedWatcher) WatchDebounced(ctx context.Context, paths []string) 
 				return
 			case ev, ok := <-rawEvents:
 				if !ok {
+					goto flush
+				}
+				if _, seen := events[ev.Path]; !seen {
+					order = append(order, ev.Path)
+				}
+				events[ev.Path] = append(events[ev.Path], ev)
+				switch ev.Type {
+				case Delete:
+					sawDelete[ev.Path] = true
+				case Create:
+					sawCreate[ev.Path] = true
+				}
+			}
+		}
+
+	flush:
+		for _, path := range order {
+			if sawDelete[path] && sawCreate[path] {
+				continue
+			}
+			for _, ev := range events[path] {
+				select {
+				case out <- ev:
+				case <-ctx.Done():
 					return
 				}
-				sem <- struct{}{}
-				wg.Add(1)
-				go func(e Event) {
-					defer func() {
-						<-sem
-						wg.Done()
-					}()
-					select {
-					case out <- e:
-					case <-ctx.Done():
-					}
-				}(ev)
 			}
 		}
 	}()

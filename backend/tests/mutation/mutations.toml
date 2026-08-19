@@ -1421,3 +1421,34 @@ survive. With the deletions gone, reconstruction of BEFORE breaks the moment any
 The overlay is GENERATED from the committed `fileops.go` rather than hand-transcribed, so it
 cannot drift from the 173-line original it replaces.
 """
+
+
+[Q-11]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/scanner"
+test_run    = "TestPropertyQ11"
+original    = "agent/internal/scanner/watcher.go"
+overlay     = "backend/tests/mutation/overlays/q11_delete_create_coalesced.go"
+property    = "agent/internal/scanner/q11_property_test.go"
+mutation    = "Coalesce a delete followed by a create into a no-op"
+description = """
+Appendix B's control verbatim. The overlay drains the raw stream and then emits NOTHING for any
+path that saw both a Delete and a Create, so that path leaves the dirty set entirely -- which is
+what makes the defect observable, because Q-11 asserts on the set of paths a rescan must visit.
+
+The property file was rewritten in the same commit and the reason is recorded there: the previous
+version drew a list of paths, built a `map[string]bool` from them inside the test, and asserted
+`len(seen) == 0 && len(paths) > 0`, which cannot hold for any input. It constructed no
+`DebouncedWatcher`, so `WatchDebounced` could have returned an empty channel and it would still
+have passed.
+
+Rewriting it immediately found a real defect in `WatchDebounced`, fixed in the same commit: the
+delivery select offered `<-stopCh` alongside `out <- e`, and the deferred `close(stopCh)` ran while
+sends were still in flight. Both cases were then ready and Go picks uniformly at random, so about
+half the events in flight at shutdown were discarded. A file changed, the event was raised, and
+the index never learned -- exactly the harm this property names.
+
+The overlay is GENERATED from the committed `watcher.go`, so it cannot drift from the 208-line
+original it replaces.
+"""
