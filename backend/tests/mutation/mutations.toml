@@ -1013,3 +1013,88 @@ def _gate_consults_the_rubric(self, content):
 rubric_module.AdvisoryRubric.evaluate = _recording_rubric_evaluate
 rubric_module.BlockingGate.evaluate = _gate_consults_the_rubric
 """
+
+
+[Q-24]
+runtime     = "python"
+property    = "backend/tests/property/test_q24_secret_absence.py"
+target      = "src.secrets.redaction._redact_text"
+mutation    = "Empty the redaction pattern list"
+description = """
+Appendix B's control verbatim, and it is the exact experiment REVIEW-PHASE-0.md Pass 8 ran.
+The two generic patterns -- the classic-PAT shape and the AWS key-id shape -- stop being
+applied while explicit project secrets are still replaced, so redaction still visibly does
+something and only the pattern half is gone. Q-24 samples the two provider shapes, so the
+raw value survives into the payload and both assertions fail: the secret is present and the
+pattern marker is absent.
+
+Removing the whole function would also fail the test, and would be a worse control: it
+cannot distinguish "the pattern table was emptied" from "redaction was deleted", and the
+first is the defect that actually shipped once.
+"""
+patch = """
+import re
+
+from src.secrets import redaction
+
+
+def _no_pattern_table(text, project_secrets=None):
+    result = text
+    # The explicit-secret half is deliberately preserved; only the pattern table is empty.
+    if project_secrets:
+        for secret in project_secrets:
+            result = result.replace(secret, "FORGEOPS_REDACTED_VALUE")
+    return result
+
+
+redaction._redact_text = _no_pattern_table
+"""
+
+[Q-12]
+runtime     = "python"
+property    = "backend/tests/property/test_q12_redaction.py"
+target      = "src.secrets.redaction._redact_text"
+mutation    = "Stop replacing the caller's declared project secrets, keeping only the pattern table"
+description = """
+Appendix B's control is "add a `str` overload to `assemble_prompt`". That control does not
+kill the test leaf 10.6 actually wrote: the test constructs `RedactedChunk` and
+`RedactedInstruction` values and passes those, so widening `assemble_prompt` to accept `str`
+adds an unused path and every assertion still holds. A control that cannot fail is the thing
+Appendix B forbids, so this row mutates the clause the test does depend on instead, and the
+divergence is recorded rather than hidden.
+
+Q-12's subject is that redaction happens BEFORE assembly. The generated secret is a
+`SECRET_..._END` string supplied through `project_secrets`, matching no provider pattern, so
+the explicit-secret replacement is the only thing standing between it and the prompt. With
+that clause gone the value reaches `assemble_prompt` and both assertions fail.
+
+This leaves a real gap, recorded as a finding rather than papered over: nothing in the suite
+proves `assemble_prompt` REFUSES a bare `str`. The type annotation is the only thing saying
+so, and a type annotation is not a runtime chokepoint.
+
+The two provider regexes below are ASSEMBLED from fragments rather than written out, which is
+this repository's standing rule for a credential shape in tracked source
+(`.antigravity/steering/secret-safety.md`, and `scripts/check-added-shapes.py`'s own pattern
+table). The first draft of this row spelled them and the pre-commit hook blocked the commit,
+which is the gate working.
+"""
+patch = """
+import re
+
+from src.secrets import redaction
+
+_PAT_TOKEN = "gh" + "p_" + "[a-zA-Z0-9]{36}"
+_PAT_KEYID = "AK" + "IA" + "[A-Z0-9]{16}"
+
+
+def _pattern_table_only(text, project_secrets=None):
+    result = text
+    # The caller's declared secrets are no longer replaced. The provider patterns still are,
+    # so redaction looks alive and only the explicit half is missing.
+    result = re.sub(_PAT_TOKEN, "FORGEOPS_REDACTED_PATTERN", result)
+    result = re.sub(_PAT_KEYID, "FORGEOPS_REDACTED_PATTERN", result)
+    return result
+
+
+redaction._redact_text = _pattern_table_only
+"""
