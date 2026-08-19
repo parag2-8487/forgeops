@@ -908,3 +908,47 @@ be able to check it by reading one short file — and a control that breaks it s
 diff against that file. `rollback.go` (Q-01), `domain.go` (Q-14) and `order.go` (Q-15) were
 separated for the mechanical reason alone; this one has both.
 """
+
+[Q-08]
+runtime     = "python"
+property    = "backend/tests/property/test_q08_iteration_bound.py"
+target      = "src.generation.feedback_loop.BoundedFeedbackLoop.execute_loop"
+mutation    = "Let the loop run one iteration past its bound, as if the counter were never decremented"
+description = """
+Appendix B's control is "make `_next` return `Continue` without decrementing". The design
+sketched the loop as a decrementing state machine with `_next` and `attempts_remaining`;
+leaf 13.6 implemented it as a bounded `for` over `range(1, max_iterations + 1)`, so there is
+no `_next` to mutate. The mutation is the same defect against the shape that exists: the
+bound is off by one, exactly as it would be if a `Continue` were returned without
+decrementing, so the loop performs one model call more than `max_iterations` allows.
+
+Q-08 quantifies over generated bounds from 1 to 10 and asserts `iterations_used <=
+max_iters`, so no value of the bound escapes: the mutation exceeds it for every one of them.
+"""
+patch = """
+from src.generation import feedback_loop
+
+
+async def _one_past_the_bound(self, generator_fn, validator_fn):
+    errors = []
+    output = ""
+    # `+ 2` rather than `+ 1`: one iteration past the bound, which is what failing to
+    # decrement buys you.
+    for iter_num in range(1, self.max_iterations + 2):
+        output = generator_fn(errors)
+        valid, errs = validator_fn(output)
+        if valid:
+            return feedback_loop.LoopResult(
+                success=True, iterations_used=iter_num, final_output=output, errors=[]
+            )
+        errors = errs
+    return feedback_loop.LoopResult(
+        success=False,
+        iterations_used=self.max_iterations + 1,
+        final_output=output,
+        errors=errors,
+    )
+
+
+feedback_loop.BoundedFeedbackLoop.execute_loop = _one_past_the_bound
+"""
