@@ -560,7 +560,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add integration tests for create/update/disable, a rejected malformed policy, and a dry-run returning the same decision the live path would.
     - _Design: §11.7, §12.1; Deliverable: 1.7; Criterion: 7_
 
-  - [ ] 9.6 Write property test Q-06 for backend/agent policy agreement
+  - [x] 9.6 Write property test Q-06 for backend/agent policy agreement
 
     - Generate governance inputs across operations, change-item sets, weekdays, timezones, verdicts and environments; with equal bundle digests, prove the OPA-server decision equals the agent's embedded decision for every input, driven from one shared fixture corpus.
     - Add the `mutations.toml` row inverting `approval.rego`'s prod clause in the agent's copy of the bundle only.
@@ -1098,7 +1098,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add a check asserting no component's threshold can be lowered without editing the committed value.
     - _Design: §7.13, §17.1 D-31; Deliverable: 1.11; Criterion: 11_
 
-  - [ ] 19.2 Complete `mutations.toml` and add the `mutation` CI job
+  - [x] 19.2 Complete `mutations.toml` and add the `mutation` CI job
 
     - Ensure `backend/tests/mutation/mutations.toml` carries one row for every property Q-01 … Q-31 with the exact negative control named in Appendix B.
     - Add the `mutation` job running `python scripts/mutation-harness.py --all`, printing the `property → mutation → expected FAIL → observed` table, and failing on any `VACUOUS` row, any missing row, or a dirty working tree afterwards.
