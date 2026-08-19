@@ -1390,3 +1390,34 @@ def _key_without_the_prompt(self, model, prompt, params):
 
 cache_module.TieredSemanticCache._build_key = _key_without_the_prompt
 """
+
+
+[Q-23]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/fileops"
+test_run    = "TestPropertyQ23"
+original    = "agent/internal/fileops/fileops.go"
+overlay     = "backend/tests/mutation/overlays/q23_deletions_dropped.go"
+property    = "agent/internal/fileops/q23_property_test.go"
+mutation    = "Drop the deletion lines from the rendered diff"
+description = """
+Appendix B's control is "compile change items with `old_content` from the wrong revision", which
+produces a diff whose BEFORE side does not match reality. Dropping the deletion lines is that
+same defect expressed inside the differ, and it is the form this property can observe.
+
+The property file moved from Python to Go in the same commit as this row, and the reason is
+recorded there: the previous `backend/tests/property/test_q23_diff_fidelity.py` imported
+`difflib` and `hypothesis` and called Python's standard-library differ. It never touched
+`FileOps.UnifiedDiff`, so it was a test of CPython, and no mutation of the agent's differ could
+be observed from it. Appendix B names `fileops.UnifiedDiff` as the target and it lives in Go, so
+the property moved to the code instead of the code being re-implemented in the test.
+
+The invariant is the complete-edit-script one: context plus deletions must reproduce the BEFORE
+text and context plus insertions must reproduce the AFTER text. Stated that way it also fails
+under a mutation that reorders or mislabels lines, which a pair of set-membership checks would
+survive. With the deletions gone, reconstruction of BEFORE breaks the moment any line is removed.
+
+The overlay is GENERATED from the committed `fileops.go` rather than hand-transcribed, so it
+cannot drift from the 173-line original it replaces.
+"""
