@@ -18,11 +18,14 @@
 # Appendix B declares Q-01 … Q-31.
 total_count = 31
 
-# Rows present in backend/tests/mutation/mutations.toml. The seventeen properties still
-# without a negative control are Q-06, Q-07, Q-08, Q-09, Q-10, Q-11, Q-12, Q-13, Q-18,
-# Q-21, Q-22, Q-23, Q-24, Q-25, Q-26, Q-28 and Q-29; Q-06 and Q-07 have no property test
-# either. Until all 31 carry a control, Phase 1 is not complete and `PROGRESS.md` says so.
-completed_count = 14
+# Rows present in backend/tests/mutation/mutations.toml, every one of them verified to KILL
+# its mutant by `scripts/mutation-harness.py` (OBSERVED OK = the property failed under the
+# mutation). The seven properties still without a control are Q-06, Q-07, Q-10, Q-11, Q-13,
+# Q-23 and Q-25, and none of them is blocked on writing a mutation: Q-06 and Q-07 have no
+# property test at all, and the tests for Q-10, Q-11, Q-13, Q-23 and Q-25 do not exercise the
+# property they are named for -- Q-11, Q-13 and Q-23 import no production code whatsoever.
+# A control cannot be added to a test that cannot fail; the test has to be written first.
+completed_count = 24
 
 min_killed_percentage = 100.0
 

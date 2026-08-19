@@ -1319,3 +1319,30 @@ async def _rerank_inventing_documents(self, query, candidates):
 
 reranker_module.Reranker.rerank = _rerank_inventing_documents
 """
+
+
+[Q-07]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/policy"
+test_run    = "TestPropertyQ07"
+original    = "agent/internal/policy/evaluator.go"
+overlay     = "backend/tests/mutation/overlays/q07_drift_is_a_warning.go"
+property    = "agent/internal/policy/q07_property_test.go"
+mutation    = "Make the agent's digest comparison a warning"
+description = """
+Appendix B's control verbatim. The overlay is the committed evaluator with one branch changed:
+the drift comparison logs and falls through to evaluation instead of returning a deny.
+`verify.go` already names this as the control in prose -- "A rejection, never a warning. Q-07's
+negative control is downgrading it" -- so this row makes that sentence executable.
+
+The property file did not exist until this leaf. Leaf 9.7 was recorded `done` with nothing
+behind it while `ErrDrift` and `verify.go`'s comment were both written expecting it, so the one
+line that stops an agent evaluating a bundle the backend never authorised had no property-level
+coverage and no control.
+
+The fixture bundle allows unconditionally and the test asserts that baseline BEFORE quantifying,
+so a deny observed under a mismatched digest is attributable to the comparison and not to a
+bundle that denies everything or an evaluator that failed to load. With the overlay applied
+every mismatched pair returns `allow` and the property fails.
+"""
