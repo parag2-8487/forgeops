@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 package grammars
 
+// NEGATIVE CONTROL for Q-25. Applied by `scripts/mutation-harness.py` via `go build -overlay`,
+// which substitutes this file for `agent/internal/scanner/grammars/grammars.go` for the duration
+// of one test run. It is never compiled into the agent.
+//
+// Byte-for-byte the committed grammars.go except that `VerifyGrammar` returns nil without
+// comparing digests. GENERATED, so it cannot drift from its original.
+//
+// With this applied, TestPropertyQ25_AnyByteMutationFailsVerification must FAIL on its first
+// tampered draw: VerifyGrammar accepts the altered blob and the test reports that a tampered Wasm
+// grammar would be parsed as if it were the vendored one.
+
 import (
-	"crypto/sha256"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 )
@@ -40,11 +49,13 @@ type LockFile struct {
 //
 // Behaviour is unchanged: same comparison, same error text, same call site.
 func VerifyGrammar(filename string, data []byte, meta GrammarMeta) error {
-	hash := sha256.Sum256(data)
-	digest := hex.EncodeToString(hash[:])
-	if digest != meta.SHA256 {
-		return fmt.Errorf("SHA-256 mismatch for %s: expected %s, got %s", filename, meta.SHA256, digest)
-	}
+	// THE MUTATION (Q-25 negative control, Appendix B: "skip digest verification when the blob
+	// loads successfully"). The comparison is gone. The blob is still read by LoadGrammars, so
+	// the stated precondition holds; only the check that the bytes are the vendored ones is
+	// missing. A tampered grammar is now accepted and parsed as if it were genuine.
+	_ = filename
+	_ = data
+	_ = meta
 	return nil
 }
 

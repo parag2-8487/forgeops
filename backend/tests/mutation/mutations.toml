@@ -1452,3 +1452,36 @@ the index never learned -- exactly the harm this property names.
 The overlay is GENERATED from the committed `watcher.go`, so it cannot drift from the 208-line
 original it replaces.
 """
+
+
+[Q-25]
+runtime     = "go"
+module_dir  = "agent"
+package     = "./internal/scanner/grammars"
+test_run    = "TestPropertyQ25"
+original    = "agent/internal/scanner/grammars/grammars.go"
+overlay     = "backend/tests/mutation/overlays/q25_verification_skipped.go"
+property    = "agent/internal/scanner/grammars/q25_property_test.go"
+mutation    = "Skip digest verification when the blob loads successfully"
+description = """
+Appendix B's control verbatim. `VerifyGrammar` returns nil without comparing digests, while
+`LoadGrammars` still reads every embedded blob -- so the control's stated precondition ("loads
+successfully") holds exactly and only the comparison is gone.
+
+Two things had to change before this control could exist, and both are in the same commit.
+
+The property test was asserting the wrong thing. It called `LoadGrammars`, copied one grammar,
+flipped byte 0, hashed the copy ITSELF and compared that to the locked digest -- an assertion that
+SHA-256 is collision resistant, which is a fact about the hash function and says nothing about
+ForgeOps. The production comparison was never invoked with a mismatching input, so deleting it
+changed no observable behaviour.
+
+`VerifyGrammar` was extracted from `LoadGrammars` to make the comparison reachable, with identical
+behaviour, comparison and error text. The embedded `.wasm` files cannot be modified at runtime --
+that is what `go:embed` is for -- so without a seam no test can watch the check reject anything,
+and Appendix B's control presupposes the seam.
+
+The test asserts both halves. The committed tree must VERIFY before the tampering begins,
+otherwise a mutation that rejected everything would also "pass" a test that only checked that
+tampered blobs are refused, while the agent refused to start.
+"""
