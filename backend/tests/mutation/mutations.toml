@@ -952,3 +952,64 @@ async def _one_past_the_bound(self, generator_fn, validator_fn):
 
 feedback_loop.BoundedFeedbackLoop.execute_loop = _one_past_the_bound
 """
+
+
+[Q-09]
+runtime     = "python"
+property    = "backend/tests/property/test_q09_rubric_non_interference.py"
+target      = "src.generation.rubric.BlockingGate.evaluate"
+mutation    = "Let the advisory rubric's low score block the gate"
+description = """
+Appendix B's control is "add a `rubric` parameter to `decide` and let a low score block".
+Leaf 13.5 implemented the split as two stateless classes, `BlockingGate.evaluate` and
+`AdvisoryRubric.evaluate`, rather than a `decide` with parameters, so there is no signature
+to widen. The mutation delivers the same defect through the shape that exists: the rubric
+records its score and the gate consults it, so an advisory score below 100 adds a blocking
+violation. That is precisely "advisory output overrides a blocking decision", which is the
+isolation Q-09 exists to defend.
+
+Determinism matters here and is deliberate. The gate CONSUMES the recorded score rather than
+leaving it, so each Hypothesis example starts from the same empty state: `gate.evaluate`
+before the rubric passes, and the same call after it blocks. Left un-consumed, the leftover
+score from the previous example would make both of one example's gate calls agree and the
+property would pass for the wrong reason -- a mutation that hides itself every second
+example is not a control.
+
+The rubric lowers its score for content carrying neither `#` nor `//`, which random
+generated text almost never does, so the interference is reachable on essentially every
+example rather than on a rare one.
+"""
+patch = """
+from src.generation import rubric as rubric_module
+
+_recorded: list[float] = []
+
+_original_rubric_evaluate = rubric_module.AdvisoryRubric.evaluate
+
+
+def _recording_rubric_evaluate(self, content):
+    result = _original_rubric_evaluate(self, content)
+    _recorded.append(result.advisory_score)
+    return result
+
+
+def _gate_consults_the_rubric(self, content):
+    violations = []
+    if "eval(" in content or "exec(" in content:
+        violations.append("Forbidden unsafe call detected")
+    if "rm -rf /" in content:
+        violations.append("Forbidden destructive shell command")
+
+    # The interference: an advisory score blocks admission. Consumed, so the next
+    # example starts clean and the mutation cannot hide behind leftover state.
+    if _recorded:
+        score = _recorded.pop()
+        if score < 100.0:
+            violations.append("Advisory rubric score below threshold")
+
+    return rubric_module.GateResult(passed=len(violations) == 0, violations=violations)
+
+
+rubric_module.AdvisoryRubric.evaluate = _recording_rubric_evaluate
+rubric_module.BlockingGate.evaluate = _gate_consults_the_rubric
+"""
