@@ -98,6 +98,19 @@ tmp/
 # untracked files — the mutation harness (§0.4.5) requires `git status --porcelain`
 # to be empty after a run, so scratch that is not ignored would fail it.
 *.tmp
+# The rest of the scratch family, added 2026-08-19 after a cleanup found 202 loose files under
+# `.evidence/` and a `.commitmsg.tmp` at the root. `*.tmp` alone did not cover them: captured
+# command output tends to land as `.out`, `.err` or `.hits`, editors and patch tools leave `.bak`,
+# `.orig` and `.rej`, and a half-written replacement lands as `.new`. None of these extensions is
+# tracked anywhere in the tree, so ignoring them costs nothing and keeps
+# `git status --porcelain` empty — which the mutation harness (§0.4.5) requires after a run.
+*.bak
+*.new
+*.hits
+*.err
+*.out
+*.orig
+*.rej
 scripts/_*.py
 scripts/_*.sh
 scripts/_*.txt
