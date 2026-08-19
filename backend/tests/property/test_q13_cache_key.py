@@ -88,9 +88,7 @@ def _synthetic_secret() -> str:
     model=st.text(min_size=1, max_size=20),
     surrounding=st.text(min_size=1, max_size=60),
 )
-async def test_a_cached_completion_is_not_retrievable_with_unredacted_text(
-    model: str, surrounding: str
-) -> None:
+async def test_a_cached_completion_is_not_retrievable_with_unredacted_text(model: str, surrounding: str) -> None:
     """The property: the redacted prompt is the only key that reaches the entry."""
     secret = _synthetic_secret()
     raw_text = f"{surrounding} {secret} {surrounding}"
@@ -122,9 +120,7 @@ async def test_a_cached_completion_is_not_retrievable_with_unredacted_text(
     prompt_a=st.text(min_size=1, max_size=60),
     prompt_b=st.text(min_size=1, max_size=60),
 )
-async def test_distinct_prompts_do_not_share_a_cache_entry(
-    model: str, prompt_a: str, prompt_b: str
-) -> None:
+async def test_distinct_prompts_do_not_share_a_cache_entry(model: str, prompt_a: str, prompt_b: str) -> None:
     """Two different prompts must not collide, or one caller reads another's completion."""
     redacted_a = create_redacted_prompt(prompt_a, [])
     redacted_b = create_redacted_prompt(prompt_b, [])
@@ -138,8 +134,7 @@ async def test_distinct_prompts_do_not_share_a_cache_entry(
         assert hit_b is not None
         return
     assert hit_b is None, (
-        "Q-13 violation: prompt B read the entry stored for prompt A, so the key does not "
-        "depend on the prompt"
+        "Q-13 violation: prompt B read the entry stored for prompt A, so the key does not depend on the prompt"
     )
 
 
@@ -159,9 +154,7 @@ async def test_no_stored_key_material_contains_the_secret(model: str, surroundin
 
     assert redis.store, "nothing was written, so this proves nothing"
     for key in redis.store:
-        assert secret not in key, (
-            "Q-13 violation: the synthetic secret appears in stored cache key material"
-        )
+        assert secret not in key, "Q-13 violation: the synthetic secret appears in stored cache key material"
         # And the key is a real digest rather than the prompt in disguise.
         digest = key.rsplit(":", 1)[-1]
         assert len(digest) == len(hashlib.sha256(b"").hexdigest())
