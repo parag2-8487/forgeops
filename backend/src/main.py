@@ -672,6 +672,13 @@ def create_app() -> FastAPI:
 
     app.include_router(approvals_router)
 
+    # The generation surface (§1.5, §7.4, §11.5, criterion 10 steps 6-7). `generation/` had twelve
+    # modules and no routes.py, so the pipeline and the `generation_runs` table from revision 0008
+    # were unreachable over HTTP. One streaming endpoint, because the service exposes one method.
+    from .generation.routes import router as generation_router
+
+    app.include_router(generation_router)
+
     from .secrets.routes import router as secrets_router
 
     app.include_router(secrets_router)

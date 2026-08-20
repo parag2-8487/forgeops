@@ -1177,41 +1177,97 @@ template_library.get_default_template_loader = _loader_with_a_corrupt_template
 [Q-22]
 runtime     = "python"
 property    = "backend/tests/property/test_q22_changeset_state_legality.py"
-target      = "src.approvals.service.ApprovalService.approve_changeset"
-mutation    = "Let an already-approved change-set be approved again, so a terminal state stops absorbing"
+target      = "src.governance.chokepoint.GovernanceChokepoint.approve"
+mutation    = "Remove the optimistic-concurrency `version` predicate, so a stale approval lands"
 description = """
-Appendix B's control is "remove the optimistic-concurrency `version` predicate". Leaf 16.1
-implemented the state machine over an in-memory dict with no `version` column and no
-optimistic-concurrency predicate to remove, so that control has no target. The mutation
-removes the guard that IS there -- the `status != PENDING` check in `approve_changeset` -- which
-is the same defect the version predicate exists to prevent: a second approval landing on a
-change-set that has already left `PENDING`.
+**Appendix B's control verbatim, for the first time.** The previous version of this row recorded
+that the prescribed control -- "remove the optimistic-concurrency `version` predicate" -- "has no
+target", because leaf 16.1 implemented the state machine over an in-memory dict with no `version`
+column. That was accurate about the dict and wrong about the system: `change_sets.version` has
+existed since revision `0004`, and `GovernanceChokepoint.approve` has predicated its UPDATE on it
+since leaf 7.5. The control had a target the whole time; what it did not have was a property
+pointing at it.
 
-Q-22 generates action sequences up to length 10 over approve/reject/rollback and asserts with
-`pytest.raises(ValueError)` that a second approval on an APPROVED change-set is refused. With
-the guard gone that call returns normally, `pytest.raises` fails, and any sequence containing
-two approvals kills the mutant -- which a 10-long draw from a 3-symbol alphabet reaches
-quickly.
+The cause was deeper than a missing mutation. Q-22's property file imported `ApprovalStatus` and
+`ApprovalService` from `src/approvals/` and drove the dictionary, asserting over the uppercase
+vocabulary `PENDING`/`APPROVED`/`REJECTED`/`EXECUTED`/`ROLLED_BACK`. **Not one of those five names is
+in `CHANGE_SET_STATUSES`**, the thirteen §3.6 states revision `0010`'s CHECK constraint enforces. So
+the property named after §3.6's state machine quantified over a different state machine, in a store
+that was not the database, behind a router that was not mounted -- while
+`CHANGE_SET_TRANSITIONS`'s docstring called itself "the single source Q-22 quantifies over" and
+several `chokepoint.py` docstrings cited Q-22 as proof of their concurrency guards. Both citations
+were false.
 
-Only `approve_changeset` is mutated. `reject` and `rollback` keep their guards, so the control
-isolates one transition rather than dissolving the whole machine.
+The property is rewritten to quantify over `CHANGE_SET_TRANSITIONS` and to drive
+`GovernanceChokepoint`, so this row can state Appendix B's control as written.
+
+What the mutation does: the UPDATE keeps its `status = 'pending_approval'` predicate and loses
+`version = :version`, so it no longer refuses an approval built on state the client has not seen.
+Two independent assertions die.
+`test_a_stale_version_is_refused_rather_than_applied` fails because an `expected_version` one behind
+the stored one now updates the row and returns instead of raising 409 -- which is precisely the
+concurrent-approval defect the predicate exists to prevent.
+`test_the_update_carries_both_predicates` fails because the statement no longer contains the clause.
+
+Verified by applying it: 2 failed, 40 passed. Restored afterwards.
+
+The `status` predicate is deliberately left intact, so the control isolates optimistic concurrency
+rather than dissolving the transition guard as well -- the state-machine half is covered by the
+parametrised refusal tests over all thirteen states.
 """
 patch = """
-from src.approvals import service as approvals_service
-from src.approvals.schemas import ApprovalStatus
+from sqlalchemy import text
+
+from src.governance import chokepoint as chokepoint_module
+
+_original_approve = chokepoint_module.GovernanceChokepoint.approve
 
 
-def _approve_without_the_terminal_guard(self, cs_id, approver):
-    cs = self._changesets.get(cs_id)
-    if cs is None:
-        raise ValueError(f"ChangeSet '{cs_id}' not found")
-    # The `status != PENDING` guard is gone: a terminal state no longer absorbs.
-    cs.status = ApprovalStatus.APPROVED
-    cs.approver = approver
-    return cs
+async def _approve_without_the_version_predicate(
+    self, session, *, change_set_id, principal, comment=None, expected_version=None
+):
+    # The one line that differs from the committed method: `AND version = :version` is gone from
+    # the UPDATE, so a stale approval is applied instead of refused.
+    row = await self._load_change_set(session, change_set_id)
+    if row["status"] != "pending_approval":
+        raise chokepoint_module.problem(
+            "change-set-conflict",
+            detail=f"change set {change_set_id} is {row['status']}, not pending_approval",
+        )
+    version = int(row["version"]) if expected_version is None else int(expected_version)
+    admitted = await self._admit(session, project_id=row["project_id"], principal=principal)
+    decision = await self._evaluate_policy(
+        session,
+        principal=principal,
+        admitted=admitted,
+        operation=chokepoint_module.APPLY_OPERATION,
+        items=(),
+        change_set_id=change_set_id,
+    )
+    updated = await session.execute(
+        text(
+            "UPDATE change_sets SET status = 'approved', version = version + 1 "
+            "WHERE id = :id AND status = 'pending_approval'"
+        ),
+        {"id": change_set_id, "version": version},
+    )
+    if updated.rowcount != 1:
+        await session.rollback()
+        raise chokepoint_module.problem(
+            "change-set-conflict",
+            detail=f"change set {change_set_id} was modified concurrently; re-read it and retry",
+        )
+    return chokepoint_module.Submission(
+        change_set_id=change_set_id,
+        status="approved",
+        outcome="approved",
+        audit_seq=0,
+        blast_radius_score=int(row["blast_radius_score"]),
+        blast_radius_verdict=str(row["blast_radius_verdict"]),
+    )
 
 
-approvals_service.ApprovalService.approve_changeset = _approve_without_the_terminal_guard
+chokepoint_module.GovernanceChokepoint.approve = _approve_without_the_version_predicate
 """
 
 [Q-26]
