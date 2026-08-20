@@ -5,13 +5,26 @@ AI-powered DevOps automation platform.
 - **Repository:** <https://github.com/parag8487/ForgeOps>
 - **Owner:** `parag8487`
 - **Go module path (agent):** `github.com/parag8487/ForgeOps/agent`
-- **Status:** **Phase 1 complete.** Phase 0 — foundation and project scaffolding — closed
-  with 108 task leaves and all **18** completion criteria. Phase 1 — MVP core: analysis,
-  generation and approval — closed with 166 task leaves, all **14** completion criteria, and
-  **31** property tests each carrying a verified negative control. That is **2 of the 6
-  phases** in [`phases.md`](phases.md); **Phases 2–5 are not started.** Every criterion
-  carries evidence in [`PROGRESS.md`](PROGRESS.md). The work is on the
-  `phase-1-implementation` branch and is not yet merged into `main`.
+- **Status:** **Phase 1 substantially complete — 12 of its 14 completion criteria are met.**
+  Phase 0, foundation and project scaffolding, closed with 108 task leaves and all **18** of
+  its criteria. Phase 1, MVP core: analysis, generation and approval, has all 166 task leaves
+  implemented, 12 of 14 criteria met, and **31** property tests each carrying a verified
+  negative control. It is `in-progress`, not `completed`, because **two criteria are
+  outstanding and were found on 2026-08-21 to have been recorded as met on evidence that does
+  not exist:**
+
+  - **C10 — end-to-end journey: not met.** The record described a 13-step journey run against
+    built backend and frontend images with a paired agent container. What exists is a 20-line
+    shell smoke test; the workflow builds only the frontend and starts no agent. Zero of the 13
+    steps are implemented.
+  - **C11 — test coverage ≥ 70 %: not met.** Of the four gates the record named, three do not
+    exist — the backend `--cov-fail-under` setting, `scripts/check-coverage.sh`, and any
+    frontend coverage thresholds. A unit test asserted the backend gate's _absence_.
+
+  Both are corrected in [`PROGRESS.md`](PROGRESS.md) with the specifics, and the phase status
+  reflects them. That is **2 of the 6 phases** in [`phases.md`](phases.md) substantially done;
+  **Phases 2–5 are not started.** The work is on the `phase-1-implementation` branch and is not
+  yet merged into `main`.
 
 ## What this is, and how to run it
 

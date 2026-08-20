@@ -10,13 +10,13 @@
   "findings_count": 66,
   "mutations_completed": 31,
   "mutations_total": 31,
-  "phase_1_status": "COMPLETE",
+  "phase_1_status": "IN_PROGRESS",
   "unfinished_leaves": {},
   "properties_without_a_negative_control": [],
   "note": "This file once read leaves_completed 166 and phase_1_status COMPLETE against git_tip 4e7ede7 while PROGRESS.md said in-progress, tasks.md had 98 unchecked leaves, and the mutation manifest held 14 of 31 properties. Nothing reconciled the four sources, so the most optimistic one was quoted. It reads COMPLETE again now, and the difference is that it can no longer say so on its own: scripts/check-progress.sh refuses the completed status unless every criterion is done, no leaf is unfinished, and scripts/check-mutation-manifest.py passes -- failing closed when it cannot find an interpreter to run that check. The criteria clause was added after criterion 14 sat pending beside a completed phase row and nothing objected.",
   "criterion_14": "MET: L2 semantic matching implemented in backend/src/ai/routing/cache.py and WIRED into create_app in 1ce7267, reading settings.semantic_cache_threshold. 5 semantic-cache tests pass against redis-stack-server 7.4.0-v3 and 4 wiring assertions in test_wiring_tier_config.py assert on the constructed object.",
   "all_31_controls_verified_killed": true,
-  "all_14_criteria_done": true,
+  "all_14_criteria_done": false,
   "verified_by": "scripts/check-progress.sh (passes, manifest verified) and scripts/check-mutation-manifest.py (strict, 31/31)",
   "ci_evidence": {
     "commit": "30f74f4",
@@ -25,5 +25,10 @@
     "k8s": "run 32289535508 success",
     "e2e": "run 32289535572 success",
     "templates": "run 32289535556 success"
-  }
+  },
+  "unfinished_criteria": {
+    "10": "NOT MET. journey.spec.ts is a 20-line shell smoke test with three assertions, not the 13-step journey the record claimed; e2e-ci.yml builds no backend image, starts no agent container, and uploads no traces. Zero of 13 steps implemented.",
+    "11": "NOT MET. Three of the four cited gates do not exist: --cov-fail-under=70 is in no config file, scripts/check-coverage.sh is absent, vitest.config.ts has no coverage key. test_metadata.py::test_coverage_not_a_gate asserts the backend gate's ABSENCE."
+  },
+  "criteria_note": "12 of 14 criteria are met. C10 and C11 are pending as of 2026-08-21, corrected after both were found to cite evidence that is not in the tree. The correction landed BEFORE any fix, so no commit carries a status ahead of the code."
 }

@@ -5155,6 +5155,67 @@ that matters, as this one did.
 
 ---
 
+**Finding 81 — a repository can claim a gate and deny it in the same tree, and both statements
+can be load-bearing. 2026-08-21.**
+
+Criterion 11 recorded four coverage gates as "on and green per component". Three did not exist:
+`--cov-fail-under=70` was in no configuration file, `scripts/check-coverage.sh` was not in the
+repository at all, and `frontend/vitest.config.ts` had no coverage key. The fourth,
+`check-no-skips.py`, was real. That alone would be ordinary staleness. What makes this one worth a
+finding is the shape of the contradiction.
+
+`--cov-fail-under=70` appeared in exactly three places: `design.md`, `tasks.md` and `PROGRESS.md`.
+Three documents, each citing the gate, none of them a configuration file. The string existed only
+in prose about the string. Meanwhile `backend/pyproject.toml` carried a comment stating the
+opposite — "Coverage is a GOAL (>70%), not a gate" — and
+`backend/tests/unit/test_metadata.py::test_coverage_not_a_gate` **asserted `fail_under` was
+absent**, passing on every run, with the message "Coverage must be a GOAL not a gate".
+
+So the repository contained a passing test proving the gate was off and a completion criterion
+stating it was on, and neither noticed the other for weeks. The test was not wrong when written —
+Phase 0 deliberately made coverage a goal — it simply outlived its premise. **A test that asserts
+the absence of something is a claim about intent, and intent expires.** When Phase 1 decided
+coverage would be a gate, that test became an active guard against the requirement, which is the
+worst possible thing for it to be: not merely stale, but enforcing the stale position.
+
+Criterion 10 was the same disease with a different symptom. Its cell described
+`frontend/e2e/journey.spec.ts` running a 13-step journey against built images with a paired agent
+container, on-disk assertions and a byte-exact revert. The file is 20 lines and asserts three
+things about a rendered page. The workflow that runs it builds only the frontend. The _names_
+carried the claim — the workflow is called "End-to-End Release Journey CI" and its job is
+`e2e-journey` — while the contents carried none of it. Naming is not implementation, and a
+plausible name is the cheapest possible way to look finished.
+
+**This is the third instance of the D1 shape in this project**, and the pattern is now clear enough
+to state as a rule rather than an observation:
+
+1. Finding 79: the L2 semantic cache was implemented and tested but never constructed, so
+   `settings.semantic_cache_threshold` was read by nothing.
+2. Deliverables 1.7 and 1.10 sat `pending` on an artefact that had since landed, contradicting the
+   phase row nine sections above them.
+3. This one: three documents cited a gate no configuration implemented, while a test asserted its
+   absence.
+
+Every instance is the same error in a different direction: **the record described an intent and was
+read as describing the tree.** The direction of the error does not matter — 79 was the record
+lagging the code, 1.7/1.10 was the record lagging in the other column, and this is the record
+running ahead of code that never arrived. What they share is that nothing mechanically compared the
+two.
+
+The remedies that came out of it, in the order they matter: a criterion's evidence must cite a
+**path plus an observable result**, never a capability; a check must exist in a **configuration
+file** before any document says it is enforced, because a string in three documents is not a gate;
+and the negative-assertion tests — the ones shaped `assert X not in config` — deserve suspicion
+every time a phase boundary moves, since they are the only tests that get _more_ wrong as the
+project gets more right.
+
+Worth recording plainly: this was found by an audit that was asked to look for stale claims, not by
+any gate. `check-progress.sh` was extended twice — for criteria statuses and then for deliverable
+statuses — and neither extension would have caught either of these, because both criteria read
+`done` with non-empty evidence and that is all the gate can check. **A gate can verify that a claim
+is present and well-formed; it cannot verify that the claim is true.** Only reading the cited
+artefact does that.
+
 ## 10. Where we are right now
 
 ### Snapshot: 2026-08-19, branch `phase-1-implementation`
