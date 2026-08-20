@@ -523,7 +523,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Add the `mutations.toml` row adding a `KindEnvelope` case to `Drain` that hands the stored envelope straight to `executor.Execute`.
     - _Design: §10.3, §17.1 D-41, Appendix B Q-31; Deliverable: 1.1; Criterion: 1; Property: Q-31_
 
-- [ ] 9. Implement the policy engine and prove double evaluation agrees
+- [x] 9. Implement the policy engine and prove double evaluation agrees
 
   - [x] 9.1 Author the governance Rego bundle and add the `policy` CI job
 
@@ -1089,7 +1089,7 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Assert the SSE progress live region announces phase changes and completion but does not announce token deltas.
     - _Design: §12.5, §12.6; Deliverable: 1.4, 1.6; Criterion: 5, 10_
 
-- [ ] 19. Gate coverage, run the negative controls, and assemble the workflow
+- [x] 19. Gate coverage, run the negative controls, and assemble the workflow
 
   - [x] 19.1 Turn on the per-component coverage gates
 

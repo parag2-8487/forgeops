@@ -396,6 +396,22 @@ P1_CRIT_UNMET=$(printf '%s\n' "$P1_CRIT" |
 	awk -F'|' 'NF >= 5 { s=$4; gsub(/^[ \t]+|[ \t]+$/, "", s); s=tolower(s)
 		if (s != "" && s != "done") print s }' | wc -l | tr -d ' \t')
 
+# Deliverable rows that are not `done`. The same hole as the criteria one above, one column over,
+# and it was still open after that one was closed: the loop above checks only that a row EXISTS
+# for each of 1.1 through 1.11, never what the row SAYS. So deliverables 1.7 and 1.10 sat
+# `pending` beside a `completed` phase row, in the same file, nine sections apart, and this script
+# passed both. A deliverable is what the phase promised to ship, so a phase cannot be complete
+# while one of them is not -- the leaves are how it was built and the criteria are how it is
+# judged, but the deliverables are the thing itself.
+#
+# The row filter is on field 2 rather than NF alone, because `$P1_DELIV` is every line of the
+# section: the prose paragraphs, the header row and the `| :--- |` separator all reach this awk,
+# and the separator would otherwise count as a row whose status is not `done`.
+P1_DELIV_UNMET=$(printf '%s\n' "$P1_DELIV" |
+	awk -F'|' 'NF >= 6 && $2 ~ /^[ \t]*\*?\*?1\.[0-9]+\*?\*?[ \t]*$/ {
+		s=$5; gsub(/^[ \t]+|[ \t]+$/, "", s); s=tolower(s)
+		if (s != "" && s != "done") print s }' | wc -l | tr -d ' \t')
+
 if [ "$P1_PHASE_STATUS" = 'completed' ]; then
 	CLAIM_VIOLATIONS=$(wc -l <"$FAILFILE" | tr -d ' \t')
 	if [ "${CLAIM_VIOLATIONS:-0}" -ne 0 ]; then
@@ -404,6 +420,8 @@ if [ "$P1_PHASE_STATUS" = 'completed' ]; then
 		fail "Phase 1 is marked \`completed\` while $P1_UNFINISHED leaf row(s) are not done"
 	elif [ "${P1_CRIT_UNMET:-0}" -ne 0 ]; then
 		fail "Phase 1 is marked \`completed\` while $P1_CRIT_UNMET completion criterion/criteria are not \`done\`"
+	elif [ "${P1_DELIV_UNMET:-0}" -ne 0 ]; then
+		fail "Phase 1 is marked \`completed\` while $P1_DELIV_UNMET deliverable row(s) are not \`done\`"
 	else
 		# The mutation manifest must be checked, and being UNABLE to check it is a failure rather
 		# than a pass. The first version of this clause was guarded by
@@ -429,7 +447,7 @@ if [ "$P1_PHASE_STATUS" = 'completed' ]; then
 		fi
 	fi
 else
-	ok "Phase 1 is \`$P1_PHASE_STATUS\`, with $P1_UNFINISHED leaf row(s) and $P1_CRIT_UNMET criterion/criteria not yet done"
+	ok "Phase 1 is \`$P1_PHASE_STATUS\`, with $P1_UNFINISHED leaf row(s), $P1_CRIT_UNMET criterion/criteria and $P1_DELIV_UNMET deliverable row(s) not yet done"
 fi
 
 VIOLATIONS=$(wc -l <"$FAILFILE" | tr -d ' \t')
