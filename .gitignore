@@ -127,3 +127,16 @@ scripts/_*.txt
 # (§0.4.5) treats as a failure. `docs/development.md` documents how to rebuild them.
 docs/understand-anything/.ua/*
 !docs/understand-anything/.ua/.understandignore
+
+
+# Captured command output. Not covered until now, which is exactly why 18 of these accumulated
+# at the repository root — 3.83 MB of pytest and agent transcripts named `agent_log4.log`,
+# `auth_failed3.log`, `run_failed.log` and so on. None was ever tracked and none was ever
+# wanted; the pattern was simply missing, so `git status` stayed noisy and the next person had
+# to decide, every time, whether a `.log` at the root mattered.
+#
+# Verified safe before adding: no tracked file anywhere in the repository has a `.log`
+# extension, so this pattern cannot hide something that is under version control. The four
+# `.log` files the comprehension artifact writes under `.ua/intermediate/` are already covered
+# by the rule above; this one catches them a second time, harmlessly.
+*.log
