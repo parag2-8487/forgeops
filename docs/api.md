@@ -1,5 +1,19 @@
 # ForgeOps API — Phase 0
 
+> **Stale as of 2026-08-21, and kept rather than deleted so the gap stays visible.** This
+> document describes the **Phase 0** API surface. Phase 1 has since shipped and this file was not
+> updated with it, so it is wrong in two ways that matter.
+>
+> It states there is **no login flow and no general user authentication**. There is: Phase 1 added
+> the OIDC flow at `/api/v1/auth/login`, `/callback`, `/refresh` and `/logout`, and
+> `require_principal` now guards every route not listed in the `PUBLIC_ROUTES` table.
+>
+> It also **documents none of the Phase 1 surfaces**. `projects`, `policies`, `audit` and
+> `approvals` are not mentioned once, and twelve routers are registered in `create_app`. Until this
+> file is rewritten, the accurate and self-updating source is the generated schema — Swagger UI at
+> <http://localhost:8000/api/v1/docs> and `openapi.json` beside it — because it is produced from the
+> routers themselves and cannot drift from them.
+
 Authority: `.antigravity/specs/phase-0-foundation/design.md` §4.2, §4.3, §4.4, §11, §14.2, §15.2.
 Only the surfaces listed here exist in Phase 0.
 

@@ -1,5 +1,9 @@
 # ForgeOps Architecture — Phase 0
 
+> **Partly stale as of 2026-08-21.** The title and the sections that follow describe **Phase
+> 0**. This file _does_ carry a Phase 1 additions section further down, so it contradicts its own
+> heading: read the Phase 1 section as current and the Phase 0 framing as history.
+
 Repository: `github.com/parag8487/ForgeOps`. This document describes what Phase 0
 actually builds, what it deliberately leaves out, and the cross-cutting contracts every
 later phase inherits. Authority: `.antigravity/specs/phase-0-foundation/design.md` §1–§6.

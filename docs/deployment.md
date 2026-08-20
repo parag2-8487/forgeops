@@ -1,5 +1,11 @@
 # ForgeOps Deployment — Phase 0
 
+> **Stale as of 2026-08-21.** This describes the **Phase 0** topology. The security warning
+> below still holds and should be read. One concrete fact has since become false: it says Phase 0
+> has "exactly one revision, `0001_initial`" — there are now **ten**, `0001` through `0010`, adding
+> identity and devices, codebase-index extensions, change-sets, policies, secrets, the append-only
+> audit table, generation runs, project tags and the change-set status vocabulary.
+
 **Warning: the Phase 0 `docker-compose.yml` topology is for local development on a trusted
 machine only. It must never be exposed to a network.** Phase 0 adds no general user
 authentication to the API surface, so most non-MCP routes are unauthenticated; the single
