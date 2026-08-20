@@ -145,6 +145,12 @@ class GovernanceAction(StrEnum):
     CHANGE_SET_AUTO_APPROVED = "change_set_auto_approved"
     #: A human approved a pending change set.
     CHANGE_SET_APPROVED = "change_set_approved"
+    #: A human refused a pending change set. §3.6's `pending_approval → rejected` edge, which had
+    #: no action here because nothing implemented that edge: `approvals/routes.py` had a `reject`
+    #: handler over an in-process dict, so a rejection was never a governance event and never
+    #: reached the log. A refusal is exactly as auditable as an approval — arguably more so, since
+    #: "who stopped this and why" is the question asked after an incident.
+    CHANGE_SET_REJECTED = "change_set_rejected"
     #: A revert was authorised; the reverse change set is named in `after_state`.
     CHANGE_SET_REVERT_AUTHORISED = "change_set_revert_authorised"
 
@@ -590,6 +596,108 @@ class GovernanceChokepoint:
             outcome="applying",
             blast_radius_score=int(row["blast_radius_score"]),
             blast_radius_verdict=str(row["blast_radius_verdict"]),
+        )
+
+    async def reject(
+        self,
+        session: AsyncSession,
+        *,
+        change_set_id: uuid.UUID,
+        principal: Principal,
+        comment: str | None = None,
+        expected_version: int | None = None,
+    ) -> Submission:
+        """Human refusal: §3.6's `pending_approval → rejected` edge (§11.6).
+
+        The edge existed in the state machine and in the database's check constraint, and nothing
+        implemented it. `approvals/routes.py` had a `reject` handler, but it mutated a dictionary
+        held in one worker's memory, so a refusal left no row, no audit record and no trace — and
+        a second worker still saw the change set as pending. This is that edge, written where the
+        other transitions live.
+
+        Deliberately NOT a mirror of `approve`, in three ways, each of which would be a defect if
+        copied:
+
+        * **No authority is minted and nothing is delivered.** A rejection produces no envelope
+          because there is nothing to apply. `approve` ends in `_deliver`; this ends at `commit`.
+        * **No rollback handle is reserved.** A handle exists to make an apply recoverable, and
+          there is no apply.
+        * **Policy is not re-evaluated.** `approve` re-runs admission and policy because it is
+          about to *act*, and an hour-old decision may no longer hold. A refusal removes authority
+          rather than granting it, so a policy that has since turned deny cannot make refusing
+          wrong. Admission still runs, because the record must name a real principal in a real
+          tenant, and because a caller with no rights over the project must not be able to reject
+          another tenant's work.
+
+        Optimistic concurrency is identical to `approve`'s and is the point: approve and reject
+        race against each other, not merely against themselves. Both predicate their UPDATE on the
+        version and the `pending_approval` status, so a simultaneous approve and reject yield
+        exactly one winner and one `409 change-set-conflict` — never both a rejection row and an
+        approval row for one change set.
+        """
+        row = await self._load_change_set(session, change_set_id)
+        if row["status"] != "pending_approval":
+            raise problem(
+                "change-set-conflict",
+                detail=f"change set {change_set_id} is {row['status']}, not pending_approval",
+            )
+        version = int(row["version"]) if expected_version is None else int(expected_version)
+
+        admitted = await self._admit(session, project_id=row["project_id"], principal=principal)
+
+        updated = await session.execute(
+            text(
+                "UPDATE change_sets SET status = 'rejected', version = version + 1 "
+                "WHERE id = :id AND version = :version AND status = 'pending_approval'"
+            ),
+            {"id": change_set_id, "version": version},
+        )
+        if updated.rowcount != 1:
+            await session.rollback()
+            raise problem(
+                "change-set-conflict",
+                detail=f"change set {change_set_id} was modified concurrently; re-read it and retry",
+            )
+
+        approval_id = uuid.uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO approvals (id, change_set_id, approver_id, status, comment) "
+                "VALUES (:id, :cs, :approver, 'rejected', :comment)"
+            ),
+            {"id": approval_id, "cs": change_set_id, "approver": principal.user_id, "comment": comment},
+        )
+        event = await self._append_audit(
+            session,
+            principal=principal,
+            admitted=admitted,
+            action=GovernanceAction.CHANGE_SET_REJECTED,
+            # `rejected`, not `denied`. §11.9's outcome vocabulary distinguishes a human refusing
+            # from a policy denying, and collapsing them would make "how often do reviewers
+            # disagree with the policy engine" unanswerable.
+            outcome="rejected",
+            resource_kind="change_set",
+            resource_id=str(change_set_id),
+            reason=(
+                f"rejected by {principal.email or principal.subject}: "
+                f"{comment or 'no reason supplied'}"
+            ),
+            before_state={"status": "pending_approval", "version": version},
+            after_state={"status": "rejected", "version": version + 1, "approval_id": str(approval_id)},
+        )
+        await session.commit()
+
+        return Submission(
+            change_set_id=change_set_id,
+            status="rejected",
+            outcome="rejected",
+            audit_seq=int(event.seq),
+            approval_id=approval_id,
+            blast_radius_score=int(row["blast_radius_score"]),
+            blast_radius_verdict=str(row["blast_radius_verdict"]),
+            # No envelope, and the field is explicit rather than defaulted so the absence is a
+            # value the caller must handle.
+            command=None,
         )
 
     async def revert(self, session: AsyncSession, *, change_set_id: uuid.UUID, principal: Principal) -> Submission:

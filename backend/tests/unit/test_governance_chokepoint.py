@@ -307,6 +307,15 @@ class TestTheConstants:
             "approval_required",
             "change_set_auto_approved",
             "change_set_approved",
+            # Added with `GovernanceChokepoint.reject`. §3.6 has always defined
+            # `pending_approval → rejected`, and revision 0010's CHECK constraint has always
+            # permitted the state, but nothing implemented the edge: the old `approvals/routes.py`
+            # mutated an in-process dict, so a human refusal produced no row and no audit record.
+            # A refusal is at least as auditable as an approval — "who stopped this, and why" is
+            # the question asked after an incident — so it gets its own action rather than being
+            # folded into `change_set_approved` with an outcome flag, which would make "how often
+            # do reviewers refuse" unanswerable.
+            "change_set_rejected",
             "change_set_revert_authorised",
         }
 

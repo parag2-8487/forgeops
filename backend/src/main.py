@@ -657,6 +657,21 @@ def create_app() -> FastAPI:
 
     app.include_router(policies_router, prefix=settings.api_prefix)
 
+    # The change-approval surface (§3.6, §11.6, criterion 10 steps 8-9). Mounted here for the
+    # first time: the router existed since Phase 1's first wave and was deliberately left out of
+    # this list, because it required no authentication and took the approver as a query parameter
+    # defaulting to `admin`. `check-route-auth.py` would have failed the build, which is why the
+    # honest move was to leave it unmounted rather than register it and exempt it.
+    #
+    # It is registrable now because it carries router-level `require_principal`, derives the
+    # approver from the verified principal, and delegates every transition to
+    # `GovernanceChokepoint` — so approving through HTTP takes the same six stages, the same
+    # optimistic concurrency and the same audit record as approving through any other path. No
+    # entry was added to `PUBLIC_ROUTES` for it.
+    from .approvals.routes import router as approvals_router
+
+    app.include_router(approvals_router)
+
     from .secrets.routes import router as secrets_router
 
     app.include_router(secrets_router)
