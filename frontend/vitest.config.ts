@@ -25,7 +25,12 @@ export default defineConfig({
       // nothing is excluded because it happens to be poorly covered, which is the failure mode
       // that makes a coverage gate meaningless. `app/**` is included even though route
       // components are thin, precisely so a route added without a test moves the number down.
-      include: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}", "features/**/*.{ts,tsx}", "lib/**/*.{ts,tsx}"],
+      include: [
+        "app/**/*.{ts,tsx}",
+        "components/**/*.{ts,tsx}",
+        "features/**/*.{ts,tsx}",
+        "lib/**/*.{ts,tsx}",
+      ],
       exclude: [
         "**/*.test.{ts,tsx}",
         "**/*.d.ts",

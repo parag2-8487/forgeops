@@ -1,0 +1,15 @@
+# Prettier's scope. Added 2026-08-21 with `prettier --check .` becoming a CI gate.
+#
+# `pnpm-lock.yaml` is generated, and pnpm owns its formatting. Prettier disagrees with pnpm's
+# output, so without this line every dependency change would rewrite the lockfile into a state
+# the new format gate rejects, and the fix would be to reformat a file pnpm regenerates on the
+# next install — a loop that ends with someone deleting the gate.
+#
+# This is scope, not exemption: nothing here is a check being switched off, and the lockfile is
+# still policed by the things that should police it — `pnpm install --frozen-lockfile` in CI,
+# `scripts/check-lock-freshness.sh`, and pnpm's own supply-chain policy pass.
+pnpm-lock.yaml
+
+# Build output and coverage reports, none of it authored.
+.next/
+coverage/
