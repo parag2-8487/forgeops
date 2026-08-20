@@ -19,6 +19,10 @@ export const queryKeys = {
   },
   projects: {
     all: ["projects"] as const,
+    // Added with `GET /api/v1/projects`. The limit is part of the key because two pages of
+    // different sizes are different responses, and sharing a key would serve one from the other's
+    // cache entry.
+    list: (limit: number) => [...queryKeys.projects.all, "list", limit] as const,
     detail: (id: string) => [...queryKeys.projects.all, "detail", id] as const,
     activity: (id: string) => [...queryKeys.projects.all, "activity", id] as const,
     readiness: (id: string) => [...queryKeys.projects.all, "readiness", id] as const,

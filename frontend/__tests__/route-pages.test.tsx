@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+﻿// SPDX-License-Identifier: Apache-2.0
 /**
  * The nine shell routes, each across every state it can actually reach.
  *
@@ -123,27 +123,36 @@ const LIVE_PAGES = [
     name: "Projects",
     Page: ProjectsPage,
     heading: "Projects",
-    label: "project",
+    label: "projects",
+    // `GET /projects` now returns a page. The activity feed is only requested once a project is
+    // selected, so the list response is what this page's states are driven by.
     respond: (path: string) =>
       path.includes("/activity")
         ? [
             {
               id: "act-9",
-              action: "project_created",
+              action: "change_set_approved",
               timestamp: "2026-08-21T00:00:00Z",
-              details: "Project initialized",
+              details: "allowed: policy matched",
             },
           ]
         : {
-            id: "00000000-0000-0000-0000-000000000001",
-            name: "Checkout Service",
-            path: "/srv/checkout",
-            repo_url: "https://github.com/acme/checkout",
-            settings: {},
+            projects: [
+              {
+                id: "00000000-0000-0000-0000-000000000001",
+                name: "Checkout Service",
+                path: "/srv/checkout",
+                repo_url: "https://github.com/acme/checkout",
+                settings: {},
+                created_at: "2026-08-20T00:00:00Z",
+                updated_at: "2026-08-20T00:00:00Z",
+              },
+            ],
+            next_cursor: null,
           },
-    shows: ["Checkout Service", "project_created", "Project initialized"],
-    empty: null,
-    emptyText: undefined,
+    shows: ["Checkout Service"],
+    empty: { projects: [], next_cursor: null },
+    emptyText: /no projects are stored for this tenant yet/i,
   },
   {
     name: "Readiness",
@@ -156,6 +165,14 @@ const LIVE_PAGES = [
       level: "Adequate",
       summary_report: "Scored seventy-three of one hundred.",
       recommendations: ["Add a health check"],
+      // The five fields of `ReadinessBreakdown`, which the response model used to drop.
+      categories: {
+        documentation_score: 80,
+        test_coverage_score: 60,
+        ci_config_score: 90,
+        security_policy_score: 50,
+        containerization_score: 85,
+      },
     }),
     shows: ["Adequate", "Add a health check"],
     empty: null,
@@ -414,57 +431,145 @@ describe.each(NOT_IMPLEMENTED_PAGES)(
 );
 
 /**
- * Behaviour that only the two id-driven pages have: typing a different project id must actually
- * re-request against that id. This is the branch that would silently break if the field were
- * wired to state the query key does not depend on — the page would look interactive and keep
- * showing the first project.
+ * Readiness is now the only id-driven screen. Projects gained a real list endpoint, so its
+ * `ProjectIdField` is gone — the lookup box existed solely because `GET /api/v1/projects` did not.
+ *
+ * The behaviour asserted here is the one that would silently break if the field were wired to
+ * state the query key does not depend on: the page would look interactive and keep showing the
+ * first project.
  */
-describe("the project-id field drives the request", () => {
-  it.each([
-    ["Projects", ProjectsPage, "project-id", /^\/projects\/[^/]+$/],
-    ["Readiness", ReadinessPage, "readiness-project-id", /\/readiness$/],
-  ] as const)(
-    "%s refetches against a newly typed id",
-    async (pageName, Page, fieldId, pathShape) => {
-      mockGet.mockImplementation((path: string) => {
-        if (path.includes("/activity")) return Promise.resolve([]);
-        if (path.includes("/readiness"))
-          return Promise.resolve({
-            project_id: "x",
-            score: 1,
-            level: "Low",
-            summary_report: "s",
-            recommendations: [],
-          });
-        return Promise.resolve({
-          id: "x",
-          name: "Checkout Service",
-          path: "/p",
-          repo_url: null,
-          settings: {},
-        });
-      });
-      renderPage(<Page />);
-      await waitFor(() => expect(mockGet).toHaveBeenCalled());
+describe("the project-id field drives the readiness request", () => {
+  it("refetches against a newly typed id", async () => {
+    mockGet.mockResolvedValue({
+      project_id: "x",
+      score: 1,
+      level: "Low",
+      summary_report: "s",
+      recommendations: [],
+      categories: { documentation_score: 1 },
+    });
+    renderPage(<ReadinessPage />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
 
-      const field = screen.getByLabelText("Project ID");
-      expect(field).toHaveAttribute("id", fieldId);
+    const field = screen.getByLabelText("Project ID");
+    expect(field).toHaveAttribute("id", "readiness-project-id");
 
-      const user = userEvent.setup();
-      await user.clear(field);
-      await user.type(field, "11111111-1111-1111-1111-111111111111");
+    const user = userEvent.setup();
+    await user.clear(field);
+    await user.type(field, "11111111-1111-1111-1111-111111111111");
 
-      await waitFor(() => {
-        const requested = mockGet.mock.calls.map((c) => String(c[0]));
-        expect(
-          requested.some(
-            (p) => p.includes("11111111-1111-1111-1111-111111111111") && pathShape.test(p),
-          ),
-        ).toBe(true);
-      });
-      expect(pageName).toBeTruthy();
-    },
-  );
+    await waitFor(() => {
+      const requested = mockGet.mock.calls.map((c) => String(c[0]));
+      expect(
+        requested.some(
+          (p) => p.includes("11111111-1111-1111-1111-111111111111") && /\/readiness$/.test(p),
+        ),
+      ).toBe(true);
+    });
+  });
+});
+
+describe("Readiness category breakdown", () => {
+  const categories = {
+    documentation_score: 80,
+    test_coverage_score: 60,
+    ci_config_score: 90,
+    security_policy_score: 50,
+    containerization_score: 85,
+  };
+
+  it("renders one bar per category the engine computed, labelled readably", async () => {
+    mockGet.mockResolvedValue({
+      project_id: "x",
+      score: 70,
+      level: "Adequate",
+      summary_report: "s",
+      recommendations: [],
+      categories,
+    });
+    renderPage(<ReadinessPage />);
+    // `documentation_score` becomes `Documentation`. The chart used to render a single bar called
+    // "Overall", because the breakdown was computed server-side and dropped by the response model.
+    for (const label of [
+      "Documentation",
+      "Test Coverage",
+      "Ci Config",
+      "Security Policy",
+      "Containerization",
+    ]) {
+      expect((await screen.findAllByText(new RegExp(label, "i"))).length).toBeGreaterThan(0);
+    }
+    expect(screen.queryByText("Overall")).not.toBeInTheDocument();
+  });
+
+  it("renders no category bars when the engine reported none, rather than inventing five", async () => {
+    mockGet.mockResolvedValue({
+      project_id: "x",
+      score: 0,
+      level: "Blocked",
+      summary_report: "s",
+      recommendations: [],
+      categories: {},
+    });
+    renderPage(<ReadinessPage />);
+    expect((await screen.findAllByText(/Blocked/i)).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Documentation")).not.toBeInTheDocument();
+  });
+});
+
+describe("Projects activity feed", () => {
+  const page = {
+    projects: [
+      {
+        id: "p-1",
+        name: "Checkout Service",
+        path: "/srv/checkout",
+        repo_url: null,
+        settings: {},
+        created_at: "2026-08-20T00:00:00Z",
+        updated_at: "2026-08-20T00:00:00Z",
+      },
+    ],
+    next_cursor: null,
+  };
+
+  it("requests no activity until a project is selected", async () => {
+    mockGet.mockImplementation(() => Promise.resolve(page));
+    renderPage(<ProjectsPage />);
+    // The name appears twice once loaded — in the list and as an <option> — so wait on the control
+    // that only exists after the list resolves.
+    await screen.findByLabelText("Project");
+    // The feed is `enabled` only once a selection exists, so one project's history is never shown
+    // under another project's heading during a refetch.
+    expect(mockGet.mock.calls.every((c) => !String(c[0]).includes("/activity"))).toBe(true);
+    expect(screen.getByText(/select a project to read its activity/i)).toBeInTheDocument();
+  });
+
+  it("requests and renders the selected project's audit-backed activity", async () => {
+    mockGet.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/activity")
+          ? [
+              {
+                id: "e-1",
+                action: "change_set_approved",
+                timestamp: "2026-08-21T00:00:00Z",
+                details: "allowed: policy matched",
+              },
+            ]
+          : page,
+      ),
+    );
+    renderPage(<ProjectsPage />);
+    await screen.findByLabelText("Project");
+
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Project"), "p-1");
+
+    expect(await screen.findByText("change_set_approved")).toBeInTheDocument();
+    // The outcome travels with the reason, so an allowed and a denied transit are distinguishable.
+    expect(screen.getByText(/allowed: policy matched/)).toBeInTheDocument();
+  });
 });
 
 /**

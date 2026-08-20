@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: FSL-1.1-ALv2
+﻿# SPDX-License-Identifier: FSL-1.1-ALv2
 """The approvals surface is mounted, authenticated, and speaks the stored vocabulary.
 
 This file exists because the previous version of `src/approvals/` was a working-looking module that
@@ -239,9 +239,13 @@ class TestPaginationIsKeyset:
         change_set_id = uuid.uuid4()
         timestamp, decoded_id = decode_cursor(encode_cursor(now, change_set_id))
         assert decoded_id == change_set_id
-        assert timestamp.startswith("2026-08-21T04:30")
+        assert timestamp == now
+        # Base64url, so the `+00:00` in the ISO timestamp cannot be mangled into a space by query
+        # string decoding — which is exactly how the projects list's paging test caught this.
+        encoded = encode_cursor(now, change_set_id)
+        assert "+" not in encoded and "|" not in encoded and ":" not in encoded
 
-    @pytest.mark.parametrize("bad", ["", "no-separator", "|", "2026-08-21T00:00:00+00:00|"])
+    @pytest.mark.parametrize("bad", ["", "bm8tc2VwYXJhdG9y", "fA==", "!!!not-base64!!!"])
     def test_a_malformed_cursor_is_rejected_rather_than_ignored(self, bad: str) -> None:
         from src.approvals.service import decode_cursor
 

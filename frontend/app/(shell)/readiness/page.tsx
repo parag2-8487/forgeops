@@ -15,6 +15,21 @@ interface ReadinessReport {
   level: string;
   summary_report: string;
   recommendations: string[];
+  /**
+   * The five fields of `ReadinessBreakdown`, which the engine has always computed and the response
+   * model used to drop. That omission is why this screen previously rendered a one-bar chart
+   * labelled "Overall": the per-category data the radar chart was built for was not on the wire.
+   */
+  categories: Record<string, number>;
+}
+
+/** Turn `documentation_score` into `Documentation` for display, without inventing categories. */
+function categoryLabel(key: string): string {
+  return key
+    .replace(/_score$/, "")
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export default function ReadinessPage() {
@@ -61,15 +76,20 @@ export default function ReadinessPage() {
             </div>
 
             {/*
-              One bar, holding the one number the API actually returns.
+              The radar chart, finally holding the data it was built for.
 
               `ReadinessEngine` computes a five-category breakdown — documentation, test coverage,
-              CI config, security policy, containerisation — but `ReadinessReportResponse` does not
-              expose it, so the per-category data this chart was built for is not on the wire.
-              Rendering five invented bars would be the exact defect this pass exists to remove, so
-              it gets the real total and the gap is noted below.
+              CI config, security policy, containerisation — and `ReadinessReportResponse` used to
+              expose only the total, so this rendered a single bar labelled "Overall". The
+              categories are now on the wire, mapped straight from the engine's own field names, so
+              there is no risk of rendering a category the engine does not compute.
             */}
-            <ReadinessRadarChart scores={[{ category: "Overall", score: readiness.data.score }]} />
+            <ReadinessRadarChart
+              scores={Object.entries(readiness.data.categories).map(([key, score]) => ({
+                category: categoryLabel(key),
+                score,
+              }))}
+            />
 
             <div className="rounded-lg border border-border bg-background p-4">
               <h2 className="text-sm font-semibold">Summary</h2>
@@ -93,17 +113,18 @@ export default function ReadinessPage() {
       <aside className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
         <p className="font-medium text-foreground">What is real here, and what is not.</p>
         <p className="mt-2">
-          The score, level, summary and recommendations are computed by <code>ReadinessEngine</code>{" "}
-          — real arithmetic, not a stored number. What it scores, however, is a{" "}
-          <strong>hardcoded input</strong>: the route passes a fixed
-          <code> {'{manifests: ["Dockerfile"], config_files: ["README.md"]}'} </code>
-          rather than analysing the project at the id you typed, so the same figure comes back for
-          every project. The engine is finished; the wiring from real repository contents into it is
-          not.
+          The score, level, summary, recommendations and the five-category breakdown are all
+          computed by <code>ReadinessEngine</code> — real arithmetic, not stored numbers. The
+          project must exist: this endpoint used to score any id at all, so it would return a
+          readiness figure for a project that had never been created.
         </p>
         <p className="mt-2">
-          The five-category breakdown the chart above was designed for is computed server-side but
-          dropped by the response model, so only the total crosses the wire.
+          <strong>The remaining limit, stated plainly.</strong> What the engine scores is derived
+          from the project&apos;s <em>stored</em> settings and repository reference, not from a walk
+          of its working tree. So the figure is a real evaluation of real stored data, and it is not
+          yet an analysis of your source. Wiring repository contents into the engine is analysis
+          work, and the summary text says which of the two it is rather than leaving it to be
+          assumed.
         </p>
       </aside>
     </div>

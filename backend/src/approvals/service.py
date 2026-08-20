@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: FSL-1.1-ALv2
+﻿# SPDX-License-Identifier: FSL-1.1-ALv2
 """Reads over the real change-set tables (design.md §3.6, §6.5 revision `0004`, §11.6).
 
 **What this replaces.** The previous `ApprovalService` held `self._store: dict[str, ChangeSetResponse]`
@@ -22,7 +22,9 @@ source being changed.
 
 from __future__ import annotations
 
+import base64
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -49,25 +51,39 @@ _SUMMARY_COLUMNS = (
 
 
 def encode_cursor(created_at: Any, change_set_id: uuid.UUID) -> str:
-    """A keyset cursor over `(created_at, id)`.
+    """A URL-safe keyset cursor over `(created_at, id)`.
 
     Both halves, because `created_at` alone is not unique: two change sets submitted in the same
     transaction share a timestamp, and a cursor on the timestamp alone would either skip one or
     repeat it. The id breaks the tie and is itself unique, so the pair is a total order.
+
+    Base64url rather than the raw `"<iso>|<uuid>"`, because an ISO-8601 timestamp contains `+00:00`
+    and `+` in a query string decodes to a space — a raw cursor round-tripped through a URL comes
+    back as `...19.866059 00:00` and no longer parses. Found by the projects list's own test rather
+    than reasoned about in advance, and fixed in both places for the same reason.
     """
-    return f"{created_at.isoformat()}|{change_set_id}"
+    raw = f"{created_at.isoformat()}|{change_set_id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
 
 
-def decode_cursor(cursor: str) -> tuple[str, uuid.UUID]:
+def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
     """Split a cursor, raising `ValueError` on anything malformed.
 
     Deliberately strict. A cursor that failed to parse and silently became "start from the
     beginning" would make a paging client loop forever over page one.
+
+    Returns a real `datetime`: asyncpg binds a timestamp parameter by type and refuses a `str`, so
+    parsing belongs here, at the edge where the caller's input is validated.
     """
-    timestamp, _, raw_id = cursor.partition("|")
+    padded = cursor + "=" * (-len(cursor) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+    except Exception as exc:  # noqa: BLE001 - any decode failure is one malformed-cursor answer
+        raise ValueError("a cursor must be base64url of '<created_at>|<id>'") from exc
+    timestamp, _, raw_id = raw.partition("|")
     if not timestamp or not raw_id:
-        raise ValueError("a cursor must be '<created_at>|<id>'")
-    return timestamp, uuid.UUID(raw_id)
+        raise ValueError("a cursor must be base64url of '<created_at>|<id>'")
+    return datetime.fromisoformat(timestamp), uuid.UUID(raw_id)
 
 
 class ApprovalService:
