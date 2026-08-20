@@ -5,9 +5,51 @@ AI-powered DevOps automation platform.
 - **Repository:** <https://github.com/parag8487/ForgeOps>
 - **Owner:** `parag8487`
 - **Go module path (agent):** `github.com/parag8487/ForgeOps/agent`
-- **Status:** Phase 0 — foundation and project scaffolding, complete. All 18 completion
-  criteria carry evidence in [`PROGRESS.md`](PROGRESS.md); the work is on the
-  `phase-0-implementation` branch and is not yet merged into `main`.
+- **Status:** **Phase 1 complete.** Phase 0 — foundation and project scaffolding — closed
+  with 108 task leaves and all **18** completion criteria. Phase 1 — MVP core: analysis,
+  generation and approval — closed with 166 task leaves, all **14** completion criteria, and
+  **31** property tests each carrying a verified negative control. That is **2 of the 6
+  phases** in [`phases.md`](phases.md); **Phases 2–5 are not started.** Every criterion
+  carries evidence in [`PROGRESS.md`](PROGRESS.md). The work is on the
+  `phase-1-implementation` branch and is not yet merged into `main`.
+
+## What this is, and how to run it
+
+ForgeOps analyses a codebase, generates deployment artifacts for it — Dockerfiles,
+Kubernetes manifests, OpenTofu HCL — with an LLM, and puts every generated change behind a
+policy check and a human approval gate before a local agent applies it to disk. Three
+components: a **Go agent** that runs next to your code and is the only thing that writes to
+it, a **FastAPI backend** that does the analysis, generation and governance, and a
+**Next.js** shell.
+
+**Prerequisites.** GNU make and a POSIX shell — on Windows use Git Bash or WSL2, as
+PowerShell and `cmd.exe` are not supported for these targets — plus Docker with Compose
+2.24.7, Go 1.26, Python 3.13 and pnpm 10. `make bootstrap` verifies the pinned versions
+rather than assuming them.
+
+```sh
+make bootstrap   # verify the pinned toolchain, install the git hooks
+make up          # start the default Compose profile, polling until readiness answers
+```
+
+`make up` returns once the backend answers its readiness probe, so when it exits the stack
+is genuinely serving:
+
+| Surface                    | URL                                  |
+| :------------------------- | :----------------------------------- |
+| Readiness probe            | <http://localhost:8000/health/ready> |
+| API documentation, Swagger | <http://localhost:8000/api/v1/docs>  |
+| Frontend shell             | <http://localhost:3000>              |
+
+`make down` stops the containers and preserves the volumes. Everything else — the Compose
+profiles, the seeded development credentials, the test containers, the full target list —
+is in [`docs/development.md`](docs/development.md) and is deliberately not duplicated here.
+
+**What is reachable without signing in.** Only the readiness probe, the versioned health
+echo and the API documentation are public (§4.4). Every project, policy, secret and audit
+route requires an authenticated principal, so the UI shows an explicit sign-in-required
+state on those panels rather than inventing data to fill them. `docs/development.md`
+covers bringing up the identity provider if you want the authenticated surfaces.
 
 ## Verifying a release
 
