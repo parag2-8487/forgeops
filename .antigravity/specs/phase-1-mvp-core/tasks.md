@@ -1159,13 +1159,15 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Execute the `0007` migration test proving UPDATE, DELETE and TRUNCATE raise `42501` and the app role holds no UPDATE privilege, `check-db-roles.py`, Q-04, Q-05, and the `e2e` audit-viewer step showing the full transit.
     - _Design: Appendix E criterion 9; Deliverable: 1.9; Criterion: 9; Property: Q-04, Q-05_
 
-  - [x] 20.10 Verify criterion 10 — the end-to-end journey
+  - [ ] 20.10 Verify criterion 10 — the end-to-end journey
 
+      - **Unchecked 2026-08-21.** This was `[x]` while the journey it names had never been executed and cannot be: 0 of the 13 steps exist. Descoped by D-94.
     - Execute the `e2e` job's full thirteen-step journey against built containers with a real paired agent, with the `k8s` job supplying the server-side dry-run, and confirm traces and agent logs upload on failure.
     - _Design: Appendix E criterion 10; Deliverable: 1.1–1.9; Criterion: 10_
 
-  - [x] 20.11 Verify criterion 11 — coverage ≥ 70 % per component
+  - [ ] 20.11 Verify criterion 11 — coverage ≥ 70 % per component
 
+      - **Unchecked 2026-08-21.** This was `[x]` while two of the three gates did not exist. They exist now and were run: backend 87.06 %, agent 78.8 %, frontend 37.04 % — so the verification has been performed and its outcome is negative.
     - Execute the three coverage gates independently, confirm none is aggregated, and confirm the `mutation` job reports no `VACUOUS` row and `check-no-skips.py` reports zero skips in the mandatory selection.
     - _Design: Appendix E criterion 11; Deliverable: 1.11; Criterion: 11; Property: Q-01–Q-31_
 

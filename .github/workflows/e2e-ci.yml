@@ -1,4 +1,14 @@
-name: End-to-End Release Journey CI
+# Renamed 2026-08-21. This was "End-to-End Release Journey CI" with a job called `e2e-journey`,
+# and it runs neither: six steps that install Node, build the FRONTEND ONLY, and execute a
+# 20-line spec asserting a page title, a visible h1 and one string. No backend image, no agent
+# container, no fixture project, no on-disk assertion, no revert, no artifact upload.
+#
+# The old name was the load-bearing part of a false record: criterion 10 cited this workflow as
+# evidence of a 13-step journey, and the name was plausible enough that nobody opened it. Renamed
+# to what it does, per D-94, which also descopes the criterion and defers the real journey to the
+# phase that has a generation endpoint and a mountable approval surface. See design §12.6 for the
+# 13 steps and LEARNING-JOURNAL finding 81 for why naming is not implementation.
+name: Frontend Shell Smoke CI
 
 on:
   workflow_dispatch:
@@ -8,7 +18,7 @@ on:
     branches: [main]
 
 jobs:
-  e2e-journey:
+  shell-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +48,7 @@ jobs:
           cd frontend
           pnpm build
 
-      - name: Run End-to-End Journey Tests
+      - name: Run the shell smoke spec
         run: |
           cd frontend
           npx playwright test e2e/journey.spec.ts
