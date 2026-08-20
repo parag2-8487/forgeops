@@ -36,6 +36,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "3.3.6",
     "@playwright/test": "1.62.0",
     "@tailwindcss/postcss": "4.3.3",
     "@testing-library/dom": "10.4.1",
@@ -46,7 +47,7 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.4",
-    "@eslint/eslintrc": "3.3.6",
+    "@vitest/coverage-v8": "4.1.10",
     "eslint": "9.39.5",
     "eslint-config-next": "16.2.12",
     "eslint-config-prettier": "10.1.8",

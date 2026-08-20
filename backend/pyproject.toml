@@ -79,6 +79,19 @@ asyncio_mode = "auto"
 addopts = [
     "--strict-markers",
     "--tb=short",
+    # Coverage is a GATE, not a goal (design.md §7.13, D-31; criterion 11). These three flags
+    # are the backend third of that criterion, and they were missing: the criterion recorded
+    # them as active while no configuration file carried them, and a unit test asserted their
+    # absence. See LEARNING-JOURNAL finding 81.
+    #
+    # This runs on EVERY pytest invocation, which is deliberate — a gate that only the CI
+    # entry point applies is a gate a developer can be surprised by. The consequence is that
+    # running a single test file fails the threshold, because one file does not cover the
+    # package. That is expected: pass `--no-cov` for a targeted run. Do not remove these flags
+    # to make a subset run quiet, which is exactly how the gate came to be missing before.
+    "--cov=src",
+    "--cov-branch",
+    "--cov-fail-under=70",
 ]
 markers = [
     "integration: marks integration tests (deselect with '-m not integration')",
@@ -103,7 +116,15 @@ source = ["src"]
 branch = true
 
 [tool.coverage.report]
-# Coverage is a GOAL (>70%), not a gate in Phase 0 (design.md §7.6, OQ-17).
+# Coverage is a GATE at 70 % (design.md §7.13, D-31; criterion 11). This line previously read
+# "Coverage is a GOAL (>70%), not a gate in Phase 0 (design.md §7.6, OQ-17)" and carried no
+# threshold — accurate for Phase 0 and false for Phase 1, which is what let criterion 11 claim a
+# gate that nothing implemented.
+#
+# `fail_under` here as well as `--cov-fail-under` in addopts, on purpose: the flag governs a
+# pytest run, this governs any direct `coverage report`, and `test_metadata.py` asserts on this
+# one because a value in a config file is what a test can read.
+fail_under = 70
 show_missing = true
 skip_empty = true
 

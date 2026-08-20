@@ -188,6 +188,20 @@ jobs:
       # PRD §9: -race and -shuffle=on. Linux runners have cgo, so -race works.
       - name: Test
         run: go test -race -shuffle=on ./... -count=1
+      # Criterion 11's AGENT third. It was recorded as "`agent` runs `scripts/check-coverage.sh
+      # 70` over `./internal/...`" while that script did not exist in the repository at all, so
+      # the gate was cited and never run (LEARNING-JOURNAL finding 81). Wired here now that the
+      # script exists.
+      #
+      # A THIRD `go test` invocation rather than reusing either above, for the same reason the
+      # `-json` record is separate: this one needs `-coverpkg` and a profile path, and folding
+      # coverage into the `-race -shuffle=on` step would make one failure mean two things.
+      #
+      # The threshold is passed explicitly and the script has no default, so the number CI
+      # enforces is visible at the call site rather than buried in the script.
+      - name: Coverage gate, 70% over ./internal/...
+        working-directory: .
+        run: bash scripts/check-coverage.sh 70
       # design.md §0.4.4 and criterion 11 both say the AGENT job runs `check-no-skips.py`.
       # It did not: the only invocation in this workflow was the backend `auth` job's, so the
       # Go side's "the mandatory selection recorded zero skips" was asserted by the design and
@@ -322,6 +336,14 @@ jobs:
         run: python scripts/check-test-credentials.py backend/tests
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
+      # Criterion 11's BACKEND third rides on this step: `--cov=src --cov-branch
+      # --cov-fail-under=70` is in `backend/pyproject.toml`'s addopts, so this invocation
+      # enforces the gate without naming it. That is deliberate — the gate applies to every
+      # pytest run, including a developer's, rather than only to the CI entry point.
+      #
+      # Previously none of it existed: the flags were in no configuration file and a unit test
+      # asserted their absence (LEARNING-JOURNAL finding 81). Measured under this exact marker
+      # selection on 2026-08-21: 87.06%, so the gate passes with real margin.
       - run: pytest tests/ -m "not oidc and not infisical" -q
       - name: Cerbos logs on failure
         if: failure()
@@ -540,8 +562,23 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec eslint .
+      # `make lint-frontend` is documented as eslint AND prettier --check, and only eslint was
+      # ever enforced. The consequence was not hypothetical: globals.css, button.tsx and
+      # sheet.tsx all drifted out of format and stayed that way, because the pre-commit prettier
+      # hook only sees files a commit touches and nothing checked the whole tree. Enforced here
+      # so the documented target and the gate are the same thing.
+      - run: pnpm exec prettier --check .
       - run: pnpm exec tsc --noEmit
-      - run: pnpm exec vitest --run
+      # `--coverage` turns criterion 11's FRONTEND third into a gate. vitest.config.ts holds the
+      # v8 provider and the 70/70/70 thresholds; it had no coverage key at all while the record
+      # claimed those thresholds were held.
+      #
+      # THIS STEP CURRENTLY FAILS, and is wired anyway. Measured 2026-08-21: 37.04% lines,
+      # 32.47% functions, 38.25% branches. The shortfall is real — the nine route pages under
+      # app/(shell)/ have no unit tests, and six components/ui primitives have none either — and
+      # the threshold is NOT lowered to accommodate it, because a gate tuned to what the code
+      # currently reaches measures nothing. Criterion 11 stays `pending` until this passes.
+      - run: pnpm exec vitest --run --coverage
       # Criterion 6: a non-default browser URL must be inlined at build time.
       - name: Build with a non-default public URL
         env:

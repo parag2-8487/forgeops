@@ -60,7 +60,19 @@ PATTERNS: tuple[tuple[str, str, bool], ...] = (
     ("aws-temp-akid", "AS" + "IA", True),
     ("slack-bot", "xo" + "xb-", True),
     ("slack-user", "xo" + "xp-", True),
-    ("jwt-header", "ey" + "J", True),
+    # A JWT is three dot-separated base64url segments, so the rule requires that STRUCTURE rather
+    # than the bare `eyJ` prefix it used to match. Sharpened rather than exempted after
+    # `frontend/pnpm-lock.yaml` tripped it three times on `integrity: sha512-…` values: a base64
+    # digest is 88 characters of arbitrary alphabet and will contain any given 3-character run
+    # sooner or later, so the old form had a false-positive class on every generated lockfile —
+    # and a check that cries wolf on machine-generated content is one people learn to wave
+    # through, which is the failure this whole file exists to prevent.
+    #
+    # This is strictly MORE precise, not looser. Every real JWT still matches, because every real
+    # JWT has two dots; standard-alphabet base64 has none, so a digest cannot reach the first `\.`.
+    # The trailing segment is `*` rather than `+` so an `alg: none` token with an empty signature
+    # is still caught.
+    ("jwt-header", "ey" + "J" + r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*", True),
     ("pem-armour", ("-" * 5) + "BE" + "GIN", True),
     ("private-key", "PRIV" + "ATE " + "KEY", True),
     ("client-secret", "client" + "_sec" + "ret", False),

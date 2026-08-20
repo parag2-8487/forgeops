@@ -104,7 +104,7 @@ $Patterns = @(
     @{ Name = 'aws-temp-akid'  ; Regex = 'AS' + 'IA'                          ; Case = $true  }
     @{ Name = 'slack-bot'      ; Regex = 'xo' + 'xb-'                         ; Case = $true  }
     @{ Name = 'slack-user'     ; Regex = 'xo' + 'xp-'                         ; Case = $true  }
-    @{ Name = 'jwt-header'     ; Regex = 'ey' + 'J'                           ; Case = $true  }
+    @{ Name = 'jwt-header'     ; Regex = 'ey' + 'J' + '[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*' ; Case = $true  }
     @{ Name = 'pem-armour'     ; Regex = ('-' * 5) + 'BE' + 'GIN'             ; Case = $true  }
     @{ Name = 'private-key'    ; Regex = 'PRIV' + 'ATE ' + 'KEY'              ; Case = $true  }
     @{ Name = 'client-secret'  ; Regex = 'client' + '_sec' + 'ret'            ; Case = $false }

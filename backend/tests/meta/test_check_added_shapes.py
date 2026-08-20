@@ -115,6 +115,11 @@ class TestEveryRuleFires:
             # Assembled, like everything else here: written out, this line would carry the very
             # shape the rule matches and the hook would block the commit that adds its own test.
             "credential-dsn": "postgresql://user" + ":pw@host/db",
+            # The other rules are literal prefixes, so the regex doubles as its own sample. This
+            # one is a real pattern — three dot-separated base64url segments — so it needs a
+            # sample that actually has that structure. Sharpened from a bare prefix after the
+            # generated `pnpm-lock.yaml` tripped it on a base64 `integrity: sha512-…` digest.
+            "jwt-header": ("ey" + "JhbGciOiJIUzI1NiJ9") + "." + ("ey" + "JzdWIiOiIxIn0") + ".sig_value",
         }.get(name, regex)
         assert name in checker.shapes(sample), (sample, checker.shapes(sample))
 
