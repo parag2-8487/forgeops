@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Typed query-key factory for TanStack Query.
  * Centralised so Phase 1+ invalidation cannot drift into stringly-typed keys.
  */
@@ -34,6 +34,12 @@ export const queryKeys = {
   policies: {
     all: ["policies"] as const,
     templates: () => [...queryKeys.policies.all, "templates"] as const,
+  },
+  devices: {
+    all: ["devices"] as const,
+    // Added with `GET /api/v1/agents/devices`, the read surface pairing never had.
+    list: () => [...queryKeys.devices.all, "list"] as const,
+    detail: (id: string) => [...queryKeys.devices.all, "detail", id] as const,
   },
   secrets: {
     all: ["secrets"] as const,

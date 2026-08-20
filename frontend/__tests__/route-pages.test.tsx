@@ -238,6 +238,38 @@ const LIVE_PAGES = [
     empty: [],
     emptyText: /no secret references are registered/i,
   },
+  {
+    name: "Pairing",
+    Page: PairingPage,
+    heading: "Agent pairing",
+    label: "agent devices",
+    respond: () => ({
+      devices: [
+        {
+          id: "d-1",
+          project_id: "p-1",
+          status: "active",
+          agent_version: "0.4.1",
+          platform: "linux/amd64",
+          cert_serial: "0A1B",
+          cert_fingerprint: "sha256:ab:cd",
+          cert_not_after: "2026-12-01T00:00:00Z",
+          last_seq: 42,
+          last_seen: "2026-08-21T04:00:00Z",
+          pairing_expires_at: null,
+          revoked_at: null,
+          created_at: "2026-08-20T00:00:00Z",
+          seconds_since_last_seen: 12,
+          heartbeat_fresh: true,
+          heartbeat_timeout_seconds: 90,
+        },
+      ],
+      next_cursor: null,
+    }),
+    shows: ["linux/amd64", "0.4.1", "active"],
+    empty: { devices: [], next_cursor: null },
+    emptyText: /no agent devices exist for this tenant/i,
+  },
 ] as const;
 
 describe.each(LIVE_PAGES)(
@@ -362,24 +394,16 @@ const NOT_IMPLEMENTED_PAGES = [
     Page: ApprovalsPage,
     heading: "Approvals",
     feature: /Change Approval Center is not implemented in Phase 1/i,
-    namesMissingPiece: /router exists and is not registered|no endpoint to call/i,
-    owner: /Phase 1 deliverable 1\.6/i,
+    namesMissingPiece: /no screen has been built to render a change-set diff/i,
+    owner: /the reviewable diff UI is the remaining work/i,
   },
   {
     name: "Generation",
     Page: GenerationPage,
     heading: "Generation",
     feature: /artifact generator is not implemented in Phase 1/i,
-    namesMissingPiece: /no routes\.py/i,
-    owner: /Phase 1 deliverable 1\.5/i,
-  },
-  {
-    name: "Pairing",
-    Page: PairingPage,
-    heading: "Agent pairing",
-    feature: /Agent pairing and attestation status is not implemented in Phase 1/i,
-    namesMissingPiece: /no endpoint that reports which devices are paired/i,
-    owner: /Phase 1 deliverable 1\.1/i,
+    namesMissingPiece: /has never been connected to it/i,
+    owner: /wiring the wizard to it is the remaining work/i,
   },
 ] as const;
 
@@ -591,5 +615,118 @@ describe("Home route scope list", () => {
     mockGet.mockResolvedValue({ status: "ok", version: "1.0.0", commit: "" });
     renderPage(<HomePage />);
     expect(await screen.findByText("not stamped")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The reason this screen exists. `features/pairing/AgentPairing.tsx` displayed "Connected &
+ * Attested" and a fixed SPIFFE trust domain with no props and no fetch — a security control
+ * reported as passing by a component that could not observe it.
+ *
+ * So the assertion that matters is not that a device renders, it is that NEVER REPORTED is
+ * distinguishable from STALE. A boolean cannot carry that difference, which is why the field is
+ * tri-state, and these three cases are what stop it collapsing back into one.
+ */
+describe("Pairing heartbeat is an observation, not a claim", () => {
+  function device(overrides: Record<string, unknown>) {
+    return {
+      devices: [
+        {
+          id: "d-1",
+          project_id: "p-1",
+          status: "active",
+          agent_version: "0.4.1",
+          platform: "linux/amd64",
+          cert_serial: null,
+          cert_fingerprint: null,
+          cert_not_after: null,
+          last_seq: 0,
+          last_seen: null,
+          pairing_expires_at: null,
+          revoked_at: null,
+          created_at: "2026-08-20T00:00:00Z",
+          seconds_since_last_seen: null,
+          heartbeat_fresh: null,
+          heartbeat_timeout_seconds: 90,
+          ...overrides,
+        },
+      ],
+      next_cursor: null,
+    };
+  }
+
+  it("reports a device that has never reported as unobserved, not as disconnected", async () => {
+    mockGet.mockResolvedValue(device({}));
+    renderPage(<PairingPage />);
+    const cell = await screen.findByTestId("heartbeat-d-1");
+    expect(cell).toHaveTextContent(/never reported/i);
+    expect(cell).toHaveTextContent(/nothing is known about whether it is running/i);
+    // Must not claim staleness, which would imply an observation that never happened.
+    expect(cell).not.toHaveTextContent(/stale/i);
+  });
+
+  it("reports a fresh heartbeat with the age and the timeout it was judged against", async () => {
+    mockGet.mockResolvedValue(
+      device({
+        last_seen: "2026-08-21T04:00:00Z",
+        seconds_since_last_seen: 12,
+        heartbeat_fresh: true,
+      }),
+    );
+    renderPage(<PairingPage />);
+    const cell = await screen.findByTestId("heartbeat-d-1");
+    expect(cell).toHaveTextContent(/heartbeating/i);
+    expect(cell).toHaveTextContent("12");
+    // The threshold travels with the judgement, so the client cannot invent its own.
+    expect(cell).toHaveTextContent("90");
+  });
+
+  it("reports a stale heartbeat as stale rather than as absent", async () => {
+    mockGet.mockResolvedValue(
+      device({
+        last_seen: "2026-08-20T00:00:00Z",
+        seconds_since_last_seen: 4000,
+        heartbeat_fresh: false,
+      }),
+    );
+    renderPage(<PairingPage />);
+    const cell = await screen.findByTestId("heartbeat-d-1");
+    expect(cell).toHaveTextContent(/stale/i);
+    expect(cell).toHaveTextContent("4000");
+    expect(cell).not.toHaveTextContent(/never reported/i);
+  });
+
+  it("never presents an attestation claim as device state", async () => {
+    mockGet.mockResolvedValue(device({}));
+    renderPage(<PairingPage />);
+    const heartbeat = await screen.findByTestId("heartbeat-d-1");
+    const status = screen.getByTestId("status-d-1");
+
+    // Scoped to the fields that report state, deliberately. The page's own explanatory note quotes
+    // "Connected & Attested" when describing the component this replaced, and that quotation is
+    // the record rather than a claim — asserting its absence from the whole document would forbid
+    // the page from explaining itself. What must never happen is the phrase appearing as a
+    // device's reported status, so that is what is asserted.
+    for (const cell of [heartbeat, status]) {
+      expect(cell).not.toHaveTextContent(/Connected & Attested/i);
+      expect(cell).not.toHaveTextContent(/attested/i);
+      expect(cell).not.toHaveTextContent(/spiffe:/i);
+    }
+    // And the trust domain the old component invented appears nowhere at all, since no endpoint
+    // reports one.
+    expect(screen.queryByText(/spiffe:\/\/cluster\.local/i)).not.toBeInTheDocument();
+  });
+
+  it("explains each §3.7 status rather than only colour-coding it", async () => {
+    mockGet.mockResolvedValue(device({ status: "policy_stale" }));
+    renderPage(<PairingPage />);
+    expect(await screen.findByTestId("status-d-1")).toHaveTextContent("policy_stale");
+    expect(screen.getByText(/policy bundle digest no longer matches/i)).toBeInTheDocument();
+  });
+
+  it("says no certificate has been issued rather than rendering an empty field", async () => {
+    mockGet.mockResolvedValue(device({ cert_fingerprint: null }));
+    renderPage(<PairingPage />);
+    expect(await screen.findByText(/no certificate has been issued/i)).toBeInTheDocument();
   });
 });

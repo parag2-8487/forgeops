@@ -7,36 +7,25 @@ export default function ApprovalsPage() {
       <h1 className="text-2xl font-bold tracking-tight">Approvals</h1>
       <NotImplemented
         feature="The Change Approval Center"
-        owner="Phase 1 deliverable 1.6 for the backend mechanism; the reviewable UI is not scheduled until the approval surface is safe to mount"
-        reason="The backend router exists and is not registered, so there is no endpoint to call. Mounting it as it stands would be a security regression, not a quick win."
+        owner="Phase 1 for the endpoint, which now exists; the reviewable diff UI is the remaining work"
+        reason="The backend surface is mounted and authenticated, but no screen has been built to render a change-set diff or submit a decision."
         detail={
           <div className="space-y-2 text-muted-foreground">
-            <p className="font-medium text-foreground">
-              Why an existing router is deliberately left unmounted.
+            <p className="font-medium text-foreground">What changed, and what is genuinely left.</p>
+            <p>
+              This panel used to say the router was <em>not registered</em> and{" "}
+              <em>required no authentication</em>. Both statements were true and are now false.{" "}
+              <code>/api/v1/approvals</code> is mounted with router-level{" "}
+              <code>require_principal</code>, the approver comes from the verified principal rather
+              than a query parameter defaulting to <code>admin</code>, and every transition goes
+              through the governance chokepoint over the real <code>change_sets</code> table.
             </p>
             <p>
-              <code>backend/src/approvals/routes.py</code> implements list, get, approve, reject and
-              rollback, and has tests. It is absent from the twelve routers <code>create_app</code>{" "}
-              registers, and it should stay absent until two defects are fixed.
-            </p>
-            <p>
-              <strong>It requires no authentication.</strong> Neither the router nor any route
-              depends on <code>require_principal</code>, so mounting it would expose change-set
-              approval to anonymous callers. Worse, <code>approve</code> takes the approver as a{" "}
-              <em>query parameter</em> defaulting to <code>admin</code> — a caller-supplied
-              identity, which contradicts the rule the rest of the system is built on: a principal
-              is constructed only by a verifier, never from request data. The approval gate is the
-              one control that must not be bypassable.
-            </p>
-            <p>
-              <strong>Its store is a dictionary.</strong> <code>ApprovalService</code> holds
-              change-sets in an in-process dict, so state would be lost on restart and would differ
-              between workers, despite the module describing them as persisted.
-            </p>
-            <p>
-              <code>scripts/check-route-auth.py</code>, which CI runs, asserts every route either
-              depends on <code>require_principal</code> or is listed public. It would fail the build
-              if this router were mounted — which is the gate doing its job.
+              What is missing is this screen. Five routes are available — list, read one with its{" "}
+              <code>change_items</code>, approve, reject and revert — and rendering a diff with the
+              two view modes the design calls for, plus a decision form carrying a comment and the
+              displayed version for optimistic concurrency, is a real piece of UI work rather than a
+              wiring gap. Until it exists this page says so instead of showing a diff of nothing.
             </p>
           </div>
         }

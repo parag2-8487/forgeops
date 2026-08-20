@@ -627,6 +627,14 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(agent_public_router)
 
+    # The device READ surface (§3.7, criterion 10 step 4). Pairing was write-only — a POST to mint,
+    # a public POST to exchange, a DELETE to revoke, and no GET — so a paired agent could not be
+    # observed and the /pairing screen had nothing to read. Its own module so the public exemption
+    # above stays visible next to the route that carries it.
+    from .auth.device_read_routes import router as device_read_router
+
+    app.include_router(device_read_router)
+
     # The agent hub (§11.10). One WebSocket route, authenticated inside its handshake by the
     # client certificate and the bearer device token — which is why `check-route-auth.py` reports
     # the path rather than passing it: a WebSocket route has no method set for it to examine.

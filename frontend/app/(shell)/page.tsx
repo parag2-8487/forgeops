@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: FSL-1.1-ALv2
+﻿// SPDX-License-Identifier: FSL-1.1-ALv2
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
@@ -58,10 +58,15 @@ export default function HomePage() {
           What is wired, and what is not
         </h2>
         <p className="text-sm text-muted-foreground">
-          Six routes read from real endpoints and three have no endpoint to read from. The three say
-          so on their own screens rather than showing sample data — the honest gap is the point, and
-          this dashboard used to render a single hardcoded project whose readiness score no backend
-          had ever computed.
+          Seven of the nine routes read from real endpoints. Approvals and generation now have
+          mounted, authenticated backend surfaces — approvals was an unmounted router requiring no
+          authentication, and generation had no HTTP surface at all — but their reviewer and wizard
+          screens are not built, so those two say so rather than showing sample data. Pairing became
+          readable this pass: it had no GET, so a paired agent could not be observed.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          This dashboard used to render a single hardcoded project whose readiness score no backend
+          had ever computed. The honest gap is the point: a visible one can be planned around.
         </p>
         <ul className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
           <ScopeItem href="/projects" live>
@@ -79,9 +84,15 @@ export default function HomePage() {
           <ScopeItem href="/vault" live>
             Vault — secret references, never values
           </ScopeItem>
-          <ScopeItem href="/approvals">Approvals — router exists, not mounted</ScopeItem>
-          <ScopeItem href="/generation">Generation — no HTTP surface yet</ScopeItem>
-          <ScopeItem href="/pairing">Pairing — agent-initiated, no read surface</ScopeItem>
+          <ScopeItem href="/approvals">
+            Approvals — endpoint mounted, reviewer UI not built
+          </ScopeItem>
+          <ScopeItem href="/generation">
+            Generation — SSE endpoint mounted, wizard not wired
+          </ScopeItem>
+          <ScopeItem href="/pairing" live>
+            Pairing — observed device state, heartbeat included
+          </ScopeItem>
         </ul>
       </section>
     </div>
