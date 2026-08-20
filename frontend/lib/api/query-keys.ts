@@ -17,4 +17,22 @@ export const queryKeys = {
     all: ["ai"] as const,
     tiers: () => [...queryKeys.ai.all, "tiers"] as const,
   },
+  projects: {
+    all: ["projects"] as const,
+    detail: (id: string) => [...queryKeys.projects.all, "detail", id] as const,
+    activity: (id: string) => [...queryKeys.projects.all, "activity", id] as const,
+    readiness: (id: string) => [...queryKeys.projects.all, "readiness", id] as const,
+  },
+  audit: {
+    all: ["audit"] as const,
+    events: (limit: number) => [...queryKeys.audit.all, "events", limit] as const,
+  },
+  policies: {
+    all: ["policies"] as const,
+    templates: () => [...queryKeys.policies.all, "templates"] as const,
+  },
+  secrets: {
+    all: ["secrets"] as const,
+    list: () => [...queryKeys.secrets.all, "list"] as const,
+  },
 } as const;

@@ -31,8 +31,9 @@
   --color-sidebar-border: hsl(240 5.9% 90%);
   --color-sidebar-ring: hsl(217.2 91.2% 59.8%);
   --radius: 0.5rem;
-  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-sans:
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+    "Noto Color Emoji";
 }
 
 .dark {

@@ -36,13 +36,30 @@ vi.mock("next/link", () => ({
 }));
 
 describe("AppSidebar", () => {
-  it("renders exactly one navigation link: Home -> /", () => {
+  // Home plus the eight feature modules. These two tests asserted exactly one link, which was
+  // accurate and was the problem: eight feature modules existed and the sidebar reached none of
+  // them. The counts stay exact so a nav entry added without a page behind it fails here.
+  const EXPECTED_LINKS = [
+    ["/", "Home"],
+    ["/projects", "Projects"],
+    ["/readiness", "Readiness"],
+    ["/audit", "Audit"],
+    ["/policies", "Policies"],
+    ["/vault", "Vault"],
+    ["/approvals", "Approvals"],
+    ["/generation", "Generation"],
+    ["/pairing", "Pairing"],
+  ] as const;
+
+  it("renders one navigation link per route, in order", () => {
     render(<AppSidebar />);
     const nav = screen.getByRole("navigation", { name: "Primary" });
     const links = nav.querySelectorAll("a");
-    expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", "/");
-    expect(links[0]).toHaveTextContent("Home");
+    expect(links).toHaveLength(EXPECTED_LINKS.length);
+    EXPECTED_LINKS.forEach(([href, label], i) => {
+      expect(links[i]).toHaveAttribute("href", href);
+      expect(links[i]).toHaveTextContent(label);
+    });
   });
 
   it("has no disabled or placeholder future links", () => {
@@ -50,9 +67,14 @@ describe("AppSidebar", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     const disabledLinks = nav.querySelectorAll('[aria-disabled="true"], [disabled]');
     expect(disabledLinks).toHaveLength(0);
-    // No other links exist at all
+    // Every link points somewhere real: no `#`, and no empty href.
     const allLinks = nav.querySelectorAll("a");
-    expect(allLinks).toHaveLength(1);
+    expect(allLinks).toHaveLength(EXPECTED_LINKS.length);
+    allLinks.forEach((a) => {
+      const href = a.getAttribute("href");
+      expect(href).toBeTruthy();
+      expect(href).not.toBe("#");
+    });
   });
 
   it("sets aria-current=page at / pathname", () => {
