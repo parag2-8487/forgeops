@@ -123,33 +123,154 @@ if ! have_ docker; then
     info_ 'enabling and starting the docker service'
     sudo systemctl enable --now docker || true
   fi
-  if have_ getent && ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
-    warn_ "adding $USER to the 'docker' group"
-    sudo usermod -aG docker "$USER" || true
+  # `id -un` rather than `$USER`: that variable is not set in every non-login shell, and with `set -u`
+  # an unset variable ABORTS the script -- so the install path would crash at the very end, after
+  # having installed Docker, on a machine where the environment simply lacked USER.
+  CURRENT_USER="$(id -un)"
+  if ! id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    warn_ "adding $CURRENT_USER to the 'docker' group"
+    sudo usermod -aG docker "$CURRENT_USER" || true
     warn_ 'You must LOG OUT and BACK IN for that group change to take effect, then rerun this script.'
   fi
 fi
 ok_ "$(docker --version)"
 
 step_ 'Checking the Docker engine is running'
-if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
-  warn_ 'the Docker engine is not responding. Trying to start it.'
-  if have_ systemctl; then
-    sudo systemctl start docker || true
-  elif [ "$(uname -s)" = "Darwin" ] && [ -d /Applications/Docker.app ]; then
-    open -a Docker || true
+
+# The error text is CAPTURED rather than discarded. The first version sent it to /dev/null and then
+# tried `systemctl start docker` for every failure, which is wrong for the most common one: if you are
+# not in the `docker` group the daemon is already running perfectly and starting it again changes
+# nothing, so the script waited three minutes and died advising you to check a service that was fine.
+# Waiting only helps when something is genuinely still coming up.
+docker_err=""
+docker_ok=0
+probe_docker_() {
+  if docker_err="$(docker info --format '{{.ServerVersion}}' 2>&1)"; then
+    docker_ok=1
+  else
+    docker_ok=0
   fi
-  info_ 'waiting for the engine (up to 3 minutes)'
-  engine_up=0
-  for i in $(seq 1 36); do
-    sleep 5
-    if docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then engine_up=1; break; fi
-    [ $((i % 6)) -eq 0 ] && info_ "still waiting ($((i * 5))s)"
-  done
-  [ "$engine_up" -eq 1 ] || die_ 'the Docker engine did not become ready.' \
-    'On Linux:  sudo systemctl status docker' \
-    'On macOS:  open Docker Desktop and read its own error message.' \
-    "If you were just added to the 'docker' group, log out and back in."
+}
+probe_docker_
+
+if [ "$docker_ok" -eq 0 ]; then
+  IS_WSL=0
+  if grep -qi microsoft /proc/version 2>/dev/null; then IS_WSL=1; fi
+
+  case "$docker_err" in
+    # FIRST, because the permission error also contains "connect to the docker API": a group problem
+    # is not fixed by starting a daemon that is already running.
+    *"permission denied"*)
+      # The daemon is reachable but this user may not talk to it. Proving that with sudo turns a
+      # guess into a fact, and separates "Docker is broken" from "your session lacks the group".
+      if sudo -n docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+        warn_ 'the Docker engine IS running, but this user cannot reach its socket.'
+      else
+        warn_ 'cannot reach the Docker socket, and the reason looks like permissions.'
+      fi
+      if id -nG "$(id -un)" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        die_ "you are in the 'docker' group, but THIS SHELL predates that change." \
+          'Group membership is fixed when a session starts, so the current shell never got it.' \
+          'Start a new session and run this script again:' \
+          '    newgrp docker        # then re-run in the shell it opens' \
+          '  or log out and back in, which is cleaner.'
+      else
+        die_ "your user is not in the 'docker' group, so it may not use the Docker socket." \
+          'Add it, then start a NEW session:' \
+          "    sudo usermod -aG docker \"\$USER\"" \
+          '    newgrp docker        # or log out and back in' \
+          'Running this script under sudo instead would work and is not advised: every file it' \
+          'creates, including .env and the CA, would end up owned by root.'
+      fi
+      ;;
+    # The wording differs between Docker versions and transports, so several are matched. Observed on
+    # Docker 29: a missing socket gives "failed to connect to the docker API at unix://...; check if
+    # the path is correct and if the daemon is running: ... no such file or directory", while a
+    # refused TCP endpoint still gives the older "Cannot connect to the Docker daemon ... Is the
+    # docker daemon running?". Matching only the older phrasing sent every modern failure to the
+    # catch-all, which gives worse advice and does not try the right start command.
+    #
+    # This case must stay AFTER the permission case: the permission error also contains "connect to
+    # the docker API", and a group problem is not fixed by starting a daemon that is already running.
+    *"Cannot connect to the Docker daemon"*|*"Is the docker daemon running"* \
+      |*"failed to connect to the docker API"*|*"no such file or directory"* \
+      |*"connection refused"*|*"docker daemon is not running"*)
+      warn_ 'the Docker daemon is not running. Trying to start it.'
+      started=0
+      if [ "$IS_WSL" -eq 1 ] && ! systemctl is-system-running >/dev/null 2>&1; then
+        # WSL does not run systemd unless it has been enabled, so `systemctl start docker` fails with
+        # "System has not been booted with systemd as init system (PID 1)". The SysV path still works.
+        info_ 'this looks like WSL without systemd; using the service command'
+        sudo service docker start >/dev/null 2>&1 && started=1
+      elif have_ systemctl; then
+        if systemctl is-system-running >/dev/null 2>&1 || [ -d /run/systemd/system ]; then
+          sudo systemctl start docker >/dev/null 2>&1 && started=1
+        else
+          info_ 'systemd is present but not the init system; using the service command'
+          sudo service docker start >/dev/null 2>&1 && started=1
+        fi
+      elif have_ service; then
+        sudo service docker start >/dev/null 2>&1 && started=1
+      elif [ "$(uname -s)" = "Darwin" ] && [ -d /Applications/Docker.app ]; then
+        open -a Docker >/dev/null 2>&1 && started=1
+      fi
+      [ "$started" -eq 1 ] || warn_ 'the start command did not succeed; waiting anyway in case it is coming up'
+
+      info_ 'waiting for the engine (up to 3 minutes)'
+      for i in $(seq 1 36); do
+        sleep 5
+        probe_docker_
+        if [ "$docker_ok" -eq 1 ]; then break; fi
+        if [ $((i % 6)) -eq 0 ]; then info_ "still waiting ($((i * 5))s)"; fi
+      done
+      if [ "$docker_ok" -eq 0 ]; then
+        printf '\n'
+        sudo systemctl status docker --no-pager 2>&1 | head -n 15 || true
+        die_ 'the Docker daemon did not come up.' \
+          'Its own status is above. Common causes:' \
+          '  - it is not installed: sudo apt-get install -y docker.io docker-compose-v2' \
+          '  - on WSL, enable systemd or start Docker Desktop on Windows with WSL integration' \
+          '  - it failed to start: journalctl -u docker -n 50 --no-pager'
+      fi
+      ;;
+    # Patterns NARROWED to phrases only this condition produces. A bare `*"not found"*` was
+    # unreachable anyway -- the daemon case above matches "no such file or directory" first -- and the
+    # linter flagged it as dead code (SC2222). Worse than dead: had it been ordered first it would
+    # have swallowed every missing-socket failure and advised about WSL integration for a daemon that
+    # was simply stopped.
+    #
+    # (Note for future edits: a comment line beginning with the linter's name is parsed as a
+    # DIRECTIVE, and a directive is not valid in front of a single case branch. Writing one here made
+    # the whole case expression unparseable while bash itself ran it happily.)
+    *"could not be found in this WSL"*|*"command not found"*|*"executable file not found"*)
+      die_ 'the docker command is not usable in this environment.' \
+        "The engine reported: $docker_err" \
+        'On WSL this usually means Docker Desktop is running on Windows but WSL integration is off' \
+        'for this distribution: Docker Desktop > Settings > Resources > WSL integration.' \
+        'Otherwise install Docker natively:  sudo apt-get install -y docker.io docker-compose-v2'
+      ;;
+    *)
+      warn_ 'the Docker engine did not answer. Trying to start it.'
+      if have_ systemctl && { systemctl is-system-running >/dev/null 2>&1 || [ -d /run/systemd/system ]; }; then
+        sudo systemctl start docker >/dev/null 2>&1 || true
+      elif have_ service; then
+        sudo service docker start >/dev/null 2>&1 || true
+      fi
+      info_ 'waiting for the engine (up to 3 minutes)'
+      for i in $(seq 1 36); do
+        sleep 5
+        probe_docker_
+        if [ "$docker_ok" -eq 1 ]; then break; fi
+        if [ $((i % 6)) -eq 0 ]; then info_ "still waiting ($((i * 5))s)"; fi
+      done
+      # The captured message is REPORTED rather than replaced with generic advice. A launcher that
+      # hides what the tool said makes the next person guess.
+      [ "$docker_ok" -eq 1 ] || die_ 'the Docker engine did not become ready.' \
+        "It reported: $docker_err" \
+        '  sudo systemctl status docker' \
+        '  journalctl -u docker -n 50 --no-pager'
+      ;;
+  esac
 fi
 ok_ "Docker engine $(docker info --format '{{.ServerVersion}}')"
 
@@ -157,6 +278,33 @@ docker compose version --short >/dev/null 2>&1 \
   || die_ 'Docker Compose v2 is not available: "docker compose" failed.' \
        'This project needs the Compose V2 plugin, not the older docker-compose binary.'
 ok_ "Docker Compose v$(docker compose version --short)"
+
+# ─── curl ────────────────────────────────────────────────────────────────────────────────────────
+
+step_ 'Checking curl'
+
+# curl is used three times later: waiting for Authentik's authorization flow, reading /health/ready,
+# and probing the frontend. It is NOT guaranteed on Ubuntu -- server and cloud images routinely ship
+# without it -- and its absence produces thoroughly misleading failures rather than an obvious one.
+# Without this check, a missing curl makes the flow-wait loop fail on all sixty attempts and then
+# report "Authentik never published its authorization flow", sending you to inspect an identity
+# provider that was working the whole time.
+if have_ curl; then
+  ok_ "$(curl --version | head -n 1)"
+else
+  if [ "$SKIP_INSTALL" -eq 1 ]; then
+    die_ 'curl is not installed, and --skip-install was given.' \
+      'Install it and retry:  sudo apt-get install -y curl'
+  fi
+  warn_ 'curl is not installed. Installing it.'
+  if have_ apt-get; then sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq curl >/dev/null 2>&1
+  elif have_ dnf; then sudo dnf install -y -q curl >/dev/null 2>&1
+  elif have_ pacman; then sudo pacman -Sy --noconfirm curl >/dev/null 2>&1
+  elif have_ brew; then brew install curl >/dev/null 2>&1
+  else die_ 'curl is missing and no supported package manager was found.'; fi
+  have_ curl || die_ 'curl could not be installed.' 'Install it by hand:  sudo apt-get install -y curl'
+  ok_ 'curl installed'
+fi
 
 # ─── Python ──────────────────────────────────────────────────────────────────────────────────────
 
