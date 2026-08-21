@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { GeneratorWizard } from "@/features/generation/GeneratorWizard";
-import { isProjectId, ProjectIdField } from "@/components/ui/project-id-field";
+import { ProjectPicker } from "@/components/ui/project-picker";
 
 export default function GenerationPage() {
   const [projectId, setProjectId] = useState("");
@@ -19,9 +19,9 @@ export default function GenerationPage() {
         </p>
       </div>
 
-      <ProjectIdField value={projectId} onChange={setProjectId} />
+      <ProjectPicker value={projectId} onChange={setProjectId} id="generation-project" />
 
-      {isProjectId(projectId) ? (
+      {projectId !== "" ? (
         <GeneratorWizard projectId={projectId} />
       ) : (
         <p className="text-sm text-muted-foreground">

@@ -140,3 +140,23 @@ docs/understand-anything/.ua/*
 # `.log` files the comprehension artifact writes under `.ua/intermediate/` are already covered
 # by the rule above; this one catches them a second time, harmlessly.
 *.log
+
+# Personal presentation notes. `PRESENTATION-GUIDE.md` is a demo script and speaking crib
+# written for one person on one day: it holds a walkthrough order, phrasing to use out loud,
+# anticipated questions, and a frank list of gaps to disclose. None of that describes the
+# system, so it does not belong beside `README.md`, `PROGRESS.md` or `docs/` — and unlike
+# those files nothing verifies it, so a committed copy would become a fourth record that
+# drifts and then contradicts the three that are gated.
+#
+# It also names the machine-local setup traps (`make` needs Git Bash, the `LLM_KEY_*` values
+# in `.env` are placeholders), which are true of one workstation and would mislead anyone
+# else who cloned the repository and read them as project documentation.
+PRESENTATION-GUIDE.md
+
+# Local development credentials. `credentials.md` lists the sign-in accounts, the Authentik admin and
+# the infrastructure addresses for a stack that runs on one machine behind 127.0.0.1. None of it is a
+# production secret, and all of it is recreatable from `make init-env` + `provision-authentik.py`,
+# which is exactly why it should not be tracked: a committed credential file is a credential file
+# whether or not the values matter, and the next person to add a real value to it will not notice
+# that the rule changed.
+credentials.md

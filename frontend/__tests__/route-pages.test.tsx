@@ -115,6 +115,7 @@ afterEach(() => cleanup());
 const LIVE_PAGES = [
   {
     name: "Home",
+    usesPicker: false,
     Page: HomePage,
     heading: "ForgeOps Dashboard",
     label: "platform health",
@@ -125,6 +126,7 @@ const LIVE_PAGES = [
   },
   {
     name: "Projects",
+    usesPicker: false,
     Page: ProjectsPage,
     heading: "Projects",
     label: "projects",
@@ -160,6 +162,8 @@ const LIVE_PAGES = [
   },
   {
     name: "Readiness",
+    // Picks a project from `GET /projects` before its own request, so the harness must answer both.
+    usesPicker: true,
     Page: ReadinessPage,
     heading: "Deployment readiness",
     label: "readiness report",
@@ -184,6 +188,7 @@ const LIVE_PAGES = [
   },
   {
     name: "Audit",
+    usesPicker: false,
     Page: AuditPage,
     heading: "Audit log",
     label: "audit events",
@@ -208,6 +213,7 @@ const LIVE_PAGES = [
   },
   {
     name: "Policies",
+    usesPicker: false,
     Page: PoliciesPage,
     heading: "Policies",
     label: "policy templates",
@@ -226,6 +232,8 @@ const LIVE_PAGES = [
   },
   {
     name: "Vault",
+    // Picks a project from `GET /projects` before its own request, so the harness must answer both.
+    usesPicker: true,
     Page: VaultPage,
     heading: "Vault",
     label: "secret references",
@@ -244,6 +252,7 @@ const LIVE_PAGES = [
   },
   {
     name: "Pairing",
+    usesPicker: false,
     Page: PairingPage,
     heading: "Agent pairing",
     label: "agent devices",
@@ -276,31 +285,68 @@ const LIVE_PAGES = [
   },
 ] as const;
 
+/**
+ * The project list, always served, so a page driven by `ProjectPicker` can get past choosing one.
+ *
+ * `/readiness`, `/vault` and `/generation` now pick from real projects instead of defaulting to an
+ * invented UUID. That removed a defect -- `/readiness` opened on a 403 every time, because the id it
+ * defaulted to is never created -- but it means those pages make TWO requests, and a test that made
+ * the first one fail would be testing the picker rather than the panel.
+ *
+ * So the list is answered separately from the request under test, and the panel's own outcome is
+ * still whatever the test asked for.
+ */
+const PROJECT_LIST = {
+  projects: [{ id: "11111111-1111-1111-1111-111111111111", name: "picker-fixture" }],
+  next_cursor: null,
+};
+
+/**
+ * Serve the project list, and route everything else to `handler`.
+ *
+ * Scoped by `usesPicker` rather than applied everywhere, because `/projects` fetches the project list
+ * AS its own subject -- intercepting there would answer the request under test with a fixture and the
+ * page's real payload would never arrive.
+ */
+function serving(handler: (path: string) => Promise<unknown>, usesPicker = false) {
+  if (!usesPicker) return handler;
+  return (path: string) =>
+    path.startsWith("/projects?limit=") ? Promise.resolve(PROJECT_LIST) : handler(path);
+}
+
 describe.each(LIVE_PAGES)(
   "$name route",
-  ({ name, Page, heading, label, respond, shows, empty, emptyText }) => {
+  ({ name, Page, heading, label, respond, shows, empty, emptyText, usesPicker }) => {
     it("renders exactly one h1, naming the screen", async () => {
-      mockGet.mockImplementation(() => pending());
+      mockGet.mockImplementation(serving(() => pending(), usesPicker));
       renderPage(<Page />);
       const h1s = screen.getAllByRole("heading", { level: 1 });
       expect(h1s).toHaveLength(1);
       expect(h1s[0]).toHaveTextContent(heading);
     });
 
-    it("announces a polite loading status while the request is in flight", () => {
-      mockGet.mockImplementation(() => pending());
+    it("announces a polite loading status while the request is in flight", async () => {
+      mockGet.mockImplementation(serving(() => pending(), usesPicker));
       renderPage(<Page />);
+      // Awaited rather than read synchronously. A picker-driven page resolves its project list
+      // first, so at the instant of render the only status is the picker's own -- a synchronous
+      // assertion would be testing the wrong element and would pass or fail on timing.
+      await waitFor(() => {
+        const statuses = screen.getAllByRole("status");
+        expect(
+          statuses.some((n) => new RegExp(`Loading ${label}`, "i").test(n.textContent ?? "")),
+        ).toBe(true);
+      });
       // `role=status` with aria-live=polite is the accessible contract, not the text.
       const statuses = screen.getAllByRole("status");
       expect(statuses.length).toBeGreaterThan(0);
       expect(statuses[0]).toHaveAttribute("aria-live", "polite");
-      expect(
-        statuses.some((n) => new RegExp(`Loading ${label}`, "i").test(n.textContent ?? "")),
-      ).toBe(true);
     });
 
     it("renders the payload it was given on success", async () => {
-      mockGet.mockImplementation((path: string) => Promise.resolve(respond(path)));
+      mockGet.mockImplementation(
+        serving((path: string) => Promise.resolve(respond(path)), usesPicker),
+      );
       renderPage(<Page />);
       for (const text of shows) {
         // findAllByText, because a real payload legitimately appears in more than one place —
@@ -312,7 +358,9 @@ describe.each(LIVE_PAGES)(
     });
 
     it("reports a 401 as an authentication problem rather than as a crash", async () => {
-      mockGet.mockRejectedValue(problem(401, "Unauthenticated"));
+      mockGet.mockImplementation(
+        serving(() => Promise.reject(problem(401, "Unauthenticated")), usesPicker),
+      );
       renderPage(<Page />);
       expect(
         (await screen.findAllByText(new RegExp(`Not authenticated to read ${label}`, "i"))).length,
@@ -322,7 +370,12 @@ describe.each(LIVE_PAGES)(
     });
 
     it("renders a 500 as an alert carrying the server's own problem details", async () => {
-      mockGet.mockRejectedValue(problem(500, "Internal Server Error", "the database is on fire"));
+      mockGet.mockImplementation(
+        serving(
+          () => Promise.reject(problem(500, "Internal Server Error", "the database is on fire")),
+          usesPicker,
+        ),
+      );
       renderPage(<Page />);
       // A page that fans out to several endpoints raises one alert per failed query, so assert
       // that at least one carries the server's words rather than that exactly one exists.
@@ -336,7 +389,9 @@ describe.each(LIVE_PAGES)(
     });
 
     it("requests through the api client exactly once per query", async () => {
-      mockGet.mockImplementation((path: string) => Promise.resolve(respond(path)));
+      mockGet.mockImplementation(
+        serving((path: string) => Promise.resolve(respond(path)), usesPicker),
+      );
       renderPage(<Page />);
       await waitFor(() => expect(mockGet).toHaveBeenCalled());
       // Every path requested is relative and version-less: `lib/api` owns the prefix.
@@ -348,7 +403,7 @@ describe.each(LIVE_PAGES)(
 
     if (empty !== null) {
       it("renders a specific empty message rather than an error when the collection is empty", async () => {
-        mockGet.mockResolvedValue(empty);
+        mockGet.mockImplementation(serving(() => Promise.resolve(empty), usesPicker));
         renderPage(<Page />);
         expect(await screen.findByText(emptyText!)).toBeInTheDocument();
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -578,26 +633,36 @@ describe("Generation gates the wizard on a usable project id", () => {
     expect(h1s[0]).toHaveTextContent("Generation");
   });
 
-  it("does not offer the generator before a valid project id is entered", () => {
+  it("does not offer the generator when the tenant has no projects", async () => {
+    mockGet.mockImplementation(() => Promise.resolve({ projects: [], next_cursor: null }));
     renderPage(<GenerationPage />);
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
     // A button that cannot succeed is worse than one that is not there: the run has to be
     // attributed to a project to be submitted as a change set.
     expect(screen.queryByRole("button", { name: /generate artifacts/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/generator is not offered before then/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no projects yet/i)).toBeInTheDocument();
   });
 
-  it("offers it once the id is a real UUID", async () => {
-    renderPage(<GenerationPage />);
-    await userEvent.type(
-      screen.getByLabelText(/project id/i),
-      "00000000-0000-0000-0000-000000000001",
+  it("offers the generator once a real project is selected", async () => {
+    // Chosen from `GET /projects`, not typed. The field used to be a free-text UUID box defaulting
+    // to an invented id, which is why `/readiness` opened on a 403 every time.
+    mockGet.mockImplementation((path: string) =>
+      path.startsWith("/projects?limit=")
+        ? Promise.resolve({
+            projects: [{ id: "11111111-1111-1111-1111-111111111111", name: "picker-fixture" }],
+            next_cursor: null,
+          })
+        : Promise.reject(new Error(`unexpected GET ${path}`)),
     );
-    expect(screen.getByRole("button", { name: /generate artifacts/i })).toBeInTheDocument();
+    renderPage(<GenerationPage />);
+    expect(await screen.findByRole("button", { name: /generate artifacts/i })).toBeInTheDocument();
   });
 
-  it("makes no request merely from being rendered", () => {
+  it("submits nothing merely from being rendered", async () => {
+    mockGet.mockImplementation(() => Promise.resolve({ projects: [], next_cursor: null }));
     renderPage(<GenerationPage />);
-    expect(mockGet).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    // Reading the project list is expected; POSTing a run is not.
     expect(mockPost).not.toHaveBeenCalled();
   });
 });
@@ -625,34 +690,69 @@ describe("every route marks its own nav item current", () => {
  * state the query key does not depend on: the page would look interactive and keep showing the
  * first project.
  */
-describe("the project-id field drives the readiness request", () => {
-  it("refetches against a newly typed id", async () => {
-    mockGet.mockResolvedValue({
-      project_id: "x",
-      score: 1,
-      level: "Low",
-      summary_report: "s",
-      recommendations: [],
-      categories: { documentation_score: 1 },
+describe("the project picker drives the readiness request", () => {
+  const PROJECTS = {
+    projects: [
+      { id: "11111111-1111-1111-1111-111111111111", name: "first" },
+      { id: "22222222-2222-2222-2222-222222222222", name: "second" },
+    ],
+    next_cursor: null,
+  };
+
+  function serveReadiness() {
+    mockGet.mockImplementation((path: string) => {
+      if (path.startsWith("/projects?limit=")) return Promise.resolve(PROJECTS);
+      return Promise.resolve({
+        project_id: "x",
+        score: 1,
+        level: "Low",
+        summary_report: "s",
+        recommendations: [],
+        categories: { documentation_score: 1 },
+      });
     });
+  }
+
+  it("requests the first real project rather than an invented id", async () => {
+    serveReadiness();
     renderPage(<ReadinessPage />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
+    // THE DEFECT THIS REPLACES: the field defaulted to `00000000-…-0001`, which is never created, so
+    // the screen opened on a 403 every single time. The response was correct -- §4.2 makes "may not
+    // read" and "does not exist" identical -- but a default that guarantees it teaches the operator
+    // to ignore the error rather than read it.
+    await waitFor(() => {
+      const requested = mockGet.mock.calls.map((c) => String(c[0]));
+      expect(requested.some((p) => p.includes("11111111-1111-1111-1111-111111111111"))).toBe(true);
+    });
+    const requested = mockGet.mock.calls.map((c) => String(c[0]));
+    expect(requested.some((p) => p.includes("00000000-0000-0000-0000-000000000001"))).toBe(false);
+  });
 
-    const field = screen.getByLabelText("Project ID");
-    expect(field).toHaveAttribute("id", "readiness-project-id");
+  it("refetches when a different project is selected", async () => {
+    serveReadiness();
+    renderPage(<ReadinessPage />);
+    const select = await screen.findByLabelText("Project");
+    expect(select).toHaveAttribute("id", "readiness-project");
 
-    const user = userEvent.setup();
-    await user.clear(field);
-    await user.type(field, "11111111-1111-1111-1111-111111111111");
+    await userEvent.selectOptions(select, "22222222-2222-2222-2222-222222222222");
 
     await waitFor(() => {
       const requested = mockGet.mock.calls.map((c) => String(c[0]));
       expect(
         requested.some(
-          (p) => p.includes("11111111-1111-1111-1111-111111111111") && /\/readiness$/.test(p),
+          (p) => p.includes("22222222-2222-2222-2222-222222222222") && /\/readiness$/.test(p),
         ),
       ).toBe(true);
     });
+  });
+
+  it("offers no id box when the tenant has no projects", async () => {
+    mockGet.mockImplementation(() => Promise.resolve({ projects: [], next_cursor: null }));
+    renderPage(<ReadinessPage />);
+    expect(await screen.findByText(/no projects yet/i)).toBeInTheDocument();
+    // Deliberately no free-text field: typing an id that does not exist produces a 403 that reads
+    // as a permissions fault.
+    expect(document.querySelector("input")).toBeNull();
   });
 });
 
@@ -666,14 +766,22 @@ describe("Readiness category breakdown", () => {
   };
 
   it("renders one bar per category the engine computed, labelled readably", async () => {
-    mockGet.mockResolvedValue({
-      project_id: "x",
-      score: 70,
-      level: "Adequate",
-      summary_report: "s",
-      recommendations: [],
-      categories,
-    });
+    // The project list first: this screen picks a real project before scoring one.
+    mockGet.mockImplementation((path: string) =>
+      path.startsWith("/projects?limit=")
+        ? Promise.resolve({
+            projects: [{ id: "11111111-1111-1111-1111-111111111111", name: "picker-fixture" }],
+            next_cursor: null,
+          })
+        : Promise.resolve({
+            project_id: "x",
+            score: 70,
+            level: "Adequate",
+            summary_report: "s",
+            recommendations: [],
+            categories,
+          }),
+    );
     renderPage(<ReadinessPage />);
     // `documentation_score` becomes `Documentation`. The chart used to render a single bar called
     // "Overall", because the breakdown was computed server-side and dropped by the response model.
@@ -690,14 +798,22 @@ describe("Readiness category breakdown", () => {
   });
 
   it("renders no category bars when the engine reported none, rather than inventing five", async () => {
-    mockGet.mockResolvedValue({
-      project_id: "x",
-      score: 0,
-      level: "Blocked",
-      summary_report: "s",
-      recommendations: [],
-      categories: {},
-    });
+    // The project list first: this screen picks a real project before scoring one.
+    mockGet.mockImplementation((path: string) =>
+      path.startsWith("/projects?limit=")
+        ? Promise.resolve({
+            projects: [{ id: "11111111-1111-1111-1111-111111111111", name: "picker-fixture" }],
+            next_cursor: null,
+          })
+        : Promise.resolve({
+            project_id: "x",
+            score: 0,
+            level: "Blocked",
+            summary_report: "s",
+            recommendations: [],
+            categories: {},
+          }),
+    );
     renderPage(<ReadinessPage />);
     expect((await screen.findAllByText(/Blocked/i)).length).toBeGreaterThan(0);
     expect(screen.queryByText("Documentation")).not.toBeInTheDocument();

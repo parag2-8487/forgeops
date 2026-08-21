@@ -50,6 +50,8 @@ export const queryKeys = {
   },
   secrets: {
     all: ["secrets"] as const,
-    list: () => [...queryKeys.secrets.all, "list"] as const,
+    // Scoped to a project because `GET /api/v1/secrets` REQUIRES `project_id`; a key that ignored it
+    // would serve one project's references from another's cache entry.
+    list: (projectId: string) => [...queryKeys.secrets.all, "list", projectId] as const,
   },
 } as const;

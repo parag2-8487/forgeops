@@ -9,6 +9,7 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 let mockPathname = "/";
 vi.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
 
 // Mock next-themes

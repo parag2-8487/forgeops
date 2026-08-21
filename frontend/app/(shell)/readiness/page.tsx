@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
-import { DEFAULT_PROJECT_ID, ProjectIdField } from "@/components/ui/project-id-field";
+import { ProjectPicker } from "@/components/ui/project-picker";
 import { ReadinessRadarChart } from "@/features/readiness/RadarChart";
 
 /** Mirrors `ReadinessReportResponse` in `backend/src/projects/routes.py`. */
@@ -33,11 +33,15 @@ function categoryLabel(key: string): string {
 }
 
 export default function ReadinessPage() {
-  const [projectId, setProjectId] = useState(DEFAULT_PROJECT_ID);
+  const [projectId, setProjectId] = useState("");
 
   const readiness = useQuery({
     queryKey: queryKeys.projects.readiness(projectId),
     queryFn: () => api.get<ReadinessReport>(`/projects/${projectId}/readiness`),
+    // Not fired without a project. It used to default to an invented id that is never created, so
+    // this screen opened on a 403 every time -- a correct response (§4.2 makes "may not read" and
+    // "does not exist" identical) to a request that should never have been made.
+    enabled: projectId !== "",
     retry: false,
   });
 
@@ -51,7 +55,7 @@ export default function ReadinessPage() {
         </p>
       </div>
 
-      <ProjectIdField value={projectId} onChange={setProjectId} id="readiness-project-id" />
+      <ProjectPicker value={projectId} onChange={setProjectId} id="readiness-project" />
 
       <AsyncState
         isPending={readiness.isPending}
