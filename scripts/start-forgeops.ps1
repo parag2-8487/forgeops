@@ -438,11 +438,19 @@ if (Test-PythonHasProvisioningDeps -PythonExe $BackendVenvPython) {
     Write-Ok 'using the existing launcher virtual environment'
 } else {
     $basePython = $null
-    foreach ($candidate in @('py -3.13', 'py -3', 'python', 'python3')) {
+    <#
+        3.13 EXACTLY, not "3.11 or newer". `backend/pyproject.toml` declares
+        `requires-python = ">=3.13,<3.14"` and `requirements-dev.lock` is pinned to match, so an
+        older interpreter does not fail at import time -- it fails during `pip install` with
+        "Ignoring <package>: markers ... require a different python version", which reads like a
+        broken lock file rather than a wrong interpreter. Checking the version here says it plainly.
+    #>
+    foreach ($candidate in @('py -3.13', 'python3.13', 'python', 'python3')) {
         $probe = Invoke-Native -Command ("{0} -c ""import sys; print(sys.version_info[0], sys.version_info[1])""" -f $candidate) -Quiet
         if ($probe.Ok) {
             $parts = $probe.Lines[0].Trim() -split '\s+'
-            if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 11) { $basePython = $candidate; break }
+            if ([int]$parts[0] -eq 3 -and [int]$parts[1] -eq 13) { $basePython = $candidate; break }
+            Write-Info ("{0} is {1}.{2}; this project needs 3.13" -f $candidate, $parts[0], $parts[1])
         }
     }
 

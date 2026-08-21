@@ -331,33 +331,95 @@ if py_has_deps_ "$BACKEND_PY"; then
 elif py_has_deps_ "$VENV_PY"; then
   LAUNCHER_PY="$VENV_PY"; ok_ 'using the existing launcher virtual environment'
 else
+  <<'NOTE' true
+THE VERSION IS 3.13 EXACTLY, and this must not be relaxed to "3.11 or newer".
+
+`backend/pyproject.toml` declares `requires-python = ">=3.13,<3.14"`, and every entry in
+`requirements-dev.lock` is pinned accordingly. Ubuntu 24.04 ships Python 3.12 as `python3`, so
+accepting ">= 3.11" built a 3.12 virtual environment and pip then refused the whole lock file with
+
+    Ignoring <package>: markers ... require a different python version
+    ERROR: Could not find a version that satisfies the requirement ...
+
+which reads like a broken lock file and is really a wrong interpreter. Detecting the version here
+turns that into one clear sentence, and pinning to 3.13 is what the project already declares.
+NOTE
   BASE_PY=''
-  for cand in python3.13 python3.12 python3.11 python3; do
-    if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  for cand in python3.13 python3; do
+    if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
       BASE_PY="$cand"; break
     fi
   done
+
   if [ -z "$BASE_PY" ]; then
-    [ "$SKIP_INSTALL" -eq 0 ] || die_ 'no suitable Python was found, and --skip-install was given.'
-    warn_ 'installing Python 3'
-    if have_ apt-get; then sudo apt-get update -qq && sudo apt-get install -y -qq python3 python3-venv python3-pip
-    elif have_ dnf; then sudo dnf install -y -q python3 python3-pip
-    elif have_ pacman; then sudo pacman -Sy --noconfirm python python-pip
-    elif have_ brew; then brew install python@3.13
-    else die_ 'Python is missing and no supported package manager was found.'; fi
-    for cand in python3.13 python3; do have_ "$cand" && BASE_PY="$cand" && break; done
-    [ -n "$BASE_PY" ] || die_ 'Python was installed but is not on PATH.'
+    # Report what IS present, so the reason is visible rather than "no suitable Python".
+    found=''
+    for cand in python3.13 python3.12 python3.11 python3; do
+      if have_ "$cand"; then
+        found="$found $cand=$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
+      fi
+    done
+    [ -n "$found" ] && info_ "present but not usable:$found (this project needs 3.13)"
+
+    if [ "$SKIP_INSTALL" -eq 1 ]; then
+      die_ 'Python 3.13 was not found, and --skip-install was given.' \
+        "requires-python is \">=3.13,<3.14\", so 3.12 will not do.$found" \
+        'On Ubuntu 24.04, 3.13 is not in the default archive; the deadsnakes PPA has it:' \
+        '    sudo add-apt-repository -y ppa:deadsnakes/ppa' \
+        '    sudo apt-get install -y python3.13 python3.13-venv'
+    fi
+
+    warn_ 'Python 3.13 is not installed. Installing it.'
+    if have_ apt-get; then
+      # 3.13 is absent from the default archive on Ubuntu 24.04 and earlier, so the PPA is added.
+      # `python3.13-venv` is a SEPARATE package on Debian and Ubuntu, and without it `-m venv` fails
+      # with "ensurepip is not available" -- a message that sends people looking for a pip problem.
+      sudo apt-get update -qq >/dev/null 2>&1 || true
+      sudo apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
+      sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 \
+        || warn_ 'could not add the deadsnakes PPA; trying the default archive'
+      sudo apt-get update -qq >/dev/null 2>&1 || true
+      sudo apt-get install -y -qq python3.13 python3.13-venv python3.13-dev >/dev/null 2>&1 \
+        || die_ 'could not install Python 3.13.' \
+             'Try it by hand so the package manager can explain itself:' \
+             '    sudo add-apt-repository -y ppa:deadsnakes/ppa' \
+             '    sudo apt-get update && sudo apt-get install -y python3.13 python3.13-venv'
+    elif have_ dnf; then
+      sudo dnf install -y -q python3.13 >/dev/null 2>&1 \
+        || die_ 'could not install Python 3.13 with dnf.'
+    elif have_ pacman; then
+      sudo pacman -Sy --noconfirm python >/dev/null 2>&1 \
+        || die_ 'could not install Python with pacman.'
+    elif have_ brew; then
+      brew install python@3.13 >/dev/null 2>&1 || die_ 'could not install Python 3.13 with brew.'
+    else
+      die_ 'Python 3.13 is missing and no supported package manager was found.' \
+        'Install it from https://www.python.org/downloads/ and retry.'
+    fi
+
+    for cand in python3.13 python3; do
+      if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
+        BASE_PY="$cand"; break
+      fi
+    done
+    [ -n "$BASE_PY" ] || die_ 'Python 3.13 was installed but is not on PATH as a 3.13 interpreter.' \
+      'Open a new shell and retry, or check:  python3.13 --version'
+    ok_ "Python $("$BASE_PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') installed"
   fi
 
   info_ "creating a virtual environment with $BASE_PY"
   mkdir -p "$(dirname "$VENV_DIR")"
   "$BASE_PY" -m venv "$VENV_DIR" || die_ 'could not create the virtual environment.' \
-    'On Debian and Ubuntu this usually means the venv module is missing:' \
-    '    sudo apt-get install -y python3-venv'
+    'On Debian and Ubuntu the venv module is packaged separately from the interpreter:' \
+    "    sudo apt-get install -y ${BASE_PY}-venv"
   info_ 'installing the pinned dependencies (hash-enforced; a few minutes on a first run)'
   "$VENV_PY" -m pip install --quiet --upgrade pip || warn_ 'could not upgrade pip; continuing'
-  "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock" \
-    || die_ 'the pinned dependency installation failed.' 'This step needs internet access.'
+  if ! "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock"; then
+    die_ 'the pinned dependency installation failed.' \
+      "Interpreter: $("$VENV_PY" -c 'import sys; print(sys.version)' 2>&1 | head -n 1)" \
+      'If the output mentions "require a different python version", the interpreter is wrong:' \
+      'this project needs 3.13 exactly. Otherwise the step needs internet access.'
+  fi
   py_has_deps_ "$VENV_PY" || die_ 'the virtual environment is missing the modules provisioning needs.'
   LAUNCHER_PY="$VENV_PY"
   ok_ 'launcher virtual environment ready'
