@@ -997,15 +997,42 @@ try {
 if ($loginOk) {
     Write-Ok ('sign-in starts: ' + $loginDetail)
     if ($loginTarget -match 'authentik-server') {
-        Write-Warn2 'the redirect names the INTERNAL service name; a browser cannot resolve it. Check OIDC_PUBLIC_BASE_URL.'
+        Stop-WithAdvice -Problem 'the sign-in redirect names the INTERNAL service name, which no browser can resolve.' -Advice @(
+            ("It points at: " + $loginTarget),
+            ("OIDC_PUBLIC_BASE_URL must be the address a BROWSER uses, e.g. http://localhost:{0}" -f $authentikPort)
+        )
+    }
+    # The target must also actually serve. A correct-looking URL that refuses the connection gives the
+    # user a browser error page, indistinguishable from the application being down.
+    try {
+        $idp = Invoke-WebRequest -Uri $loginTarget -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        Write-Ok ("the identity provider answers there (HTTP {0})" -f [int]$idp.StatusCode)
+    } catch {
+        $r = $null
+        if ($_.Exception.Response) { $r = $_.Exception.Response }
+        if ($r) {
+            Write-Ok ("the identity provider answers there (HTTP {0})" -f [int]$r.StatusCode)
+        } else {
+            Stop-WithAdvice -Problem 'the identity provider did not answer on the URL the browser will be sent to.' -Advice @(
+                ("Tried: " + $loginTarget),
+                'The redirect is right but nothing is listening, so the login form cannot load.'
+            )
+        }
     }
 } else {
-    Write-Warn2 ('sign-in did NOT start (' + $loginDetail + ')')
-    Write-Warn2 'The stack is up but nobody can log in. Two causes seen in practice:'
-    Write-Warn2 '  - the backend holds an older environment than .env, because Compose reads env_file'
-    Write-Warn2 '    only when it CREATES a container. Re-run this script; it replaces them.'
-    Write-Warn2 '  - E2E_OIDC_ISSUER in .env points at localhost, which the overlay uses as the'
-    Write-Warn2 '    backend issuer. Inside a container localhost is the container.'
+    # FATAL, not a warning. "The application started" and "nobody can sign in" must not both be true
+    # at the end of a successful run -- that is the exact false green this check exists to prevent.
+    $tail = (Invoke-Compose -Arguments 'logs --no-color --tail 20 backend' -Quiet).Output
+    Stop-WithAdvice -Problem ('sign-in did not start (' + $loginDetail + ').') -Advice @(
+        'The stack is up, but nobody can log in. Two causes seen in practice:',
+        '  - E2E_OIDC_ISSUER in .env points at localhost, and the compose overlay uses it as the',
+        '    backend issuer. Inside a container localhost is the container itself.',
+        '  - the backend holds an older environment than .env, because Compose reads env_file only',
+        '    when it CREATES a container. Re-running this script replaces them.',
+        '',
+        'The last 20 lines of the backend log:',
+        $tail
+    )
 }
 
 Write-Step 'Checking the frontend answers'

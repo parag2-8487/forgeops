@@ -529,6 +529,18 @@ else
   ok_ '.env already exists; existing secrets will be kept'
 fi
 
+# Taken BEFORE any edit, and compared just before the application containers start. See the note
+# there: Compose bakes env_file values in at container creation, so a changed .env means the
+# containers must be REPLACED rather than merely started.
+env_hash_() {
+  [ -f "$ENV_PATH" ] || { printf 'absent'; return 0; }
+  if have_ sha256sum; then sha256sum "$ENV_PATH" | cut -d' ' -f1
+  elif have_ shasum; then shasum -a 256 "$ENV_PATH" | cut -d' ' -f1
+  else wc -c < "$ENV_PATH" | tr -d ' '   # last resort: size alone still detects the common case
+  fi
+}
+ENV_HASH_BEFORE="$(env_hash_)"
+
 env_set_() {
   # Rewrite the key in place so its surrounding comments survive; append when absent. `.env.example`
   # is a document as much as a template, and regenerating it from a list would throw that away.
@@ -704,12 +716,29 @@ PROV_OUT="$(
 # The provisioner prints KEY=VALUE lines. The ISSUER it prints is the localhost URL it was given, and
 # that is NOT what the backend should use -- the backend reaches Authentik over the compose network.
 # Taking the printed issuer instead is the exact mistake that makes token verification fail.
+# BOTH ISSUER VARIABLES ARE OVERRIDDEN, and missing the second one is what broke sign-in.
+#
+# `docker-compose.e2e.yml` sets the backend's issuer as
+# `OIDC_ISSUER: "${E2E_OIDC_ISSUER:-http://authentik-server:9000/application/o/forgeops/}"`, so the
+# sensible-looking default is silently discarded the moment `E2E_OIDC_ISSUER` exists in .env. The
+# provisioner PRINTS that variable as the localhost URL it was handed. Skipping only `OIDC_ISSUER`
+# therefore left the backend resolving `localhost:19000`, which inside a container is the container --
+# discovery could never succeed, and every sign-in answered 503 "The OIDC discovery document could not
+# be read" on a stack whose nine containers were all healthy.
+#
+# The browser-facing value goes to the PUBLIC variables, the container-facing value to the issuers.
+ISSUER_FOR_BACKEND='http://authentik-server:9000/application/o/forgeops/'
+ISSUER_FOR_BROWSER="http://localhost:${AUTHENTIK_PORT_V}"
 while IFS= read -r line; do
   case "$line" in
-    OIDC_ISSUER=*) continue ;;
+    OIDC_ISSUER=*|E2E_OIDC_ISSUER=*) continue ;;
     [A-Z]*=*) env_set_ "${line%%=*}" "${line#*=}" ;;
   esac
 done <<< "$PROV_OUT"
+env_set_ OIDC_ISSUER              "$ISSUER_FOR_BACKEND"
+env_set_ E2E_OIDC_ISSUER          "$ISSUER_FOR_BACKEND"
+env_set_ OIDC_PUBLIC_BASE_URL     "$ISSUER_FOR_BROWSER"
+env_set_ E2E_OIDC_PUBLIC_BASE_URL "$ISSUER_FOR_BROWSER"
 ok_ 'the identity provider is provisioned'
 
 # ─── Migrations ──────────────────────────────────────────────────────────────────────────────────
@@ -722,7 +751,20 @@ ok_ 'the schema is at head'
 # ─── Application ─────────────────────────────────────────────────────────────────────────────────
 
 step_ 'Starting the backend, frontend and agent'
-dc up -d --wait backend frontend agent || warn_ 'compose reported a problem; checking readiness directly'
+
+# COMPOSE READS `env_file` ONLY WHEN IT CREATES A CONTAINER, so `up -d --wait` on one that is already
+# running leaves the OLD environment in place and a corrected .env has no effect at all. The hash is
+# taken before the edits above and compared here. A cold machine never sees this; it bites on the
+# second run, after something was reconfigured, which is the harder case to diagnose.
+ENV_HASH_AFTER="$(env_hash_)"
+RECREATE=''
+if [ "$ENV_HASH_AFTER" != "$ENV_HASH_BEFORE" ]; then
+  info_ 'the environment changed during this run, so the containers are being replaced'
+  RECREATE='--force-recreate'
+fi
+# shellcheck disable=SC2086  # RECREATE is a single optional flag or empty, and must not be one word
+dc up -d --wait $RECREATE backend frontend agent \
+  || warn_ 'compose reported a problem; checking readiness directly'
 
 # ─── Prove it ────────────────────────────────────────────────────────────────────────────────────
 
@@ -753,6 +795,57 @@ if "$LAUNCHER_PY" "$REPO_ROOT/scripts/check-oidc-reachability.py"; then
 else
   warn_ 'the reachability check reported a problem (see above)'
 fi
+
+step_ 'Checking sign-in can actually start'
+
+# THIS STEP EXISTS BECAUSE ITS ABSENCE HERE REPORTED A WORKING STACK THAT NOBODY COULD LOG IN TO.
+# /health/ready checks Postgres, Redis, Cerbos and OPA -- all four can be "ok" while the backend
+# cannot read the OIDC discovery document, and then the sign-in button answers 503. The PowerShell
+# launcher gained this check and the shell one did not, so on Linux the run finished green.
+#
+# It is FATAL, not a warning. "The application started" and "nobody can sign in" must not both be
+# true at the end of a successful run.
+LOGIN_URL="http://localhost:${BACKEND_PORT_V}/api/v1/auth/login"
+LOGIN_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$LOGIN_URL" 2>/dev/null || echo 000)"
+LOGIN_TARGET="$(curl -s -o /dev/null -w '%{redirect_url}' "$LOGIN_URL" 2>/dev/null || true)"
+
+case "$LOGIN_CODE" in
+  3*)
+    ok_ "sign-in starts: HTTP $LOGIN_CODE -> ${LOGIN_TARGET%%\?*}"
+    case "$LOGIN_TARGET" in
+      *authentik-server*)
+        die_ 'the sign-in redirect names the INTERNAL service name, which no browser can resolve.' \
+          "It points at: $LOGIN_TARGET" \
+          'OIDC_PUBLIC_BASE_URL must be the address a BROWSER uses, e.g. http://localhost:'"${AUTHENTIK_PORT_V}"
+        ;;
+    esac
+    # The redirect target must also actually SERVE. A correct-looking URL that refuses the connection
+    # gives the user a browser error page, which is indistinguishable from the application being down.
+    IDP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$LOGIN_TARGET" 2>/dev/null || echo 000)"
+    case "$IDP_CODE" in
+      000) die_ 'the identity provider did not answer on the URL the browser will be sent to.' \
+             "Tried: $LOGIN_TARGET" \
+             'The redirect is right but nothing is listening, so the login form cannot load.' ;;
+      *)   ok_ "the identity provider answers there (HTTP $IDP_CODE)" ;;
+    esac
+    ;;
+  503)
+    printf '\n'
+    dc logs --no-color --tail 20 backend 2>/dev/null | tail -n 20 || true
+    die_ 'sign-in returned 503: the backend cannot read the OIDC discovery document.' \
+      'The stack is up, but nobody can log in. The two causes seen in practice:' \
+      '  - E2E_OIDC_ISSUER in .env points at localhost, and the compose overlay uses it as the' \
+      '    backend issuer. Inside a container localhost is the container itself.' \
+      '  - the backend holds an older environment than .env, because Compose reads env_file only' \
+      '    when it CREATES a container. Re-running this script replaces them.' \
+      "Current value:  $(env_get_ OIDC_ISSUER)"
+    ;;
+  *)
+    die_ "sign-in did not start (HTTP $LOGIN_CODE at $LOGIN_URL)." \
+      'Look at what the backend said:' \
+      "    docker compose ${COMPOSE_FILES[*]} logs backend | tail -n 40"
+    ;;
+esac
 
 step_ 'Checking the frontend answers'
 FRONTEND_URL="http://localhost:${FRONTEND_PORT_V}"
