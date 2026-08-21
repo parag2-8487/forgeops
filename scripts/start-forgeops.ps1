@@ -568,6 +568,26 @@ if (-not (Test-Path -LiteralPath $EnvPath)) {
     Write-Ok '.env already exists; existing secrets will be kept'
 }
 
+<#
+    The hash is taken BEFORE any edit and compared after provisioning, because Compose reads
+    `env_file` when it CREATES a container and bakes the values in. `up -d --wait` on an
+    already-running container therefore leaves the OLD environment in place, and a changed .env has
+    no effect at all.
+
+    That is not theoretical. It produced a stack that looked completely healthy -- nine services up,
+    /health/ready 200 on all four dependencies, every page serving -- and answered 503
+    "The OIDC discovery document could not be read." on every sign-in, because the running backend
+    still held `OIDC_ISSUER=http://localhost:19000/...` from an earlier run. Inside a container
+    `localhost` is the container, so discovery could never succeed. A cold machine would not show
+    this, which is exactly what makes it worth handling here.
+#>
+function Get-EnvHash {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+}
+$envHashBefore = Get-EnvHash -Path $EnvPath
+
 $frontendPort = [int]$Ports['FRONTEND_PORT']
 $backendPort  = [int]$Ports['BACKEND_PORT']
 $authentikPort= [int]$Ports['AUTHENTIK_PORT']
@@ -789,20 +809,35 @@ if (-not $prov.Ok) {
 }
 
 <#
-    The provisioner prints KEY=VALUE lines for the client id and secret. The ISSUER it prints is the
-    one it was given -- a localhost URL -- and that is NOT what the backend should use, because the
-    backend reaches Authentik over the compose network. So the client credentials are taken and the
-    issuer is left as the service-name form set earlier. This is the split-horizon rule, and taking
-    the printed issuer instead is the exact mistake that makes token verification fail.
+    The provisioner prints KEY=VALUE lines. The client id and secret are taken as given, but the two
+    ISSUER variables it prints are the localhost URL it was HANDED, and neither is what the backend
+    should use, because the backend reaches Authentik over the compose network.
+
+    BOTH have to be overridden, and missing the second one cost real debugging time.
+    `docker-compose.e2e.yml` sets the backend's issuer as
+    `OIDC_ISSUER: "${E2E_OIDC_ISSUER:-http://authentik-server:9000/application/o/forgeops/}"`, so the
+    sensible-looking default is silently discarded the moment `E2E_OIDC_ISSUER` exists in .env. The
+    result was a stack with nine healthy containers, /health/ready 200 on all four dependencies, all
+    nine pages serving -- and 503 "The OIDC discovery document could not be read." on every sign-in,
+    because inside the container `localhost:19000` is the container itself.
+
+    So the browser-facing value goes to the PUBLIC variable and the container-facing value to the
+    issuer, on both the plain and the E2E-prefixed names.
 #>
+$issuerForBackend = 'http://authentik-server:9000/application/o/forgeops/'
+$issuerForBrowser = "http://localhost:$authentikPort"
 $fromProv = @{}
 foreach ($line in $prov.Lines) {
     if ($line -match '^([A-Z][A-Z0-9_]*)=(.*)$') {
         $k = $Matches[1]; $v = $Matches[2]
-        if ($k -eq 'OIDC_ISSUER') { continue }
+        if ($k -in @('OIDC_ISSUER', 'E2E_OIDC_ISSUER')) { continue }
         $fromProv[$k] = $v
     }
 }
+$fromProv['OIDC_ISSUER'] = $issuerForBackend
+$fromProv['E2E_OIDC_ISSUER'] = $issuerForBackend
+$fromProv['E2E_OIDC_PUBLIC_BASE_URL'] = $issuerForBrowser
+$fromProv['OIDC_PUBLIC_BASE_URL'] = $issuerForBrowser
 if ($fromProv.Count -gt 0) {
     Set-EnvValues -Path $EnvPath -Values $fromProv
     Write-Ok ('recorded ' + (($fromProv.Keys | Sort-Object) -join ', '))
@@ -825,7 +860,17 @@ Write-Ok 'the schema is at head'
 
 Write-Step 'Starting the backend, frontend and agent'
 
-$app = Invoke-Compose -Arguments 'up -d --wait backend frontend agent'
+# See the note beside Get-EnvHash: Compose bakes env_file values in at CREATE time, so when .env has
+# changed during this run the containers must be REPLACED, not merely started. Without this a
+# reconfigured stack comes up looking healthy and fails at sign-in with a 503.
+$envHashAfter = Get-EnvHash -Path $EnvPath
+$recreate = ''
+if ($envHashAfter -ne $envHashBefore) {
+    Write-Info 'the environment changed during this run, so the containers are being replaced'
+    $recreate = ' --force-recreate'
+}
+
+$app = Invoke-Compose -Arguments ('up -d --wait' + $recreate + ' backend frontend agent')
 if (-not $app.Ok) {
     Write-Warn2 'compose reported a problem; checking readiness directly before giving up'
 }
@@ -865,13 +910,94 @@ Write-Step 'Checking the identity provider is reachable from both sides'
     mapped inside the container and inside the test browser, so all the checks passed and a REAL
     browser got DNS_PROBE_FINISHED_BAD_CONFIG. The test suite was measuring a topology only the test
     suite had.
+
+    The settings are passed through the PROCESS ENVIRONMENT, because that is where the script reads
+    them -- it is written for CI, where they arrive as job variables rather than from a file. Writing
+    them only to .env made the check report "OIDC_ISSUER is unset; there is nothing to check" on
+    every run, which is a check that cannot fail and therefore is not a check.
 #>
-$reach = Invoke-Native -Command ('"{0}" "{1}"' -f $LauncherPython, (Join-Path $RepoRoot 'scripts\check-oidc-reachability.py'))
+$envForCheck = Read-EnvFile -Path $EnvPath
+$checkKeys = @('OIDC_ISSUER', 'OIDC_PUBLIC_BASE_URL', 'OIDC_CLIENT_ID', 'CORS_ALLOW_ORIGINS', 'FRONTEND_BASE_URL')
+$savedCheck = @{}
+foreach ($k in $checkKeys) {
+    $savedCheck[$k] = [System.Environment]::GetEnvironmentVariable($k, 'Process')
+    if ($envForCheck.ContainsKey($k)) {
+        [System.Environment]::SetEnvironmentVariable($k, $envForCheck[$k], 'Process')
+    }
+}
+try {
+    $reach = Invoke-Native -Command ('"{0}" "{1}"' -f $LauncherPython, (Join-Path $RepoRoot 'scripts\check-oidc-reachability.py'))
+} finally {
+    foreach ($k in $checkKeys) { [System.Environment]::SetEnvironmentVariable($k, $savedCheck[$k], 'Process') }
+}
 if ($reach.Ok) {
     Write-Ok 'the issuer is reachable from the backend and the authorization URL from a browser'
 } else {
     Write-Warn2 'the reachability check reported a problem:'
     $reach.Lines | Select-Object -Last 12 | ForEach-Object { Write-Host ('        ' + $_) -ForegroundColor Yellow }
+}
+
+Write-Step 'Checking sign-in can actually start'
+
+<#
+    /health/ready CANNOT catch this, and did not: it checks Postgres, Redis, Cerbos and OPA, all four
+    of which were "ok" while every sign-in answered 503 because the backend could not read the OIDC
+    discovery document. A stack where all nine containers are healthy and nobody can log in is not a
+    working stack, so the launcher asks the one question a user asks first.
+
+    A 302 is the pass. The redirect must also point at OIDC_PUBLIC_BASE_URL rather than the internal
+    service name, because that URL goes to a BROWSER: if it names `authentik-server` the user gets a
+    DNS error instead of a login form.
+#>
+$loginUrl = "http://localhost:$backendPort/api/v1/auth/login"
+$loginOk = $false
+$loginDetail = ''
+$loginTarget = ''
+try {
+    # `HttpWebRequest` with AllowAutoRedirect disabled rather than `Invoke-WebRequest
+    # -MaximumRedirection 0`: the cmdlet RAISES on a 3xx in that mode, and reading the status back
+    # off the exception needs `$_.Exception.Response`, which does not exist on every exception type
+    # -- under `Set-StrictMode -Version Latest` that is a terminating "property cannot be found"
+    # error rather than a missing value. GetResponse() simply returns the redirect.
+    $req = [System.Net.HttpWebRequest]::Create($loginUrl)
+    $req.AllowAutoRedirect = $false
+    $req.Method = 'GET'
+    $req.Timeout = 15000
+    $resp = $null
+    try {
+        $resp = $req.GetResponse()
+    } catch [System.Net.WebException] {
+        # A 4xx or 5xx does throw; the response still carries the status.
+        if ($_.Exception.Response) { $resp = $_.Exception.Response }
+    }
+    if ($resp) {
+        $code = [int]$resp.StatusCode
+        $loginTarget = [string]$resp.Headers['Location']
+        $loginDetail = "HTTP $code"
+        if ($code -ge 300 -and $code -lt 400) {
+            $loginOk = $true
+            $loginDetail = "HTTP $code -> $loginTarget"
+        }
+        $resp.Close()
+    } else {
+        $loginDetail = 'no response'
+    }
+} catch {
+    $loginDetail = $_.Exception.Message
+}
+
+if ($loginOk) {
+    Write-Ok ('sign-in starts: ' + $loginDetail)
+    if ($loginTarget -match 'authentik-server') {
+        Write-Warn2 'the redirect names the INTERNAL service name; a browser cannot resolve it. Check OIDC_PUBLIC_BASE_URL.'
+    }
+} else {
+    Write-Warn2 ('sign-in did NOT start (' + $loginDetail + ')')
+    Write-Warn2 'The stack is up but nobody can log in. Two causes seen in practice:'
+    Write-Warn2 '  - the backend holds an older environment than .env, because Compose reads env_file'
+    Write-Warn2 '    only when it CREATES a container. Re-run this script; it replaces them.'
+    Write-Warn2 '  - E2E_OIDC_ISSUER in .env points at localhost, which the overlay uses as the'
+    Write-Warn2 '    backend issuer. Inside a container localhost is the container.'
 }
 
 Write-Step 'Checking the frontend answers'

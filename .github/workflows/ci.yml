@@ -509,7 +509,14 @@ jobs:
         run: bash scripts/ci/start-infisical.sh
       - name: CRUD round trips against the container
         working-directory: backend
-        run: python -m pytest -m 'mandatory and infisical' --report-log=secrets.jsonl -q
+        # `--no-cov` because this selection is ONE test. `addopts` in backend/pyproject.toml carries
+        # `--cov=src --cov-branch --cov-fail-under=70`, which is a gate over the whole source tree
+        # measured by the whole suite in the `backend` job. Applied to a marker-filtered selection it
+        # measures nothing meaningful and cannot be satisfied: this job reported
+        # "1 passed, 2373 deselected" and then "ERROR: Coverage failure: total of 44 is less than
+        # fail-under=70", so the TESTS PASSED and the job failed on a threshold that does not apply
+        # to it. The gate is untouched and still enforced where it can be met.
+        run: python -m pytest -m 'mandatory and infisical' --report-log=secrets.jsonl -q --no-cov
       - name: The mandatory selection recorded zero skips
         run: python scripts/check-no-skips.py backend/secrets.jsonl
       - name: Infisical logs on failure
