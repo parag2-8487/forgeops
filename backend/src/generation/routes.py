@@ -42,6 +42,22 @@ from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from ..governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, MutationRequest
 from .service import GenerationOutcome, GenerationService
 
+#: The two event types that end a stream (§7.4). Anything after one of these is unreachable by a
+#: client that closed on it, which is why exactly one may be emitted.
+_TERMINAL_EVENTS = frozenset({SSEEventType.COMPLETE.value, SSEEventType.ERROR.value})
+
+
+def _is_terminal(frame: str) -> bool:
+    """True when an already-encoded SSE frame carries a terminal event.
+
+    Reads the wire form rather than tracking intent separately, so this cannot disagree with what
+    was actually sent — the mismatch between intent and wire is the class of bug that let three
+    invented event names ship.
+    """
+    head, _, _ = frame.partition("\n")
+    return head.removeprefix("event: ").strip() in _TERMINAL_EVENTS
+
+
 router = APIRouter(
     prefix="/api/v1/generation",
     tags=["generation"],
@@ -135,14 +151,32 @@ async def create_generation_run(
         # evidence table is for.
         await _insert_run(session, run_id=run_id, body=body, principal=principal)
 
+        # THE SERVICE'S TERMINAL FRAME IS WITHHELD, and this route emits the single terminal frame
+        # itself. §7.4 permits exactly one, and it must be last.
+        #
+        # The earlier version forwarded everything the service produced and then appended its own
+        # frame describing what governance did — so a successful run emitted `complete` followed by
+        # `status`, and a refused submission emitted `complete` followed by `error`. The second is a
+        # second TERMINAL event, which Q-26 forbids: a client that closes on the first never learns
+        # the submission was refused, and one that reads to the end sees a run reported both accepted
+        # and failed.
+        #
+        # Only this function knows the real outcome, because the outcome includes whether the
+        # chokepoint accepted the artifacts. So the terminal frame belongs here.
+        withheld: str | None = None
         async for frame in service.stream_generation(body.project_id, body.prompt, outcome=outcome):
+            if _is_terminal(frame):
+                withheld = frame
+                break
             yield frame.encode("utf-8")
 
         await _finish_run(session, run_id=run_id, outcome=outcome)
 
         if not outcome.validation_passed:
-            # The service already emitted a terminal `error`; nothing is submitted for approval
-            # because there is nothing that passed the gate.
+            # The service's own terminal frame is the right answer here: it is an `error` naming the
+            # validation gate, and nothing is submitted because nothing passed.
+            if withheld is not None:
+                yield withheld.encode("utf-8")
             return
 
         try:
@@ -165,24 +199,31 @@ async def create_generation_run(
                 ),
                 principal=principal,
             )
-        except Exception as exc:  # noqa: BLE001 - surfaced to the client as a terminal frame
+        except Exception as exc:  # noqa: BLE001 - surfaced to the client as the terminal frame
             # A refusal by the chokepoint is a legitimate outcome, not a server fault: a policy
-            # deny, a blocked blast radius or a disconnected agent all land here. Reported as an
-            # `error` frame so the client learns the reason instead of seeing the stream stop after
-            # `complete`.
+            # deny, a blocked blast radius or a stale policy bundle all land here. This is THE
+            # terminal frame, not one appended after another — the artifacts were generated and
+            # then refused, so the run did not succeed.
             yield format_event(
                 SSEEventType.ERROR,
-                {"run_id": str(run_id), "detail": str(exc), "state": "submission_refused"},
+                {
+                    "run_id": str(run_id),
+                    "detail": str(exc),
+                    "state": "submission_refused",
+                    "generated": [f.path for f in outcome.files],
+                },
             ).encode("utf-8")
             return
 
-        # A second `status`, not a second `complete`: the run completed above, and this reports what
-        # governance did with it. The change-set id is what step 8 opens.
+        # THE single terminal frame, carrying what governance did with the run. The change-set id is
+        # what §12.6 step 8 opens.
         yield format_event(
-            SSEEventType.STATUS,
+            SSEEventType.COMPLETE,
             {
                 "run_id": str(run_id),
-                "state": "submitted",
+                "state": "accepted",
+                "files": [f.path for f in outcome.files],
+                "completion_tokens": outcome.completion_tokens,
                 "change_set_id": str(submission.change_set_id) if submission.change_set_id else None,
                 "change_set_status": submission.status,
                 "outcome": submission.outcome,

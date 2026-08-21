@@ -121,7 +121,35 @@ class SessionService:
         `role` is written on every login. The IdP is authoritative for group
         membership, so a group removed there must take effect at the next login rather
         than persisting until someone notices.
+
+        THE ID IS THE SUBJECT WHEN THE SUBJECT IS A UUID, and that is a correctness
+        requirement rather than a convenience.
+
+        `AppTokenVerifier` derives `Principal.user_id` from the `forgeops_user_id` claim
+        or, failing that, from the subject — its own docstring says "Authentik's `sub` is
+        a UUID, so the common case needs no extra claim". This function used to insert
+        `uuid.uuid4()` instead, so the local row's id and the principal's `user_id` were
+        two unrelated values that could never match.
+
+        The consequence was not cosmetic. Every foreign key to `users.id` written on a
+        request path failed against a real IdP: `generation_runs.requested_by` raised
+        `ForeignKeyViolationError` on the first insert, so the SSE stream ended with no
+        events at all, and `approvals.approver_id` would have done the same on the first
+        decision. Both surfaced as an empty response rather than an error, because the
+        exception was raised inside an async generator after the response had begun.
+
+        A random id is still used when the subject is NOT a UUID, which keeps a
+        non-UUID-subject IdP insertable — but such a subject already has no usable
+        `user_id`, so the verifier rejects it before it reaches a foreign key.
         """
+        # `ON CONFLICT ... DO UPDATE` deliberately does not touch `id`. An existing row keeps
+        # the id its audit history already references; changing it would orphan every prior
+        # entry, which is worse than the mismatch this fixes.
+        try:
+            local_id = uuid.UUID(idp_subject)
+        except ValueError:
+            local_id = uuid.uuid4()
+
         result = await session.execute(
             text(
                 """
@@ -137,7 +165,7 @@ class SessionService:
                 """
             ),
             {
-                "id": uuid.uuid4(),
+                "id": local_id,
                 "email": email,
                 "name": name,
                 "role": role.value,

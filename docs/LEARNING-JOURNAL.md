@@ -5371,6 +5371,52 @@ precisely — "the pairing service cannot issue a device certificate right now" 
 resolves.
 
 
+**Finding 88 — the login upsert and the token verifier disagreed about what a user id is, so every
+foreign key written on a request path failed against a real IdP.** `AppTokenVerifier` derives
+`Principal.user_id` from a `forgeops_user_id` claim or, failing that, from the subject -- and its own
+docstring says why that is enough: "Authentik's `sub` is a UUID, so the common case needs no extra
+claim". `SessionService.upsert_user` inserted `uuid.uuid4()` as the row id instead. The local row and
+the principal were therefore two unrelated UUIDs that could never match.
+
+The consequence was not cosmetic. `generation_runs.requested_by` references `users.id`, so the first
+insert of a run raised `ForeignKeyViolationError` -- and because the exception was raised **inside an
+async generator, after the streaming response had already begun**, it could not be turned into a
+Problem response. The client received `200 text/event-stream` and **zero events**. The UI reported
+"the stream ended without a terminal event", which was an accurate description of what it observed and
+said nothing about the cause. `approvals.approver_id` would have failed identically on the first
+decision.
+
+Nothing caught it because each half was tested and correct in isolation: the verifier's tests were
+right about the principal, the session tests were right about the row, and **no test compared the
+two**. The new test asserts the EQUALITY directly, which is the only form that could have failed.
+
+Two smaller lessons. `ON CONFLICT ... DO UPDATE` deliberately does not touch `id` -- an existing row
+keeps the id its audit history already references, because changing it would orphan every prior entry.
+And an exception inside a streaming generator is structurally unable to become an error status, so
+anything that can fail must either happen before the first frame or be reported as a frame.
+
+**Finding 89 — the route appended frames after a terminal event, so a refused submission reported the
+run as both accepted and failed.** `stream_generation` ends with `complete`, and the route then
+appended its own frame describing what the governance chokepoint did with the artifacts: a `status` on
+success, an `error` on refusal. The second is a second TERMINAL event, which §7.4 forbids and Q-26
+explicitly tests for.
+
+The failure is asymmetric and that is what makes it dangerous. A client that closes on the first
+terminal event -- the correct behaviour -- never learns the submission was refused and believes the run
+succeeded. A client that reads to the end sees `complete` followed by `error` and has to guess which
+is authoritative.
+
+Q-26 did not catch it because the property exercises the SERVICE, which is correct on its own; the
+defect was in the composition. Fixed by making the route withhold the service's terminal frame and
+emit exactly one itself, enriched with the change-set id -- which is right on the merits too, since
+only the route knows whether governance accepted the run, and that is part of the outcome.
+
+Worth noting what the refusal itself was: `policy-bundle-stale`, the chokepoint declining to create an
+approvable change for a project whose paired agent has not pinned the current policy bundle digest.
+That is the control working. An approval granted under one policy and executed under another is
+precisely what it exists to prevent, and failing closed there is correct.
+
+
 ## 10. Where we are right now
 
 ### Snapshot: 2026-08-19, branch `phase-1-implementation`
