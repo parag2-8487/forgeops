@@ -713,74 +713,234 @@ step_ "Ensuring Authentik's database exists"
 # FIRST-EVER start creates this database. It does not run again on an existing volume, which is why
 # an upgraded checkout can have a data directory without it. Done through psql inside the container
 # so no Postgres client is needed on the host.
+#
+# THE OWNER MATTERS, and getting it wrong produces a failure that looks nothing like its cause.
+# That init script creates a SEPARATE `authentik` role and makes the database `OWNER authentik`;
+# Authentik connects as that role. Creating the database owned by the ForgeOps user instead leaves
+# Authentik able to connect and unable to create anything, because since PostgreSQL 15 the `public`
+# schema no longer grants CREATE to PUBLIC -- rights on it come from owning the database, via
+# `pg_database_owner`. The visible result is not a permissions message at the top of the log but
+# `InsufficientPrivilege: permission denied for schema public` during a system migration, then
+# `InFailedSqlTransaction`, then gunicorn restarting forever and the API answering 503 until the
+# timeout. An earlier version of this script created it with the wrong owner, so the ALTER below
+# repairs a database already in that state rather than only avoiding it in future.
 PG_USER="$(env_get_ POSTGRES_USER || true)"; [ -n "$PG_USER" ] || PG_USER=forgeops
-if dc exec -T postgres psql -U "$PG_USER" -d postgres -tAc \
-     "SELECT 1 FROM pg_database WHERE datname='authentik'" 2>/dev/null | grep -q 1; then
-  ok_ "the 'authentik' database already exists"
-else
-  dc exec -T postgres psql -U "$PG_USER" -d postgres \
-     -c "CREATE DATABASE authentik OWNER $PG_USER" >/dev/null \
-    || die_ "could not create Authentik's database."
-  ok_ "created the 'authentik' database"
-fi
+AK_DB_USER="$(env_get_ AUTHENTIK_POSTGRESQL__USER || true)"; [ -n "$AK_DB_USER" ] || AK_DB_USER=authentik
+AK_DB_NAME="$(env_get_ AUTHENTIK_POSTGRESQL__NAME || true)"; [ -n "$AK_DB_NAME" ] || AK_DB_NAME=authentik
+
+psql_() { dc exec -T postgres psql -U "$PG_USER" -d postgres "$@"; }
+
+ensure_authentik_db_() {
+  local ak_pw owner
+  # The role first: the database cannot be owned by a role that does not exist. `20-authentik-database.sh`
+  # skips everything when the password is absent, so an existing volume can lack the role entirely.
+  if ! psql_ -tAc "SELECT 1 FROM pg_roles WHERE rolname='$AK_DB_USER'" 2>/dev/null | grep -q 1; then
+    ak_pw="$(env_get_ AUTHENTIK_POSTGRESQL__PASSWORD || true)"
+    [ -n "$ak_pw" ] || die_ "Authentik has no database password in .env." \
+      "Add a value for AUTHENTIK_POSTGRESQL__PASSWORD, or delete the line and let this script generate one."
+    # `psql -v` plus `:'name'` quotes the value as a SQL literal, which is the same technique
+    # scripts/postgres-init/20-authentik-database.sh uses: the password never reaches the SQL text, so
+    # a value containing a quote cannot terminate the statement.
+    dc exec -T postgres psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 -v pw="$ak_pw" \
+      -c "CREATE ROLE \"$AK_DB_USER\" LOGIN PASSWORD :'pw'" >/dev/null 2>&1 \
+      || die_ "could not create Authentik's database role."
+    ok_ "created the '$AK_DB_USER' database role"
+  fi
+
+  if psql_ -tAc "SELECT 1 FROM pg_database WHERE datname='$AK_DB_NAME'" 2>/dev/null | grep -q 1; then
+    owner="$(psql_ -tAc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='$AK_DB_NAME'" 2>/dev/null | tr -d '[:space:]')"
+    if [ "$owner" = "$AK_DB_USER" ]; then
+      ok_ "the '$AK_DB_NAME' database already exists"
+    else
+      warn_ "the '$AK_DB_NAME' database is owned by '$owner', which Authentik cannot create tables in"
+      psql_ -c "ALTER DATABASE \"$AK_DB_NAME\" OWNER TO \"$AK_DB_USER\"" >/dev/null 2>&1 \
+        || die_ "could not transfer ownership of the '$AK_DB_NAME' database to '$AK_DB_USER'."
+      ok_ "ownership transferred to '$AK_DB_USER'"
+    fi
+  else
+    psql_ -c "CREATE DATABASE \"$AK_DB_NAME\" OWNER \"$AK_DB_USER\"" >/dev/null 2>&1 \
+      || die_ "could not create Authentik's database."
+    ok_ "created the '$AK_DB_NAME' database owned by '$AK_DB_USER'"
+  fi
+}
+
+ensure_authentik_db_
 
 # ─── Authentik ───────────────────────────────────────────────────────────────────────────────────
 
 step_ 'Starting Authentik and waiting for its authorization flow'
-dc up -d --wait authentik-server authentik-worker || die_ 'Authentik did not become healthy.'
-ok_ 'the Authentik containers are healthy'
+
+# The server is started BEFORE the worker. The server runs the Django migrations at startup -- the log
+# says so, "Migration needs to be applied" then "Applying ..." -- and the worker only needs a schema
+# that already exists, so this ordering means the worker never opens a connection into a half-built one.
+#
+# It is NOT what fixes the crash loop, and an earlier version of this comment claimed it was. The
+# `InFailedSqlTransaction` / "gunicorn failed to start, restarting" loop came from the database being
+# owned by the wrong role, handled in the step above. Ordering is cheap and defensible; it was not the
+# bug.
+#
+# `--wait` is deliberately NOT used. While migrating, `ak healthcheck` fails, so the container is marked
+# unhealthy and `--wait` aborts on a service that is working and merely unfinished. Readiness is taken
+# from Authentik's own liveness endpoint, which needs no credential, and then from the flow existing.
+start_authentik_() {
+  dc up -d authentik-server >/dev/null 2>&1 \
+    || die_ 'the Authentik server could not be started.' \
+         "    docker compose ${COMPOSE_FILES[*]} logs authentik-server"
+  info_ 'the server is migrating its database; this is the slow part of a first run'
+  local i code=000
+  for i in $(seq 1 90); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${AUTHENTIK_PORT_V}/-/health/ready/" 2>/dev/null || echo 000)"
+    case "$code" in
+      200|204) break ;;
+    esac
+    sleep 5
+    if [ $((i % 12)) -eq 0 ]; then info_ "still migrating ($((i * 5))s, last HTTP $code)"; fi
+  done
+  case "$code" in
+    200|204) ok_ 'the server is ready' ;;
+    *)
+      printf '\n'
+      warn_ 'the last 25 lines from the Authentik server:'
+      dc logs --no-color --tail 25 authentik-server 2>&1 | tail -n 25 || true
+      printf '\n'
+      # Returns rather than dying, so the caller can rebuild the database and try once more. A server
+      # that will not come up on an existing database is usually a HALF-MIGRATED one -- the schema is
+      # partly built, every request aborts its transaction, and gunicorn restarts forever. No amount of
+      # waiting recovers from that, and the database is disposable.
+      return 1
+      ;;
+  esac
+  # Only now the worker, which applies the blueprints against a schema that already exists.
+  dc up -d authentik-worker >/dev/null 2>&1 \
+    || die_ 'the Authentik worker could not be started.'
+  ok_ 'the worker is applying the blueprints'
+  return 0
+}
+
+# Drop and recreate ONLY Authentik's own database. Safe without asking, because nothing is lost: it
+# holds the identity provider's configuration, and the next step provisions all of it again -- the
+# application, the OAuth2 provider, the three groups and the accounts. Application data lives in the
+# SEPARATE `forgeops` database, so projects, devices, change sets and the audit chain are untouched.
+recreate_authentik_db_() {
+  dc stop authentik-server authentik-worker >/dev/null 2>&1 || true
+  dc rm -f authentik-server authentik-worker >/dev/null 2>&1 || true
+  # PostgreSQL refuses to drop a database that still has connections.
+  psql_ -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$AK_DB_NAME'" >/dev/null 2>&1 || true
+  psql_ -c "DROP DATABASE IF EXISTS \"$AK_DB_NAME\"" >/dev/null 2>&1 \
+    || die_ 'could not drop the identity provider database.' \
+         'Something still holds a connection. Stopping everything usually clears it:' \
+         "    docker compose ${COMPOSE_FILES[*]} down"
+  # Recreated through the SAME helper that creates it in the first place, so the owner cannot drift
+  # between the two paths -- which is exactly the bug that made this function necessary.
+  ensure_authentik_db_
+  ok_ 'the identity provider database was rebuilt'
+}
+
+set +e
+start_authentik_
+AK_STARTED=$?
+set -e
+if [ "$AK_STARTED" -ne 0 ]; then
+  warn_ 'the server did not come up on the existing database, which usually means a half-migrated schema.'
+  recreate_authentik_db_
+  set +e
+  start_authentik_
+  AK_STARTED=$?
+  set -e
+  if [ "$AK_STARTED" -ne 0 ]; then
+    die_ 'the Authentik server will not start even on a freshly created database.' \
+      'The log above is from that attempt. This is no longer a state problem, so check that Postgres' \
+      'is healthy and that the machine is not out of memory -- Authentik needs roughly 1 GB free.' \
+      "    docker compose ${COMPOSE_FILES[*]} ps" \
+      '    free -h'
+  fi
+fi
 
 # Health is not enough. The WORKER applies the built-in blueprints AFTER the SERVER reports healthy,
 # so provisioning against a server whose flows do not exist yet fails with a misleading 400.
 #
-# THE HTTP STATUS IS READ, not just the body. The first version piped `curl -fsS` into `grep -q` and
-# discarded everything else, which made three completely different situations look identical -- and all
-# three then spent five minutes failing before reporting "Authentik never published its authorization
-# flow", which is only true in one of them:
+# THE HTTP STATUS IS READ, not just the body. Piping `curl -fsS` into `grep -q` discards it, which
+# makes three completely different situations look identical -- and all three then spend the whole
+# timeout before reporting "Authentik never published its authorization flow", true in only one:
 #
 #   401/403  the bootstrap token in .env is not the token in Authentik's DATABASE. Authentik applies
 #            AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database, so a data volume that
-#            outlived a change to .env keeps the old one. Waiting can never fix this.
+#            outlived a change to .env keeps the old one. Waiting can never fix this -- but dropping
+#            that one database can, which is what happens below.
 #   000      nothing is listening yet, or the port is not published where we are looking.
-#   200      the API is answering and the flow genuinely has not been created yet. Only this one is
-#            worth waiting for.
+#   200      the API answers and the flow genuinely has not been created yet. Only this is worth waiting for.
 BOOTSTRAP_TOKEN="$(env_get_ "$KEY_TOKEN")"
 FLOW_URL="http://localhost:${AUTHENTIK_PORT_V}/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent"
-info_ 'waiting for the blueprints to be applied (up to 10 minutes on a first run)'
-FLOW_READY=0
-LAST_CODE=000
-LAST_BODY=''
-for i in $(seq 1 120); do
-  LAST_BODY="$(curl -s -o /tmp/forgeops-flow.$$ -w '%{http_code}' --oauth2-bearer "$BOOTSTRAP_TOKEN" "$FLOW_URL" 2>/dev/null || echo 000)"
-  LAST_CODE="$LAST_BODY"
-  case "$LAST_CODE" in
-    200)
-      if grep -q '"slug"' /tmp/forgeops-flow.$$ 2>/dev/null; then FLOW_READY=1; break; fi
-      ;;
-    401|403)
-      rm -f /tmp/forgeops-flow.$$
-      die_ "Authentik rejected the bootstrap token (HTTP $LAST_CODE), so this is not a timing problem." \
-        'Authentik applies AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database. If its' \
-        'data volume survived a change to .env, the database still holds the OLD token and no amount' \
-        'of waiting will help.' \
-        '' \
-        'Start the identity provider from scratch, which also clears the application data:' \
-        '    ./scripts/start-forgeops.sh --fresh' \
-        '' \
-        'Or, to keep the application data, drop just the Authentik database:' \
-        "    docker compose ${COMPOSE_FILES[*]} up -d postgres" \
-        "    docker compose ${COMPOSE_FILES[*]} exec -T postgres psql -U forgeops -d postgres -c 'DROP DATABASE authentik'" \
-        '    ./scripts/start-forgeops.sh'
-      ;;
-  esac
-  sleep 5
-  if [ $((i % 12)) -eq 0 ]; then
-    info_ "still waiting ($((i * 5))s, last HTTP $LAST_CODE)"
-  fi
-done
-rm -f /tmp/forgeops-flow.$$
+FLOW_LAST_CODE=000
 
-if [ "$FLOW_READY" -eq 0 ]; then
+# 0 = the flow exists, 2 = the token was rejected, 1 = timed out for any other reason.
+wait_for_flow_() {
+  local attempts="$1" i body
+  FLOW_LAST_CODE=000
+  for i in $(seq 1 "$attempts"); do
+    body="$(curl -s -o "/tmp/forgeops-flow.$$" -w '%{http_code}' --oauth2-bearer "$BOOTSTRAP_TOKEN" "$FLOW_URL" 2>/dev/null || echo 000)"
+    FLOW_LAST_CODE="$body"
+    case "$FLOW_LAST_CODE" in
+      200)
+        if grep -q '"slug"' "/tmp/forgeops-flow.$$" 2>/dev/null; then
+          rm -f "/tmp/forgeops-flow.$$"; return 0
+        fi
+        ;;
+      401|403)
+        rm -f "/tmp/forgeops-flow.$$"; return 2
+        ;;
+    esac
+    sleep 5
+    if [ $((i % 12)) -eq 0 ]; then
+      info_ "still waiting ($((i * 5))s, last HTTP $FLOW_LAST_CODE)"
+    fi
+  done
+  rm -f "/tmp/forgeops-flow.$$"
+  return 1
+}
+
+# Recreate ONLY Authentik's own database. This is safe and losing nothing, which is why it can be done
+# without asking: the `authentik` database holds the identity provider's configuration, and the next
+# step of this script provisions all of it again -- the application, the OAuth2 provider, the three
+# groups and the user accounts. Application data lives in the SEPARATE `forgeops` database and is not
+# touched, so projects, devices, change sets and the audit chain survive.
+reset_authentik_database_() {
+  warn_ 'recreating the identity provider database so it accepts the token in .env'
+  recreate_authentik_db_
+  # The SAME sequenced start as the initial one. Bringing both containers up together against the
+  # database just created is precisely the race that produced the aborted-transaction crash loop.
+  set +e
+  start_authentik_
+  local rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || die_ 'Authentik would not start on the rebuilt database.'
+  ok_ 'Authentik restarted on a clean database'
+}
+
+info_ 'waiting for the blueprints to be applied (up to 10 minutes on a first run)'
+set +e
+wait_for_flow_ 120
+FLOW_RESULT=$?
+set -e
+
+if [ "$FLOW_RESULT" -eq 2 ]; then
+  warn_ "Authentik rejected the bootstrap token (HTTP $FLOW_LAST_CODE): its database predates the token in .env."
+  reset_authentik_database_
+  info_ 'waiting for the blueprints again (a fresh database migrates from scratch)'
+  set +e
+  wait_for_flow_ 144
+  FLOW_RESULT=$?
+  set -e
+  if [ "$FLOW_RESULT" -eq 2 ]; then
+    die_ 'Authentik still rejects the bootstrap token after its database was recreated.' \
+      'That should not be possible, so the token itself is suspect. Check that this line in .env has a' \
+      'value and no stray quotes or spaces:' \
+      "    $KEY_TOKEN" \
+      'Removing the line entirely is safe: this script generates a new one when it is absent.'
+  fi
+fi
+
+if [ "$FLOW_RESULT" -ne 0 ]; then
   # The worker's log is PRINTED rather than described. It is the component that applies blueprints, so
   # it is the only place the reason can be, and telling someone to go and look is one step short of
   # helping.
@@ -788,15 +948,15 @@ if [ "$FLOW_READY" -eq 0 ]; then
   warn_ 'the last 30 lines from the Authentik worker, which applies the blueprints:'
   dc logs --no-color --tail 30 authentik-worker 2>&1 | tail -n 30 || true
   printf '\n'
-  case "$LAST_CODE" in
+  case "$FLOW_LAST_CODE" in
     000) die_ 'Authentik never answered on its API port.' \
            "Tried: http://localhost:${AUTHENTIK_PORT_V}/api/v3/..." \
            'The container reported healthy, so this is usually the published port:' \
            "    docker compose ${COMPOSE_FILES[*]} ps authentik-server" ;;
     *)   die_ 'Authentik answered but never published its authorization flow.' \
-           "The API returned HTTP $LAST_CODE and the flow was still absent after 10 minutes." \
-           'If the worker log above shows missing database relations, its migrations did not finish;' \
-           'starting from a clean database is the reliable fix:' \
+           "The API returned HTTP $FLOW_LAST_CODE and the flow was still absent." \
+           'If the worker log above shows missing database relations, its migrations did not finish.' \
+           'Starting from a clean database is the reliable fix:' \
            '    ./scripts/start-forgeops.sh --fresh' ;;
   esac
 fi

@@ -376,7 +376,22 @@ Write-Step 'Checking the Docker engine is running'
 $engine = Invoke-Native -Command 'docker info --format "{{.ServerVersion}}"' -Quiet
 if (-not $engine.Ok) {
     Write-Warn2 'the Docker engine is not responding. Trying to start Docker Desktop.'
+    # THE PATH IS DERIVED FROM THE CLI, not just guessed from Program Files. Docker Desktop 4.x
+    # installs per-user by default, at %LOCALAPPDATA%\Programs\DockerDesktop, and the machine-wide
+    # path does not exist at all -- so a hardcoded Program Files list reports "Docker Desktop was not
+    # found" on a machine where Docker is installed and working, which is worse than useless advice.
+    # `docker` on PATH points at <root>\resources\bin\docker.exe, so <root>\Docker Desktop.exe is the
+    # app whatever the install scope. The fixed paths stay as fallbacks for older installs.
+    $dockerCli = (Get-Command docker -ErrorAction SilentlyContinue)
+    $derived = $null
+    if ($dockerCli) {
+        $binDir = Split-Path -Parent $dockerCli.Source                 # ...\resources\bin
+        $root = Split-Path -Parent (Split-Path -Parent $binDir)        # ...\DockerDesktop
+        if ($root) { $derived = Join-Path $root 'Docker Desktop.exe' }
+    }
     $desktop = @(
+        $derived,
+        (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'),
         (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
         (Join-Path ${env:ProgramFiles(x86)} 'Docker\Docker\Docker Desktop.exe')
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
@@ -790,28 +805,163 @@ Write-Step "Ensuring Authentik's database exists"
     already exists, which is why an upgraded checkout can have a data directory with no Authentik
     database. Creating it here idempotently covers both cases, and does it through psql inside the
     container so no Postgres client is needed on the host.
+
+    THE OWNER MATTERS, and getting it wrong produces a failure that looks nothing like its cause.
+    That init script creates a SEPARATE `authentik` role and makes the database `OWNER authentik`;
+    Authentik connects as that role. Creating the database owned by the ForgeOps user instead leaves
+    Authentik able to connect and unable to create anything, because since PostgreSQL 15 the `public`
+    schema no longer grants CREATE to PUBLIC -- rights on it come from owning the database, via
+    `pg_database_owner`. The visible result is not a permissions message at the top of the log but
+    `InsufficientPrivilege: permission denied for schema public` during a system migration, then
+    `InFailedSqlTransaction`, then gunicorn restarting forever and the API answering 503 until the
+    timeout. An earlier version of this script created it with the wrong owner, so the ALTER below
+    repairs a database already in that state rather than only avoiding it in future.
 #>
 $pgUser = if ($envNow.ContainsKey('POSTGRES_USER')) { $envNow['POSTGRES_USER'] } else { 'forgeops' }
-$dbCheck = Invoke-Compose -Arguments ("exec -T postgres psql -U {0} -d postgres -tAc ""SELECT 1 FROM pg_database WHERE datname='authentik'""" -f $pgUser) -Quiet
-if ($dbCheck.Output -match '1') {
-    Write-Ok "the 'authentik' database already exists"
-} else {
-    $mk = Invoke-Compose -Arguments ("exec -T postgres psql -U {0} -d postgres -c ""CREATE DATABASE authentik OWNER {0}""" -f $pgUser)
-    if (-not $mk.Ok) { Stop-WithAdvice -Problem "could not create Authentik's database." -Advice @($mk.Output) }
-    Write-Ok "created the 'authentik' database"
+$akDbUser = if ($envNow.ContainsKey('AUTHENTIK_POSTGRESQL__USER')) { $envNow['AUTHENTIK_POSTGRESQL__USER'] } else { 'authentik' }
+$akDbName = if ($envNow.ContainsKey('AUTHENTIK_POSTGRESQL__NAME')) { $envNow['AUTHENTIK_POSTGRESQL__NAME'] } else { 'authentik' }
+
+function Invoke-Psql {
+    param([string]$Sql, [switch]$Tuples)
+    $flag = if ($Tuples) { '-tAc' } else { '-c' }
+    return Invoke-Compose -Arguments ('exec -T postgres psql -U {0} -d postgres {1} "{2}"' -f $pgUser, $flag, $Sql) -Quiet
 }
+
+function Initialize-AuthentikDatabase {
+    # The role first: the database cannot be owned by a role that does not exist, and
+    # 20-authentik-database.sh skips everything when the password is absent, so an existing volume can
+    # lack the role entirely.
+    $roleCheck = Invoke-Psql -Tuples ("SELECT 1 FROM pg_roles WHERE rolname='{0}'" -f $akDbUser)
+    if ($roleCheck.Output -notmatch '1') {
+        $akPw = if ($envNow.ContainsKey('AUTHENTIK_POSTGRESQL__PASSWORD')) { $envNow['AUTHENTIK_POSTGRESQL__PASSWORD'] } else { '' }
+        if (-not $akPw) {
+            Stop-WithAdvice -Problem 'Authentik has no database password in .env.' -Advice @(
+                'Add a value for AUTHENTIK_POSTGRESQL__PASSWORD, or delete the line and let this script',
+                'generate one on the next run.'
+            )
+        }
+        # `psql -v` plus `:'name'` quotes the value as a SQL literal, the same technique the repo's own
+        # init script uses, so the password never reaches the SQL text.
+        $mkRole = Invoke-Compose -Arguments ('exec -T postgres psql -U {0} -d postgres -v ON_ERROR_STOP=1 -v pw="{1}" -c "CREATE ROLE \"{2}\" LOGIN PASSWORD :''pw''"' -f $pgUser, $akPw, $akDbUser) -Quiet
+        if (-not $mkRole.Ok) { Stop-WithAdvice -Problem "could not create Authentik's database role." -Advice @($mkRole.Output) }
+        Write-Ok ("created the '{0}' database role" -f $akDbUser)
+    }
+
+    $dbCheck = Invoke-Psql -Tuples ("SELECT 1 FROM pg_database WHERE datname='{0}'" -f $akDbName)
+    if ($dbCheck.Output -match '1') {
+        $ownerRes = Invoke-Psql -Tuples ("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='{0}'" -f $akDbName)
+        $owner = ($ownerRes.Output -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 1).Trim()
+        if ($owner -eq $akDbUser) {
+            Write-Ok ("the '{0}' database already exists" -f $akDbName)
+        } else {
+            Write-Warn2 ("the '{0}' database is owned by '{1}', which Authentik cannot create tables in" -f $akDbName, $owner)
+            $alter = Invoke-Psql ('ALTER DATABASE \"{0}\" OWNER TO \"{1}\"' -f $akDbName, $akDbUser)
+            if (-not $alter.Ok) {
+                Stop-WithAdvice -Problem ("could not transfer ownership of the '{0}' database." -f $akDbName) -Advice @($alter.Output)
+            }
+            Write-Ok ("ownership transferred to '{0}'" -f $akDbUser)
+        }
+    } else {
+        $mk = Invoke-Psql ('CREATE DATABASE \"{0}\" OWNER \"{1}\"' -f $akDbName, $akDbUser)
+        if (-not $mk.Ok) { Stop-WithAdvice -Problem "could not create Authentik's database." -Advice @($mk.Output) }
+        Write-Ok ("created the '{0}' database owned by '{1}'" -f $akDbName, $akDbUser)
+    }
+}
+
+Initialize-AuthentikDatabase
 
 # --- 9. Authentik --------------------------------------------------------------------------------
 
 Write-Step 'Starting Authentik and waiting for its authorization flow'
 
-$ak = Invoke-Compose -Arguments 'up -d --wait authentik-server authentik-worker'
-if (-not $ak.Ok) {
-    Stop-WithAdvice -Problem 'Authentik did not become healthy.' -Advice @(
-        ($ak.Lines | Select-Object -Last 25) -join [Environment]::NewLine
-    )
+<#
+    The server is started BEFORE the worker. The server runs the Django migrations at startup -- the
+    log says so, "Migration needs to be applied" then "Applying ..." -- and the worker only needs a
+    schema that already exists, so this ordering means the worker never opens a connection into a
+    half-built one.
+
+    It is NOT what fixes the crash loop, and an earlier version of this comment claimed it was. The
+    `InFailedSqlTransaction` / "gunicorn failed to start, restarting" loop came from the database being
+    owned by the wrong role, handled in the step above. Ordering is cheap and defensible; it was not
+    the bug.
+
+    `--wait` is deliberately NOT used. While migrating, `ak healthcheck` fails, so the container is
+    marked unhealthy and `--wait` aborts on a service that is working and merely unfinished. Readiness
+    comes from Authentik's own liveness endpoint, which needs no credential, then from the flow.
+#>
+function Start-Authentik {
+    $srv = Invoke-Compose -Arguments 'up -d authentik-server' -Quiet
+    if (-not $srv.Ok) {
+        Stop-WithAdvice -Problem 'the Authentik server could not be started.' -Advice @($srv.Output)
+    }
+    Write-Info 'the server is migrating its database; this is the slow part of a first run'
+    $readyUrlAk = "http://localhost:$authentikPort/-/health/ready/"
+    $akReady = $false
+    $lastAk = '000'
+    for ($i = 1; $i -le 90; $i++) {
+        try {
+            $r = Invoke-WebRequest -Uri $readyUrlAk -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            $lastAk = [string][int]$r.StatusCode
+            if ([int]$r.StatusCode -in @(200, 204)) { $akReady = $true; break }
+        } catch {
+            if ($_.Exception.Response) { $lastAk = [string][int]$_.Exception.Response.StatusCode }
+        }
+        Start-Sleep -Seconds 5
+        if ($i % 12 -eq 0) { Write-Info ("still migrating ({0}s, last HTTP {1})" -f ($i * 5), $lastAk) }
+    }
+    if (-not $akReady) {
+        Write-Warn2 'the last 25 lines from the Authentik server:'
+        (Invoke-Compose -Arguments 'logs --no-color --tail 25 authentik-server' -Quiet).Lines |
+            Select-Object -Last 25 | ForEach-Object { Write-Host ('        ' + $_) -ForegroundColor DarkGray }
+        # Returns rather than stopping, so the caller can rebuild the database and try once more. A
+        # server that will not come up on an EXISTING database is usually a half-migrated one: the schema
+        # is partly built, every request aborts its transaction, and gunicorn restarts forever. Waiting
+        # never recovers from that, and this database is disposable.
+        return $false
+    }
+    Write-Ok 'the server is ready'
+    # Only now the worker, which applies the blueprints against a schema that already exists.
+    $wrk = Invoke-Compose -Arguments 'up -d authentik-worker' -Quiet
+    if (-not $wrk.Ok) { Stop-WithAdvice -Problem 'the Authentik worker could not be started.' -Advice @($wrk.Output) }
+    Write-Ok 'the worker is applying the blueprints'
+    return $true
 }
-Write-Ok 'the Authentik containers are healthy'
+
+<#
+    Drop and recreate ONLY Authentik's own database. Safe without asking, because nothing is lost: it
+    holds the identity provider's configuration, and the next step provisions all of it again -- the
+    application, the OAuth2 provider, the three groups and the accounts. Application data lives in the
+    SEPARATE `forgeops` database, so projects, devices, change sets and the audit chain are untouched.
+#>
+function Reset-AuthentikDatabaseOnly {
+    Invoke-Compose -Arguments 'stop authentik-server authentik-worker' -Quiet | Out-Null
+    Invoke-Compose -Arguments 'rm -f authentik-server authentik-worker' -Quiet | Out-Null
+    # PostgreSQL refuses to drop a database that still has connections.
+    Invoke-Psql ("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{0}'" -f $akDbName) | Out-Null
+    $drop = Invoke-Psql ('DROP DATABASE IF EXISTS \"{0}\"' -f $akDbName)
+    if (-not $drop.Ok) {
+        Stop-WithAdvice -Problem 'could not drop the identity provider database.' -Advice @(
+            'Something still holds a connection. Stopping everything usually clears it:',
+            ("    docker compose {0} down" -f $ComposeFiles), '', $drop.Output
+        )
+    }
+    # Recreated through the SAME function that creates it in the first place, so the owner cannot drift
+    # between the two paths -- which is exactly the bug that made this repair necessary.
+    Initialize-AuthentikDatabase
+    Write-Ok 'the identity provider database was rebuilt'
+}
+
+if (-not (Start-Authentik)) {
+    Write-Warn2 'the server did not come up on the existing database, which usually means a half-migrated schema.'
+    Reset-AuthentikDatabaseOnly
+    if (-not (Start-Authentik)) {
+        Stop-WithAdvice -Problem 'the Authentik server will not start even on a freshly created database.' -Advice @(
+            'The log above is from that attempt. This is no longer a state problem, so check that',
+            'Postgres is healthy and the machine is not out of memory: Authentik needs about 1 GB free.',
+            ("    docker compose {0} ps" -f $ComposeFiles)
+        )
+    }
+}
 
 <#
     Health is not enough. The WORKER applies the built-in blueprints after the SERVER reports
@@ -827,61 +977,84 @@ Write-Info 'waiting for the blueprints to be applied (up to 10 minutes on a firs
 # adding an exemption, which would put a human back in the loop for every future hit.
 # Windows PowerShell 5.1 has no `-Authentication Bearer` parameter, so the header is built by hand.
 $authPrefix = 'Bea' + 'rer '
+
 <#
-    THE HTTP STATUS IS INSPECTED, not swallowed. An empty `catch {}` made three different situations
-    look identical, and all three then spent the full timeout before reporting that the flow was never
-    published -- which is true in only one of them:
+    Returns 'ok', 'rejected' or 'timeout'. The HTTP STATUS is inspected rather than swallowed by an
+    empty `catch {}`, because three different situations otherwise look identical and all three cost
+    the whole timeout:
 
       401/403  the bootstrap token in .env is not the token in Authentik's DATABASE. Authentik applies
                AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database, so a data volume that
-               outlived a change to .env keeps the old one. Waiting cannot fix it.
+               outlived a change to .env keeps the old one. Waiting cannot fix it -- dropping that one
+               database can, which is what happens below.
       no reply nothing is listening on that port yet.
       200      the API answers and the flow genuinely is not there yet. Only this is worth waiting for.
 #>
-$flowReady = $false
-$lastStatus = 'no reply'
-for ($i = 1; $i -le 120; $i++) {
-    try {
-        $resp = Invoke-WebRequest -Uri $flowUrl -Headers @{ Authorization = ($authPrefix + $bootstrapToken) } `
-                                  -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-        $lastStatus = [string][int]$resp.StatusCode
-        if ($resp.Content -match '"slug"') { $flowReady = $true; break }
-    } catch {
-        $r = $null
-        if ($_.Exception.Response) { $r = $_.Exception.Response }
-        if ($r) {
-            $code = [int]$r.StatusCode
-            $lastStatus = [string]$code
-            if ($code -eq 401 -or $code -eq 403) {
-                Stop-WithAdvice -Problem ("Authentik rejected the bootstrap token (HTTP {0}), so this is not a timing problem." -f $code) -Advice @(
-                    'Authentik applies AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database.',
-                    'If its data volume survived a change to .env, the database still holds the OLD token',
-                    'and no amount of waiting will help.',
-                    '',
-                    'Start the identity provider from scratch, which also clears the application data:',
-                    '    .\start.cmd -Fresh',
-                    '',
-                    'Or, to keep the application data, drop just the Authentik database:',
-                    ("    docker compose {0} up -d postgres" -f $ComposeFiles),
-                    ("    docker compose {0} exec -T postgres psql -U forgeops -d postgres -c ""DROP DATABASE authentik""" -f $ComposeFiles),
-                    '    .\start.cmd'
-                )
+function Wait-ForAuthorizationFlow {
+    param([int]$Attempts)
+    $script:flowLastStatus = 'no reply'
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            $resp = Invoke-WebRequest -Uri $flowUrl -Headers @{ Authorization = ($authPrefix + $bootstrapToken) } `
+                                      -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            $script:flowLastStatus = [string][int]$resp.StatusCode
+            if ($resp.Content -match '"slug"') { return 'ok' }
+        } catch {
+            $r = $null
+            if ($_.Exception.Response) { $r = $_.Exception.Response }
+            if ($r) {
+                $code = [int]$r.StatusCode
+                $script:flowLastStatus = [string]$code
+                if ($code -eq 401 -or $code -eq 403) { return 'rejected' }
             }
         }
+        Start-Sleep -Seconds 5
+        if ($i % 12 -eq 0) { Write-Info ("still waiting ({0}s, last HTTP {1})" -f ($i * 5), $script:flowLastStatus) }
     }
-    Start-Sleep -Seconds 5
-    if ($i % 12 -eq 0) { Write-Info ("still waiting ({0}s, last HTTP {1})" -f ($i * 5), $lastStatus) }
+    return 'timeout'
 }
-if (-not $flowReady) {
-    # The worker's log is PRINTED rather than described. It applies the blueprints, so it is the only
-    # place the reason can be, and pointing at a command is one step short of helping.
+
+<#
+    Recreate ONLY Authentik's own database. Safe enough to do without asking, because nothing is lost:
+    the `authentik` database holds the identity provider's configuration, and the very next step of this
+    script provisions all of it again -- the application, the OAuth2 provider, the three groups and the
+    accounts. Application data lives in the SEPARATE `forgeops` database and is untouched, so projects,
+    devices, change sets and the audit chain survive.
+#>
+function Reset-AuthentikDatabase {
+    Write-Warn2 'recreating the identity provider database so it accepts the token in .env'
+    Reset-AuthentikDatabaseOnly
+    if (-not (Start-Authentik)) {
+        Stop-WithAdvice -Problem 'Authentik would not start on the rebuilt database.'
+    }
+    Write-Ok 'Authentik restarted on a clean database'
+}
+
+$flowResult = Wait-ForAuthorizationFlow -Attempts 120
+
+if ($flowResult -eq 'rejected') {
+    Write-Warn2 ("Authentik rejected the bootstrap token (HTTP {0}): its database predates the token in .env." -f $script:flowLastStatus)
+    Reset-AuthentikDatabase
+    Write-Info 'waiting for the blueprints again (a fresh database migrates from scratch)'
+    $flowResult = Wait-ForAuthorizationFlow -Attempts 144
+    if ($flowResult -eq 'rejected') {
+        Stop-WithAdvice -Problem 'Authentik still rejects the bootstrap token after its database was recreated.' -Advice @(
+            'That should not be possible, so the token itself is suspect. Check that this line in .env',
+            'has a value and no stray quotes or spaces:',
+            ("    " + $keyToken),
+            'Deleting the line entirely is safe: this script generates a new one when it is absent.'
+        )
+    }
+}
+
+if ($flowResult -ne 'ok') {
     Write-Warn2 'the last 30 lines from the Authentik worker, which applies the blueprints:'
     (Invoke-Compose -Arguments 'logs --no-color --tail 30 authentik-worker' -Quiet).Lines |
         Select-Object -Last 30 | ForEach-Object { Write-Host ('        ' + $_) -ForegroundColor DarkGray }
     Stop-WithAdvice -Problem 'Authentik never published its authorization flow.' -Advice @(
-        ("The API last returned {0}, and the flow was still absent after 10 minutes." -f $lastStatus),
-        'If the worker log above shows missing database relations, its migrations did not finish;',
-        'starting from a clean database is the reliable fix:',
+        ("The API last returned {0}, and the flow was still absent." -f $script:flowLastStatus),
+        'If the worker log above shows missing database relations, its migrations did not finish.',
+        'Starting from a clean database is the reliable fix:',
         '    .\start.cmd -Fresh'
     )
 }
