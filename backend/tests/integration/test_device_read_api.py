@@ -48,6 +48,7 @@ def _principal() -> Principal:
 @pytest_asyncio.fixture
 async def app_no_auth(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     from src.main import create_app
+
     from tests.integration.production_app import apply_committed_baseline_env
 
     apply_committed_baseline_env(monkeypatch)
@@ -188,9 +189,7 @@ class TestStatusFilteringUsesTheStateMachine:
         enum_schema = spec["components"]["schemas"]["DeviceStatus"]
         assert set(enum_schema["enum"]) == {"pending", "active", "policy_stale", "revoked", "abandoned"}
 
-    async def test_an_unknown_status_is_a_validation_failure_not_an_empty_list(
-        self, app_no_auth: Any
-    ) -> None:
+    async def test_an_unknown_status_is_a_validation_failure_not_an_empty_list(self, app_no_auth: Any) -> None:
         app_no_auth.dependency_overrides[require_principal] = _principal
         try:
             transport = ASGITransport(app=app_no_auth)

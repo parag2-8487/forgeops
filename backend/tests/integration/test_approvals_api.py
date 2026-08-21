@@ -90,10 +90,7 @@ class TestItIsMountedAtAll:
     async def test_every_approval_route_is_registered(self, authed_app: Any) -> None:
         spec = authed_app.openapi()
         registered = {
-            (method.upper(), path)
-            for path, ops in spec["paths"].items()
-            for method in ops
-            if "approvals" in path
+            (method.upper(), path) for path, ops in spec["paths"].items() for method in ops if "approvals" in path
         }
         # Compared against the templated paths the schema uses, not the concrete uuids above.
         assert registered == {
@@ -171,9 +168,7 @@ class TestOneStatusVocabulary:
         status_param = next(p for p in parameters if p["name"] == "status")
         # Chase the anyOf/$ref that FastAPI emits for an optional enum.
         rendered = str(status_param)
-        enum_schema = next(
-            s for name, s in spec["components"]["schemas"].items() if name == "ChangeSetStatusFilter"
-        )
+        enum_schema = next(s for name, s in spec["components"]["schemas"].items() if name == "ChangeSetStatusFilter")
         assert set(enum_schema["enum"]) == set(CHANGE_SET_STATUSES)
         assert "status" in rendered
 

@@ -170,18 +170,14 @@ async def test_a_cursor_pages_without_repeating(client: AsyncClient) -> None:
     assert len(first_page["projects"]) == 2
     assert first_page["next_cursor"] is not None
 
-    second_page = (
-        await client.get(f"/api/v1/projects?limit=2&cursor={first_page['next_cursor']}")
-    ).json()
+    second_page = (await client.get(f"/api/v1/projects?limit=2&cursor={first_page['next_cursor']}")).json()
     first_ids = {p["id"] for p in first_page["projects"]}
     second_ids = {p["id"] for p in second_page["projects"]}
     # Keyset rather than offset, so a page boundary cannot repeat a row.
     assert first_ids.isdisjoint(second_ids)
 
 
-async def test_another_tenant_cannot_read_the_project(
-    projects_app: Any, client: AsyncClient
-) -> None:
+async def test_another_tenant_cannot_read_the_project(projects_app: Any, client: AsyncClient) -> None:
     created = (await client.post("/api/v1/projects", json=_payload("Private"))).json()
 
     projects_app.dependency_overrides[require_principal] = lambda: _principal(OTHER_TENANT)

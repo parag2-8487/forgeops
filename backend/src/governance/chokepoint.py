@@ -678,10 +678,7 @@ class GovernanceChokepoint:
             outcome="rejected",
             resource_kind="change_set",
             resource_id=str(change_set_id),
-            reason=(
-                f"rejected by {principal.email or principal.subject}: "
-                f"{comment or 'no reason supplied'}"
-            ),
+            reason=(f"rejected by {principal.email or principal.subject}: {comment or 'no reason supplied'}"),
             before_state={"status": "pending_approval", "version": version},
             after_state={"status": "rejected", "version": version + 1, "approval_id": str(approval_id)},
         )

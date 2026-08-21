@@ -597,6 +597,7 @@ class TestLogout:
         response = await client.post("/api/v1/auth/logout")
         assert response.status_code == 200
 
+
 @wires("oidc_client", "id_token_verifier", "session_service")
 class TestABrowserEndsUpInTheApplication:
     """The callback has two callers, and one of them is a person.

@@ -28,6 +28,11 @@ from types import ModuleType
 
 import pytest
 
+# Built at runtime rather than written as a literal: this module's own subject is a credential-shape
+# scanner, so its samples must not be shapes in source. `check-test-credentials.py` folds `+`
+# concatenation, so fragment-splitting does not help — see the `jwt-header` entry below.
+from tests.synthetic_secrets import unsigned_jwt
+
 pytestmark = pytest.mark.mandatory
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -119,7 +124,14 @@ class TestEveryRuleFires:
             # one is a real pattern — three dot-separated base64url segments — so it needs a
             # sample that actually has that structure. Sharpened from a bare prefix after the
             # generated `pnpm-lock.yaml` tripped it on a base64 `integrity: sha512-…` digest.
-            "jwt-header": ("ey" + "JhbGciOiJIUzI1NiJ9") + "." + ("ey" + "JzdWIiOiIxIn0") + ".sig_value",
+            #
+            # BUILT AT RUNTIME, not assembled from `+` fragments. Splitting a literal across `+`
+            # does not hide it: CPython folds adjacent string constants at compile time, and
+            # `check-test-credentials.py` folds them deliberately for exactly that reason — its
+            # own docstring says a checker that only read `ast.Constant` "would be defeated by
+            # the very trick the rule exists to catch". The first version of this line used `+`
+            # fragments and CI rejected it, which is the check working.
+            "jwt-header": unsigned_jwt(),
         }.get(name, regex)
         assert name in checker.shapes(sample), (sample, checker.shapes(sample))
 

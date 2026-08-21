@@ -107,9 +107,7 @@ class TestTheStreamShape:
         assert max(i for i, e in enumerate(events) if e == "token") < events.index("validation")
 
     async def test_every_event_name_is_in_the_vocabulary(self) -> None:
-        raw = "".join(
-            [frame async for frame in GenerationService().stream_generation(uuid.uuid4(), "node app")]
-        )
+        raw = "".join([frame async for frame in GenerationService().stream_generation(uuid.uuid4(), "node app")])
         emitted = {event for event, _ in parse_frames(raw)}
         allowed = {e.value for e in SSEEventType}
         # The regression guard for the original defect: run_start, token_chunk and run_complete
@@ -131,16 +129,12 @@ class TestTheStreamShape:
             pass
         dockerfile = next(f.content for f in node.files if f.path == "Dockerfile")
         assert "node:20-alpine" in dockerfile
-        assert "containerPort: 3000" in next(
-            f.content for f in node.files if f.path == "k8s/deployment.yaml"
-        )
+        assert "containerPort: 3000" in next(f.content for f in node.files if f.path == "k8s/deployment.yaml")
 
     async def test_a_terminal_frame_is_always_emitted(self) -> None:
         # A stream ending in neither `complete` nor `error` is indistinguishable from a dropped
         # connection, which is the one outcome a client cannot recover from.
-        raw = "".join(
-            [frame async for frame in GenerationService().stream_generation(uuid.uuid4(), "x")]
-        )
+        raw = "".join([frame async for frame in GenerationService().stream_generation(uuid.uuid4(), "x")])
         assert parse_frames(raw)[-1][0] in {"complete", "error"}
 
 
@@ -151,7 +145,7 @@ class TestTheValidationGateIsDeterministic:
         service = GenerationService()
         passed, findings = service._validate(
             (
-                GeneratedFile(path="Dockerfile", content="FROM python:3.11\nCMD [\"x\"]\n"),
+                GeneratedFile(path="Dockerfile", content='FROM python:3.11\nCMD ["x"]\n'),
                 GeneratedFile(
                     path="k8s/deployment.yaml",
                     content="apiVersion: apps/v1\nkind: Deployment\nmetadata:\nspec:\n",
@@ -199,9 +193,7 @@ class TestItIsMountedAndAuthenticated:
     async def test_it_refuses_an_unauthenticated_caller(self, app_no_auth: Any) -> None:
         transport = ASGITransport(app=app_no_auth)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.post(
-                GENERATION_PATH, json={"project_id": str(uuid.uuid4()), "prompt": "hi"}
-            )
+            response = await client.post(GENERATION_PATH, json={"project_id": str(uuid.uuid4()), "prompt": "hi"})
         assert response.status_code == 401
 
     async def test_it_is_not_listed_public(self) -> None:

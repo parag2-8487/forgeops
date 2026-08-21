@@ -95,9 +95,7 @@ def test_terminal_states_absorb(terminal: str) -> None:
     """
     outgoing = [(a, b) for a, b in CHANGE_SET_TRANSITIONS if a == terminal]
     if terminal == REVERTIBLE_TERMINAL:
-        assert outgoing == [("applied", "reverted")], (
-            f"applied may only leave to reverted, found {outgoing}"
-        )
+        assert outgoing == [("applied", "reverted")], f"applied may only leave to reverted, found {outgoing}"
     else:
         assert outgoing == [], f"{terminal} is terminal but has outgoing edges {outgoing}"
 
@@ -258,9 +256,7 @@ NON_APPLIED = tuple(s for s in CHANGE_SET_STATUSES if s != "applied")
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", NON_PENDING)
-async def test_approve_refuses_every_state_but_pending_approval(
-    status: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_approve_refuses_every_state_but_pending_approval(status: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """`pending_approval → approved` is the only edge approve may take."""
     chokepoint = _chokepoint(monkeypatch)
     session = _FakeSession(status=status)
@@ -271,9 +267,7 @@ async def test_approve_refuses_every_state_but_pending_approval(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", NON_PENDING)
-async def test_reject_refuses_every_state_but_pending_approval(
-    status: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_reject_refuses_every_state_but_pending_approval(status: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """`pending_approval → rejected` likewise. This edge had no implementation at all before."""
     chokepoint = _chokepoint(monkeypatch)
     session = _FakeSession(status=status)
@@ -284,9 +278,7 @@ async def test_reject_refuses_every_state_but_pending_approval(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", NON_APPLIED)
-async def test_revert_refuses_every_state_but_applied(
-    status: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_revert_refuses_every_state_but_applied(status: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """Only `applied → reverted` leaves a success state."""
     chokepoint = _chokepoint(monkeypatch)
     session = _FakeSession(status=status)
