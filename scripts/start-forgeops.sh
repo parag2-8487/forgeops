@@ -732,20 +732,74 @@ ok_ 'the Authentik containers are healthy'
 
 # Health is not enough. The WORKER applies the built-in blueprints AFTER the SERVER reports healthy,
 # so provisioning against a server whose flows do not exist yet fails with a misleading 400.
+#
+# THE HTTP STATUS IS READ, not just the body. The first version piped `curl -fsS` into `grep -q` and
+# discarded everything else, which made three completely different situations look identical -- and all
+# three then spent five minutes failing before reporting "Authentik never published its authorization
+# flow", which is only true in one of them:
+#
+#   401/403  the bootstrap token in .env is not the token in Authentik's DATABASE. Authentik applies
+#            AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database, so a data volume that
+#            outlived a change to .env keeps the old one. Waiting can never fix this.
+#   000      nothing is listening yet, or the port is not published where we are looking.
+#   200      the API is answering and the flow genuinely has not been created yet. Only this one is
+#            worth waiting for.
 BOOTSTRAP_TOKEN="$(env_get_ "$KEY_TOKEN")"
-info_ 'waiting for the blueprints to be applied (up to 5 minutes on a first run)'
+FLOW_URL="http://localhost:${AUTHENTIK_PORT_V}/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent"
+info_ 'waiting for the blueprints to be applied (up to 10 minutes on a first run)'
 FLOW_READY=0
-for i in $(seq 1 60); do
-  if curl -fsS --oauth2-bearer "$BOOTSTRAP_TOKEN" \
-       "http://localhost:${AUTHENTIK_PORT_V}/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent" \
-       2>/dev/null | grep -q '"slug"'; then
-    FLOW_READY=1; break
-  fi
+LAST_CODE=000
+LAST_BODY=''
+for i in $(seq 1 120); do
+  LAST_BODY="$(curl -s -o /tmp/forgeops-flow.$$ -w '%{http_code}' --oauth2-bearer "$BOOTSTRAP_TOKEN" "$FLOW_URL" 2>/dev/null || echo 000)"
+  LAST_CODE="$LAST_BODY"
+  case "$LAST_CODE" in
+    200)
+      if grep -q '"slug"' /tmp/forgeops-flow.$$ 2>/dev/null; then FLOW_READY=1; break; fi
+      ;;
+    401|403)
+      rm -f /tmp/forgeops-flow.$$
+      die_ "Authentik rejected the bootstrap token (HTTP $LAST_CODE), so this is not a timing problem." \
+        'Authentik applies AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database. If its' \
+        'data volume survived a change to .env, the database still holds the OLD token and no amount' \
+        'of waiting will help.' \
+        '' \
+        'Start the identity provider from scratch, which also clears the application data:' \
+        '    ./scripts/start-forgeops.sh --fresh' \
+        '' \
+        'Or, to keep the application data, drop just the Authentik database:' \
+        "    docker compose ${COMPOSE_FILES[*]} up -d postgres" \
+        "    docker compose ${COMPOSE_FILES[*]} exec -T postgres psql -U forgeops -d postgres -c 'DROP DATABASE authentik'" \
+        '    ./scripts/start-forgeops.sh'
+      ;;
+  esac
   sleep 5
-  [ $((i % 12)) -eq 0 ] && info_ "still waiting ($((i * 5))s)"
+  if [ $((i % 12)) -eq 0 ]; then
+    info_ "still waiting ($((i * 5))s, last HTTP $LAST_CODE)"
+  fi
 done
-[ "$FLOW_READY" -eq 1 ] || die_ 'Authentik never published its authorization flow.' \
-  "Look at the worker, which applies blueprints:  docker compose ${COMPOSE_FILES[*]} logs authentik-worker"
+rm -f /tmp/forgeops-flow.$$
+
+if [ "$FLOW_READY" -eq 0 ]; then
+  # The worker's log is PRINTED rather than described. It is the component that applies blueprints, so
+  # it is the only place the reason can be, and telling someone to go and look is one step short of
+  # helping.
+  printf '\n'
+  warn_ 'the last 30 lines from the Authentik worker, which applies the blueprints:'
+  dc logs --no-color --tail 30 authentik-worker 2>&1 | tail -n 30 || true
+  printf '\n'
+  case "$LAST_CODE" in
+    000) die_ 'Authentik never answered on its API port.' \
+           "Tried: http://localhost:${AUTHENTIK_PORT_V}/api/v3/..." \
+           'The container reported healthy, so this is usually the published port:' \
+           "    docker compose ${COMPOSE_FILES[*]} ps authentik-server" ;;
+    *)   die_ 'Authentik answered but never published its authorization flow.' \
+           "The API returned HTTP $LAST_CODE and the flow was still absent after 10 minutes." \
+           'If the worker log above shows missing database relations, its migrations did not finish;' \
+           'starting from a clean database is the reliable fix:' \
+           '    ./scripts/start-forgeops.sh --fresh' ;;
+  esac
+fi
 ok_ 'the authorization flow exists'
 
 step_ 'Provisioning the application, groups and user accounts'

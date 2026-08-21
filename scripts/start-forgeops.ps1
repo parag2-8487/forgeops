@@ -820,27 +820,69 @@ Write-Ok 'the Authentik containers are healthy'
 #>
 $bootstrapToken = $envNow[$keyToken]
 $flowUrl = "http://localhost:$authentikPort/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent"
-Write-Info 'waiting for the blueprints to be applied (up to 5 minutes on a first run)'
-$flowReady = $false
+Write-Info 'waiting for the blueprints to be applied (up to 10 minutes on a first run)'
 # The authorization scheme name is ASSEMBLED rather than spelled out. The repository's added-line
 # scanner matches the literal scheme followed by a space, because that pair is what a pasted
 # credential header looks like, and it cannot read intent. Rephrasing is the rule here rather than
 # adding an exemption, which would put a human back in the loop for every future hit.
 # Windows PowerShell 5.1 has no `-Authentication Bearer` parameter, so the header is built by hand.
 $authPrefix = 'Bea' + 'rer '
-for ($i = 1; $i -le 60; $i++) {
+<#
+    THE HTTP STATUS IS INSPECTED, not swallowed. An empty `catch {}` made three different situations
+    look identical, and all three then spent the full timeout before reporting that the flow was never
+    published -- which is true in only one of them:
+
+      401/403  the bootstrap token in .env is not the token in Authentik's DATABASE. Authentik applies
+               AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database, so a data volume that
+               outlived a change to .env keeps the old one. Waiting cannot fix it.
+      no reply nothing is listening on that port yet.
+      200      the API answers and the flow genuinely is not there yet. Only this is worth waiting for.
+#>
+$flowReady = $false
+$lastStatus = 'no reply'
+for ($i = 1; $i -le 120; $i++) {
     try {
         $resp = Invoke-WebRequest -Uri $flowUrl -Headers @{ Authorization = ($authPrefix + $bootstrapToken) } `
                                   -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        $lastStatus = [string][int]$resp.StatusCode
         if ($resp.Content -match '"slug"') { $flowReady = $true; break }
-    } catch { }
+    } catch {
+        $r = $null
+        if ($_.Exception.Response) { $r = $_.Exception.Response }
+        if ($r) {
+            $code = [int]$r.StatusCode
+            $lastStatus = [string]$code
+            if ($code -eq 401 -or $code -eq 403) {
+                Stop-WithAdvice -Problem ("Authentik rejected the bootstrap token (HTTP {0}), so this is not a timing problem." -f $code) -Advice @(
+                    'Authentik applies AUTHENTIK_BOOTSTRAP_TOKEN only when it initialises a NEW database.',
+                    'If its data volume survived a change to .env, the database still holds the OLD token',
+                    'and no amount of waiting will help.',
+                    '',
+                    'Start the identity provider from scratch, which also clears the application data:',
+                    '    .\start.cmd -Fresh',
+                    '',
+                    'Or, to keep the application data, drop just the Authentik database:',
+                    ("    docker compose {0} up -d postgres" -f $ComposeFiles),
+                    ("    docker compose {0} exec -T postgres psql -U forgeops -d postgres -c ""DROP DATABASE authentik""" -f $ComposeFiles),
+                    '    .\start.cmd'
+                )
+            }
+        }
+    }
     Start-Sleep -Seconds 5
-    if ($i % 12 -eq 0) { Write-Info ("still waiting ({0}s)" -f ($i * 5)) }
+    if ($i % 12 -eq 0) { Write-Info ("still waiting ({0}s, last HTTP {1})" -f ($i * 5), $lastStatus) }
 }
 if (-not $flowReady) {
+    # The worker's log is PRINTED rather than described. It applies the blueprints, so it is the only
+    # place the reason can be, and pointing at a command is one step short of helping.
+    Write-Warn2 'the last 30 lines from the Authentik worker, which applies the blueprints:'
+    (Invoke-Compose -Arguments 'logs --no-color --tail 30 authentik-worker' -Quiet).Lines |
+        Select-Object -Last 30 | ForEach-Object { Write-Host ('        ' + $_) -ForegroundColor DarkGray }
     Stop-WithAdvice -Problem 'Authentik never published its authorization flow.' -Advice @(
-        'Look at what the worker is doing; it is the component that applies blueprints:',
-        ("    docker compose {0} logs authentik-worker" -f $ComposeFiles)
+        ("The API last returned {0}, and the flow was still absent after 10 minutes." -f $lastStatus),
+        'If the worker log above shows missing database relations, its migrations did not finish;',
+        'starting from a clean database is the reliable fix:',
+        '    .\start.cmd -Fresh'
     )
 }
 Write-Ok 'the authorization flow exists'
