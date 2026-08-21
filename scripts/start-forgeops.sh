@@ -12,11 +12,16 @@
 #
 # Usage:
 #   ./scripts/start-forgeops.sh                 start everything
-#   ./scripts/start-forgeops.sh --fresh         delete all data first (asks to confirm)
-#   ./scripts/start-forgeops.sh --fresh --force delete all data without asking
+#   ./scripts/start-forgeops.sh --fresh         also delete the data volumes (asks to confirm)
+#   ./scripts/start-forgeops.sh --fresh --force delete the data without asking
+#   ./scripts/start-forgeops.sh --no-reset      reuse existing containers instead of replacing them
+#   ./scripts/start-forgeops.sh --purge-images  also delete the locally built images
 #   ./scripts/start-forgeops.sh --skip-install  never install anything; fail if something is missing
 #   ./scripts/start-forgeops.sh --rebuild       force an image rebuild
 #   ./scripts/start-forgeops.sh --no-browser    do not open a browser
+#
+# By DEFAULT it removes the previous deployment's containers first and keeps the data volumes. See the
+# note at that step for why those two are separated.
 
 set -Eeuo pipefail
 
@@ -25,6 +30,8 @@ FORCE=0
 SKIP_INSTALL=0
 NO_BROWSER=0
 REBUILD=0
+NO_RESET=0
+PURGE_IMAGES=0
 READY_TIMEOUT=900
 
 while [ $# -gt 0 ]; do
@@ -34,8 +41,10 @@ while [ $# -gt 0 ]; do
     --skip-install) SKIP_INSTALL=1 ;;
     --no-browser) NO_BROWSER=1 ;;
     --rebuild) REBUILD=1 ;;
+    --no-reset) NO_RESET=1 ;;
+    --purge-images) PURGE_IMAGES=1 ;;
     --ready-timeout) shift; READY_TIMEOUT="$1" ;;
-    -h|--help) sed -n '3,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '3,30p' "$0"; exit 0 ;;
     *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -427,19 +436,57 @@ fi
 
 # ─── Optional clean slate ────────────────────────────────────────────────────────────────────────
 
-if [ "$FRESH" -eq 1 ]; then
-  head_ 'Fresh start'
-  step_ 'Removing all containers and data volumes'
-  if [ "$FORCE" -eq 0 ]; then
-    warn_ 'This DELETES every project, device, change set, audit row and identity.'
+head_ 'Previous deployment'
+step_ 'Removing anything left from a previous run'
+
+<<'NOTE' true
+THIS RUNS BY DEFAULT, and it removes CONTAINERS but not DATA.
+
+`docker compose down` deletes the containers and the network; the named volumes survive unless `-v`
+is given. That split is deliberate:
+
+  * Removing the containers every run makes the whole class of stale-container faults impossible.
+    Compose reads `env_file` only when it CREATES a container, so a container that predates a change
+    to .env keeps the old values -- which is how a stack came up with all nine services healthy and
+    every sign-in answering 503, because the backend still held an issuer pointing at localhost.
+
+  * Keeping the volumes means your projects, paired devices, change sets, audit rows and identity
+    provider configuration are still there afterwards. Deleting those on every start would be a
+    surprising thing for a script called "start" to do, and the audit chain is append-only by design.
+
+Use --fresh when you do want the data gone, and --no-reset to skip this step entirely.
+NOTE
+
+if [ "$NO_RESET" -eq 1 ]; then
+  info_ 'skipped (--no-reset): existing containers will be reused'
+elif [ -z "$(dc ps -aq 2>/dev/null)" ]; then
+  ok_ 'nothing to remove'
+else
+  DOWN_ARGS='--remove-orphans'
+  if [ "$FRESH" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
+    warn_ '--fresh DELETES every project, device, change set, audit row and identity.'
     printf '      type "yes" to continue: '
     read -r answer
-    [ "$answer" = "yes" ] || { info_ 'left the existing data alone'; FRESH=0; }
+    if [ "$answer" != "yes" ]; then
+      info_ 'keeping the data; removing containers only'
+      FRESH=0
+    fi
   fi
+  # Written as `if` blocks rather than `[ cond ] && assignment`. Under `set -e` a trailing test that
+  # evaluates FALSE returns non-zero, and as the last command of a block that terminates the whole
+  # script -- a silent early exit that looks like the run simply stopping.
+  if [ "$FRESH" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS -v"; fi
+  if [ "$PURGE_IMAGES" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS --rmi local"; fi
+
+  # shellcheck disable=SC2086  # DOWN_ARGS is a deliberate list of flags and must word-split
+  dc down $DOWN_ARGS >/dev/null 2>&1 || warn_ 'the teardown reported a problem; continuing'
+
   if [ "$FRESH" -eq 1 ]; then
-    dc down -v --remove-orphans >/dev/null 2>&1 || true
-    ok_ 'containers and volumes removed'
+    ok_ 'containers, networks and data volumes removed'
+  else
+    ok_ 'containers and networks removed; data volumes kept'
   fi
+  if [ "$PURGE_IMAGES" -eq 1 ]; then ok_ 'locally built images removed, so they will be rebuilt'; fi
 fi
 
 # ─── Ports ───────────────────────────────────────────────────────────────────────────────────────

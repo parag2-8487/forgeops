@@ -48,16 +48,28 @@
 .PARAMETER NoBrowser
     Do not open a browser when the stack is ready.
 
+.PARAMETER NoReset
+    Reuse the existing containers instead of removing and recreating them. By DEFAULT the launcher
+    removes the previous deployment's containers first, keeping the data volumes, which makes stale
+    container environments impossible.
+
+.PARAMETER PurgeImages
+    Also delete the images this project built locally, so they are rebuilt from source.
+
 .PARAMETER Rebuild
     Force a rebuild of the backend, frontend and agent images even if they already exist.
 
 .EXAMPLE
     .\scripts\start-forgeops.ps1
-    Start everything, installing anything missing.
+    Start everything, installing anything missing. Replaces the previous containers, keeps the data.
 
 .EXAMPLE
     .\scripts\start-forgeops.ps1 -Fresh -Force
     Wipe all data and start clean, without being asked to confirm.
+
+.EXAMPLE
+    .\scripts\start-forgeops.ps1 -NoReset
+    Leave the running containers alone and only bring up what is missing.
 #>
 [CmdletBinding()]
 param(
@@ -66,6 +78,8 @@ param(
     [switch]$SkipInstall,
     [switch]$NoBrowser,
     [switch]$Rebuild,
+    [switch]$NoReset,
+    [switch]$PurgeImages,
     [int]$ReadyTimeoutSeconds = 900
 )
 
@@ -506,17 +520,55 @@ if (Test-PythonHasProvisioningDeps -PythonExe $BackendVenvPython) {
 
 # --- 3. Optional clean slate ---------------------------------------------------------------------
 
-if ($Fresh) {
-    Write-Head 'Fresh start'
-    Write-Step 'Removing all containers and data volumes'
-    if (-not $Force) {
-        Write-Warn2 'This DELETES every project, device, change set, audit row and identity.'
-        $answer = Read-Host '      type "yes" to continue'
-        if ($answer -ne 'yes') { Write-Info 'left the existing data alone'; $Fresh = $false }
-    }
-    if ($Fresh) {
-        $down = Invoke-Compose -Arguments 'down -v --remove-orphans'
-        if ($down.Ok) { Write-Ok 'containers and volumes removed' } else { Write-Warn2 'nothing to remove' }
+Write-Head 'Previous deployment'
+Write-Step 'Removing anything left from a previous run'
+
+<#
+    THIS RUNS BY DEFAULT, and it removes CONTAINERS but not DATA.
+
+    `docker compose down` deletes the containers and the network; named volumes survive unless `-v` is
+    given. That split is deliberate:
+
+      * Removing the containers every run makes the whole class of stale-container faults impossible.
+        Compose reads `env_file` only when it CREATES a container, so one that predates a change to
+        .env keeps the old values -- which is how a stack came up with all nine services healthy and
+        every sign-in answering 503, because the backend still held an issuer pointing at localhost.
+
+      * Keeping the volumes means projects, paired devices, change sets, audit rows and the identity
+        provider's configuration are still there afterwards. Destroying those on every start would be
+        a surprising thing for a script called "start" to do, and the audit chain is append-only by
+        design.
+
+    Use -Fresh when the data should go, and -NoReset to skip this entirely.
+#>
+
+if ($NoReset) {
+    Write-Info 'skipped (-NoReset): existing containers will be reused'
+} else {
+    # `@(...)` for the same reason as below: with no containers this is $null, and `.Count` on $null
+    # is a terminating error under StrictMode.
+    $existingIds = @((Invoke-Compose -Arguments 'ps -aq' -Quiet).Lines | Where-Object { $_ -match '\S' })
+    if ($existingIds.Count -eq 0) {
+        Write-Ok 'nothing to remove'
+    } else {
+        if ($Fresh -and -not $Force) {
+            Write-Warn2 '-Fresh DELETES every project, device, change set, audit row and identity.'
+            $answer = Read-Host '      type "yes" to continue'
+            if ($answer -ne 'yes') {
+                Write-Info 'keeping the data; removing containers only'
+                $Fresh = $false
+            }
+        }
+        $downArgs = 'down --remove-orphans'
+        if ($Fresh) { $downArgs += ' -v' }
+        if ($PurgeImages) { $downArgs += ' --rmi local' }
+
+        $down = Invoke-Compose -Arguments $downArgs -Quiet
+        if (-not $down.Ok) { Write-Warn2 'the teardown reported a problem; continuing' }
+
+        if ($Fresh) { Write-Ok 'containers, networks and data volumes removed' }
+        else { Write-Ok 'containers and networks removed; data volumes kept' }
+        if ($PurgeImages) { Write-Ok 'locally built images removed, so they will be rebuilt' }
     }
 }
 
@@ -542,7 +594,11 @@ Write-Step 'Choosing host ports'
 
 $existing = Read-EnvFile -Path $EnvPath
 
-$runningIds = (Invoke-Compose -Arguments 'ps -q' -Quiet).Lines | Where-Object { $_ -match '\S' }
+# `@(...)` forces an array. Without it a single line comes back as a bare string and NOTHING comes
+# back as $null, and under `Set-StrictMode -Version Latest` reading `.Count` on $null is a terminating
+# "property cannot be found" error. It only shows up when there are no containers at all -- a fresh
+# machine, or immediately after the reset step above -- so it survives every test on a running stack.
+$runningIds = @((Invoke-Compose -Arguments 'ps -q' -Quiet).Lines | Where-Object { $_ -match '\S' })
 $stackIsUp = ($runningIds.Count -gt 0)
 
 function Resolve-Port {
