@@ -27,14 +27,17 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Hoisted so the module factory below can close over it.
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
+const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
 
 // Partial mock: `api.get` is replaced, but `ApiProblemError`, `queryKeys` and the problem helpers
 // stay REAL. The error branch under test reads `error instanceof ApiProblemError`, so a fake error
 // class would make the test pass while the page failed in production.
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, api: { get: mockGet, post: vi.fn(), put: vi.fn(), del: vi.fn() } };
+  return {
+    ...actual,
+    api: { get: mockGet, post: mockPost, put: vi.fn(), delete: vi.fn(), stream: vi.fn() },
+  };
 });
 
 let mockPathname = "/";
@@ -92,6 +95,7 @@ function pending() {
 
 beforeEach(() => {
   mockGet.mockReset();
+  mockPost.mockReset();
   mockPathname = "/";
 });
 afterEach(() => cleanup());
@@ -388,71 +392,230 @@ function escapeRe(s: string) {
  * and showed a plausible empty state would be indistinguishable from a working screen with no
  * data, which is the confusion `NotImplemented` exists to prevent.
  */
-const NOT_IMPLEMENTED_PAGES = [
-  {
-    name: "Approvals",
-    Page: ApprovalsPage,
-    heading: "Approvals",
-    feature: /Change Approval Center is not implemented in Phase 1/i,
-    namesMissingPiece: /no screen has been built to render a change-set diff/i,
-    owner: /the reviewable diff UI is the remaining work/i,
-  },
-  {
-    name: "Generation",
-    Page: GenerationPage,
-    heading: "Generation",
-    feature: /artifact generator is not implemented in Phase 1/i,
-    namesMissingPiece: /has never been connected to it/i,
-    owner: /wiring the wizard to it is the remaining work/i,
-  },
-] as const;
+/**
+ * THERE ARE NO LONGER ANY NOT-IMPLEMENTED ROUTES, so the table that drove this section is gone.
+ *
+ * It held three entries and lost them one at a time as each gap closed: pairing when
+ * `GET /api/v1/agents/devices` gave it something to observe, then approvals and generation when
+ * their reviewer UI and wizard were built against the endpoints mounted earlier in the session.
+ *
+ * The tests that replaced them are deliberately harder. A `NotImplemented` panel can only be
+ * asserted on its own prose -- it names a feature, an owner and a reason -- and prose is exactly
+ * what a page can claim without doing anything. What follows asserts requests made, decisions
+ * submitted, and event names received.
+ */
 
-describe.each(NOT_IMPLEMENTED_PAGES)(
-  "$name route (no endpoint behind it)",
-  ({ name, Page, heading, feature, namesMissingPiece, owner }) => {
-    it("renders exactly one h1, naming the screen", () => {
-      render(<Page />);
-      const h1s = screen.getAllByRole("heading", { level: 1 });
-      expect(h1s).toHaveLength(1);
-      expect(h1s[0]).toHaveTextContent(heading);
-    });
+describe("Approvals renders a real diff and submits a real decision", () => {
+  const CHANGE_SET = {
+    id: "cs-1",
+    project_id: "p-1",
+    status: "pending_approval",
+    origin: "generation",
+    blast_radius_score: 12,
+    blast_radius_verdict: "moderate",
+    version: 3,
+    generation_run_id: "run-1",
+    created_at: "2026-08-21T04:00:00Z",
+    applied_at: null,
+  };
 
-    it("declares the feature unimplemented in a labelled region", () => {
-      render(<Page />);
-      const region = screen.getByRole("region", { name: feature });
-      expect(region).toBeInTheDocument();
-    });
+  const DETAIL = {
+    ...CHANGE_SET,
+    items: [
+      {
+        id: "ci-1",
+        file_path: "Dockerfile",
+        action: "update" as const,
+        old_content: "FROM node:18\nUSER root\n",
+        new_content: "FROM node:20-alpine\nUSER node\n",
+        old_hash: "aaa",
+        new_hash: "bbb",
+        ordinal: 0,
+      },
+    ],
+    approvals: [],
+  };
 
-    it("names the missing piece and the owning phase", () => {
-      render(<Page />);
-      const region = screen.getByRole("region", { name: feature });
-      expect(region).toHaveTextContent(namesMissingPiece);
-      expect(region).toHaveTextContent(owner);
+  function serve(overrides: Record<string, unknown> = {}) {
+    mockGet.mockImplementation((path: string) => {
+      if (path.startsWith("/approvals?")) {
+        return Promise.resolve({ change_sets: [CHANGE_SET], next_cursor: null });
+      }
+      if (path === "/approvals/cs-1") return Promise.resolve({ ...DETAIL, ...overrides });
+      return Promise.reject(new Error(`unexpected GET ${path}`));
     });
+  }
 
-    it("states that the blankness is deliberate rather than unfinished", () => {
-      render(<Page />);
-      expect(
-        screen.getByText(/deliberately blank rather than populated with sample data/i),
-      ).toBeInTheDocument();
-    });
+  it("lists change sets awaiting a decision", async () => {
+    serve();
+    renderPage(<ApprovalsPage />);
+    expect(await screen.findByText("cs-1")).toBeInTheDocument();
+    // The list request is filtered server-side to the one state a decision is legal from.
+    expect(mockGet).toHaveBeenCalledWith(expect.stringContaining("status=pending_approval"));
+  });
 
-    it("makes no network request at all", () => {
-      render(<Page />);
-      expect(mockGet).not.toHaveBeenCalled();
-    });
+  it("shows no diff until a change set is chosen", async () => {
+    serve();
+    renderPage(<ApprovalsPage />);
+    await screen.findByText("cs-1");
+    // Nothing selected by default, so one change set's diff is never shown under another's heading.
+    expect(screen.queryByRole("region", { name: /diff for/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/select a change set to review/i)).toBeInTheDocument();
+  });
 
-    it(`is the current nav item at its own pathname (${name})`, () => {
-      mockPathname = ROUTE_HREFS[name];
-      render(<AppSidebar />);
-      const current = screen
-        .getAllByRole("link")
-        .filter((a) => a.getAttribute("aria-current") === "page");
-      expect(current).toHaveLength(1);
-      expect(current[0]).toHaveAttribute("href", ROUTE_HREFS[name]);
-    });
-  },
-);
+  it("renders the diff of the change items, not a pre-flattened string", async () => {
+    serve();
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+
+    const region = await screen.findByRole("region", { name: /diff for Dockerfile/i });
+    // Both sides present: the removed line and the added line, which is what makes it a diff rather
+    // than a listing of the new file.
+    expect(region).toHaveTextContent("FROM node:18");
+    expect(region).toHaveTextContent("FROM node:20-alpine");
+    // The recorded hash is displayed rather than recomputed in the browser.
+    expect(region).toHaveTextContent("bbb");
+  });
+
+  it("offers both view modes and switches between them", async () => {
+    serve();
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+
+    const unified = await screen.findByRole("button", { name: "Unified" });
+    const split = screen.getByRole("button", { name: "Side by side" });
+    expect(unified).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.click(split);
+    expect(split).toHaveAttribute("aria-pressed", "true");
+    expect(unified).toHaveAttribute("aria-pressed", "false");
+    // The side-by-side table announces its two columns; the unified one does not have them.
+    expect(screen.getByText("Before")).toBeInTheDocument();
+    expect(screen.getByText("After")).toBeInTheDocument();
+  });
+
+  it("has no field for the approver anywhere on the screen", async () => {
+    serve();
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByRole("region", { name: /diff for/i });
+
+    // THE defect that kept this router unmounted was `approver: str = "admin"` as a query
+    // parameter. Reintroducing it as a form field would be the same defect in a nicer coat.
+    expect(screen.queryByLabelText(/approver/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/rejector/i)).not.toBeInTheDocument();
+    const inputs = Array.from(document.querySelectorAll("input"));
+    expect(inputs).toHaveLength(0);
+    expect(screen.getByText(/server takes it from your session/i)).toBeInTheDocument();
+  });
+
+  it("submits an approval carrying the comment and the displayed version", async () => {
+    serve();
+    mockPost.mockResolvedValue({});
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByRole("region", { name: /diff for/i });
+
+    await userEvent.type(screen.getByLabelText(/reason/i), "looks right");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/approve", {
+        comment: "looks right",
+        // The version THIS screen displayed, so a stale tab gets a 409 rather than deciding on
+        // state the reviewer never saw.
+        expected_version: 3,
+      }),
+    );
+  });
+
+  it("submits a rejection to the reject endpoint", async () => {
+    serve();
+    mockPost.mockResolvedValue({});
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByRole("region", { name: /diff for/i });
+
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/reject", {
+        comment: null,
+        expected_version: 3,
+      }),
+    );
+  });
+
+  it("explains a 409 as a stale view rather than a generic failure", async () => {
+    serve();
+    mockPost.mockRejectedValue(problem(409, "Change set conflict"));
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByRole("region", { name: /diff for/i });
+
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/moved since it was displayed/i);
+  });
+
+  it("offers no decision controls from a state §3.6 forbids deciding from", async () => {
+    serve({ status: "applied" });
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByRole("region", { name: /diff for/i });
+
+    // Not offered and refused by the server: not offered at all.
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(screen.getByText(/only permits a decision from/i)).toBeInTheDocument();
+  });
+});
+
+describe("Generation gates the wizard on a usable project id", () => {
+  it("renders exactly one h1", () => {
+    renderPage(<GenerationPage />);
+    const h1s = screen.getAllByRole("heading", { level: 1 });
+    expect(h1s).toHaveLength(1);
+    expect(h1s[0]).toHaveTextContent("Generation");
+  });
+
+  it("does not offer the generator before a valid project id is entered", () => {
+    renderPage(<GenerationPage />);
+    // A button that cannot succeed is worse than one that is not there: the run has to be
+    // attributed to a project to be submitted as a change set.
+    expect(screen.queryByRole("button", { name: /generate artifacts/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/generator is not offered before then/i)).toBeInTheDocument();
+  });
+
+  it("offers it once the id is a real UUID", async () => {
+    renderPage(<GenerationPage />);
+    await userEvent.type(
+      screen.getByLabelText(/project id/i),
+      "00000000-0000-0000-0000-000000000001",
+    );
+    expect(screen.getByRole("button", { name: /generate artifacts/i })).toBeInTheDocument();
+  });
+
+  it("makes no request merely from being rendered", () => {
+    renderPage(<GenerationPage />);
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("every route marks its own nav item current", () => {
+  it.each([
+    ["Approvals", "/approvals"],
+    ["Generation", "/generation"],
+  ])("%s", (_name, href) => {
+    mockPathname = href;
+    render(<AppSidebar />);
+    const current = screen
+      .getAllByRole("link")
+      .filter((a) => a.getAttribute("aria-current") === "page");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveAttribute("href", href);
+  });
+});
 
 /**
  * Readiness is now the only id-driven screen. Projects gained a real list endpoint, so its

@@ -4,12 +4,9 @@ import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ProjectList } from "../features/projects/ProjectList";
 import { ReadinessRadarChart } from "../features/readiness/RadarChart";
-import { GeneratorWizard } from "../features/generation/GeneratorWizard";
-import { ApprovalCenter } from "../features/approvals/ApprovalCenter";
 import { PolicyEditor } from "../features/policies/PolicyEditor";
 import { SecretVault } from "../features/vault/SecretVault";
 import { AuditViewer } from "../features/audit/AuditViewer";
-import { AgentPairing } from "../features/pairing/AgentPairing";
 
 describe("Frontend Feature Surfaces", () => {
   it("renders project list component", () => {
@@ -22,19 +19,6 @@ describe("Frontend Feature Surfaces", () => {
     const scores = [{ category: "Security", score: 90 }];
     render(<ReadinessRadarChart scores={scores} />);
     expect(screen.getByText("Security")).toBeInTheDocument();
-  });
-
-  it("renders generator wizard component", () => {
-    render(<GeneratorWizard />);
-    expect(screen.getByText("Artifact Generator Wizard")).toBeInTheDocument();
-  });
-
-  it("renders approval center component", () => {
-    const cs = [
-      { id: "cs-1", summary: "Fix config", status: "PENDING", diff: "--- file\n+++ file" },
-    ];
-    render(<ApprovalCenter changeSets={cs} />);
-    expect(screen.getByText("Fix config")).toBeInTheDocument();
   });
 
   it("renders policy editor component", () => {
@@ -82,8 +66,15 @@ describe("Frontend Feature Surfaces", () => {
     expect(screen.getByText("changeset/cs-9")).toBeInTheDocument();
   });
 
-  it("renders agent pairing component", () => {
-    render(<AgentPairing />);
-    expect(screen.getByText("Agent Pairing & Workload Attestation")).toBeInTheDocument();
-  });
+  // `pairing/AgentPairing.tsx` IS DELETED, and its smoke test with it.
+  //
+  // It rendered `SPIFFE Trust Domain: spiffe://cluster.local` and `Status: Connected & Attested`
+  // from no props and no fetch -- a security control reported as passing by a component that could
+  // not observe it. Nothing rendered it once `/pairing` was rewritten against
+  // `GET /api/v1/agents/devices`, so it was an unused component whose only remaining effect was to
+  // make a fabricated attestation claim available to the next person who imported it.
+  //
+  // The old assertion here is worth remembering as a category: it checked that the component
+  // rendered its own title. A test like that passes for a component that has never been correct,
+  // which is why the replacement asserts observed device state in `route-pages.test.tsx` instead.
 });

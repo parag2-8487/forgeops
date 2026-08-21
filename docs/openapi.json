@@ -1,0 +1,4126 @@
+{
+  "components": {
+    "schemas": {
+      "ActivityFeedItem": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "details": {
+            "title": "Details",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "timestamp",
+          "details"
+        ],
+        "title": "ActivityFeedItem",
+        "type": "object"
+      },
+      "ApprovalDecisionRequest": {
+        "description": "The body of an approve or reject.\n\nA **body**, not query parameters, and this is the point of the rewrite. The old handlers took\n`approver: str = \"admin\"` and `rejector: str = \"admin\"` in the query string, so the caller\nsupplied the identity that the audit record would attribute the decision to \u2014 and defaulted it\nto an administrator. The approver is now taken from the verified principal and cannot be\nexpressed on the wire at all; there is deliberately no `approver` field here.\n\n`comment` carries the reviewer's reason into `approvals.comment` and into the audit record's\n`reason`. `expected_version` is the change set's `version` as the client last saw it.",
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The version the client displayed. When supplied, a change set that has moved on produces 409 change-set-conflict instead of a decision on stale state.",
+            "title": "Expected Version"
+          }
+        },
+        "title": "ApprovalDecisionRequest",
+        "type": "object"
+      },
+      "ApprovalRead": {
+        "description": "A human decision, from `approvals`.\n\n`approver_id` is a `users.id`, not a name \u2014 the column is a foreign key with `ON DELETE\nRESTRICT`, so a decision cannot be attributed to a user who does not exist, and the user\nbehind a decision cannot be deleted. The old surface took the approver as a query-string\nstring, which could name anybody.",
+        "properties": {
+          "approver_id": {
+            "format": "uuid",
+            "title": "Approver Id",
+            "type": "string"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "description": "One of approved, rejected (APPROVAL_STATUSES).",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "approver_id",
+          "status",
+          "created_at"
+        ],
+        "title": "ApprovalRead",
+        "type": "object"
+      },
+      "AuditEventOut": {
+        "description": "One record, as the API renders it.\n\n`prev_hash` and `hash` are hex, so a caller can verify the chain independently without this\nservice being trusted to answer honestly about itself \u2014 which is the only kind of tamper\nevidence worth having.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_device_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Device Id"
+          },
+          "actor_kind": {
+            "title": "Actor Kind",
+            "type": "string"
+          },
+          "actor_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor User Id"
+          },
+          "after_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After State"
+          },
+          "before_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before State"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "hash": {
+            "title": "Hash",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "prev_hash": {
+            "title": "Prev Hash",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_kind": {
+            "title": "Resource Kind",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "tenant_id",
+          "project_id",
+          "actor_kind",
+          "actor_user_id",
+          "actor_device_id",
+          "action",
+          "resource_kind",
+          "resource_id",
+          "reason",
+          "before_state",
+          "after_state",
+          "outcome",
+          "trace_id",
+          "prev_hash",
+          "hash",
+          "created_at"
+        ],
+        "title": "AuditEventOut",
+        "type": "object"
+      },
+      "AuditPage": {
+        "description": "A page plus the cursor that fetches the next one.\n\n`next_cursor` is `None` exactly when the page is the last one, so a client's loop terminates\non a value rather than on a count comparison it has to get right.",
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AuditEventOut"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "events",
+          "next_cursor"
+        ],
+        "title": "AuditPage",
+        "type": "object"
+      },
+      "BlastRadiusResponse": {
+        "properties": {
+          "affected_resources": {
+            "title": "Affected Resources",
+            "type": "integer"
+          },
+          "destructive_count": {
+            "title": "Destructive Count",
+            "type": "integer"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          },
+          "stateful_deletions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stateful Deletions",
+            "type": "array"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "destructive_count",
+          "affected_resources",
+          "stateful_deletions",
+          "verdict"
+        ],
+        "title": "BlastRadiusResponse",
+        "type": "object"
+      },
+      "ChainVerificationOut": {
+        "description": "`ok` is derived from `divergence`, never a stored or separately-computed flag.",
+        "properties": {
+          "divergence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DivergenceOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "from_seq": {
+            "title": "From Seq",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "rows_checked": {
+            "title": "Rows Checked",
+            "type": "integer"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          }
+        },
+        "required": [
+          "ok",
+          "tenant_id",
+          "from_seq",
+          "rows_checked",
+          "divergence"
+        ],
+        "title": "ChainVerificationOut",
+        "type": "object"
+      },
+      "ChangeItemRead": {
+        "description": "One file's worth of a change set, from `change_items`.\n\n`old_content` and `new_content` are included because the diff viewer needs them and the\nagent's apply is verified against them. `old_hash`/`new_hash` are carried separately rather\nthan recomputed by the client: \u00a712.6 step 10 asserts the on-disk result against the hash the\nbackend recorded, and a client-computed hash would be checking the client against itself.",
+        "properties": {
+          "action": {
+            "description": "One of create, update, delete (CHANGE_ITEM_ACTIONS).",
+            "title": "Action",
+            "type": "string"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "new_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Content"
+          },
+          "new_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Hash"
+          },
+          "old_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Content"
+          },
+          "old_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Hash"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "file_path",
+          "action",
+          "ordinal"
+        ],
+        "title": "ChangeItemRead",
+        "type": "object"
+      },
+      "ChangeSetDetail": {
+        "description": "A change set with the items that constitute its diff and the decisions taken on it.",
+        "properties": {
+          "applied_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
+          },
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/ApprovalRead"
+            },
+            "title": "Approvals",
+            "type": "array"
+          },
+          "blast_radius_score": {
+            "title": "Blast Radius Score",
+            "type": "integer"
+          },
+          "blast_radius_verdict": {
+            "title": "Blast Radius Verdict",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeItemRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "status": {
+            "description": "One of \u00a73.6's thirteen states (CHANGE_SET_STATUSES).",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "status",
+          "origin",
+          "blast_radius_score",
+          "blast_radius_verdict",
+          "version",
+          "created_at",
+          "items",
+          "approvals"
+        ],
+        "title": "ChangeSetDetail",
+        "type": "object"
+      },
+      "ChangeSetPage": {
+        "description": "A page of change sets plus the cursor that fetches the next one.\n\nKeyset rather than offset, matching the audit surface: an offset shifts under insertion, so a\nreviewer paging through pending change sets while new ones arrive would see rows twice or not\nat all.",
+        "properties": {
+          "change_sets": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeSetSummary"
+            },
+            "title": "Change Sets",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "change_sets"
+        ],
+        "title": "ChangeSetPage",
+        "type": "object"
+      },
+      "ChangeSetStatusFilter": {
+        "enum": [
+          "draft",
+          "validating",
+          "rejected_by_policy",
+          "blocked",
+          "pending_approval",
+          "approved",
+          "rejected",
+          "expired",
+          "applying",
+          "applied",
+          "rolled_back",
+          "conflicted",
+          "reverted"
+        ],
+        "title": "ChangeSetStatusFilter",
+        "type": "string"
+      },
+      "ChangeSetSummary": {
+        "description": "A change set without its items, for the list view.",
+        "properties": {
+          "applied_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied At"
+          },
+          "blast_radius_score": {
+            "title": "Blast Radius Score",
+            "type": "integer"
+          },
+          "blast_radius_verdict": {
+            "title": "Blast Radius Verdict",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "status": {
+            "description": "One of \u00a73.6's thirteen states (CHANGE_SET_STATUSES).",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "status",
+          "origin",
+          "blast_radius_score",
+          "blast_radius_verdict",
+          "version",
+          "created_at"
+        ],
+        "title": "ChangeSetSummary",
+        "type": "object"
+      },
+      "ChunkDetailResponse": {
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "file_path",
+          "content",
+          "start_line",
+          "end_line",
+          "language"
+        ],
+        "title": "ChunkDetailResponse",
+        "type": "object"
+      },
+      "CodebaseStatusResponse": {
+        "properties": {
+          "indexed_files": {
+            "title": "Indexed Files",
+            "type": "integer"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total_chunks": {
+            "title": "Total Chunks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indexed_files",
+          "total_chunks",
+          "languages",
+          "status"
+        ],
+        "title": "CodebaseStatusResponse",
+        "type": "object"
+      },
+      "CompletionRequestBody": {
+        "properties": {
+          "max_tokens": {
+            "default": 4096,
+            "maximum": 128000.0,
+            "minimum": 1.0,
+            "title": "Max Tokens",
+            "type": "integer"
+          },
+          "prompt": {
+            "description": "The prompt to complete",
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          },
+          "temperature": {
+            "default": 0.7,
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Temperature",
+            "type": "number"
+          },
+          "tier": {
+            "description": "Model tier name (e.g. 'high_coding')",
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "prompt"
+        ],
+        "title": "CompletionRequestBody",
+        "type": "object"
+      },
+      "CompletionResponseBody": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "degraded": {
+            "default": false,
+            "title": "Degraded",
+            "type": "boolean"
+          },
+          "endpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Id"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "served_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Served From"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "CompletionResponseBody",
+        "type": "object"
+      },
+      "DevicePage": {
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceRead"
+            },
+            "title": "Devices",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "title": "DevicePage",
+        "type": "object"
+      },
+      "DeviceRead": {
+        "description": "One agent device, as observed.",
+        "properties": {
+          "agent_version": {
+            "title": "Agent Version",
+            "type": "string"
+          },
+          "cert_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cert Fingerprint"
+          },
+          "cert_not_after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cert Not After"
+          },
+          "cert_serial": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cert Serial"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "heartbeat_fresh": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Fresh"
+          },
+          "heartbeat_timeout_seconds": {
+            "title": "Heartbeat Timeout Seconds",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "last_seq": {
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "pairing_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pairing Expires At"
+          },
+          "platform": {
+            "title": "Platform",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "seconds_since_last_seen": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seconds Since Last Seen"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeviceStatus",
+            "description": "\u00a73.7's state machine: pending, active, policy_stale, revoked, abandoned."
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "status",
+          "agent_version",
+          "platform",
+          "last_seq",
+          "created_at",
+          "heartbeat_timeout_seconds"
+        ],
+        "title": "DeviceRead",
+        "type": "object"
+      },
+      "DeviceStatus": {
+        "description": "\u00a73.7's state machine, expressed as data.",
+        "enum": [
+          "pending",
+          "active",
+          "policy_stale",
+          "revoked",
+          "abandoned"
+        ],
+        "title": "DeviceStatus",
+        "type": "string"
+      },
+      "DivergenceOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "expected_hash": {
+            "title": "Expected Hash",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stored_hash": {
+            "title": "Stored Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "detail",
+          "expected_hash",
+          "stored_hash"
+        ],
+        "title": "DivergenceOut",
+        "type": "object"
+      },
+      "DryRunInput": {
+        "properties": {
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "title": "DryRunInput",
+        "type": "object"
+      },
+      "ExchangeRequest": {
+        "additionalProperties": false,
+        "description": "\u00a73.1's `{code, csr, agent_version, platform, fingerprint}`.\n\n`extra=\"forbid\"` because this is the one route an unauthenticated caller can reach: a body\nwith unknown members is either a client bug or a probe, and accepting it silently makes both\ninvisible.",
+        "properties": {
+          "agent_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Agent Version",
+            "type": "string"
+          },
+          "code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "csr": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "title": "Csr",
+            "type": "string"
+          },
+          "fingerprint": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "platform": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Platform",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "csr",
+          "agent_version",
+          "platform",
+          "fingerprint"
+        ],
+        "title": "ExchangeRequest",
+        "type": "object"
+      },
+      "ExchangeResponse": {
+        "description": "What the exchange issues (\u00a73.1's `201` body, as far as Phase 1 has built it).\n\n\u00a73.1's response also carries `policy_bundle` and `policy_bundle_digest`. Both come from\n`PolicyBundleService.publish`, which leaf 9.3 builds; they are absent rather than empty,\nbecause D-30 makes a missing bundle a **deny** on the agent side, so a zero-byte bundle would\nbe a field that means \"refuse everything\" while looking like a bundle.\n\nThe token and the key are hex-encoded. They are 32 random bytes each and JSON has no byte\ntype; hex rather than base64url because the agent stores them as bytes and one decoding\nmistake there is a credential that silently never matches. The certificate and CA bundle are\nPEM strings, which are already text and already have exactly one spelling.",
+        "properties": {
+          "ca_bundle": {
+            "title": "Ca Bundle",
+            "type": "string"
+          },
+          "cert_fingerprint": {
+            "title": "Cert Fingerprint",
+            "type": "string"
+          },
+          "cert_not_after": {
+            "title": "Cert Not After",
+            "type": "string"
+          },
+          "cert_serial": {
+            "title": "Cert Serial",
+            "type": "string"
+          },
+          "client_cert": {
+            "title": "Client Cert",
+            "type": "string"
+          },
+          "csr_spki_sha256": {
+            "title": "Csr Spki Sha256",
+            "type": "string"
+          },
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "device_token": {
+            "title": "Device Token",
+            "type": "string"
+          },
+          "envelope_key": {
+            "title": "Envelope Key",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "renew_after": {
+            "title": "Renew After",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "project_id",
+          "device_token",
+          "envelope_key",
+          "csr_spki_sha256",
+          "client_cert",
+          "ca_bundle",
+          "cert_serial",
+          "cert_fingerprint",
+          "cert_not_after",
+          "renew_after"
+        ],
+        "title": "ExchangeResponse",
+        "type": "object"
+      },
+      "FindingResponse": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "severity",
+          "code",
+          "message"
+        ],
+        "title": "FindingResponse",
+        "type": "object"
+      },
+      "GenerationEventEnvelope": {
+        "description": "One SSE frame this endpoint emits, published so the vocabulary is machine-readable.\n\nDeclared as a response model even though the response is a `StreamingResponse` and no single\nframe is \"the\" body. The reason is not documentation for its own sake: without a model\nreferencing `SSEEventType`, the enum appears nowhere in `openapi.json`, and a client has no\ncheckable source for the event names \u2014 which is precisely how a producer came to emit\n`run_start`, `token_chunk` and `run_complete` for a whole phase without anything noticing.\n\n`frontend/__tests__/sse-vocabulary.test.ts` reads this enum out of the generated schema and\nasserts the browser's list is exactly equal to it. That comparison is what makes the two ends\nunable to drift apart silently; a client-side test checking its own list against a copy of\nitself would have been as blind as the backend property was.",
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "description": "The JSON payload, encoded on a single line because newlines separate frames.",
+            "title": "Data",
+            "type": "object"
+          },
+          "event": {
+            "$ref": "#/components/schemas/SSEEventType",
+            "description": "One of \u00a77.4's six event types; no others are emitted."
+          }
+        },
+        "required": [
+          "event",
+          "data"
+        ],
+        "title": "GenerationEventEnvelope",
+        "type": "object"
+      },
+      "GenerationRequest": {
+        "description": "What a caller asks to have generated.",
+        "properties": {
+          "environment": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "prompt"
+        ],
+        "title": "GenerationRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "PairingCodeRequest": {
+        "additionalProperties": false,
+        "description": "Which project the code pairs a device to.",
+        "properties": {
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "PairingCodeRequest",
+        "type": "object"
+      },
+      "PairingCodeResponse": {
+        "description": "\u00a73.1's `201 {code, expires_at, device_id}`.\n\nThe code appears here and nowhere else \u2014 not in a log line, not in an audit row, not in a\ndatabase column. This response is the single moment it exists in the clear.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "device_id": {
+            "format": "uuid",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "device_id",
+          "expires_at"
+        ],
+        "title": "PairingCodeResponse",
+        "type": "object"
+      },
+      "PlanAnalysisRequest": {
+        "description": "Request body for plan analysis.",
+        "properties": {
+          "plan": {
+            "additionalProperties": true,
+            "description": "OpenTofu/Terraform plan JSON object",
+            "title": "Plan",
+            "type": "object"
+          }
+        },
+        "required": [
+          "plan"
+        ],
+        "title": "PlanAnalysisRequest",
+        "type": "object"
+      },
+      "PlanAnalysisResponse": {
+        "properties": {
+          "approval_decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Decision"
+          },
+          "blast_radius": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BlastRadiusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/FindingResponse"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "findings",
+          "verdict"
+        ],
+        "title": "PlanAnalysisResponse",
+        "type": "object"
+      },
+      "PolicyCreate": {
+        "properties": {
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "engine": {
+            "default": "rego",
+            "maxLength": 16,
+            "title": "Engine",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 200,
+            "title": "Name",
+            "type": "string"
+          },
+          "rego_rules": {
+            "title": "Rego Rules",
+            "type": "string"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "required": [
+          "name",
+          "rego_rules"
+        ],
+        "title": "PolicyCreate",
+        "type": "object"
+      },
+      "PolicyRead": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "engine": {
+            "title": "Engine",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "rego_rules": {
+            "title": "Rego Rules",
+            "type": "string"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "tenant_id",
+          "name",
+          "engine",
+          "rego_rules",
+          "enabled",
+          "template_id"
+        ],
+        "title": "PolicyRead",
+        "type": "object"
+      },
+      "PolicyTemplateRead": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "rego_rules": {
+            "title": "Rego Rules",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "rego_rules",
+          "parameters"
+        ],
+        "title": "PolicyTemplateRead",
+        "type": "object"
+      },
+      "PolicyUpdate": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "rego_rules": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rego Rules"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "title": "PolicyUpdate",
+        "type": "object"
+      },
+      "ProjectCreateRequest": {
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo_url": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Url"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "ProjectCreateRequest",
+        "type": "object"
+      },
+      "ProjectPage": {
+        "description": "A keyset page of projects, newest first.",
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectResponse"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "title": "ProjectPage",
+        "type": "object"
+      },
+      "ProjectResponse": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "repo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Url"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "path",
+          "repo_url",
+          "settings"
+        ],
+        "title": "ProjectResponse",
+        "type": "object"
+      },
+      "ReadinessReportResponse": {
+        "properties": {
+          "categories": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Categories",
+            "type": "object"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "recommendations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          },
+          "summary_report": {
+            "title": "Summary Report",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "score",
+          "level",
+          "summary_report",
+          "recommendations"
+        ],
+        "title": "ReadinessReportResponse",
+        "type": "object"
+      },
+      "RevokeRequest": {
+        "additionalProperties": false,
+        "description": "Why the device is being revoked. Required, per NFR-14's \"why\".",
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RevokeRequest",
+        "type": "object"
+      },
+      "SSEEventType": {
+        "description": "The fixed SSE event-type vocabulary from Research \u00a70.\n\nPhase 1 producers use only these values; no divergent names may be invented.",
+        "enum": [
+          "status",
+          "token",
+          "progress",
+          "validation",
+          "complete",
+          "error"
+        ],
+        "title": "SSEEventType",
+        "type": "string"
+      },
+      "SecretCreate": {
+        "properties": {
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "environment",
+          "key",
+          "value"
+        ],
+        "title": "SecretCreate",
+        "type": "object"
+      },
+      "SecretResponse": {
+        "properties": {
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "infisical_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Infisical Path"
+          },
+          "is_local": {
+            "title": "Is Local",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "environment",
+          "key",
+          "infisical_path",
+          "is_local"
+        ],
+        "title": "SecretResponse",
+        "type": "object"
+      },
+      "SecretUpdate": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "SecretUpdate",
+        "type": "object"
+      },
+      "SymbolQueryResponse": {
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "line_number": {
+            "title": "Line Number",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "file_path",
+          "line_number"
+        ],
+        "title": "SymbolQueryResponse",
+        "type": "object"
+      },
+      "TierInfoResponse": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "breaker_state": {
+            "title": "Breaker State",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "primary_endpoint": {
+            "title": "Primary Endpoint",
+            "type": "string"
+          },
+          "primary_protocol": {
+            "title": "Primary Protocol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "primary_endpoint",
+          "primary_protocol",
+          "available",
+          "breaker_state"
+        ],
+        "title": "TierInfoResponse",
+        "type": "object"
+      },
+      "TiersListResponse": {
+        "properties": {
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/TierInfoResponse"
+            },
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tiers"
+        ],
+        "title": "TiersListResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ForgeOps API",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/agents/devices": {
+      "get": {
+        "description": "The devices the caller's tenant can see, newest first.\n\n`status` is typed as `DeviceStatus`, so an unknown value is FastAPI's registered\n`validation-failed` 422 rather than a query that matches nothing and looks like an empty\ninventory.",
+        "operationId": "list_devices_api_v1_agents_devices_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/DeviceStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List paired agent devices",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/devices/{device_id}": {
+      "get": {
+        "description": "One device, or the non-disclosing 403.\n\nNot `device-not-found`, even though that type is registered and the revoke route uses it. The\ndifference is what the caller has already proved: revoke is scoped to a device the caller is\nacting on, whereas this is a read by id, and answering 404 here would let a caller enumerate\ndevice ids across tenants. \u00a74.2 requires the forbidden body to be identical whether or not the\nrow exists.",
+        "operationId": "get_device_api_v1_agents_devices__device_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read one agent device",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/pair/exchange": {
+      "post": {
+        "description": "The public exchange. Rate limited per IP and globally before anything else runs.",
+        "operationId": "exchange_pairing_code_api_v1_agents_pair_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange a pairing code for device credentials (public)",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/pairing-codes": {
+      "post": {
+        "description": "Issue a code, revoking any code already live for the project (Appendix A.1).",
+        "operationId": "issue_pairing_code_api_v1_agents_pairing_codes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingCodeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue a single-use pairing code for a project",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/{device_id}": {
+      "delete": {
+        "description": "Revoke a device. Idempotent: a second call succeeds and writes no second audit row.",
+        "operationId": "revoke_device_api_v1_agents__device_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Device Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke a device",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/ai/complete": {
+      "post": {
+        "description": "Run a completion with the fixed security/admission order.\n\nOrder: OIDC \u2192 claims.sub \u2192 Redis limiter \u2192 cache \u2192 router/provider.",
+        "operationId": "complete_api_v1_ai_complete_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompletionRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompletionResponseBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/tiers": {
+      "get": {
+        "description": "Return all tier names with primary endpoint info, availability, and breaker state.",
+        "operationId": "list_tiers_api_v1_ai_tiers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TiersListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Tiers",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/analysis/codebase/chunks/{chunk_id}": {
+      "get": {
+        "description": "Retrieve chunk content and line range by chunk_id.",
+        "operationId": "get_chunk_details_api_v1_analysis_codebase_chunks__chunk_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChunkDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chunk Details",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/v1/analysis/codebase/status": {
+      "get": {
+        "description": "Return indexing status and summary metrics for the codebase.",
+        "operationId": "get_codebase_status_api_v1_analysis_codebase_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodebaseStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Codebase Status",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/v1/analysis/codebase/symbols": {
+      "get": {
+        "description": "Query indexed symbols matching a substring search.",
+        "operationId": "query_symbols_api_v1_analysis_codebase_symbols_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Query",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SymbolQueryResponse"
+                  },
+                  "title": "Response Query Symbols Api V1 Analysis Codebase Symbols Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Symbols",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/v1/analysis/plan": {
+      "post": {
+        "description": "Analyse a Terraform/OpenTofu plan and return findings + blast radius.",
+        "operationId": "analyse_plan_api_v1_analysis_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanAnalysisRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyse Plan",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "description": "A keyset page of the caller's tenant's change sets, newest first.",
+        "operationId": "list_change_sets_api_v1_approvals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ChangeSetStatusFilter"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeSetPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List change sets awaiting or past decision",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{change_set_id}": {
+      "get": {
+        "description": "One change set with its `change_items` and every decision recorded against it.",
+        "operationId": "get_change_set_api_v1_approvals__change_set_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeSetDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read one change set and its diff",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{change_set_id}/approve": {
+      "post": {
+        "description": "Approve, then mint authority and deliver the envelope \u2014 the full \u00a711.6 transit.\n\nThe approver is `principal.user_id` and cannot be supplied by the caller. Delegated to the\nchokepoint rather than reimplemented, so approval keeps its optimistic-concurrency check, its\n`approvals` row, its audit event and its re-evaluation of policy at apply time.",
+        "operationId": "approve_change_set_api_v1_approvals__change_set_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Approve Change Set Api V1 Approvals  Change Set Id  Approve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve a pending change set",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{change_set_id}/reject": {
+      "post": {
+        "description": "Refuse a pending change set: \u00a73.6's `pending_approval \u2192 rejected` edge.\n\nNothing is minted and nothing is delivered, because there is nothing to apply. The refusal is\nstill a governance event with a row and an audit record \u2014 under the old dictionary it was\nneither.",
+        "operationId": "reject_change_set_api_v1_approvals__change_set_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reject Change Set Api V1 Approvals  Change Set Id  Reject Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject a pending change set",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{change_set_id}/revert": {
+      "post": {
+        "description": "Compile and authorise the reverse change set (\u00a711.6, D-66).\n\nNamed `revert`, not `rollback`, because \u00a73.6's edge out of `applied` is `applied \u2192 reverted` and\nthe old handler's name matched no edge in the state machine. `rolled_back` is a different state\nreached from `applying` when an apply fails \u2014 conflating them would make the two\nindistinguishable on the record.\n\nA revert is a mutation and goes through all six stages with its own fresh authority: reusing the\noriginal's would make rollback a privileged back door.",
+        "operationId": "revert_change_set_api_v1_approvals__change_set_id__revert_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revert Change Set Api V1 Approvals  Change Set Id  Revert Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revert an applied change set",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/audit/events": {
+      "get": {
+        "description": "Newest first, filtered, cursor-paginated.\n\n**Tenant scope is taken from the principal, never from a parameter.** A `tenant_id` query\nargument would be a cross-tenant read waiting for a caller to try it, and D-35 leaves the\ncolumn nullable in Phase 1 with no RLS policy behind it \u2014 so the confinement has to be here.\n\n`actor_kind` and `outcome` are typed `Literal`, so an unknown value is refused by FastAPI's\nown validation. Raising a hand-made problem here instead would mean inventing a type Appendix\nC.1 does not register, which is exactly what the registry exists to prevent.",
+        "operationId": "list_events_api_v1_audit_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_user_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor User Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "agent",
+                    "system"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "allowed",
+                    "denied",
+                    "blocked",
+                    "pending",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "description": "Return records with seq < cursor",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return records with seq < cursor",
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query audit records",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/audit/verify": {
+      "get": {
+        "description": "Recompute the caller's tenant chain and report the first divergence.\n\nAdmin only. Not because the result is sensitive \u2014 it is a hash comparison \u2014 but because the\noperation reads every row from `since_seq` and an unbounded recomputation available to any\nauthenticated caller is a cheap way to make the database everybody's problem. `since_seq` is\nwhat makes an incremental check possible on a large table.\n\nA **200 with `ok: false`** rather than an error status. A divergence is a successful\nverification that found something; returning 5xx would make \"the chain is broken\"\nindistinguishable from \"the verifier is broken\", and those need different responses.",
+        "operationId": "verify_chain_api_v1_audit_verify_get",
+        "parameters": [
+          {
+            "description": "Recompute from this seq onward",
+            "in": "query",
+            "name": "since_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Recompute from this seq onward",
+              "minimum": 0,
+              "title": "Since Seq",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainVerificationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify the audit hash chain",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/api/v1/auth/callback": {
+      "get": {
+        "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
+        "operationId": "callback_api_v1_auth_callback_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Callback",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
+        "operationId": "callback_api_v1_auth_callback_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Callback",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "get": {
+        "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
+        "operationId": "login_api_v1_auth_login_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
+        "operationId": "login_api_v1_auth_login_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "get": {
+        "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
+        "operationId": "logout_api_v1_auth_logout_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
+        "operationId": "logout_api_v1_auth_logout_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "description": "Rotate the session and return a fresh access token.",
+        "operationId": "refresh_api_v1_auth_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/generation/runs": {
+      "post": {
+        "description": "Stream one generation run, then persist it and submit its artifacts for approval.\n\nThe frames are \u00a712.6 step 7's sequence: `status`, one `token` per chunk, `validation`, then\n`complete` \u2014 or `error` in place of `complete`, never neither.",
+        "operationId": "create_generation_run_api_v1_generation_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationEventEnvelope"
+                }
+              },
+              "text/event-stream": {}
+            },
+            "description": "An SSE stream of \u00a77.4 events. The schema describes ONE frame, not the whole body: frames arrive in the order status \u2192 token* \u2192 validation \u2192 complete, or terminate early with a single error."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate deployment artifacts, streaming progress as SSE",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "description": "Versioned informational echo of liveness, also dependency-free.",
+        "operationId": "api_v1_health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api V1 Health"
+      }
+    },
+    "/api/v1/mcp": {
+      "post": {
+        "description": "Single MCP ingress. Dispatch is chosen from headers, never from the body.\n\nTwo orchestration paths exist and share no generic \"forward then authorise\"\nhelper (Design \u00a75.3):\n\n  tools/list  verify \u2192 route \u2192 cache|upstream \u2192 OPA filter \u2192 return\n  tools/call  verify \u2192 route \u2192 parse \u2192 resolve metadata \u2192 OPA authorise\n              \u2192 invoke upstream only on allow",
+        "operationId": "mcp_ingress_api_v1_mcp_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Mcp Ingress",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/api/v1/mcp/apps/{name}": {
+      "get": {
+        "description": "MCP App descriptor. The host page is served separately at /apps/{name}/host.",
+        "operationId": "get_app_descriptor_api_v1_mcp_apps__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get App Descriptor",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/api/v1/mcp/apps/{name}/host": {
+      "get": {
+        "description": "Sandboxed iframe host page.\n\nThe iframe carries ``allow-scripts allow-forms`` and deliberately NOT\n``allow-same-origin``, so the app cannot reach the parent origin's storage or\ncookies even though it executes script.",
+        "operationId": "get_app_host_page_api_v1_mcp_apps__name__host_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get App Host Page",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/api/v1/mcp/servers": {
+      "get": {
+        "description": "Registry introspection. Requires a verified bearer token like every other\ngateway surface, so the registry cannot be enumerated anonymously.",
+        "operationId": "list_servers_api_v1_mcp_servers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Servers",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/api/v1/policies": {
+      "post": {
+        "operationId": "create_policy_api_v1_policies_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Policy",
+        "tags": [
+          "policies"
+        ]
+      }
+    },
+    "/api/v1/policies/publish": {
+      "post": {
+        "operationId": "publish_bundle_api_v1_policies_publish_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Publish Bundle Api V1 Policies Publish Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Bundle",
+        "tags": [
+          "policies"
+        ]
+      }
+    },
+    "/api/v1/policies/templates": {
+      "get": {
+        "operationId": "list_templates_api_v1_policies_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PolicyTemplateRead"
+                  },
+                  "title": "Response List Templates Api V1 Policies Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Templates",
+        "tags": [
+          "policies"
+        ]
+      }
+    },
+    "/api/v1/policies/{policy_id}": {
+      "delete": {
+        "operationId": "delete_policy_api_v1_policies__policy_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Policy",
+        "tags": [
+          "policies"
+        ]
+      },
+      "get": {
+        "operationId": "get_policy_api_v1_policies__policy_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Policy",
+        "tags": [
+          "policies"
+        ]
+      },
+      "patch": {
+        "operationId": "update_policy_api_v1_policies__policy_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Policy",
+        "tags": [
+          "policies"
+        ]
+      }
+    },
+    "/api/v1/policies/{policy_id}/test": {
+      "post": {
+        "operationId": "test_policy_dry_run_api_v1_policies__policy_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DryRunInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Policy Dry Run",
+        "tags": [
+          "policies"
+        ]
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "description": "The endpoint whose absence forced the UI to be a lookup box.\n\nKeyset over `(created_at, id)`, for the same reason the approvals list is: an offset shifts as\nrows are inserted, so a client paging while projects are created sees duplicates or gaps.",
+        "operationId": "list_projects_api_v1_projects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List the caller's projects",
+        "tags": [
+          "projects"
+        ]
+      },
+      "post": {
+        "description": "Insert a project row owned by the caller's tenant.\n\nThe settings validation is unchanged and still refuses an unknown key rather than dropping it \u2014\na typo in `embedding_backend` that silently kept the default would only surface later as a\nproject whose vectors are in the wrong table (D-48).",
+        "operationId": "create_project_api_v1_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}": {
+      "get": {
+        "description": "Read a stored project.\n\nThis returned a fixed `\"Sample Project\"` for every id, including ids that had never existed.\nA create-then-read now returns what was created.",
+        "operationId": "get_project_api_v1_projects__project_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read one project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/activity": {
+      "get": {
+        "description": "The project's real governance history, read from `audit_events`.\n\nThis returned a single hardcoded `project_created` item dated 2026-08-06. The audit log is\nappend-only, hash-chained and already indexed on `(project_id, created_at)`, so an activity feed\nis a query over it rather than a second store \u2014 and using it means the feed cannot disagree with\nthe audit viewer about what happened.\n\nExistence is checked first so a caller cannot use an empty feed to learn that an id is\nunallocated.",
+        "operationId": "get_project_activity_api_v1_projects__project_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ActivityFeedItem"
+                  },
+                  "title": "Response Get Project Activity Api V1 Projects  Project Id  Activity Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project activity",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/readiness": {
+      "get": {
+        "description": "Score the project with `ReadinessEngine` and return the full breakdown.\n\nTwo things change here. The project must exist, so a readiness score is no longer returned for\nan unallocated id. And the **five-category breakdown is exposed**: the engine has always\ncomputed it and `ReadinessReportResponse` dropped it, which is why \u00a712.6 step 5's \"category\nbreakdown\" had nothing to render and the radar chart was reduced to one bar.\n\nWhat it scores is still derived from the project's stored `settings` and `path` rather than from\na filesystem walk of the repository, and that limit is real: wiring repository contents into the\nengine is analysis work, not a response-model change. The score is honest about its input rather\nthan pretending to have read the tree.",
+        "operationId": "get_project_readiness_api_v1_projects__project_id__readiness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Readiness score",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/secrets": {
+      "get": {
+        "description": "Expose metadata only.",
+        "operationId": "list_secrets_api_v1_secrets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Environment"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SecretResponse"
+                  },
+                  "title": "Response List Secrets Api V1 Secrets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Secrets",
+        "tags": [
+          "secrets"
+        ]
+      },
+      "post": {
+        "description": "Create a new secret metadata record and store value in backend.",
+        "operationId": "create_secret_api_v1_secrets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Secret",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/api/v1/secrets/{secret_id}": {
+      "delete": {
+        "description": "Delete a secret.",
+        "operationId": "delete_secret_api_v1_secrets__secret_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "secret_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Secret Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Secret",
+        "tags": [
+          "secrets"
+        ]
+      },
+      "patch": {
+        "description": "Update a secret's value.",
+        "operationId": "update_secret_api_v1_secrets__secret_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "secret_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Secret Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecretUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Secret",
+        "tags": [
+          "secrets"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Liveness. Event loop accepts work. No dependency I/O.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "description": "Readiness. PostgreSQL SELECT 1 + Redis PING, each with 2s timeout.",
+        "operationId": "health_ready_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Ready"
+      }
+    }
+  }
+}

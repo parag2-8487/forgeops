@@ -35,6 +35,13 @@ export const queryKeys = {
     all: ["policies"] as const,
     templates: () => [...queryKeys.policies.all, "templates"] as const,
   },
+  approvals: {
+    all: ["approvals"] as const,
+    // Added with the review UI. The status is part of the key because the list endpoint filters on
+    // it server-side, so two filters are two different responses.
+    list: (status: string) => [...queryKeys.approvals.all, "list", status] as const,
+    detail: (id: string) => [...queryKeys.approvals.all, "detail", id] as const,
+  },
   devices: {
     all: ["devices"] as const,
     // Added with `GET /api/v1/agents/devices`, the read surface pairing never had.

@@ -76,11 +76,42 @@ def _chokepoint(request: Request) -> GovernanceChokepoint:
     return chokepoint
 
 
+class GenerationEventEnvelope(BaseModel):
+    """One SSE frame this endpoint emits, published so the vocabulary is machine-readable.
+
+    Declared as a response model even though the response is a `StreamingResponse` and no single
+    frame is "the" body. The reason is not documentation for its own sake: without a model
+    referencing `SSEEventType`, the enum appears nowhere in `openapi.json`, and a client has no
+    checkable source for the event names — which is precisely how a producer came to emit
+    `run_start`, `token_chunk` and `run_complete` for a whole phase without anything noticing.
+
+    `frontend/__tests__/sse-vocabulary.test.ts` reads this enum out of the generated schema and
+    asserts the browser's list is exactly equal to it. That comparison is what makes the two ends
+    unable to drift apart silently; a client-side test checking its own list against a copy of
+    itself would have been as blind as the backend property was.
+    """
+
+    event: SSEEventType = Field(description="One of §7.4's six event types; no others are emitted.")
+    data: dict[str, object] = Field(
+        description="The JSON payload, encoded on a single line because newlines separate frames."
+    )
+
+
 @router.post(
     "/runs",
     summary="Generate deployment artifacts, streaming progress as SSE",
     response_class=StreamingResponse,
-    responses={200: {"content": {SSE_MEDIA_TYPE: {}}, "description": "An SSE stream of §7.4 events."}},
+    responses={
+        200: {
+            "model": GenerationEventEnvelope,
+            "content": {SSE_MEDIA_TYPE: {}},
+            "description": (
+                "An SSE stream of §7.4 events. The schema describes ONE frame, not the whole "
+                "body: frames arrive in the order status → token* → validation → complete, or "
+                "terminate early with a single error."
+            ),
+        }
+    },
 )
 async def create_generation_run(
     body: GenerationRequest,

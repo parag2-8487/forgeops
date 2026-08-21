@@ -4,14 +4,25 @@
 import React from "react";
 
 /**
- * Phase 1 serves no `GET /api/v1/projects` list endpoint — only create, get-by-id, activity and
- * readiness. So a projects screen cannot enumerate anything, and the honest interface is a
- * lookup by id rather than a list that quietly renders fixtures.
+ * A lookup by project id, for screens that act on ONE project rather than browse them.
+ *
+ * This comment used to say Phase 1 served no `GET /api/v1/projects` list endpoint, which is why a
+ * field existed instead of a picker. That is no longer true — the list endpoint was added with real
+ * persistence, and `/projects` now enumerates. The field remains because the generation screen acts
+ * on a single project supplied by the operator, not because nothing can be listed.
  *
  * A valid UUID, because `project_id: uuid.UUID` on the route means anything else is a 422 from
- * FastAPI's validation rather than a reply from the handler.
+ * FastAPI's validation rather than a reply from the handler. `isProjectId` is exported so a caller
+ * can decline to offer an action that is certain to fail.
  */
 export const DEFAULT_PROJECT_ID = "00000000-0000-0000-0000-000000000001";
+
+/** The shape FastAPI will accept for a `uuid.UUID` path or body field. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isProjectId(value: string): boolean {
+  return UUID_PATTERN.test(value.trim());
+}
 
 export function ProjectIdField({
   value,
