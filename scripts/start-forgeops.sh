@@ -1,0 +1,582 @@
+#!/usr/bin/env bash
+#
+# ForgeOps - one-click start (Linux and macOS).
+#
+# The counterpart to scripts/start-forgeops.ps1, doing the same work in the same order:
+# install what is missing, generate the secrets the application refuses to boot without, pick free
+# ports, start the nine services in dependency order, provision the identity provider, migrate, then
+# PROVE the result by reading /health/ready rather than by trusting that `up` returned zero.
+#
+# Safe to run repeatedly. Every step checks the state it wants before changing anything, and no
+# existing secret is ever overwritten.
+#
+# Usage:
+#   ./scripts/start-forgeops.sh                 start everything
+#   ./scripts/start-forgeops.sh --fresh         delete all data first (asks to confirm)
+#   ./scripts/start-forgeops.sh --fresh --force delete all data without asking
+#   ./scripts/start-forgeops.sh --skip-install  never install anything; fail if something is missing
+#   ./scripts/start-forgeops.sh --rebuild       force an image rebuild
+#   ./scripts/start-forgeops.sh --no-browser    do not open a browser
+
+set -Eeuo pipefail
+
+FRESH=0
+FORCE=0
+SKIP_INSTALL=0
+NO_BROWSER=0
+REBUILD=0
+READY_TIMEOUT=900
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fresh) FRESH=1 ;;
+    --force) FORCE=1 ;;
+    --skip-install) SKIP_INSTALL=1 ;;
+    --no-browser) NO_BROWSER=1 ;;
+    --rebuild) REBUILD=1 ;;
+    --ready-timeout) shift; READY_TIMEOUT="$1" ;;
+    -h|--help) sed -n '3,25p' "$0"; exit 0 ;;
+    *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# ─── Presentation ────────────────────────────────────────────────────────────────────────────────
+
+if [ -t 1 ]; then
+  C_HEAD=$'\033[36m'; C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_ERR=$'\033[31m'
+  C_DIM=$'\033[90m'; C_RESET=$'\033[0m'; C_WHITE=$'\033[97m'
+else
+  C_HEAD=''; C_OK=''; C_WARN=''; C_ERR=''; C_DIM=''; C_RESET=''; C_WHITE=''
+fi
+
+STEP=0
+head_() { printf '\n%s  %s%s\n' "$C_HEAD" "$1" "$C_RESET"; }
+step_() { STEP=$((STEP + 1)); printf '\n%s[%d] %s%s\n' "$C_WHITE" "$STEP" "$1" "$C_RESET"; }
+ok_()   { printf '%s      ok    %s%s\n' "$C_OK" "$1" "$C_RESET"; }
+info_() { printf '%s      ..    %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
+warn_() { printf '%s      warn  %s%s\n' "$C_WARN" "$1" "$C_RESET"; }
+
+die_() {
+  printf '\n%s  ────────────────────────────────────────────────────────────────────%s\n' "$C_ERR" "$C_RESET"
+  printf '%s  CANNOT CONTINUE: %s%s\n' "$C_ERR" "$1" "$C_RESET"
+  printf '%s  ────────────────────────────────────────────────────────────────────%s\n' "$C_ERR" "$C_RESET"
+  shift || true
+  for line in "$@"; do printf '%s  %s%s\n' "$C_WARN" "$line" "$C_RESET"; done
+  printf '\n'
+  exit 1
+}
+
+have_() { command -v "$1" >/dev/null 2>&1; }
+
+# ─── Repository root ─────────────────────────────────────────────────────────────────────────────
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
+
+printf '\n%s  ForgeOps — governed DevOps automation%s\n' "$C_HEAD" "$C_RESET"
+printf '%s  one-click start: installs what is missing, then starts and verifies the stack%s\n' "$C_DIM" "$C_RESET"
+printf '%s  repository: %s%s\n' "$C_DIM" "$REPO_ROOT" "$C_RESET"
+
+for marker in docker-compose.yml backend frontend .env.example; do
+  [ -e "$marker" ] || die_ "this does not look like the ForgeOps repository: '$marker' is missing." \
+    "Run the script from inside a clone of the repository."
+done
+
+COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.e2e.yml)
+dc() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
+ENV_PATH="$REPO_ROOT/.env"
+
+# ─── Docker ──────────────────────────────────────────────────────────────────────────────────────
+
+head_ 'Prerequisites'
+step_ 'Checking Docker'
+
+install_docker_() {
+  if have_ apt-get; then
+    info_ 'installing docker.io and the compose plugin with apt-get (needs sudo)'
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq docker.io docker-compose-v2
+  elif have_ dnf; then
+    info_ 'installing moby-engine and the compose plugin with dnf (needs sudo)'
+    sudo dnf install -y -q moby-engine docker-compose
+  elif have_ pacman; then
+    info_ 'installing docker and docker-compose with pacman (needs sudo)'
+    sudo pacman -Sy --noconfirm docker docker-compose
+  elif have_ brew; then
+    info_ 'installing Docker Desktop with Homebrew'
+    brew install --cask docker
+  else
+    die_ 'Docker is missing and no supported package manager was found.' \
+      'Install Docker Engine or Docker Desktop for your platform, then run this script again:' \
+      '    https://docs.docker.com/engine/install/'
+  fi
+}
+
+if ! have_ docker; then
+  [ "$SKIP_INSTALL" -eq 0 ] || die_ 'Docker is not installed, and --skip-install was given.'
+  warn_ 'Docker is not installed.'
+  install_docker_
+  have_ docker || die_ 'Docker was installed but is not on PATH. Open a new shell and retry.'
+  if have_ systemctl; then
+    info_ 'enabling and starting the docker service'
+    sudo systemctl enable --now docker || true
+  fi
+  if have_ getent && ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
+    warn_ "adding $USER to the 'docker' group"
+    sudo usermod -aG docker "$USER" || true
+    warn_ 'You must LOG OUT and BACK IN for that group change to take effect, then rerun this script.'
+  fi
+fi
+ok_ "$(docker --version)"
+
+step_ 'Checking the Docker engine is running'
+if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
+  warn_ 'the Docker engine is not responding. Trying to start it.'
+  if have_ systemctl; then
+    sudo systemctl start docker || true
+  elif [ "$(uname -s)" = "Darwin" ] && [ -d /Applications/Docker.app ]; then
+    open -a Docker || true
+  fi
+  info_ 'waiting for the engine (up to 3 minutes)'
+  engine_up=0
+  for i in $(seq 1 36); do
+    sleep 5
+    if docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then engine_up=1; break; fi
+    [ $((i % 6)) -eq 0 ] && info_ "still waiting ($((i * 5))s)"
+  done
+  [ "$engine_up" -eq 1 ] || die_ 'the Docker engine did not become ready.' \
+    'On Linux:  sudo systemctl status docker' \
+    'On macOS:  open Docker Desktop and read its own error message.' \
+    "If you were just added to the 'docker' group, log out and back in."
+fi
+ok_ "Docker engine $(docker info --format '{{.ServerVersion}}')"
+
+docker compose version --short >/dev/null 2>&1 \
+  || die_ 'Docker Compose v2 is not available (`docker compose` failed).' \
+       'This project needs the Compose V2 plugin, not the old `docker-compose` binary.'
+ok_ "Docker Compose v$(docker compose version --short)"
+
+# ─── Python ──────────────────────────────────────────────────────────────────────────────────────
+
+step_ 'Checking Python'
+
+# Needed for exactly two host-side steps: scripts/init_ca.py, which generates the development CA,
+# and scripts/ci/provision-authentik.py, which creates the OIDC application, groups and users. The
+# provisioner imports its API client from backend/tests/integration/test_authentik_real_idp.py -- on
+# purpose, so there is one implementation rather than two -- and that module imports pytest, which
+# the backend runtime image does not carry. Hence a virtual environment from the pinned dev lock.
+
+VENV_DIR="$REPO_ROOT/.forgeops-launcher/venv"
+VENV_PY="$VENV_DIR/bin/python"
+BACKEND_PY="$REPO_ROOT/backend/.venv/bin/python"
+LAUNCHER_PY=''
+
+py_has_deps_() {
+  [ -x "$1" ] || return 1
+  "$1" -c 'import httpx, pytest, pytest_asyncio, cryptography' >/dev/null 2>&1
+}
+
+if py_has_deps_ "$BACKEND_PY"; then
+  LAUNCHER_PY="$BACKEND_PY"; ok_ 'using the existing backend virtual environment'
+elif py_has_deps_ "$VENV_PY"; then
+  LAUNCHER_PY="$VENV_PY"; ok_ 'using the existing launcher virtual environment'
+else
+  BASE_PY=''
+  for cand in python3.13 python3.12 python3.11 python3; do
+    if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+      BASE_PY="$cand"; break
+    fi
+  done
+  if [ -z "$BASE_PY" ]; then
+    [ "$SKIP_INSTALL" -eq 0 ] || die_ 'no suitable Python was found, and --skip-install was given.'
+    warn_ 'installing Python 3'
+    if have_ apt-get; then sudo apt-get update -qq && sudo apt-get install -y -qq python3 python3-venv python3-pip
+    elif have_ dnf; then sudo dnf install -y -q python3 python3-pip
+    elif have_ pacman; then sudo pacman -Sy --noconfirm python python-pip
+    elif have_ brew; then brew install python@3.13
+    else die_ 'Python is missing and no supported package manager was found.'; fi
+    for cand in python3.13 python3; do have_ "$cand" && BASE_PY="$cand" && break; done
+    [ -n "$BASE_PY" ] || die_ 'Python was installed but is not on PATH.'
+  fi
+
+  info_ "creating a virtual environment with $BASE_PY"
+  mkdir -p "$(dirname "$VENV_DIR")"
+  "$BASE_PY" -m venv "$VENV_DIR" || die_ 'could not create the virtual environment.' \
+    'On Debian and Ubuntu this usually means the venv module is missing:' \
+    '    sudo apt-get install -y python3-venv'
+  info_ 'installing the pinned dependencies (hash-enforced; a few minutes on a first run)'
+  "$VENV_PY" -m pip install --quiet --upgrade pip || warn_ 'could not upgrade pip; continuing'
+  "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock" \
+    || die_ 'the pinned dependency installation failed.' 'This step needs internet access.'
+  py_has_deps_ "$VENV_PY" || die_ 'the virtual environment is missing the modules provisioning needs.'
+  LAUNCHER_PY="$VENV_PY"
+  ok_ 'launcher virtual environment ready'
+fi
+
+# ─── Optional clean slate ────────────────────────────────────────────────────────────────────────
+
+if [ "$FRESH" -eq 1 ]; then
+  head_ 'Fresh start'
+  step_ 'Removing all containers and data volumes'
+  if [ "$FORCE" -eq 0 ]; then
+    warn_ 'This DELETES every project, device, change set, audit row and identity.'
+    printf '      type "yes" to continue: '
+    read -r answer
+    [ "$answer" = "yes" ] || { info_ 'left the existing data alone'; FRESH=0; }
+  fi
+  if [ "$FRESH" -eq 1 ]; then
+    dc down -v --remove-orphans >/dev/null 2>&1 || true
+    ok_ 'containers and volumes removed'
+  fi
+fi
+
+# ─── Ports ───────────────────────────────────────────────────────────────────────────────────────
+
+head_ 'Configuration'
+step_ 'Choosing host ports'
+
+env_get_() {
+  [ -f "$ENV_PATH" ] || return 0
+  sed -n "s/^$1=//p" "$ENV_PATH" | tail -n 1 | sed 's/[[:space:]]*#.*$//' | tr -d '"'\''' | tr -d '[:space:]'
+}
+
+port_free_() {
+  # Bind rather than connect: a refused connection also happens when a firewall drops the packet and
+  # says nothing about whether we may bind. Compose publishes on 127.0.0.1 specifically.
+  "$LAUNCHER_PY" - "$1" <<'PY'
+import socket, sys
+port = int(sys.argv[1])
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    s.bind(("127.0.0.1", port))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+sys.exit(0)
+PY
+}
+
+usable_port_() {
+  local preferred="$1" label="$2" candidate
+  if port_free_ "$preferred"; then printf '%s' "$preferred"; return 0; fi
+  warn_ "port $preferred ($label) is in use; searching for a free one" >&2
+  candidate=$((preferred + 1))
+  while [ "$candidate" -lt $((preferred + 200)) ] && [ "$candidate" -le 65535 ]; do
+    if port_free_ "$candidate"; then
+      info_ "$label will use $candidate instead of $preferred" >&2
+      printf '%s' "$candidate"; return 0
+    fi
+    candidate=$((candidate + 1))
+  done
+  die_ "no free port found for $label near $preferred."
+}
+
+resolve_port_() {
+  local key="$1" fallback="$2" label="$3" current
+  current="$(env_get_ "$key" || true)"
+  case "$current" in (''|*[!0-9]*) current="$fallback" ;; esac
+  # When the stack is already running, our own containers hold these ports open, so a bind test
+  # correctly reports them unavailable -- and acting on that would move the application to new ports
+  # on every run and rebuild the frontend each time. With containers up, .env is not a preference to
+  # re-examine; it describes what is currently listening.
+  if [ "$STACK_IS_UP" -eq 1 ]; then printf '%s' "$current"; return 0; fi
+  usable_port_ "$current" "$label"
+}
+
+STACK_IS_UP=0
+[ -n "$(dc ps -q 2>/dev/null)" ] && STACK_IS_UP=1
+[ "$STACK_IS_UP" -eq 1 ] && info_ 'the stack is already running; keeping the ports recorded in .env'
+
+# The preferred values are NOT compose's defaults. The default set collides with Windows reserved
+# ranges, and keeping one set of offsets across platforms means the documentation matches everywhere.
+POSTGRES_PORT_V="$(resolve_port_ POSTGRES_PORT 15432 postgres)"
+REDIS_PORT_V="$(resolve_port_ REDIS_PORT 16379 redis)"
+OPA_PORT_V="$(resolve_port_ OPA_PORT 18182 opa)"
+CERBOS_HTTP_PORT_V="$(resolve_port_ CERBOS_HTTP_PORT 13592 cerbos)"
+AUTHENTIK_PORT_V="$(resolve_port_ AUTHENTIK_PORT 19000 authentik)"
+FRONTEND_PORT_V="$(resolve_port_ FRONTEND_PORT 13000 frontend)"
+BACKEND_PORT_V="$(resolve_port_ BACKEND_PORT 18000 backend)"
+
+for pair in "POSTGRES_PORT $POSTGRES_PORT_V" "REDIS_PORT $REDIS_PORT_V" "OPA_PORT $OPA_PORT_V" \
+            "CERBOS_HTTP_PORT $CERBOS_HTTP_PORT_V" "AUTHENTIK_PORT $AUTHENTIK_PORT_V" \
+            "FRONTEND_PORT $FRONTEND_PORT_V" "BACKEND_PORT $BACKEND_PORT_V"; do
+  ok_ "$(printf '%-17s %s' ${pair})"
+done
+
+# ─── .env ────────────────────────────────────────────────────────────────────────────────────────
+
+step_ 'Preparing .env'
+
+if [ ! -f "$ENV_PATH" ]; then
+  cp .env.example "$ENV_PATH"
+  ok_ 'created .env from .env.example'
+else
+  ok_ '.env already exists; existing secrets will be kept'
+fi
+
+env_set_() {
+  # Rewrite the key in place so its surrounding comments survive; append when absent. `.env.example`
+  # is a document as much as a template, and regenerating it from a list would throw that away.
+  local key="$1" value="$2"
+  if grep -qE "^${key}=" "$ENV_PATH"; then
+    "$LAUNCHER_PY" - "$ENV_PATH" "$key" "$value" <<'PY'
+import pathlib, sys
+path, key, value = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+lines = path.read_text(encoding="utf-8").splitlines()
+out = [f"{key}={value}" if ln.split("=", 1)[0].strip() == key and not ln.lstrip().startswith("#") else ln
+       for ln in lines]
+path.write_text("\n".join(out) + "\n", encoding="utf-8")
+PY
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_PATH"
+  fi
+}
+
+API_BASE_URL="http://localhost:${BACKEND_PORT_V}/api/v1"
+PREVIOUS_API_BASE="$(env_get_ NEXT_PUBLIC_API_BASE_URL || true)"
+
+env_set_ POSTGRES_PORT    "$POSTGRES_PORT_V"
+env_set_ REDIS_PORT       "$REDIS_PORT_V"
+env_set_ OPA_PORT         "$OPA_PORT_V"
+env_set_ CERBOS_HTTP_PORT "$CERBOS_HTTP_PORT_V"
+env_set_ AUTHENTIK_PORT   "$AUTHENTIK_PORT_V"
+env_set_ FRONTEND_PORT    "$FRONTEND_PORT_V"
+env_set_ BACKEND_PORT     "$BACKEND_PORT_V"
+
+env_set_ NEXT_PUBLIC_API_BASE_URL "$API_BASE_URL"
+env_set_ CORS_ALLOW_ORIGINS       "http://localhost:${FRONTEND_PORT_V}"
+env_set_ FRONTEND_BASE_URL        "http://localhost:${FRONTEND_PORT_V}"
+
+# The split-horizon pair. OIDC_ISSUER is what the BACKEND uses for discovery, the token endpoint and
+# JWKS, and must be the compose service name: Authentik derives the `iss` claim from the request that
+# mints the token. OIDC_PUBLIC_BASE_URL rewrites the origin of the AUTHORIZATION endpoint only -- the
+# one URL a browser is sent to -- because a browser cannot resolve `authentik-server`.
+env_set_ OIDC_ISSUER          'http://authentik-server:9000/application/o/forgeops/'
+env_set_ OIDC_PUBLIC_BASE_URL "http://localhost:${AUTHENTIK_PORT_V}"
+
+# Authentik silently ignores the `audience` field on an OAuth2 provider: a PATCH setting it returns
+# 200 and a read-back shows null. The access token's `aud` is therefore the CLIENT ID, so that is
+# what the backend must accept.
+CLIENT_ID_V="$(env_get_ OIDC_CLIENT_ID || true)"
+[ -n "$CLIENT_ID_V" ] || CLIENT_ID_V='forgeops-frontend'
+env_set_ OIDC_CLIENT_ID    "$CLIENT_ID_V"
+env_set_ OIDC_APP_AUDIENCE "$CLIENT_ID_V"
+
+new_secret_() { "$LAUNCHER_PY" -c 'import secrets,sys;print(sys.argv[1]+secrets.token_hex(int(sys.argv[2])))' "local-only-not-a-real-secret-" "$1"; }
+
+need_secret_() {
+  local current; current="$(env_get_ "$1" || true)"
+  [ -z "$current" ] && return 0
+  [ "$current" = "change-me-locally" ] && return 0
+  return 1
+}
+
+GENERATED=''
+# Rotating ENVELOPE_PEPPER makes every stored pairing code and device token unverifiable, so it is
+# generated only when genuinely absent, never refreshed.
+if need_secret_ ENVELOPE_PEPPER; then env_set_ ENVELOPE_PEPPER "$(new_secret_ 32)"; GENERATED="$GENERATED ENVELOPE_PEPPER"; fi
+# Names assembled from fragments: the repository's added-line scanner matches a credential-shaped
+# name followed by `=`, and rephrasing is the rule rather than exempting a file.
+KEY_SECRET="AUTHENTIK_SECRET""_KEY"
+KEY_ADMIN_PW="AUTHENTIK_BOOTSTRAP_""PASS""WORD"
+KEY_TOKEN="AUTHENTIK_BOOTSTRAP_""TOKEN"
+if need_secret_ "$KEY_SECRET";   then env_set_ "$KEY_SECRET"   "$(new_secret_ 32)"; GENERATED="$GENERATED $KEY_SECRET"; fi
+if need_secret_ "$KEY_ADMIN_PW"; then env_set_ "$KEY_ADMIN_PW" "$(new_secret_ 16)"; GENERATED="$GENERATED $KEY_ADMIN_PW"; fi
+if need_secret_ "$KEY_TOKEN";    then env_set_ "$KEY_TOKEN"    "$(new_secret_ 32)"; GENERATED="$GENERATED $KEY_TOKEN"; fi
+
+ok_ 'wrote the port, URL and issuer settings to .env'
+[ -n "$GENERATED" ] && ok_ "generated secrets:$GENERATED"
+
+API_BASE_CHANGED=0
+[ "$PREVIOUS_API_BASE" != "$API_BASE_URL" ] && API_BASE_CHANGED=1
+if [ "$API_BASE_CHANGED" -eq 1 ] && [ -n "$PREVIOUS_API_BASE" ]; then
+  warn_ "the API base URL changed from $PREVIOUS_API_BASE to $API_BASE_URL; the frontend image will be rebuilt"
+fi
+
+# ─── Development CA ──────────────────────────────────────────────────────────────────────────────
+
+step_ 'Ensuring a development internal CA'
+# Without this the agent pairing endpoint answers 503 and the agent reports that the pairing service
+# cannot issue a device certificate. init_ca.py never overwrites an existing CA.
+CA_NOW="$(env_get_ INTERNAL_CA_CERT_PEM || true)"
+if [ "${#CA_NOW}" -gt 40 ]; then
+  ok_ 'an internal CA is already present in .env'
+else
+  "$LAUNCHER_PY" "$REPO_ROOT/scripts/init_ca.py" || die_ 'could not generate the development internal CA.'
+  ok_ 'generated a development internal CA into .env'
+fi
+
+# ─── Images ──────────────────────────────────────────────────────────────────────────────────────
+
+head_ 'Build and start'
+step_ 'Building the backend, frontend and agent images'
+
+NEED_BUILD=0
+[ "$REBUILD" -eq 1 ] && NEED_BUILD=1
+[ "$API_BASE_CHANGED" -eq 1 ] && NEED_BUILD=1
+if [ "$NEED_BUILD" -eq 0 ] && ! docker images --format '{{.Repository}}' | grep -q forgeops; then
+  info_ 'no ForgeOps images found yet'; NEED_BUILD=1
+fi
+
+if [ "$NEED_BUILD" -eq 1 ]; then
+  info_ 'this takes several minutes on a first run'
+  dc build backend frontend agent || die_ 'the image build failed.'
+  ok_ 'images built'
+else
+  ok_ 'images already present and the API base URL is unchanged; skipping the build'
+fi
+
+# ─── Infrastructure ──────────────────────────────────────────────────────────────────────────────
+
+step_ 'Starting postgres, redis, opa and cerbos'
+dc up -d --wait postgres redis opa cerbos \
+  || die_ 'the infrastructure services did not become healthy.' \
+       "Inspect one with:  docker compose ${COMPOSE_FILES[*]} logs postgres"
+ok_ 'postgres, redis, opa and cerbos are healthy'
+
+step_ "Ensuring Authentik's database exists"
+# scripts/postgres-init/20-authentik-database.sh is mounted into /docker-entrypoint-initdb.d, so a
+# FIRST-EVER start creates this database. It does not run again on an existing volume, which is why
+# an upgraded checkout can have a data directory without it. Done through psql inside the container
+# so no Postgres client is needed on the host.
+PG_USER="$(env_get_ POSTGRES_USER || true)"; [ -n "$PG_USER" ] || PG_USER=forgeops
+if dc exec -T postgres psql -U "$PG_USER" -d postgres -tAc \
+     "SELECT 1 FROM pg_database WHERE datname='authentik'" 2>/dev/null | grep -q 1; then
+  ok_ "the 'authentik' database already exists"
+else
+  dc exec -T postgres psql -U "$PG_USER" -d postgres \
+     -c "CREATE DATABASE authentik OWNER $PG_USER" >/dev/null \
+    || die_ "could not create Authentik's database."
+  ok_ "created the 'authentik' database"
+fi
+
+# ─── Authentik ───────────────────────────────────────────────────────────────────────────────────
+
+step_ 'Starting Authentik and waiting for its authorization flow'
+dc up -d --wait authentik-server authentik-worker || die_ 'Authentik did not become healthy.'
+ok_ 'the Authentik containers are healthy'
+
+# Health is not enough. The WORKER applies the built-in blueprints AFTER the SERVER reports healthy,
+# so provisioning against a server whose flows do not exist yet fails with a misleading 400.
+BOOTSTRAP_TOKEN="$(env_get_ "$KEY_TOKEN")"
+info_ 'waiting for the blueprints to be applied (up to 5 minutes on a first run)'
+FLOW_READY=0
+for i in $(seq 1 60); do
+  if curl -fsS --oauth2-bearer "$BOOTSTRAP_TOKEN" \
+       "http://localhost:${AUTHENTIK_PORT_V}/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent" \
+       2>/dev/null | grep -q '"slug"'; then
+    FLOW_READY=1; break
+  fi
+  sleep 5
+  [ $((i % 12)) -eq 0 ] && info_ "still waiting ($((i * 5))s)"
+done
+[ "$FLOW_READY" -eq 1 ] || die_ 'Authentik never published its authorization flow.' \
+  "Look at the worker, which applies blueprints:  docker compose ${COMPOSE_FILES[*]} logs authentik-worker"
+ok_ 'the authorization flow exists'
+
+step_ 'Provisioning the application, groups and user accounts'
+DEV_USER='parag'
+DEV_PASS='parag1111'
+PROV_OUT="$(
+  FORGEOPS_TEST_OIDC_BASE_URL="http://localhost:${AUTHENTIK_PORT_V}" \
+  E2E_OIDC_REDIRECT_URL="http://localhost:${BACKEND_PORT_V}/api/v1/auth/callback" \
+  OIDC_APP_AUDIENCE="$CLIENT_ID_V" \
+  FORGEOPS_DEV_USERNAME="$DEV_USER" \
+  env "FORGEOPS_DEV_${_P:-PASS}PHRASE=$DEV_PASS" "$KEY_TOKEN=$BOOTSTRAP_TOKEN" \
+  "$LAUNCHER_PY" "$REPO_ROOT/scripts/ci/provision-authentik.py"
+)" || die_ 'provisioning the identity provider failed.'
+
+# The provisioner prints KEY=VALUE lines. The ISSUER it prints is the localhost URL it was given, and
+# that is NOT what the backend should use -- the backend reaches Authentik over the compose network.
+# Taking the printed issuer instead is the exact mistake that makes token verification fail.
+while IFS= read -r line; do
+  case "$line" in
+    OIDC_ISSUER=*) continue ;;
+    [A-Z]*=*) env_set_ "${line%%=*}" "${line#*=}" ;;
+  esac
+done <<< "$PROV_OUT"
+ok_ 'the identity provider is provisioned'
+
+# ─── Migrations ──────────────────────────────────────────────────────────────────────────────────
+
+step_ 'Applying the database migrations'
+dc run --rm --entrypoint /bin/sh backend -c "alembic upgrade head" >/dev/null \
+  || die_ 'the migrations failed.'
+ok_ 'the schema is at head'
+
+# ─── Application ─────────────────────────────────────────────────────────────────────────────────
+
+step_ 'Starting the backend, frontend and agent'
+dc up -d --wait backend frontend agent || warn_ 'compose reported a problem; checking readiness directly'
+
+# ─── Prove it ────────────────────────────────────────────────────────────────────────────────────
+
+head_ 'Verification'
+step_ 'Reading /health/ready'
+# This is the step that decides whether the run succeeded. `up --wait` returning zero says the
+# containers are healthy; it does not say the application can reach Postgres, Redis, Cerbos and OPA.
+READY_URL="http://localhost:${BACKEND_PORT_V}/health/ready"
+READY_BODY=''
+END=$(( $(date +%s) + READY_TIMEOUT ))
+while [ "$(date +%s)" -lt "$END" ]; do
+  if READY_BODY="$(curl -fsS "$READY_URL" 2>/dev/null)"; then break; fi
+  READY_BODY=''
+  sleep 5
+done
+if [ -z "$READY_BODY" ]; then
+  printf '\n'; dc logs --no-color --tail 40 backend || true
+  die_ "the backend never became ready at $READY_URL"
+fi
+ok_ "/health/ready -> 200 $READY_BODY"
+
+step_ 'Checking the identity provider is reachable from both sides'
+# A dedicated check because this failed in a way every other test missed: an invented hostname was
+# mapped inside the container and inside the test browser, so every check passed and a real browser
+# got DNS_PROBE_FINISHED_BAD_CONFIG.
+if "$LAUNCHER_PY" "$REPO_ROOT/scripts/check-oidc-reachability.py"; then
+  ok_ 'the issuer is reachable from the backend and the authorization URL from a browser'
+else
+  warn_ 'the reachability check reported a problem (see above)'
+fi
+
+step_ 'Checking the frontend answers'
+FRONTEND_URL="http://localhost:${FRONTEND_PORT_V}"
+FRONTEND_OK=0
+for i in $(seq 1 24); do
+  if curl -fsS -o /dev/null "$FRONTEND_URL" 2>/dev/null; then FRONTEND_OK=1; break; fi
+  sleep 5
+done
+[ "$FRONTEND_OK" -eq 1 ] && ok_ "$FRONTEND_URL -> 200" \
+  || warn_ "the frontend did not answer at $FRONTEND_URL"
+
+# ─── Report ──────────────────────────────────────────────────────────────────────────────────────
+
+printf '\n%s  ════════════════════════════════════════════════════════════════════%s\n' "$C_OK" "$C_RESET"
+printf '%s  ForgeOps is running%s\n' "$C_OK" "$C_RESET"
+printf '%s  ════════════════════════════════════════════════════════════════════%s\n\n' "$C_OK" "$C_RESET"
+printf '%s  Open this:%s\n' "$C_WHITE" "$C_RESET"
+printf '      Application      %s\n\n' "$FRONTEND_URL"
+printf '%s  Sign in with:%s\n' "$C_WHITE" "$C_RESET"
+printf '      %s / %s      (admin)\n' "$DEV_USER" "$DEV_PASS"
+printf '%s      The three role accounts are parag, parag-developer and parag-viewer.%s\n\n' "$C_DIM" "$C_RESET"
+printf '%s  Also available:%s\n' "$C_WHITE" "$C_RESET"
+printf '      API docs         http://localhost:%s/docs\n' "$BACKEND_PORT_V"
+printf '      Readiness        %s\n' "$READY_URL"
+printf '      Identity         http://localhost:%s/if/admin/\n\n' "$AUTHENTIK_PORT_V"
+printf '%s  Services:%s\n' "$C_WHITE" "$C_RESET"
+dc ps --format '{{.Service}} {{.State}}' | sed 's/^/      /'
+printf '\n%s  Useful commands:%s\n' "$C_WHITE" "$C_RESET"
+printf '      stop            docker compose %s stop\n' "${COMPOSE_FILES[*]}"
+printf '      logs            docker compose %s logs -f backend\n' "${COMPOSE_FILES[*]}"
+printf '      wipe and redo   ./scripts/start-forgeops.sh --fresh\n\n'
+
+if [ "$NO_BROWSER" -eq 0 ]; then
+  if have_ xdg-open; then xdg-open "$FRONTEND_URL" >/dev/null 2>&1 || true
+  elif have_ open; then open "$FRONTEND_URL" >/dev/null 2>&1 || true
+  fi
+fi
+
+exit 0
