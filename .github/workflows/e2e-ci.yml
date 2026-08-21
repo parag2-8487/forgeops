@@ -196,6 +196,15 @@ jobs:
           pnpm install
           npx playwright install --with-deps chromium
 
+      # Fails LOUDLY on a topology mistake instead of letting it surface as a browser DNS error.
+      # Both sides are checked: the container's route to the issuer, that the discovery document's
+      # issuer matches it exactly, and that a host browser can reach the public authorize endpoint.
+      - name: Check the IdP is reachable from both sides
+        env:
+          OIDC_ISSUER: http://authentik-server:9000/application/o/forgeops/
+          OIDC_PUBLIC_BASE_URL: http://localhost:9000
+        run: python scripts/check-oidc-reachability.py
+
       # §8.3.2: the journey drives the browser through §12.6. The stack is already up, so
       # FORGEOPS_E2E_EXTERNAL_STACK tells playwright.config.ts not to start its own server.
       - name: Run the thirteen-step journey
@@ -203,6 +212,8 @@ jobs:
           FORGEOPS_E2E_EXTERNAL_STACK: "1"
           E2E_FRONTEND_URL: http://localhost:3000
           E2E_API_BASE_URL: http://localhost:8000/api/v1
+          # The origin a BROWSER reaches the IdP at, which is not the one the backend uses.
+          E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: cd frontend && npx playwright test --project=journey
 
       # §8.3.2: "Playwright traces and the agent's logs are uploaded on failure, because an e2e

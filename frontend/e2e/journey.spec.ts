@@ -133,8 +133,14 @@ async function mintAccessToken(page: Page): Promise<string> {
  */
 async function signIn(page: Page) {
   const frontend = new URL(process.env.E2E_FRONTEND_URL ?? "http://localhost:3000");
-  const idp = (process.env.E2E_OIDC_ISSUER ?? "").replace(/\/application\/o\/[^/]+\/?$/, "");
-  expect(idp, "E2E_OIDC_ISSUER must be set for step 1").not.toBe("");
+  // The PUBLIC origin, never the issuer. `OIDC_ISSUER` is how the BACKEND reaches the IdP -- inside
+  // Compose that is a service name a browser cannot resolve -- and driving the browser at it is
+  // exactly the mistake that shipped a login redirecting to an unresolvable host.
+  const idp = (process.env.E2E_OIDC_PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
+  expect(
+    idp,
+    "E2E_OIDC_PUBLIC_BASE_URL must be set: it is the origin a BROWSER can reach",
+  ).not.toBe("");
 
   // Land ON the IdP's own origin first. Two reasons, both load-bearing:
   //

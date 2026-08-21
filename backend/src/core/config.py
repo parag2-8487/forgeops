@@ -208,6 +208,7 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "AGENT_VALIDATOR_TIMEOUT_SECONDS",
         # Frontend (browser-visible; never a secret)
         "FRONTEND_BASE_URL",
+        "OIDC_PUBLIC_BASE_URL",
         "NEXT_PUBLIC_OIDC_LOGIN_PATH",
         "NEXT_PUBLIC_SSE_TIMEOUT_MS",
     }
@@ -284,6 +285,15 @@ class Settings(BaseSettings):
     oidc_client_id: str = Field(default="")
     oidc_client_secret: SecretStr = Field(default=SecretStr(""))
     oidc_redirect_url: str = Field(default="http://localhost:8000/api/v1/auth/callback")
+    #: Where a BROWSER reaches the IdP, when that is not where the backend reaches it.
+    #:
+    #: Empty means they are the same, which is correct for a single host and is the default. Set it
+    #: when the backend talks to the IdP over an internal name a browser cannot resolve -- inside
+    #: Compose the backend uses `authentik-server:9000` while the browser must use the published
+    #: `localhost:<port>`, and neither address works from the other side. Only the authorization
+    #: redirect is rewritten; discovery, token and JWKS stay on `oidc_issuer`, which is also what
+    #: keeps the token's `iss` claim equal to it.
+    oidc_public_base_url: str = Field(default="")
     #: Where a BROWSER is sent once the code exchange succeeds.
     #:
     #: Distinct from `oidc_redirect_url`, and the distinction is the point: the IdP redirects to

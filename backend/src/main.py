@@ -283,6 +283,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         client_secret=settings.oidc_client_secret.get_secret_value(),
         redirect_url=settings.oidc_redirect_url,
         http=shared_http,
+        # Where a BROWSER can reach the IdP, when that is not where this process reaches it. Empty for
+        # a single host; set in the Compose overlay, where the backend uses an internal service name a
+        # browser cannot resolve. Only the authorization redirect is rewritten.
+        public_base_url=settings.oidc_public_base_url,
     )
     app.state.session_service = SessionService(
         pepper=settings.envelope_pepper.get_secret_value(),

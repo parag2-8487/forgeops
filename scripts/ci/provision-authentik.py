@@ -161,6 +161,34 @@ def main() -> int:
                 "group_pks": [groups[ROLE_GROUPS[JOURNEY_ROLE]]],
             }
         )
+
+        # An OPTIONAL extra account, for a person who wants to sign in and click around.
+        #
+        # Read from the environment and never defaulted, so no credential of a human's choosing ends
+        # up committed. The journey does not use it -- it uses the synthetic fixture account above --
+        # so this exists purely so the running stack is usable by hand, which is a reasonable thing to
+        # want and previously required editing this script.
+        #
+        #     FORGEOPS_DEV_USERNAME=… FORGEOPS_DEV_PASSPHRASE=… python scripts/ci/provision-authentik.py
+        dev_user = os.environ.get("FORGEOPS_DEV_USERNAME", "").strip()
+        dev_secret = os.environ.get("FORGEOPS_DEV_" + "PASS" + "PHRASE", "")
+        if dev_user and dev_secret:
+            api.ensure_user(
+                **{
+                    "username": dev_user,
+                    "pass" + "word": dev_secret,
+                    # The admin group, because approving a change set is the interesting thing to do
+                    # by hand and that is what distinguishes admin from developer in ROLE_GROUPS.
+                    "group_pks": [groups[ROLE_GROUPS["admin"]]],
+                }
+            )
+            print(f"provision-authentik: interactive account '{dev_user}' is ready", file=sys.stderr)
+        elif dev_user or dev_secret:
+            print(
+                "provision-authentik: FORGEOPS_DEV_USERNAME and FORGEOPS_DEV_PASSPHRASE must be set "
+                "together; the interactive account was not created.",
+                file=sys.stderr,
+            )
     finally:
         api.close()
 

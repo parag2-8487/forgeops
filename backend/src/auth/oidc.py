@@ -45,7 +45,7 @@ import json
 import secrets
 from dataclasses import dataclass
 from typing import Any, Final
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 import jwt
@@ -313,6 +313,7 @@ class OidcClient:
         redirect_url: str,
         http: httpx.AsyncClient,
         scopes: tuple[str, ...] = DEFAULT_SCOPES,
+        public_base_url: str = "",
     ) -> None:
         self._issuer = issuer
         self._client_id = client_id
@@ -320,7 +321,29 @@ class OidcClient:
         self._redirect_url = redirect_url
         self._http = http
         self._scopes = scopes
+        #: Where a BROWSER can reach the IdP, when that differs from where this process reaches it.
+        #:
+        #: Empty means they are the same, which is the single-host case and the default. It is not the
+        #: containerised case: inside Compose this process resolves `authentik-server:9000` and a
+        #: browser on the host cannot, while the host's `localhost:9000` is not reachable from inside a
+        #: container -- and the ports are bound to 127.0.0.1 deliberately, so widening them is not an
+        #: option. There is therefore NO single host:port both sides can use, and pretending otherwise
+        #: is what produced a login that redirected a real browser to an unresolvable name.
+        #:
+        #: Only the AUTHORIZATION endpoint is rewritten. Discovery, token and JWKS are server-to-server
+        #: and must keep using the internal issuer -- and because Authentik derives the `iss` claim from
+        #: the request that mints the token, keeping the token call internal is also what keeps `iss`
+        #: equal to the configured issuer.
+        self._public_base_url = public_base_url.rstrip("/")
         self._metadata: OidcMetadata | None = None
+
+    def _browser_reachable(self, endpoint: str) -> str:
+        """Rewrite an endpoint's origin to the browser-reachable one, path and query intact."""
+        if not self._public_base_url:
+            return endpoint
+        parsed = urlsplit(endpoint)
+        public = urlsplit(self._public_base_url)
+        return urlunsplit((public.scheme, public.netloc, parsed.path, parsed.query, parsed.fragment))
 
     @property
     def client_id(self) -> str:
@@ -372,10 +395,12 @@ class OidcClient:
                 "code_challenge_method": pkce.method,
             }
         )
-        separator = "&" if "?" in metadata.authorization_endpoint else "?"
+        # The one URL a BROWSER has to be able to open, so it is the one rewritten.
+        authorize = self._browser_reachable(metadata.authorization_endpoint)
+        separator = "&" if "?" in authorize else "?"
         return (
             AuthorizationRequest(
-                url=f"{metadata.authorization_endpoint}{separator}{query}",
+                url=f"{authorize}{separator}{query}",
                 state=state,
                 nonce=nonce,
                 verifier=pkce.verifier,

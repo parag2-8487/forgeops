@@ -7,8 +7,11 @@ Why this file exists
 **real object graph** by some test, and `test_wiring_coverage.py` enforces it. `device_ca` arrives
 with leaf 8.2, so it needs a `@wires` declaration — but the declaration is the smaller half. The
 larger half is D-23's lesson: Phase 0 shipped registered routes whose composition was never
-assembled, and every request to them raised `AttributeError`. Three new routes land here, so three
-new routes get asserted against `create_app()`'s real router rather than against a hand-built one.
+assembled, and every request to them raised `AttributeError`. Every route on this surface is
+asserted against `create_app()`'s real router rather than against a hand-built one.
+
+The set is CLOSED rather than a subset check. When the device read routes were added it failed at
+once, naming both new paths -- which is what a subset check would not have done.
 
 What is asserted, and what is left to the integration tests
 ----------------------------------------------------------
@@ -50,11 +53,22 @@ def _load_route_checker() -> ModuleType:
     return module
 
 
-#: The three routes §11.2 lists, with whether each requires a principal (§4.4).
+#: Every route on the agent surface, with whether each requires a principal (§4.4).
+#:
+#: A CLOSED set, deliberately, and it earned that design: adding the two read routes below made this
+#: assertion fail immediately with both new paths named in the diff. A test that only checked the
+#: three it knew about would have passed while the surface silently grew -- and the surface growing
+#: unnoticed is how `agent_devices`' credential columns could have started crossing the wire.
 EXPECTED_ROUTES = {
     ("/api/v1/agents/pairing-codes", "POST"): True,
+    # The one public route in Phase 1. An agent presenting a pairing code has no principal yet, which
+    # is the whole point of the exchange; §4.4's table carries the justification.
     ("/api/v1/agents/pair/exchange", "POST"): False,
     ("/api/v1/agents/{device_id}", "DELETE"): True,
+    # Added with the device read surface. Pairing was write-only until then -- mint, exchange, revoke,
+    # and no GET -- so a paired agent could be created and destroyed but never observed.
+    ("/api/v1/agents/devices", "GET"): True,
+    ("/api/v1/agents/devices/{device_id}", "GET"): True,
 }
 
 
@@ -90,7 +104,7 @@ class TestTheAgentSurfaceIsComposed:
         service = production_app.state.device_service
         assert service._redis is production_app.state.redis  # noqa: SLF001
 
-    async def test_all_three_routes_are_registered_on_the_real_app(self, production_app: FastAPI) -> None:  # noqa: F811
+    async def test_every_agent_route_is_registered_on_the_real_app(self, production_app: FastAPI) -> None:  # noqa: F811
         """Enumerated through `check-route-auth.py`'s own flattener, not through `app.routes`.
 
         FastAPI 0.139 does not flatten `include_router` into `app.routes`: each inclusion appears as

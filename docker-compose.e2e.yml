@@ -73,28 +73,32 @@ services:
 
   # ── the backend, told where the browser actually is ──────────────────────
   backend:
-    # ONE HOSTNAME BOTH SIDES RESOLVE, which is the whole difficulty of OIDC in containers.
+    # TWO ADDRESSES FOR ONE IdP, because no single one works from both sides.
     #
-    # Authentik derives the `iss` claim from the Host header of the request the BROWSER made, and
-    # the backend must verify that `iss` against a discovery document it fetches ITSELF. If the
-    # browser uses `localhost:9000` and the backend uses `authentik-server:9000`, the two disagree
-    # and verification fails with a mismatched issuer -- which reads like a bug in the token rather
-    # than a topology mistake.
+    # An earlier version of this file invented a shared hostname, `forgeops-idp.local`, mapped to the
+    # host gateway here and to 127.0.0.1 through a Chromium `--host-resolver-rules` flag in
+    # playwright.config.ts. It worked for the Playwright-launched browser and for nothing else: a
+    # person opening the app got `DNS_PROBE_FINISHED_BAD_CONFIG`, because a name that only resolves
+    # under a launch flag does not resolve for a real browser. That was a defect, not a setting.
     #
-    # So both ends use `forgeops-idp.local`. Here it is mapped to the host gateway; the browser maps
-    # it to 127.0.0.1 through Chromium's `--host-resolver-rules` (see playwright.config.ts). Neither
-    # side needs an entry in /etc/hosts, which would require privileges CI does not grant.
-    extra_hosts:
-      - "forgeops-idp.local:host-gateway"
+    # The constraint is genuine and worth stating so nobody re-invents the hack. The backend resolves
+    # `authentik-server` over the Compose network and a host browser cannot. The host's published
+    # `localhost:${AUTHENTIK_PORT}` is not reachable from inside a container. The published ports are
+    # bound to 127.0.0.1 deliberately -- `check-compose-validate.py` enforces it -- so exposing the
+    # LAN interface to bridge the gap is not available either.
+    #
+    # So the backend uses the INTERNAL address for everything server-to-server, which also keeps the
+    # token's `iss` claim equal to OIDC_ISSUER, and OIDC_PUBLIC_BASE_URL rewrites the one URL a
+    # browser has to open: the authorization redirect.
     environment:
       # Where the OIDC callback sends a BROWSER once the code exchange succeeds. Without this the
       # callback would bounce to the default localhost:3000, which is correct for a developer and
       # wrong inside CI if the frontend is published elsewhere.
       FRONTEND_BASE_URL: "${E2E_FRONTEND_URL:-http://localhost:3000}"
-      # The IdP as the BROWSER resolves it. This is not the same as how the backend resolves it, and
-      # conflating the two is the classic OIDC container failure: the issuer in the token must match
-      # what the browser was redirected to, or verification fails on a mismatched `iss`.
-      OIDC_ISSUER: "${E2E_OIDC_ISSUER:-http://localhost:9000/application/o/forgeops/}"
+      # Internal: how THIS process reaches the IdP. Also the issuer it verifies `iss` against.
+      OIDC_ISSUER: "${E2E_OIDC_ISSUER:-http://authentik-server:9000/application/o/forgeops/}"
+      # Public: how a BROWSER reaches it. Only the authorization redirect uses this.
+      OIDC_PUBLIC_BASE_URL: "${E2E_OIDC_PUBLIC_BASE_URL:-http://localhost:9000}"
       OIDC_REDIRECT_URL: "${E2E_OIDC_REDIRECT_URL:-http://localhost:8000/api/v1/auth/callback}"
       CORS_ALLOW_ORIGINS: "${E2E_FRONTEND_URL:-http://localhost:3000}"
       APP_ENV: "test"
