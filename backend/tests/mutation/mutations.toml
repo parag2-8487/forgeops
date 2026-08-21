@@ -1274,39 +1274,67 @@ chokepoint_module.GovernanceChokepoint.approve = _approve_without_the_version_pr
 runtime     = "python"
 property    = "backend/tests/property/test_q26_sse_well_formedness.py"
 target      = "src.generation.service.GenerationService.stream_generation"
-mutation    = "Emit frames terminated by a single newline instead of the blank line SSE requires"
+mutation    = "Emit a second `COMPLETE` after an `ERROR`"
 description = """
-Appendix B's control is "emit a second `COMPLETE` after an `ERROR`". Leaf 13.12's test does not
-check terminal-event uniqueness at all -- it asserts only the framing of each event -- so that
-control cannot fail it. Recorded rather than worked around: **Q-26's test does not cover the
-one-terminal-event clause Appendix B states**, and closing that gap means extending the test,
-not adjusting this mutation.
+**Appendix B's control verbatim, for the first time.** The previous version of this row recorded that
+the prescribed control could not fail Q-26, because leaf 13.12's test asserted only the framing of
+each frame -- `event: ` prefix, `\\ndata: ` separator, blank-line terminator -- and never counted
+terminal events. The row substituted a framing mutation and documented the gap. The gap is now
+closed in the property rather than worked around here, which is what that note asked for.
 
-What the test does constrain is the wire format, and this mutation breaks it in the way that
-actually strands a browser: the event/data block is terminated by one newline instead of the
-blank line the SSE grammar requires, so `EventSource` never dispatches. Every frame of every
-generated prompt trips `event_str.endswith("\\n\\n")`.
+Q-26 was thin in a second and worse way, found while giving generation an HTTP surface. All three of
+its original clauses were about FRAMING and none about the event NAME, so the only producer in the
+tree emitted `run_start`, `token_chunk` and `run_complete` -- **not one of which is in
+`SSEEventType`** -- and the property passed on every frame, because a frame with an invented name is
+still a perfectly well-framed frame. §7.4 states "no divergent names may be invented" and nothing
+enforced it. Worse, `tests/integration/test_generation_service.py` ASSERTED the three invented names,
+so the only test naming the vocabulary encoded the violation as the expectation.
+
+The property now carries four clauses -- framing, the closed vocabulary read out of `SSEEventType`,
+exactly one terminal event which is also last, and single-line JSON payloads -- plus a class pinning
+`format_event`'s refusal of a bare string, which is what makes the enum load-bearing instead of
+documentary.
+
+What the mutation does: it appends a `COMPLETE` frame after the stream's terminal event.
+`test_property_q26_a_stream_carries_exactly_one_terminal_event` fails on the count, and its second
+assertion still holds, so the failure is specifically about uniqueness rather than ordering.
+
+One deliberate widening, stated because it is a deviation. Appendix B says "after an `ERROR`", and a
+literal reading appends only on the error path. Phase 1's pipeline is template-rendered and its
+validation gate is deterministic, so every prompt hypothesis generates validates successfully and no
+`ERROR` is ever produced -- a literal patch would never fire and the row would report the property
+healthy without having tested anything. Appending after whichever terminal event occurred preserves
+the clause under test (a client that closed on the first terminal event never sees the second, so the
+two ends disagree about whether the run finished) and fires on the reachable path. On an error run it
+is Appendix B's control exactly.
 """
 patch = """
+from src.core.sse import SSEEventType, format_event
 from src.generation import service as generation_service
 
 _original_stream = generation_service.GenerationService.stream_generation
 
+_TERMINAL = {SSEEventType.COMPLETE.value, SSEEventType.ERROR.value}
 
-def _single_newline_frames(self, project_id, prompt):
+
+def _duplicate_terminal(self, project_id, prompt, **kwargs):
     async def _generate():
-        async for frame in _original_stream(self, project_id, prompt):
-            # One newline, not two: the frame never terminates for a real SSE client.
-            if frame.endswith("\\n\\n"):
-                yield frame[:-1]
-            else:
-                yield frame
+        saw_terminal = False
+        async for frame in _original_stream(self, project_id, prompt, **kwargs):
+            yield frame
+            name = frame.partition("\\n")[0].removeprefix("event: ")
+            if name in _TERMINAL:
+                saw_terminal = True
+        if saw_terminal:
+            # The second terminal event. A client that closed on the first never sees it.
+            yield format_event(SSEEventType.COMPLETE, {"state": "accepted", "duplicate": True})
 
     return _generate()
 
 
-generation_service.GenerationService.stream_generation = _single_newline_frames
+generation_service.GenerationService.stream_generation = _duplicate_terminal
 """
+
 
 [Q-28]
 runtime     = "python"
