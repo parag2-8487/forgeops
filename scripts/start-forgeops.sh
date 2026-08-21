@@ -154,8 +154,8 @@ fi
 ok_ "Docker engine $(docker info --format '{{.ServerVersion}}')"
 
 docker compose version --short >/dev/null 2>&1 \
-  || die_ 'Docker Compose v2 is not available (`docker compose` failed).' \
-       'This project needs the Compose V2 plugin, not the old `docker-compose` binary.'
+  || die_ 'Docker Compose v2 is not available: "docker compose" failed.' \
+       'This project needs the Compose V2 plugin, not the older docker-compose binary.'
 ok_ "Docker Compose v$(docker compose version --short)"
 
 # ─── Python ──────────────────────────────────────────────────────────────────────────────────────
@@ -303,7 +303,9 @@ BACKEND_PORT_V="$(resolve_port_ BACKEND_PORT 18000 backend)"
 for pair in "POSTGRES_PORT $POSTGRES_PORT_V" "REDIS_PORT $REDIS_PORT_V" "OPA_PORT $OPA_PORT_V" \
             "CERBOS_HTTP_PORT $CERBOS_HTTP_PORT_V" "AUTHENTIK_PORT $AUTHENTIK_PORT_V" \
             "FRONTEND_PORT $FRONTEND_PORT_V" "BACKEND_PORT $BACKEND_PORT_V"; do
-  ok_ "$(printf '%-17s %s' ${pair})"
+  # Split explicitly rather than letting the shell word-split an unquoted expansion. The unquoted
+  # form worked, but it depends on IFS being untouched and reads as an accident.
+  ok_ "$(printf '%-17s %s' "${pair%% *}" "${pair##* }")"
 done
 
 # ─── .env ────────────────────────────────────────────────────────────────────────────────────────
@@ -549,8 +551,14 @@ for i in $(seq 1 24); do
   if curl -fsS -o /dev/null "$FRONTEND_URL" 2>/dev/null; then FRONTEND_OK=1; break; fi
   sleep 5
 done
-[ "$FRONTEND_OK" -eq 1 ] && ok_ "$FRONTEND_URL -> 200" \
-  || warn_ "the frontend did not answer at $FRONTEND_URL"
+# A real if/else rather than `A && ok_ ... || warn_ ...`. In that idiom the `||` branch also runs when
+# the first command SUCCEEDED but the middle one returned non-zero, so a display function having a bad
+# day would report both success and failure.
+if [ "$FRONTEND_OK" -eq 1 ]; then
+  ok_ "$FRONTEND_URL -> 200"
+else
+  warn_ "the frontend did not answer at $FRONTEND_URL"
+fi
 
 # ─── Report ──────────────────────────────────────────────────────────────────────────────────────
 
