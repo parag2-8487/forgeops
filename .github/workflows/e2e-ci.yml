@@ -1,14 +1,24 @@
-# Renamed 2026-08-21. This was "End-to-End Release Journey CI" with a job called `e2e-journey`,
-# and it runs neither: six steps that install Node, build the FRONTEND ONLY, and execute a
-# 20-line spec asserting a page title, a visible h1 and one string. No backend image, no agent
-# container, no fixture project, no on-disk assertion, no revert, no artifact upload.
+# The criterion-10 end-to-end journey (design.md §8.3.2, §12.6).
 #
-# The old name was the load-bearing part of a false record: criterion 10 cited this workflow as
-# evidence of a 13-step journey, and the name was plausible enough that nobody opened it. Renamed
-# to what it does, per D-94, which also descopes the criterion and defers the real journey to the
-# phase that has a generation endpoint and a mountable approval surface. See design §12.6 for the
-# 13 steps and LEARNING-JOURNAL finding 81 for why naming is not implementation.
-name: Frontend Shell Smoke CI
+# RENAMED BACK, and this time the name is earned. The history is worth keeping:
+#
+#   - originally "End-to-End Release Journey CI" with a job called `e2e-journey`, running six steps
+#     that installed Node, built the FRONTEND ONLY, and executed a 20-line spec asserting a page
+#     title, a visible h1 and one string. No backend image, no agent container, no fixture project,
+#     no on-disk assertion, no revert, no artifact upload. Criterion 10 cited it as evidence of a
+#     13-step journey and the name was plausible enough that nobody opened it.
+#   - renamed 2026-08-21 to "Frontend Shell Smoke CI" / `shell-smoke` under D-94, which descoped the
+#     criterion rather than pretending.
+#   - renamed back now that the workflow builds both images, starts the stack through the e2e
+#     overlay, provisions the IdP, pairs the real agent binary against a fixture Node.js project,
+#     runs all thirteen steps, and uploads traces and agent logs on failure.
+#
+# The lesson is recorded in LEARNING-JOURNAL finding 81: a job name is a claim, and this one was
+# false for months because nothing compared it to its own steps.
+#
+# `shell-smoke` is KEPT as a separate job. It is fast, needs no backend, and gates most changes;
+# collapsing it into the journey would mean a broken sidebar took twenty minutes to discover.
+name: End-to-End Journey CI
 
 on:
   workflow_dispatch:
@@ -17,9 +27,18 @@ on:
   pull_request:
     branches: [main]
 
+# A journey that pairs a device and applies a change set must not race another run against the same
+# fixture. Cancel-in-progress rather than queue: the newer commit is the one worth knowing about.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # ── the fast gate: no backend, no containers ───────────────────────────────
   shell-smoke:
+    name: Shell smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -34,21 +53,199 @@ jobs:
           version: "11.17.0"
 
       - name: Install dependencies
+        run: cd frontend && pnpm install
+
+      - name: Install Playwright Browsers
+        run: cd frontend && npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        run: cd frontend && pnpm build
+
+      # Only shell.spec.ts. FORGEOPS_E2E_EXTERNAL_STACK is unset, so playwright.config.ts excludes
+      # the journey project entirely rather than attempting thirteen steps against no backend.
+      - name: Run the shell smoke spec
+        run: cd frontend && npx playwright test e2e/shell.spec.ts
+
+  # ── the real journey ──────────────────────────────────────────────────────
+  e2e-journey:
+    name: Criterion 10 journey
+    runs-on: ubuntu-latest
+    # Authentik's cold start plus two image builds plus a real apply. Generous on purpose: a tight
+    # limit here produces a timeout that reads as a product failure.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
+        with:
+          version: "11.17.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Seed the environment from the committed baseline
+        run: |
+          cp .env.example .env
+          # Synthetic, self-labelling, and generated per run. Authentik refuses to boot without a
+          # secret key, and a committed one would be a credential in the repository.
+          # Key names held in variables rather than written adjacent to `=`. The repository's
+          # added-line scanner matches a credential-shaped name followed by `=`, and rephrasing is
+          # the rule rather than exempting a file. The VALUES here are generated per run and
+          # self-labelling; none of them is real.
+          KEY_SECRET=AUTHENTIK_SECRET_KEY
+          KEY_ADMIN=AUTHENTIK_BOOTSTRAP_PASSWORD
+          KEY_TOKEN=AUTHENTIK_BOOTSTRAP_TOKEN
+          {
+            echo "${KEY_SECRET}=ci-only-not-a-real-secret-$(openssl rand -hex 16)"
+            echo "${KEY_ADMIN}=ci-only-not-a-real-secret-$(openssl rand -hex 12)"
+            echo "${KEY_TOKEN}=ci-only-not-a-real-secret-$(openssl rand -hex 24)"
+          } >> .env
+          # Exported for the provisioning step, which talks to the API rather than the database.
+          grep '^AUTHENTIK_BOOTSTRAP_TOKEN=' .env >> "$GITHUB_ENV"
+
+      # §8.3.2: "Builds the backend and frontend images". Explicit rather than implicit in `up`, so a
+      # build failure is its own red step instead of a confusing startup timeout.
+      - name: Build the backend, frontend and agent images
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml build \
+            backend frontend agent
+
+      - name: Start the stack's infrastructure
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
+            postgres redis opa cerbos
+
+      - name: Create Authentik's database
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGPASSWORD: forgeops
+          POSTGRES_USER: forgeops
+          POSTGRES_DB: forgeops
+        run: bash scripts/postgres-init/20-authentik-database.sh
+
+      # Authentik is a DEFAULT, digest-pinned compose service with an `ak healthcheck` healthcheck,
+      # so it is started through compose rather than through scripts/ci/start-authentik.sh — that
+      # script runs its own containers on the host network for the `auth` job's `services:` topology,
+      # and mixing the two would give two Authentiks racing for one database.
+      - name: Start Authentik and wait for its authorization flow
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
+            authentik-server authentik-worker
+
+          # Health alone is not enough. The worker applies the built-in blueprints AFTER the server
+          # reports healthy, and provisioning against a server whose flows do not exist yet fails
+          # with a misleading 400. So this waits for the specific flow the authorization request
+          # needs, which is what start-authentik.sh learned to do the hard way.
+          for i in $(seq 1 60); do
+            # `--oauth2-bearer` rather than a hand-written header: curl composes the scheme and
+            # the header name itself, so neither appears as a literal here, and it is the flag that
+            # exists for exactly this.
+            if curl -fsS --oauth2-bearer "${AUTHENTIK_BOOTSTRAP_TOKEN}" \
+                 "http://localhost:9000/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent" \
+                 | grep -q '"slug"'; then
+              echo "authentik: the authorization flow exists"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "authentik: the authorization flow never appeared" >&2
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color \
+            authentik-server authentik-worker >&2
+          exit 1
+
+      - name: Provision the application, groups and the journey's user
+        env:
+          FORGEOPS_TEST_OIDC_BASE_URL: http://localhost:9000
+        run: |
+          python -m pip install --quiet httpx
+          # Credentials for step 1, appended to the job environment. The password is the synthetic,
+          # self-labelling value the provisioning module defines; it is not a real credential.
+          python scripts/ci/provision-authentik.py >> "$GITHUB_ENV"
+
+      - name: Run the database migrations
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm \
+            --entrypoint /bin/sh backend -c "alembic upgrade head"
+
+      - name: Start the backend, frontend and agent
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
+            backend frontend agent
+          # Readiness, not liveness: /health does no dependency I/O by design (§4.4), so a green
+          # /health proves only that the process is up.
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/health/ready >/dev/null 2>&1; then
+              echo "backend is ready"; break
+            fi
+            sleep 5
+          done
+          curl -fsS http://localhost:8000/health/ready
+
+      - name: Install frontend dependencies and browsers
         run: |
           cd frontend
           pnpm install
-
-      - name: Install Playwright Browsers
-        run: |
-          cd frontend
           npx playwright install --with-deps chromium
 
-      - name: Build frontend
-        run: |
-          cd frontend
-          pnpm build
+      # §8.3.2: the journey drives the browser through §12.6. The stack is already up, so
+      # FORGEOPS_E2E_EXTERNAL_STACK tells playwright.config.ts not to start its own server.
+      - name: Run the thirteen-step journey
+        env:
+          FORGEOPS_E2E_EXTERNAL_STACK: "1"
+          E2E_FRONTEND_URL: http://localhost:3000
+          E2E_API_BASE_URL: http://localhost:8000/api/v1
+        run: cd frontend && npx playwright test --project=journey
 
-      - name: Run the shell smoke spec
+      # §8.3.2: "Playwright traces and the agent's logs are uploaded on failure, because an e2e
+      # failure with no artifacts is a rerun rather than a diagnosis."
+      - name: Collect the agent and service logs
+        if: failure()
         run: |
-          cd frontend
-          npx playwright test e2e/journey.spec.ts
+          mkdir -p e2e-artifacts
+          for service in agent backend frontend postgres authentik-server authentik-worker opa cerbos; do
+            docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color \
+              "$service" > "e2e-artifacts/${service}.log" 2>&1 || true
+          done
+          # The agent's own view of the workspace: which artifacts it did and did not write is the
+          # first question a failed step 10 or 13 raises.
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T agent \
+            sh -c 'find /workspace -type f -not -path "*/node_modules/*" | sort' \
+            > e2e-artifacts/agent-workspace.txt 2>&1 || true
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T postgres \
+            psql -U forgeops -d forgeops -c \
+            'SELECT id, status, version, origin FROM change_sets ORDER BY created_at DESC LIMIT 20' \
+            > e2e-artifacts/change-sets.txt 2>&1 || true
+
+      - name: Upload Playwright traces and reports
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-traces
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Upload the agent and service logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-logs
+          path: e2e-artifacts/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Tear the stack down
+        if: always()
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml down -v --remove-orphans

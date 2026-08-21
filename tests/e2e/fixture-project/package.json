@@ -1,0 +1,11 @@
+{
+  "name": "forgeops-e2e-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fixture Node.js service for the criterion-10 end-to-end journey.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "Apache-2.0"
+}

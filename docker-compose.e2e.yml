@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: FSL-1.1-ALv2
+#
+# The end-to-end overlay (design.md §8.3.2, criterion 10).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait
+#
+# WHAT THIS ADDS TO THE BASE STACK
+# The base file already brings up postgres, redis, opa, cerbos, authentik-server, authentik-worker,
+# backend and frontend as default services. This overlay adds the one service §8.3.2 names that did
+# not exist — the real agent, built from the new `runtime` target with a fixture Node.js project
+# mounted — and points the backend and frontend at each other the way a browser will see them.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# A DELIBERATE DEVIATION FROM §8.3.2, RECORDED HERE BECAUSE IT IS ONE
+#
+# §8.3.2 states the OIDC issuer for this job is "a small signed-JWT fixture service, not Authentik",
+# on the grounds that Authentik's cold start is expensive and the flow it adds is covered by the
+# dedicated `auth` job.
+#
+# This overlay uses Authentik. The reason is not preference: a signed-JWT fixture service has no
+# interactive authorization endpoint. It can mint a token, which is all the `auth` job needs, but it
+# cannot render a login form — and §12.6 step 1 is a human logging in through a browser. Playwright
+# cannot type a password into a service that has no page. Satisfying §8.3.2 literally would mean the
+# journey either skips step 1 or fakes it by injecting a session, and a journey that fakes its first
+# step is not evidence of anything.
+#
+# The rationale §8.3.2 gives is a cost concern rather than a correctness one, and it is already
+# mitigated: `scripts/ci/start-authentik.sh` exists, health-gates the server on `ak healthcheck`,
+# and waits for the authorization flow and the four scopes to be present before returning. The
+# split §8.3.2 was protecting — that the `auth` job proves the token path without a browser — is
+# untouched; that job still uses the fixture issuer in `test_auth_oidc_flow.py`.
+#
+# So: the fixture issuer stays where it can do the job, and the journey uses the issuer that can
+# render a login form. This is noted in the phase record as a decision rather than left for a
+# reviewer to spot as a discrepancy.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── the real agent, which §8.3.2 requires and no target previously built ──
+  agent:
+    build:
+      context: ./agent
+      target: runtime
+    # Idles. The journey mints a pairing code through the API, then:
+    #   docker compose ... exec -T agent forgeops-agent pair --code <code>
+    #   docker compose ... exec -d -T agent forgeops-agent run
+    # Two separately checkable exit statuses. An entrypoint that paired itself would collapse both
+    # into one container start, and a pairing failure would be indistinguishable from a crash.
+    command: ["sleep", "infinity"]
+    environment:
+      # Over the compose network, so the journey exercises the real WebSocket path rather than a
+      # loopback shortcut that would not survive a container boundary.
+      AGENT_BACKEND_WSS_URL: "ws://backend:8000/api/v1/agent/ws"
+      AGENT_STATE_DIR: "/var/lib/forgeops"
+      # `file` rather than `auto`: `auto` prefers an OS keychain, and a container has none, so
+      # leaving it to fall back would make the journey depend on a negative probe succeeding.
+      AGENT_CREDENTIAL_STORE: "file"
+      AGENT_IDENTITY_PROVIDER: "paired_device"
+      AGENT_LOG_FORMAT: "json"
+    volumes:
+      # The fixture project, read-write because the journey's whole point is that the agent WRITES
+      # generated artifacts into it and step 10 then verifies them on disk. Mounted read-only would
+      # make the apply step fail for a reason unrelated to the code under test.
+      - ./tests/e2e/fixture-project:/workspace:rw
+      - agentstate:/var/lib/forgeops
+    depends_on:
+      backend:
+        condition: service_healthy
+    # The agent is a client. It must not be reachable from outside the compose network, and it
+    # publishes no port.
+    networks:
+      default: {}
+
+  # ── the backend, told where the browser actually is ──────────────────────
+  backend:
+    environment:
+      # Where the OIDC callback sends a BROWSER once the code exchange succeeds. Without this the
+      # callback would bounce to the default localhost:3000, which is correct for a developer and
+      # wrong inside CI if the frontend is published elsewhere.
+      FRONTEND_BASE_URL: "${E2E_FRONTEND_URL:-http://localhost:3000}"
+      # The IdP as the BROWSER resolves it. This is not the same as how the backend resolves it, and
+      # conflating the two is the classic OIDC container failure: the issuer in the token must match
+      # what the browser was redirected to, or verification fails on a mismatched `iss`.
+      OIDC_ISSUER: "${E2E_OIDC_ISSUER:-http://localhost:9000/application/o/forgeops/}"
+      OIDC_REDIRECT_URL: "${E2E_OIDC_REDIRECT_URL:-http://localhost:8000/api/v1/auth/callback}"
+      CORS_ALLOW_ORIGINS: "${E2E_FRONTEND_URL:-http://localhost:3000}"
+      APP_ENV: "test"
+
+  # ── the frontend, told where the API is ──────────────────────────────────
+  frontend:
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: "${E2E_API_BASE_URL:-http://localhost:8000/api/v1}"
+      NEXT_PUBLIC_OIDC_LOGIN_PATH: "/auth/login"
+
+volumes:
+  # Kept out of the fixture project's bind mount so a `git status` on the fixture stays clean and
+  # the journey's on-disk assertions are not competing with credential files.
+  agentstate: {}
