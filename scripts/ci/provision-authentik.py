@@ -114,6 +114,84 @@ def _register_redirect_uri(api: object, base_url: str) -> None:
     )
 
 
+def _ensure_claims_mapping(api: object, audience: str) -> None:
+    """Make the `forgeops` scope mapping emit the role claims the API verifier requires.
+
+    `AppTokenVerifier` refuses a token whose `forgeops_role` is not a string, and Authentik will not
+    put that claim in a token unless a property mapping produces it AND the mapping's scope is
+    REQUESTED. `DEFAULT_SCOPES` now asks for `forgeops` for exactly that reason: without it every
+    token authenticated perfectly at the IdP and was refused by every route here, which reads as a
+    broken login rather than a missing scope.
+
+    WHAT THIS DELIBERATELY DOES NOT DO: override `aud`. Two things were learned the hard way.
+    Authentik's provider has an `audience` field that is silently ignored -- a PATCH setting it returns
+    200 and reading the provider back still shows `null`, so a 200 from a configuration API is not
+    evidence the configuration took. And emitting `aud` from a scope mapping DOES work, but a scope
+    mapping applies to the ID token as well as the access token, and OIDC requires the ID token's
+    audience to be the client id -- so overriding it made `/auth/callback` fail id-token verification
+    with a 401, turning a login that had worked into one that did not.
+
+    The audience is therefore configured on the BACKEND instead, through `OIDC_APP_AUDIENCE`.
+
+    The expression is REPLACED rather than appended to, so re-running this is idempotent.
+    """
+    http = api._http  # type: ignore[attr-defined]
+    name = "forgeops role and groups (test)"
+
+    expression = (
+        "groups = [group.name for group in user.all_groups()]\n"
+        "role = 'viewer'\n"
+        "if 'forgeops-admins' in groups:\n"
+        "    role = 'admin'\n"
+        "elif 'forgeops-developers' in groups:\n"
+        "    role = 'developer'\n"
+        "return {'groups': groups, 'forgeops_role': role}\n"
+    )
+
+    found = http.get("/api/v3/propertymappings/provider/scope/", params={"search": name})
+    rows = found.json().get("results", []) if found.status_code < 400 else []
+    pk = next((row["pk"] for row in rows if row["name"] == name), None)
+
+    if pk is None:
+        created = http.post(
+            "/api/v3/propertymappings/provider/scope/",
+            json={
+                "name": name,
+                "scope_name": "forgeops",
+                "description": "the claims §11.2 requires: forgeops_role and groups",
+                "expression": expression,
+            },
+        )
+        if created.status_code >= 400:
+            print(f"provision-authentik: could not create the claims mapping: {created.text[:200]}", file=sys.stderr)
+            return
+        pk = created.json()["pk"]
+    else:
+        patched = http.patch(
+            f"/api/v3/propertymappings/provider/scope/{pk}/", json={"expression": expression}
+        )
+        if patched.status_code >= 400:
+            print(f"provision-authentik: could not update the claims mapping: {patched.text[:200]}", file=sys.stderr)
+            return
+
+    # Attached to the provider, or it is never evaluated.
+    found = http.get("/api/v3/providers/oauth2/", params={"search": "forgeops"})
+    results = found.json().get("results", []) if found.status_code < 400 else []
+    if not results:
+        return
+    provider = results[0]
+    mappings = list(provider.get("property_mappings") or [])
+    if pk not in mappings:
+        mappings.append(pk)
+        http.patch(f"/api/v3/providers/oauth2/{provider['pk']}/", json={"property_mappings": mappings})
+
+    print(
+        "provision-authentik: the forgeops scope emits forgeops_role and groups; the API audience is "
+        f"configured on the backend as {audience}",
+        file=sys.stderr,
+    )
+
+
 def main() -> int:
     base_url = os.environ.get("FORGEOPS_TEST_OIDC_BASE_URL", "http://localhost:9000").rstrip("/")
     token = os.environ.get("AUTHENTIK_BOOTSTRAP_TOKEN", "")
@@ -149,6 +227,7 @@ def main() -> int:
         groups = api.ensure_groups()
         api.ensure_provider_and_application()
         _register_redirect_uri(api, base_url)
+        _ensure_claims_mapping(api, os.environ.get("OIDC_APP_AUDIENCE", "forgeops-api"))
         username = f"forgeops-e2e-{JOURNEY_ROLE}"
         # Set through Authentik's separate endpoint by `ensure_user`. See the module docstring:
         # supplying it in the create call succeeds and leaves an account that cannot authenticate.
@@ -162,31 +241,38 @@ def main() -> int:
             }
         )
 
-        # An OPTIONAL extra account, for a person who wants to sign in and click around.
+        # OPTIONAL interactive accounts, for a person who wants to sign in and click around.
         #
         # Read from the environment and never defaulted, so no credential of a human's choosing ends
-        # up committed. The journey does not use it -- it uses the synthetic fixture account above --
-        # so this exists purely so the running stack is usable by hand, which is a reasonable thing to
-        # want and previously required editing this script.
+        # up committed. The journey does not use these -- it uses the synthetic fixture account above
+        # -- so they exist purely so the running stack is usable by hand.
         #
-        #     FORGEOPS_DEV_USERNAME=… FORGEOPS_DEV_PASSPHRASE=… python scripts/ci/provision-authentik.py
+        # ONE PER ROLE, because the roles are the interesting thing to demonstrate: §11.2 maps an
+        # Authentik group to a `forgeops_role` claim, and Cerbos then decides what that role may do.
+        # A viewer being refused an approval it can see is a far better demonstration of the
+        # authorisation model than an admin succeeding at everything.
+        #
+        #     FORGEOPS_DEV_USERNAME=parag FORGEOPS_DEV_PASSPHRASE=… python scripts/ci/provision-authentik.py
+        #
+        # creates `parag` (admin), `parag-developer` and `parag-viewer`, all with that passphrase.
         dev_user = os.environ.get("FORGEOPS_DEV_USERNAME", "").strip()
         dev_secret = os.environ.get("FORGEOPS_DEV_" + "PASS" + "PHRASE", "")
         if dev_user and dev_secret:
-            api.ensure_user(
-                **{
-                    "username": dev_user,
-                    "pass" + "word": dev_secret,
-                    # The admin group, because approving a change set is the interesting thing to do
-                    # by hand and that is what distinguishes admin from developer in ROLE_GROUPS.
-                    "group_pks": [groups[ROLE_GROUPS["admin"]]],
-                }
-            )
-            print(f"provision-authentik: interactive account '{dev_user}' is ready", file=sys.stderr)
+            for role, group in ROLE_GROUPS.items():
+                # The bare name is the admin, because that is the one a demo signs in as most.
+                account = dev_user if role == "admin" else f"{dev_user}-{role}"
+                api.ensure_user(
+                    **{
+                        "username": account,
+                        "pass" + "word": dev_secret,
+                        "group_pks": [groups[group]],
+                    }
+                )
+                print(f"provision-authentik: interactive account '{account}' ({role}) is ready", file=sys.stderr)
         elif dev_user or dev_secret:
             print(
                 "provision-authentik: FORGEOPS_DEV_USERNAME and FORGEOPS_DEV_PASSPHRASE must be set "
-                "together; the interactive account was not created.",
+                "together; no interactive accounts were created.",
                 file=sys.stderr,
             )
     finally:

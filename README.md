@@ -8,7 +8,7 @@ AI-powered DevOps automation platform.
 - **Status:** **Phase 1 substantially complete — 12 of its 14 completion criteria are met.**
   Phase 0, foundation and project scaffolding, closed with 108 task leaves and all **18** of
   its criteria. Phase 1, MVP core: analysis, generation and approval, has all 166 task leaves
-  implemented, 12 of 14 criteria met, and **31** property tests each carrying a verified
+  implemented, 13 of 14 criteria met, and **31** property tests each carrying a verified
   negative control. It is `in-progress`, not `completed`, because **two criteria are
   outstanding and were found on 2026-08-21 to have been recorded as met on evidence that does
   not exist:**

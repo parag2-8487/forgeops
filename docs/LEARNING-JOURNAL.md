@@ -5216,6 +5216,161 @@ statuses — and neither extension would have caught either of these, because bo
 is present and well-formed; it cannot verify that the claim is true.** Only reading the cited
 artefact does that.
 
+**Finding 82 — a property test can be adjacent to a defect and blind to it, and the only test that
+named the vocabulary asserted the defect.** `test_q26_sse_well_formedness.py` carried three clauses:
+each frame starts `event: `, contains `\ndata: `, and ends with a blank line. All three are about
+FRAMING and none about the event NAME. So when `generation/service.py` — the only SSE producer in the
+tree — emitted `run_start`, `token_chunk` and `run_complete`, none of which is in `SSEEventType`, every
+frame was perfectly well-framed and the property passed on every one. §7.4 states "no divergent names
+may be invented" and nothing enforced it, because the vocabulary was an enum with no encoder: a
+`StrEnum` nothing had to go through is documentation, not a constraint.
+
+The worse half is that `tests/integration/test_generation_service.py` **asserted the three invented
+names**. The only test that named the vocabulary required the violation. That is a different and
+harder category than a missing test: a gap is silent, whereas a test that encodes the bug as the
+expectation turns the fix red and invites the reading that the fix broke something.
+
+The failure mode is quiet at both ends, which is why it survived. An `EventSource` registered for
+`token` never fires for `token_chunk`; nothing raises, nothing is rejected, and the stream looks empty
+rather than wrong.
+
+Fixed in three places rather than one, because any single one of them would leave the hole open.
+`format_event` now takes `SSEEventType` and raises `TypeError` on a bare string, so an invented name is
+a type error at the call site instead of a string reaching a client. Q-26 grew to four clauses —
+framing, the closed vocabulary read out of the enum, exactly one terminal event which is also last,
+and single-line JSON payloads. And `frontend/__tests__/sse-vocabulary.test.ts` asserts the browser's
+list equals the backend's enum **read out of the generated `openapi.json`**, because a client-side test
+comparing its own list against a copy of itself would have been exactly as blind as the property was.
+
+Both new clauses were verified to bite rather than assumed to: Appendix B's control kills only the
+terminal-uniqueness test, and replaying the three historical names fails the vocabulary clause with
+`event name 'run_start' is not in §7.4's vocabulary`.
+
+**Finding 83 — three separate features had their persistence and their domain logic already built and
+only their HTTP layer missing, which made a shallow gap look like a deep one.** Approvals, generation
+and projects were all recorded as unreachable, and "0 of 13 journey steps" was read as thirteen steps
+of unbuilt work. It was not. `change_sets`, `change_items`, `validations`, `approvals` and
+`rollback_handles` have existed since migration `0004`; `projects` since `0009`; `generation_runs`
+since `0008`. `GovernanceChokepoint` already implemented submit, approve and revert over those tables
+with optimistic concurrency on `version`.
+
+**No new migration was written for any of the three.** Approvals in particular turned out to be a
+PARALLEL implementation rather than an unfinished one: `src/approvals/` had its own in-memory store and
+its own `ApprovalStatus` enum whose five uppercase members — `PENDING`, `APPROVED`, `REJECTED`,
+`EXECUTED`, `ROLLED_BACK` — are **not one of them** in `CHANGE_SET_STATUSES`, the thirteen §3.6 states
+revision `0010`'s CHECK constraint enforces. Two vocabularies existed for one concept, one enforced by
+Postgres and one enforced by nothing, and the HTTP surface spoke the unenforced one. Postgres would
+have refused every row it ever tried to write. It never tried, because the store was a dict.
+
+The lesson is about how to read a gap report. "Not wired" and "not built" look identical from the
+outside and cost an order of magnitude differently, and the way to tell them apart is to read the
+migrations before believing the summary.
+
+**Finding 84 — an invisible byte broke a module while the test suites stayed green.** Eight tracked
+files acquired a UTF-8 byte-order mark from PowerShell's `Set-Content -Encoding UTF8` default, and
+several were already committed. In `src/approvals/service.py` Python rejected it outright —
+`SyntaxError: invalid non-printable character U+FEFF` — so the approvals feature could not be imported
+at all, while the record said it was built and tested.
+
+It survived two things it should not have. It is invisible in a diff, and the suites that ran after
+each edit did not import the one file that was broken. The tests I ran passed, and the file I broke was
+not one they touched.
+
+The lesson, stated as a rule now followed: **a green suite proves the tested paths work, not that the
+program starts.** Starting the application is a separate verification step. Doing that also surfaced
+two further defects the suites could not see — `next build` failing on a `useSearchParams` call with no
+Suspense boundary, and the app refusing to boot without `ENVELOPE_PEPPER`, the second of which is
+correct behaviour rather than a fault.
+
+**Finding 85 — I made the same class of mistake I had been cataloguing: a hostname that resolved only
+for the test.** The e2e overlay puts the browser and the backend on opposite sides of a container
+boundary, and the IdP has to be reachable from both. I invented `forgeops-idp.local` and gave it two
+different mappings — `extra_hosts: forgeops-idp.local:host-gateway` inside the container, and
+`--host-resolver-rules=MAP forgeops-idp.local 127.0.0.1` on Playwright's Chromium.
+
+Every check passed. The journey reached the IdP, discovery matched, the token verified. A real browser
+got `DNS_PROBE_FINISHED_BAD_CONFIG`, because a name that resolves only under a launch flag does not
+resolve for a person. **The test suite was measuring a topology only the test suite had**, which is
+worse than a red test: green was reporting the opposite of the truth.
+
+The constraint underneath was real, and worth recording so it is not papered over again. The backend
+resolves `authentik-server` over the Compose network and a host browser cannot; the host's published
+`localhost:<port>` is unreachable from inside a container; and the ports are bound to `127.0.0.1`
+deliberately, with `check-compose-validate.py` enforcing it, so exposing the LAN interface is not
+available either — the host's LAN IP was tried and correctly refused. **No `host:port` works from both
+sides.**
+
+The fix was to stop requiring one. `OIDC_PUBLIC_BASE_URL` rewrites the origin of exactly one URL, the
+authorization endpoint, which is the only one a browser follows. Discovery, token and JWKS keep the
+internal issuer, and that is load-bearing rather than tidy: Authentik derives `iss` from the request
+that mints the token, so keeping the token call internal is what keeps `iss` equal to the configured
+issuer. Rewriting the issuer to "help" the browser would have broken verification instead. Split
+horizons are the normal condition for a real deployment, so the setting is one production wants anyway.
+
+Guarded twice, because a comment does not stop a recurrence: nine unit tests assert on the URL the
+endpoint actually returns, and `scripts/check-oidc-reachability.py` — wired into `e2e-ci.yml` before
+the journey — checks the container's route to the issuer, that the discovery document's issuer matches
+exactly, and that a host browser can reach the public authorize endpoint. Its failure message names
+the forbidden fixes explicitly: "those make the tests pass and leave the application broken for anyone
+using a normal browser."
+
+**Finding 86 — a bug found in one place and fixed in two, and a security control that looked like a
+bug.** Keyset pagination cursors were plain `"<iso>|<uuid>"` strings. Two faults at once: asyncpg
+refuses a `str` where a timestamp parameter is expected, and `+` in a query string decodes to a space,
+so `+00:00` arrived as ` 00:00`. The tests for the projects list caught it; the identical code had
+already been written into `approvals/service.py` in an earlier commit, where nothing had exercised it
+yet. Both are base64url now. Worth recording because the instinct on a caught bug is to fix the file
+the failure named, and the copy that has no test yet is the one that reaches production.
+
+The mirror of that, from the same stretch: the journey's step 1 reached a 302 callback, a session row
+and a 200 refresh, and then got 401 from `/api/v1/projects`. That reads as a broken login and is
+actually §7.1's audience separation working — the app API audience is deliberately distinct from the
+OIDC client id so a token minted for the gateway cannot be replayed against the product API, and the
+IdP was not minting it. Lowering `OIDC_APP_AUDIENCE` to the client id would have turned the criterion
+green by disabling the control, so criterion 10 is recorded as pending with the cause named instead.
+
+
+**Finding 87 — the entire authenticated application was unusable against a real identity provider,
+because it never requested the scope carrying the claims its own verifier demanded.** Every panel in
+the running app reported an authentication error to a user who was, in fact, authenticated. The login
+worked completely: the IdP authenticated, the code exchanged, a `sessions` row was written, and
+`POST /auth/refresh` returned 200 with an access token. Then every single route answered 401.
+
+`AppTokenVerifier` refuses a token whose `forgeops_role` is not a string. Authentik emits that claim
+from a provider scope mapping, and **it only evaluates a mapping when the mapping's scope is
+requested**. `DEFAULT_SCOPES` asked for `openid`, `profile`, `email` and `offline_access` — not
+`forgeops`. So the mapping never ran, the claim was never present, and no token Authentik could mint
+was ever acceptable to this API. The fix is one entry in `DEFAULT_SCOPES`, and the defect had nothing
+to do with sessions.
+
+Two dead ends on the audience, both worth recording because each looked like the answer:
+
+Authentik's OAuth2 provider has an `audience` field. Setting it by PATCH returns **200**, and reading
+the provider back shows `null`. It is accepted and ignored. **A 200 from a configuration API is not
+evidence that the configuration took** — the only proof is reading it back, and then reading the claim
+out of a real token.
+
+Emitting `aud` from a scope mapping DOES reach the token, and breaks the login. A scope mapping
+applies to the ID token as well as the access token, and OIDC requires the ID token's audience to be
+the client id — so overriding it made `/auth/callback` fail id-token verification with a 401, turning
+a login that worked into one that did not. The audience belongs on the backend, in
+`OIDC_APP_AUDIENCE`, and §7.1's separation is preserved because the distinction that matters is
+between the product API and the MCP gateway, whose issuer and audience are configured separately.
+
+**The panel text was its own, smaller version of the same fault.** It said "your session ended … this
+is an expiry rather than a missing sign-in", which asserted a cause it had not verified. The token was
+being REFUSED, not aged out, so the advice to sign in again was wrong and a user following it would
+loop. It now states what it knows — a 401 survived one refresh attempt — and names the configuration
+causes that produce the same status, with a test asserting it does NOT claim an expiry.
+
+Immediate effect on criterion 10: steps 1 through 4 of the journey now pass — a real browser OIDC
+login verified by a session row, a project persisted, the real Go agent binary paired from its own
+container, and the device observed as active and heartbeating. Step 3 needed one more thing that only
+running it could reveal: pairing returns 503 until an internal CA exists, and the agent said so
+precisely — "the pairing service cannot issue a device certificate right now" — which `make init-ca`
+resolves.
+
+
 ## 10. Where we are right now
 
 ### Snapshot: 2026-08-19, branch `phase-1-implementation`

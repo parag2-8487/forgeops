@@ -247,8 +247,10 @@ test.describe("Criterion 10: the end-to-end journey", () => {
       headers: authHeaders(),
       data: {
         name: "e2e-fixture",
+        // `path`, matching `ProjectCreateRequest`. The agent mounts the fixture project at
+        // /workspace, so this is the path the agent will resolve when it applies a change.
+        path: "/workspace",
         repo_url: "https://example.invalid/forgeops/e2e-fixture",
-        local_path: "/workspace",
       },
     });
     // ASSERTION: the HTTP status, then the row.

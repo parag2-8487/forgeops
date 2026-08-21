@@ -100,6 +100,15 @@ services:
       # Public: how a BROWSER reaches it. Only the authorization redirect uses this.
       OIDC_PUBLIC_BASE_URL: "${E2E_OIDC_PUBLIC_BASE_URL:-http://localhost:9000}"
       OIDC_REDIRECT_URL: "${E2E_OIDC_REDIRECT_URL:-http://localhost:8000/api/v1/auth/callback}"
+      # The audience the IdP actually mints, which for this deployment is the OIDC client id.
+      #
+      # §7.1's separation is between the PRODUCT API audience and the MCP GATEWAY audience, and that
+      # stays intact: MCP_OIDC_ISSUERS/MCP_OIDC_AUDIENCE are configured separately, so a gateway token
+      # still cannot be replayed here. What does not work is inventing a third value: Authentik's
+      # provider `audience` field is silently ignored, and emitting `aud` from a scope mapping also
+      # rewrites the ID TOKEN, whose audience OIDC requires to be the client id -- doing that made
+      # /auth/callback fail id-token verification with a 401.
+      OIDC_APP_AUDIENCE: "${E2E_OIDC_APP_AUDIENCE:-forgeops-frontend}"
       CORS_ALLOW_ORIGINS: "${E2E_FRONTEND_URL:-http://localhost:3000}"
       APP_ENV: "test"
 

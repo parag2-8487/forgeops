@@ -567,7 +567,7 @@ describe("AsyncState", () => {
     expect(alert).not.toHaveTextContent("Detail");
   });
 
-  it("reports 401 as an ended session, not as an alert", () => {
+  it("reports 401 as an authentication problem, not as an alert", () => {
     render(
       <AsyncState
         isPending={false}
@@ -580,10 +580,15 @@ describe("AsyncState", () => {
     // Not an alert: an expired session is expected operation, and role="alert" interrupts a screen
     // reader for something the user fixes by signing in again.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText(/session ended before secrets could be read/i)).toBeInTheDocument();
-    // It must say the refresh was already attempted, because that is what makes this an expiry
-    // rather than a missing sign-in.
+    expect(screen.getByText(/not authenticated to read secrets/i)).toBeInTheDocument();
+    // It must say the refresh was already attempted, so the reader knows this is not simply a
+    // missing sign-in.
     expect(screen.getByText(/auth\/refresh/i)).toBeInTheDocument();
+    // And it must NOT assert an expiry as the cause. A 401 here can equally mean the token was
+    // REFUSED -- wrong audience, or a missing forgeops_role claim -- and claiming "your session
+    // ended" sent a real user to sign in repeatedly against a configuration fault.
+    expect(screen.queryByText(/your session ended/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/OIDC_APP_AUDIENCE/)).toBeInTheDocument();
   });
 
   it("reports 403 as a policy refusal, distinctly from 401", () => {
@@ -600,7 +605,7 @@ describe("AsyncState", () => {
     expect(screen.getByText(/not authorised to read secrets/i)).toBeInTheDocument();
     // The two were collapsed into one "sign-in required" message before, which was wrong for 403:
     // the caller IS authenticated and signing in again changes nothing.
-    expect(screen.queryByText(/session ended/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument();
     expect(screen.getByText(/refused by policy/i)).toBeInTheDocument();
   });
 });

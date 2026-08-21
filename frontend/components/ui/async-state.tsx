@@ -83,12 +83,20 @@ function ProblemPanel({ error, label }: { error: unknown; label: string }) {
   if (status === 401) {
     return (
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-6 text-sm">
-        <p className="font-semibold">Your session ended before {label} could be read.</p>
+        <p className="font-semibold">Not authenticated to read {label}.</p>
         <p className="mt-2 text-muted-foreground">
-          The backend answered <code>401</code> and renewing the session from its cookie did not
-          succeed either, so this is an expiry rather than a missing sign-in — the client attempts{" "}
-          <code>POST /auth/refresh</code> once before any 401 reaches this panel. Signing in again
-          will restore it. The panel reports that rather than showing sample data in its place.
+          The backend answered <code>401</code>, and renewing from the session cookie did not
+          succeed either — the client attempts <code>POST /auth/refresh</code> once before any 401
+          reaches this panel. Signing in again is the usual fix. The panel reports that rather than
+          showing sample data in its place.
+        </p>
+        <p className="mt-2 text-muted-foreground">
+          If signing in does not help, the token is being <em>refused</em> rather than missing, and
+          the cause is configuration rather than session age: the API requires the token&apos;s
+          audience to match <code>OIDC_APP_AUDIENCE</code> and requires a <code>forgeops_role</code>{" "}
+          claim, which the identity provider only emits when the <code>forgeops</code> scope is
+          requested. <code>scripts/check-oidc-reachability.py</code> checks the surrounding
+          topology.
         </p>
       </div>
     );

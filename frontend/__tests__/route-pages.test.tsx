@@ -311,11 +311,11 @@ describe.each(LIVE_PAGES)(
       }
     });
 
-    it("reports a 401 as an ended session rather than as a failure", async () => {
+    it("reports a 401 as an authentication problem rather than as a crash", async () => {
       mockGet.mockRejectedValue(problem(401, "Unauthenticated"));
       renderPage(<Page />);
       expect(
-        (await screen.findAllByText(new RegExp(`session ended before ${label}`, "i"))).length,
+        (await screen.findAllByText(new RegExp(`Not authenticated to read ${label}`, "i"))).length,
       ).toBeGreaterThan(0);
       // A 401 is the designed behaviour, so it must NOT be announced as an alert.
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();

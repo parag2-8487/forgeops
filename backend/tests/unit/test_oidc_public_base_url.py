@@ -112,3 +112,43 @@ class TestOnlyTheBrowserFacingUrlIsRewritten:
         # internal address. Rewriting the issuer here would make every token fail verification.
         metadata = await _client(PUBLIC_BASE).metadata()
         assert metadata.issuer == INTERNAL_ISSUER
+
+
+class TestTheRequestedScopesCarryTheClaimsTheApiRequires:
+    """The scope that carries `forgeops_role` must be REQUESTED, or no token is ever acceptable.
+
+    This is the guard for a defect that made the entire authenticated application unusable against a
+    real identity provider while every test passed. `AppTokenVerifier` refuses a token whose
+    `forgeops_role` is not a string. Authentik emits that claim from a provider scope mapping, and it
+    only evaluates a mapping when its scope is requested. `DEFAULT_SCOPES` did not ask for it.
+
+    The result was a login that worked perfectly -- IdP authenticated, code exchanged, session row
+    written, refresh returning 200 -- followed by 401 on every single route, which reads as an expired
+    session rather than a missing scope. Every panel in the application showed an authentication
+    error to a user who was, in fact, authenticated.
+    """
+
+    def test_the_forgeops_scope_is_requested(self) -> None:
+        from src.auth.oidc import DEFAULT_SCOPES, FORGEOPS_SCOPE
+
+        assert FORGEOPS_SCOPE in DEFAULT_SCOPES, (
+            "the scope carrying forgeops_role must be requested, or Authentik will not emit the claim "
+            "and AppTokenVerifier will refuse every token"
+        )
+
+    def test_the_standard_oidc_scopes_are_still_requested(self) -> None:
+        from src.auth.oidc import DEFAULT_SCOPES
+
+        # `openid` is what makes it an OIDC request at all; `offline_access` is what yields the refresh
+        # token the session cookie is built from.
+        for scope in ("openid", "profile", "email", "offline_access"):
+            assert scope in DEFAULT_SCOPES, scope
+
+    async def test_the_authorization_request_actually_sends_them(self) -> None:
+        from src.auth.oidc import DEFAULT_SCOPES
+
+        authorization, _ = await _client(PUBLIC_BASE).authorization_request()
+        # Asserted on the URL, not on the constant: a scope in the tuple that never reaches the wire
+        # would leave exactly the defect this class exists to prevent.
+        for scope in DEFAULT_SCOPES:
+            assert scope in authorization.url, f"{scope} is not in the authorization request"

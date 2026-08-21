@@ -57,7 +57,22 @@ from .models import UserRole
 #: The scopes Phase 1 asks for. `openid` is mandatory; `profile` and `email` populate
 #: `users.name` and `users.email`; `offline_access` is what makes a refresh token
 #: available, and without it `/refresh` would have nothing to present.
-DEFAULT_SCOPES: Final[tuple[str, ...]] = ("openid", "profile", "email", "offline_access")
+#: The scope whose Authentik property mapping carries the claims THIS API requires.
+#:
+#: `AppTokenVerifier` refuses a token without a `forgeops_role` string, and checks `aud` against the
+#: product API's audience -- which §7.1 deliberately makes distinct from the OIDC client id. Both
+#: claims are emitted by a provider scope mapping, and Authentik only evaluates a mapping when its
+#: scope is REQUESTED. Omitting it therefore produced a token that authenticated perfectly at the IdP
+#: and was refused by every route here, which reads as a broken login rather than a missing scope.
+FORGEOPS_SCOPE: Final[str] = "forgeops"
+
+DEFAULT_SCOPES: Final[tuple[str, ...]] = (
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    FORGEOPS_SCOPE,
+)
 
 #: How long an in-flight authorization request may sit in Redis before its PKCE
 #: verifier is discarded. Five minutes is generous for a human login and short enough
