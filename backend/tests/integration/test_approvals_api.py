@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: FSL-1.1-ALv2
+# SPDX-License-Identifier: FSL-1.1-ALv2
 """The approvals surface is mounted, authenticated, and speaks the stored vocabulary.
 
 This file exists because the previous version of `src/approvals/` was a working-looking module that

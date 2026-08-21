@@ -76,6 +76,22 @@ def _safe_next(raw: str | None) -> str:
     return raw
 
 
+def _wants_html(request: Request) -> bool:
+    """True for a browser's top-level navigation, false for a programmatic caller.
+
+    The callback has two genuinely different callers and one of them cannot read JSON usefully.
+    `test_auth_oidc_flow.py` drives it with an API client and asserts on the token body; a person
+    arrives via a 302 from the IdP with `Accept: text/html,...`. Negotiating on `Accept` keeps both
+    working off one route rather than adding a second callback that would need its own copy of the
+    state-consumption and nonce checks — and duplicating those is how one copy ends up missing a
+    check.
+
+    `text/html` must be explicitly present. A missing or `*/*` Accept header is treated as
+    programmatic, so the default for anything ambiguous is the JSON body the tests rely on.
+    """
+    return "text/html" in request.headers.get("accept", "").lower()
+
+
 def _client(request: Request) -> OidcClient:
     client = getattr(request.app.state, "oidc_client", None)
     if client is None:
@@ -188,7 +204,22 @@ async def callback(
     body = await _open_session(request, session, tokens, nonce=pending.nonce)
     body["next"] = pending.next_path
 
-    response = JSONResponse(body)
+    response: Response
+    if _wants_html(request):
+        # A BROWSER got here by following the IdP's redirect, and a JSON token document is not
+        # somewhere a person can be left standing. Bounce it into the app.
+        #
+        # No token in the URL, deliberately. A query parameter would be written to the browser
+        # history, sent in the `Referer` of the next outbound request, and captured by any access
+        # log along the way. The session cookie set below is `httpOnly`, and the app mints its
+        # access token from it by calling `POST /auth/refresh` once it loads — so the credential
+        # never becomes part of a URL, and the SPA still gets a bearer token to send.
+        settings = request.app.state.settings
+        landing = settings.frontend_base_url.rstrip("/") + pending.next_path
+        response = RedirectResponse(url=landing, status_code=302)
+    else:
+        response = JSONResponse(body)
+
     if tokens.refresh_token:
         _set_session_cookie(request, response, tokens.refresh_token)
     return response

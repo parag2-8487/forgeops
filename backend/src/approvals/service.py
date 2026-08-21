@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: FSL-1.1-ALv2
+# SPDX-License-Identifier: FSL-1.1-ALv2
 """Reads over the real change-set tables (design.md §3.6, §6.5 revision `0004`, §11.6).
 
 **What this replaces.** The previous `ApprovalService` held `self._store: dict[str, ChangeSetResponse]`

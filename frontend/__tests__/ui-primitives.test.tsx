@@ -567,18 +567,41 @@ describe("AsyncState", () => {
     expect(alert).not.toHaveTextContent("Detail");
   });
 
-  it.each([401, 403])("treats %i as sign-in required rather than as an alert", (status) => {
+  it("reports 401 as an ended session, not as an alert", () => {
     render(
       <AsyncState
         isPending={false}
-        error={new ApiProblemError({ type: "t", title: "Denied", status })}
+        error={new ApiProblemError({ type: "t", title: "Denied", status: 401 })}
         label="secrets"
       >
         {child}
       </AsyncState>,
     );
-    expect(screen.getByText(/Sign-in required to read secrets/i)).toBeInTheDocument();
+    // Not an alert: an expired session is expected operation, and role="alert" interrupts a screen
+    // reader for something the user fixes by signing in again.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText(/session ended before secrets could be read/i)).toBeInTheDocument();
+    // It must say the refresh was already attempted, because that is what makes this an expiry
+    // rather than a missing sign-in.
+    expect(screen.getByText(/auth\/refresh/i)).toBeInTheDocument();
+  });
+
+  it("reports 403 as a policy refusal, distinctly from 401", () => {
+    render(
+      <AsyncState
+        isPending={false}
+        error={new ApiProblemError({ type: "t", title: "Denied", status: 403 })}
+        label="secrets"
+      >
+        {child}
+      </AsyncState>,
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText(/not authorised to read secrets/i)).toBeInTheDocument();
+    // The two were collapsed into one "sign-in required" message before, which was wrong for 403:
+    // the caller IS authenticated and signing in again changes nothing.
+    expect(screen.queryByText(/session ended/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/refused by policy/i)).toBeInTheDocument();
   });
 });
 

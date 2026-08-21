@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Typed query-key factory for TanStack Query.
  * Centralised so Phase 1+ invalidation cannot drift into stringly-typed keys.
  */

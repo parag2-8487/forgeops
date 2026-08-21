@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: FSL-1.1-ALv2
+# SPDX-License-Identifier: FSL-1.1-ALv2
 """Q-22: only edges in the §3.6 state machine are accepted.
 
 **This file is a rewrite, and what it replaced is the finding.** The previous version imported

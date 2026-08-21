@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0
 /**
  * The nine shell routes, each across every state it can actually reach.
  *
@@ -307,11 +307,11 @@ describe.each(LIVE_PAGES)(
       }
     });
 
-    it("reports a 401 as sign-in required rather than as a failure", async () => {
+    it("reports a 401 as an ended session rather than as a failure", async () => {
       mockGet.mockRejectedValue(problem(401, "Unauthenticated"));
       renderPage(<Page />);
       expect(
-        (await screen.findAllByText(new RegExp(`Sign-in required to read ${label}`, "i"))).length,
+        (await screen.findAllByText(new RegExp(`session ended before ${label}`, "i"))).length,
       ).toBeGreaterThan(0);
       // A 401 is the designed behaviour, so it must NOT be announced as an alert.
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();

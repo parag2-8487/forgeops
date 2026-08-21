@@ -61,13 +61,18 @@ export function AsyncState({
 }
 
 /**
- * A 401 is not an error worth alarming anyone about, it is the design.
+ * A 401 or 403 is not an error worth alarming anyone about.
  *
- * §4.4 makes every route except the probes, the docs and the auth flow itself require an
- * authenticated principal, and this app ships no sign-in screen yet — so an unauthenticated
- * visitor SHOULD see this on every live panel. Saying so plainly is more honest than a red
- * failure box, and considerably more honest than filling the panel with sample data to avoid
- * the question.
+ * This note used to say the app "ships no sign-in screen yet", which is why an unauthenticated
+ * visitor saw this panel everywhere. That is no longer true: `app/login` starts the OIDC flow and
+ * `AuthBoundary` redirects an anonymous visitor to it, so reaching a panel at all now means a
+ * session was established.
+ *
+ * Which changes what a 401 here MEANS, and the panel says so. It is no longer "you never signed
+ * in" — the client retries once through `POST /auth/refresh` before surfacing anything, so a 401
+ * that survives to this component is a session that ended and could not be renewed. A 403 is
+ * different again and always was: authenticated, and refused by policy. Those two are no longer
+ * collapsed into one message.
  */
 function ProblemPanel({ error, label }: { error: unknown; label: string }) {
   // `ApiTransportError extends ApiProblemError`, so this one check covers both and every
@@ -75,16 +80,29 @@ function ProblemPanel({ error, label }: { error: unknown; label: string }) {
   const problem = error instanceof ApiProblemError ? error.problem : null;
   const status = problem?.status;
 
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return (
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-6 text-sm">
-        <p className="font-semibold">Sign-in required to read {label}.</p>
+        <p className="font-semibold">Your session ended before {label} could be read.</p>
         <p className="mt-2 text-muted-foreground">
-          The backend answered <code>{status}</code>. This is the intended behaviour, not a failure:
-          §4.4 makes every route other than the health probes, the API documentation and the auth
-          flow itself require an authenticated principal. Phase 1 ships the OIDC flow on the backend
-          but no sign-in screen in this shell, so these panels stay unreadable from a cold start.
-          The panel reports that rather than showing sample data in its place.
+          The backend answered <code>401</code> and renewing the session from its cookie did not
+          succeed either, so this is an expiry rather than a missing sign-in — the client attempts{" "}
+          <code>POST /auth/refresh</code> once before any 401 reaches this panel. Signing in again
+          will restore it. The panel reports that rather than showing sample data in its place.
+        </p>
+      </div>
+    );
+  }
+
+  if (status === 403) {
+    return (
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-6 text-sm">
+        <p className="font-semibold">Not authorised to read {label}.</p>
+        <p className="mt-2 text-muted-foreground">
+          The backend answered <code>403</code>. You are signed in; this identity is refused by
+          policy. §4.2 makes the response for a resource you may not read identical to the response
+          for one that does not exist, so this does not tell you which — deliberately, because the
+          person who benefits from being able to tell them apart is the one enumerating.
         </p>
       </div>
     );

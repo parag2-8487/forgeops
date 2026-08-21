@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: FSL-1.1-ALv2
+# SPDX-License-Identifier: FSL-1.1-ALv2
 """Projects are stored and read back (design.md §6.5 revision `0009`, §11.3).
 
 Rewritten because the handlers now open a session. Two changes to the existing cases were forced by

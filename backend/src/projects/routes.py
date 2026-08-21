@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: FSL-1.1-ALv2
+# SPDX-License-Identifier: FSL-1.1-ALv2
 """Project CRUD, activity and readiness (design.md §6.5 revision `0009`, §11.3, §11.4).
 
 **No migration accompanies this.** The `projects` table and the `Project` SQLModel have existed

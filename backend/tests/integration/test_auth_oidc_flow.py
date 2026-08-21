@@ -596,3 +596,140 @@ class TestLogout:
         client.cookies.clear()
         response = await client.post("/api/v1/auth/logout")
         assert response.status_code == 200
+
+@wires("oidc_client", "id_token_verifier", "session_service")
+class TestABrowserEndsUpInTheApplication:
+    """The callback has two callers, and one of them is a person.
+
+    §12.6 step 1 is an OIDC login performed in a browser. The IdP 302s the browser to THIS endpoint
+    -- it has to, because the client secret and the pending PKCE verifier live here and nowhere in
+    the SPA -- but the endpoint answered JSON, so a real browser following that redirect was left
+    looking at a token document with no way back into the application. The frontend shell also had
+    no sign-in screen at the time, so the gap was invisible: there was no journey to strand.
+
+    Negotiated on `Accept` rather than split into a second route, because a second callback would
+    need its own copy of the state-consumption and nonce checks and that is how one copy ends up
+    missing one.
+    """
+
+    async def test_a_browser_is_redirected_into_the_app(
+        self, client: httpx.AsyncClient, auth_app: Any, fixture_issuer: FixtureIssuer
+    ) -> None:
+        subject = _new_subject(fixture_issuer)
+        state, nonce = await _begin_login(client, next_path="/readiness")
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+
+        response = await client.get(
+            "/api/v1/auth/callback",
+            params={"code": "any-code", "state": state},
+            headers={"accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+        )
+
+        assert response.status_code == 302, response.text
+        # The deep link survives the round trip, joined to the configured frontend origin.
+        assert response.headers["location"] == "http://localhost:3000/readiness"
+
+    async def test_no_token_is_placed_in_the_redirect_url(
+        self, client: httpx.AsyncClient, auth_app: Any, fixture_issuer: FixtureIssuer
+    ) -> None:
+        """The reason the app calls `/auth/refresh` instead of reading a query parameter.
+
+        A token in the URL is written to browser history, sent in the `Referer` of the next
+        outbound request, and captured by every access log on the path. The `httpOnly` cookie plus
+        a refresh call gets the SPA a bearer token without any of that.
+        """
+        subject = _new_subject(fixture_issuer)
+        state, nonce = await _begin_login(client, next_path="/projects")
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+
+        response = await client.get(
+            "/api/v1/auth/callback",
+            params={"code": "any-code", "state": state},
+            headers={"accept": "text/html"},
+        )
+
+        location = response.headers["location"]
+        assert "access_token" not in location
+        assert "token" not in location.lower()
+        assert "?" not in location, f"the landing URL carries a query string: {location}"
+
+    async def test_the_session_cookie_is_still_set_on_the_redirect(
+        self, client: httpx.AsyncClient, auth_app: Any, fixture_issuer: FixtureIssuer
+    ) -> None:
+        """Without this the browser lands in the app with no way to mint an access token."""
+        subject = _new_subject(fixture_issuer)
+        state, nonce = await _begin_login(client)
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+
+        response = await client.get(
+            "/api/v1/auth/callback",
+            params={"code": "any-code", "state": state},
+            headers={"accept": "text/html"},
+        )
+
+        cookie_name = auth_app.state.settings.session_cookie_name
+        set_cookie = response.headers.get("set-cookie", "")
+        assert cookie_name in set_cookie
+        # httpOnly is the whole basis for keeping the access token out of web storage.
+        assert "httponly" in set_cookie.lower()
+
+    async def test_a_programmatic_caller_still_gets_the_json_body(
+        self, client: httpx.AsyncClient, auth_app: Any, fixture_issuer: FixtureIssuer
+    ) -> None:
+        """The negotiation must not have moved the existing contract out from under its callers."""
+        subject = _new_subject(fixture_issuer)
+        state, nonce = await _begin_login(client)
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+
+        response = await client.get(
+            "/api/v1/auth/callback",
+            params={"code": "any-code", "state": state},
+            headers={"accept": "application/json"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["access_token"]
+
+    async def test_an_absent_accept_header_is_treated_as_programmatic(
+        self, client: httpx.AsyncClient, auth_app: Any, fixture_issuer: FixtureIssuer
+    ) -> None:
+        """Ambiguity defaults to JSON, so nothing that omits `Accept` silently starts redirecting."""
+        subject = _new_subject(fixture_issuer)
+        state, nonce = await _begin_login(client)
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+
+        response = await client.get(
+            "/api/v1/auth/callback",
+            params={"code": "any-code", "state": state},
+            headers={"accept": "*/*"},
+        )
+
+        assert response.status_code == 200, response.text
+
+    async def test_a_hostile_next_cannot_steer_the_landing_off_origin(
+        self, client: httpx.AsyncClient, auth_app: Any, fixture_issuer: FixtureIssuer
+    ) -> None:
+        """`_safe_next` runs at `/login`, so the hostile value never reaches the redirect.
+
+        Asserted end to end rather than by unit-testing `_safe_next` alone, because the property
+        that matters is that the two halves compose: a guard applied at the wrong end of the round
+        trip would still leave an open redirect here.
+        """
+        subject = _new_subject(fixture_issuer)
+        state, nonce = await _begin_login(client, next_path="//evil.example/steal")
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+
+        response = await client.get(
+            "/api/v1/auth/callback",
+            params={"code": "any-code", "state": state},
+            headers={"accept": "text/html"},
+        )
+
+        assert response.headers["location"] == "http://localhost:3000/"
+        assert "evil.example" not in response.headers["location"]

@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: FSL-1.1-ALv2
 "use client";
 
 import { useQuery } from "@tanstack/react-query";

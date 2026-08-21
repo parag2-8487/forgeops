@@ -207,6 +207,7 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "AGENT_TRIVY_BINARY",
         "AGENT_VALIDATOR_TIMEOUT_SECONDS",
         # Frontend (browser-visible; never a secret)
+        "FRONTEND_BASE_URL",
         "NEXT_PUBLIC_OIDC_LOGIN_PATH",
         "NEXT_PUBLIC_SSE_TIMEOUT_MS",
     }
@@ -283,6 +284,17 @@ class Settings(BaseSettings):
     oidc_client_id: str = Field(default="")
     oidc_client_secret: SecretStr = Field(default=SecretStr(""))
     oidc_redirect_url: str = Field(default="http://localhost:8000/api/v1/auth/callback")
+    #: Where a BROWSER is sent once the code exchange succeeds.
+    #:
+    #: Distinct from `oidc_redirect_url`, and the distinction is the point: the IdP redirects to
+    #: the BACKEND callback, because that is where the client secret and the pending PKCE verifier
+    #: live. But the backend callback answers JSON, so a browser that followed the IdP's redirect
+    #: would be left staring at a token document instead of the application. This is the origin the
+    #: callback bounces it to afterwards, with `next` appended.
+    #:
+    #: Only ever joined with a path `_safe_next` has already reduced to a same-origin absolute
+    #: path, so a hostile `next` cannot turn this into an open redirect.
+    frontend_base_url: str = Field(default="http://localhost:3000")
     session_cookie_name: str = Field(default="forgeops_session")
     session_ttl_seconds: int = Field(default=3600, ge=60, le=86_400)
     refresh_ttl_seconds: int = Field(default=1_209_600, ge=3600)
