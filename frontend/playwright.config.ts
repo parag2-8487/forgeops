@@ -43,7 +43,16 @@ export default defineConfig({
         {
           name: "journey",
           testMatch: /journey\.spec\.ts/,
-          use: { ...devices["Desktop Chrome"] },
+          use: {
+            ...devices["Desktop Chrome"],
+            launchOptions: {
+              // The browser half of the shared-hostname arrangement documented in
+              // docker-compose.e2e.yml: the IdP must be reachable at the SAME URL the backend
+              // verifies the token's `iss` against, or the two ends disagree about the issuer.
+              // A resolver rule does that without touching /etc/hosts, which CI cannot write.
+              args: [`--host-resolver-rules=MAP forgeops-idp.local 127.0.0.1`],
+            },
+          },
           // The journey drives a real IdP redirect and a real agent apply. Individual steps set
           // their own waits; this is the outer bound per step.
           timeout: 180_000,

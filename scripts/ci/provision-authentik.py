@@ -45,6 +45,75 @@ BACKEND = REPO_ROOT / "backend"
 JOURNEY_ROLE = "admin"
 
 
+def _register_redirect_uri(api: object, base_url: str) -> None:
+    """Add THIS deployment's callback to the provider's allowed redirect URIs.
+
+    `test_authentik_real_idp.py` registers `http://testserver/api/v1/auth/callback`, which is right
+    for it: that test drives the flow over httpx and never navigates, so the URI only has to be
+    matched, not reachable. A browser journey is different — the IdP redirects a real browser to it,
+    so it has to be the address the backend is actually published on.
+
+    Registered ADDITIVELY rather than replacing, so provisioning for the journey does not break the
+    integration test if it runs afterwards against the same Authentik. Authentik matches strictly per
+    entry, so two entries mean two acceptable callbacks rather than a looser rule.
+
+    Found by the journey failing at step 1 with Authentik's own "Redirect URI Error" page, which is
+    worth recording: the flow reached the IdP, the IdP refused the request, and the refusal was
+    visible rather than silent. A fixture issuer with no pages would have produced a blank failure.
+    """
+    redirect_url = os.environ.get("E2E_OIDC_REDIRECT_URL", "")
+    if not redirect_url:
+        print(
+            "provision-authentik: E2E_OIDC_REDIRECT_URL is unset, so only the integration test's "
+            "redirect URI is registered. A browser journey will fail at the authorization request "
+            "with Authentik's Redirect URI Error.",
+            file=sys.stderr,
+        )
+        return
+
+    http = api._http  # type: ignore[attr-defined]
+    found = http.get("/api/v3/providers/oauth2/", params={"search": "forgeops"})
+    results = found.json().get("results", []) if found.status_code < 400 else []
+    if not results:
+        print("provision-authentik: no oauth2 provider found to patch", file=sys.stderr)
+        return
+
+    provider = results[0]
+    existing = provider.get("redirect_uris") or []
+    urls = {entry.get("url") for entry in existing if isinstance(entry, dict)}
+    if redirect_url not in urls:
+        existing.append({"matching_mode": "strict", "url": redirect_url})
+    patch: dict[str, object] = {"redirect_uris": existing}
+
+    # THE API AUDIENCE MUST BE MINTED BY THE IdP, or a perfectly good login still 401s.
+    #
+    # §7.1 makes the app API audience DISTINCT from the client id on purpose, so a token minted for
+    # the MCP gateway cannot be replayed against the product API. The consequence is that Authentik
+    # has to be told to put `forgeops-api` in `aud`: without it the access token carries only the
+    # client id, `AppTokenVerifier` rejects it, and every authenticated route answers 401 even though
+    # the code exchange, the session and the refresh all succeeded.
+    #
+    # Found exactly that way. The journey's step 1 reached a 302 callback and a 200 refresh and then
+    # got 401 from `/projects`, which looks like a broken login and is actually a correct audience
+    # check refusing a token that was never meant for it.
+    audience = os.environ.get("OIDC_APP_AUDIENCE", "forgeops-api")
+    if provider.get("audience") != audience:
+        patch["audience"] = audience
+
+    patched = http.patch(f"/api/v3/providers/oauth2/{provider['pk']}/", json=patch)
+    if patched.status_code >= 400:
+        print(
+            f"provision-authentik: could not register {redirect_url}: "
+            f"{patched.status_code} {patched.text[:200]}",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"provision-authentik: registered redirect URI {redirect_url} and audience {audience}",
+        file=sys.stderr,
+    )
+
+
 def main() -> int:
     base_url = os.environ.get("FORGEOPS_TEST_OIDC_BASE_URL", "http://localhost:9000").rstrip("/")
     token = os.environ.get("AUTHENTIK_BOOTSTRAP_TOKEN", "")
@@ -79,6 +148,7 @@ def main() -> int:
     try:
         groups = api.ensure_groups()
         api.ensure_provider_and_application()
+        _register_redirect_uri(api, base_url)
         username = f"forgeops-e2e-{JOURNEY_ROLE}"
         # Set through Authentik's separate endpoint by `ensure_user`. See the module docstring:
         # supplying it in the create call succeeds and leaves an account that cannot authenticate.

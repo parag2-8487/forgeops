@@ -73,6 +73,19 @@ services:
 
   # ── the backend, told where the browser actually is ──────────────────────
   backend:
+    # ONE HOSTNAME BOTH SIDES RESOLVE, which is the whole difficulty of OIDC in containers.
+    #
+    # Authentik derives the `iss` claim from the Host header of the request the BROWSER made, and
+    # the backend must verify that `iss` against a discovery document it fetches ITSELF. If the
+    # browser uses `localhost:9000` and the backend uses `authentik-server:9000`, the two disagree
+    # and verification fails with a mismatched issuer -- which reads like a bug in the token rather
+    # than a topology mistake.
+    #
+    # So both ends use `forgeops-idp.local`. Here it is mapped to the host gateway; the browser maps
+    # it to 127.0.0.1 through Chromium's `--host-resolver-rules` (see playwright.config.ts). Neither
+    # side needs an entry in /etc/hosts, which would require privileges CI does not grant.
+    extra_hosts:
+      - "forgeops-idp.local:host-gateway"
     environment:
       # Where the OIDC callback sends a BROWSER once the code exchange succeeds. Without this the
       # callback would bounce to the default localhost:3000, which is correct for a developer and
