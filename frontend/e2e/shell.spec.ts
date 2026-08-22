@@ -178,9 +178,9 @@ test.describe("Feature routes", () => {
     // moment a route regresses to a placeholder. Every one of the nine is checked, not just three.
     for (const { path } of ROUTES) {
       await page.goto(path);
-      await expect(page.getByRole("heading", { name: /is not implemented in Phase 1/ })).toHaveCount(
-        0,
-      );
+      await expect(
+        page.getByRole("heading", { name: /is not implemented in Phase 1/ }),
+      ).toHaveCount(0);
       await expect(page.getByText("Why this screen is empty")).toHaveCount(0);
       // And it is a real surface rather than a blank one.
       await expect(page.locator("h1")).toHaveCount(1);

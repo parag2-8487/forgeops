@@ -21,7 +21,13 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
 import {
   agentFile,
   agentFileSha256,
@@ -270,7 +276,12 @@ async function gotoAsOperator(page: Page, path: string): Promise<void> {
     const deadline = Date.now() + 30_000;
     let heading = "";
     while (Date.now() < deadline) {
-      heading = (await page.locator("h1").first().textContent().catch(() => "")) ?? "";
+      heading =
+        (await page
+          .locator("h1")
+          .first()
+          .textContent()
+          .catch(() => "")) ?? "";
       // A heading that is neither absent nor the sign-in screen's means the route rendered for an
       // authenticated principal.
       if (heading.trim() !== "" && !/sign in to forgeops/i.test(heading)) {
@@ -286,7 +297,12 @@ async function gotoAsOperator(page: Page, path: string): Promise<void> {
     }
 
     if (attempt === 3) {
-      const shown = (await page.locator("main").innerText().catch(() => "")).slice(0, 600);
+      const shown = (
+        await page
+          .locator("main")
+          .innerText()
+          .catch(() => "")
+      ).slice(0, 600);
       throw new Error(`${path} never rendered for a signed-in operator. What it showed:\n${shown}`);
     }
 
@@ -379,7 +395,9 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     });
     expect(published.status(), await published.text()).toBe(202);
     const bundle = await published.json();
-    expect(bundle.digest, "publish must name the digest it activated").toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(bundle.digest, "publish must name the digest it activated").toMatch(
+      /^sha256:[0-9a-f]{64}$/,
+    );
     journey.bundleDigest = bundle.digest as string;
 
     const minted = await page.request.post(`${API}/agents/pairing-codes`, {
