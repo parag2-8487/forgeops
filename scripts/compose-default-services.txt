@@ -28,3 +28,16 @@ authentik-server
 authentik-worker
 backend
 frontend
+# The ARQ worker that RUNS what the API enqueues.
+#
+# A NINTH service, and a deliberate widening of §2.3's eight rather than an accident. The design
+# text lists the services that SERVE traffic; it does not name a worker because §4.6 treats the
+# task engine as an implementation concern. The consequence of leaving it out of this file was that
+# it was left out of the stack: `.env.example` sets `TASK_DISPATCHER=arq`, so the API enqueued jobs
+# that nothing consumed. `redis-cli --scan` showed `arq:job:*` keys accumulating with no consumer,
+# and an approved change set never applied. `make worker` had always run exactly this command, so
+# the worker was documented and simply absent from what `make up` starts.
+#
+# Recorded here rather than gated behind a profile, because a stack that accepts work it will never
+# perform is not a working default.
+worker

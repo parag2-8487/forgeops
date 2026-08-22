@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"go.uber.org/zap"
@@ -131,14 +132,76 @@ func New(cfg *config.Config, bi BuildInfo) (*App, error) {
 // Run starts the agent subsystems and blocks until all finish or ctx is cancelled.
 func (a *App) Run(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error { return a.mcpSrv.Serve(gctx) })
-	g.Go(func() error { return a.conn.Serve(gctx) })
+
+	// THE MCP STDIO TRANSPORT MUST NOT END THE AGENT, and until this it did.
+	//
+	// `mcpSrv.Serve` is the stdio transport: it reads stdin. Started as a plain errgroup member, a
+	// closed stdin makes `stdio.Listen` return io.EOF, errgroup treats any non-nil error as fatal and
+	// cancels gctx, `conn.Serve` unwinds with context.Canceled, and the check below then maps that to
+	// nil. So the agent printed "agent starting" and exited 0 with nothing logged.
+	//
+	// That is exactly how `forgeops-agent run` is started in production and in the journey:
+	// `docker compose exec -d`, which attaches no stdin. The agent therefore never held a WebSocket
+	// session, never received a command, and an approved change set was never applied -- visible only
+	// as a step timing out on "waiting for the change set to be applied". Holding stdin open with a
+	// pipe kept the same binary running for over an hour, which is what identified this.
+	//
+	// A daemon whose lifetime depends on stdin being attached is the defect. `mcp-serve` exists for
+	// the stdio use case; here the stdio transport ending is one transport becoming unavailable, not
+	// the agent's work being over, so this goroutine stays until the group itself ends.
+	g.Go(func() error {
+		err := a.mcpSrv.Serve(gctx)
+		switch {
+		case err == nil, errors.Is(err, io.EOF), errors.Is(err, context.Canceled):
+			if err != nil {
+				a.logger.Info(
+					"the MCP stdio transport ended; the agent continues on its WebSocket session",
+					zap.String("reason", err.Error()),
+				)
+			}
+			<-gctx.Done()
+			return gctx.Err()
+		default:
+			return err
+		}
+	})
+	g.Go(func() error { return a.serveSession(gctx) })
 
 	err := g.Wait()
 	if errors.Is(err, context.Canceled) || errors.Is(err, connection.ErrDisabled) {
 		err = nil
 	}
 	return err
+}
+
+// serveSession runs the agent's real session: dial, handshake, heartbeat, execute commands.
+//
+// `a.conn.Serve` was called here instead, and `connection.Manager.Serve` is a Phase 0 stub whose body
+// is a comment and `return nil`:
+//
+//	// Phase 0: dial not yet wired to a read loop.
+//	// Future phases will implement the full event loop here.
+//	return nil
+//
+// So `forgeops-agent run` opened no socket, joined no session, and received no command -- while
+// exiting 0 and logging only "agent starting". Everything downstream of an approval therefore did
+// nothing: the backend minted and signed the command, `send_command` had no connected device to hand
+// it to, and the change set stayed `approved` exactly as the chokepoint documents for a failed
+// delivery. The journey saw "timed out waiting for the change set to be applied".
+//
+// The real loop already existed, in `session.Manager.Serve` -- handshake, per-message revocation
+// check, envelope verification, executor dispatch, the lot, with its own tests. It was simply never
+// reached from `run`. `a.Session()` constructs it lazily because opening the credential store can
+// fail, and that failure has to be reportable rather than fatal at construction.
+//
+// `ErrUnpaired` is returned as-is. An agent with a backend URL and no device token is misconfigured,
+// and `run` should say so rather than idle: `doctor` prints the same distinction.
+func (a *App) serveSession(ctx context.Context) error {
+	manager, err := a.Session()
+	if err != nil {
+		return fmt.Errorf("session: %w", err)
+	}
+	return manager.Serve(ctx)
 }
 
 // Close performs graceful shutdown of all subsystems in reverse construction order.

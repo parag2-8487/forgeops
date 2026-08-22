@@ -19,7 +19,9 @@
  * SERIAL, and that is not incidental. Step 13 reverts what step 9 approved and step 10 wrote; the
  * steps share one project, one device and one change set. `fullyParallel` would interleave them.
  */
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
 import {
   agentFile,
   agentFileSha256,
@@ -42,6 +44,15 @@ const OPERATOR = {
 };
 
 /** Carried between steps. Populated as the journey proceeds. */
+/**
+ * Where step 1 saves the session it genuinely obtained, for the later steps to carry forward.
+ *
+ * Under `test-results/`, which Playwright already treats as run output and which is gitignored, so
+ * nothing resembling a credential lands in the tree. It holds the cookies of a synthetic, e2e-only
+ * account against a local IdP.
+ */
+const SESSION_STATE_PATH = path.join("test-results", "journey-session.json");
+
 const journey: {
   projectId?: string;
   deviceId?: string;
@@ -49,6 +60,8 @@ const journey: {
   runId?: string;
   changeSetId?: string;
   accessToken?: string;
+  //: The digest published in step 3, which the device must end up pinned to.
+  bundleDigest?: string;
   preImages?: Map<string, string | null>;
 } = {};
 
@@ -206,6 +219,90 @@ async function signIn(page: Page) {
   });
 }
 
+/**
+ * Navigate to an application route with a session, and prove the app really rendered it.
+ *
+ * A FULL PAGE LOAD discards the in-memory access token, so `AuthBoundary` recovers the session by
+ * POSTing `/auth/refresh` with the httpOnly cookie. That is designed to work and usually does -- but
+ * it is not free of races, and a recovery that does not land redirects to `/login`, where every
+ * locator in the calling step waits on a control that only exists inside the shell. Observed exactly
+ * that: the same step passing on one run and reporting the sign-in screen on the next.
+ *
+ * THE SHELL IS NOT THE SIGNAL. `app/(shell)/layout.tsx` puts `AuthBoundary` inside `<main>`
+ * deliberately, so the sidebar and header stay rendered while the session is being restored -- an
+ * earlier version of this helper waited for `nav[Primary]`, saw it immediately, returned, and left
+ * the caller on a page that redirected to `/login` a moment later. What distinguishes the two is the
+ * heading: the sign-in screen owns the only `h1` that says so.
+ *
+ * Nothing is weakened by the retry: the assertions in each step are unchanged, and if the route never
+ * renders the error carries the text the screen was actually showing rather than a locator timeout.
+ */
+async function gotoAsOperator(page: Page, path: string): Promise<void> {
+  // REUSE THE SESSION STEP 1 OBTAINED rather than authenticating again per test.
+  //
+  // Playwright gives each test a fresh context, so nothing step 1 obtained is here. Signing in again
+  // per step works but is not reliable: the IdP round trip is a real browser navigation through a
+  // real provider, and repeating it four more times per run produced intermittent
+  // `page.waitForURL: Timeout 60000ms exceeded` and, on an already-authenticated context,
+  // `ak-stage-identification -> ak-stage-flow-error`. Neither says anything about the product.
+  //
+  // Step 1 performs the genuine login -- that IS the criterion, and it asserts a session row exists --
+  // and saves the cookies it received. Every later step restores exactly those. No credential is
+  // invented and no authentication is skipped: this is the same session, carried forward, which is
+  // what a browser would do for an operator who signed in once.
+  const cookies = await page.context().cookies();
+  if (!cookies.some((cookie) => cookie.name.includes("session"))) {
+    if (fs.existsSync(SESSION_STATE_PATH)) {
+      const saved = JSON.parse(fs.readFileSync(SESSION_STATE_PATH, "utf8")) as {
+        cookies?: Parameters<BrowserContext["addCookies"]>[0];
+      };
+      if (saved.cookies?.length) await page.context().addCookies(saved.cookies);
+    } else {
+      // No saved state means step 1 did not run in this invocation (a single step was selected), so
+      // the full login is the only option.
+      await signIn(page);
+    }
+  }
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await page.goto(path);
+
+    const deadline = Date.now() + 30_000;
+    let heading = "";
+    while (Date.now() < deadline) {
+      heading = (await page.locator("h1").first().textContent().catch(() => "")) ?? "";
+      // A heading that is neither absent nor the sign-in screen's means the route rendered for an
+      // authenticated principal.
+      if (heading.trim() !== "" && !/sign in to forgeops/i.test(heading)) {
+        // RE-SAVE, because the refresh token ROTATES. `POST /auth/refresh` issues a new refresh
+        // cookie and retires the one presented, so the state file becomes stale the moment it is
+        // used -- which is why restoring the same snapshot worked for one step and then failed on the
+        // next with the sign-in screen. Writing back the cookies this context now holds keeps the
+        // chain moving forward instead of replaying a spent token.
+        await page.context().storageState({ path: SESSION_STATE_PATH });
+        return;
+      }
+      await page.waitForTimeout(500);
+    }
+
+    if (attempt === 3) {
+      const shown = (await page.locator("main").innerText().catch(() => "")).slice(0, 600);
+      throw new Error(`${path} never rendered for a signed-in operator. What it showed:\n${shown}`);
+    }
+
+    // RESUME rather than re-authenticate. The browser holds Authentik's own cookie by now, so
+    // clicking the application's sign-on button round-trips through the IdP without a prompt and the
+    // callback sets a fresh application cookie. Re-driving the IdP's flow executor here instead fails
+    // with "IdP flow stages seen: ak-stage-identification -> ak-stage-flow-error", because there is
+    // no identification stage to answer when the visitor is already known.
+    await page.goto("/login");
+    await page.getByRole("button", { name: /single sign-on/i }).click();
+    await page
+      .waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 })
+      .catch(() => {});
+  }
+}
+
 test.describe("Criterion 10: the end-to-end journey", () => {
   test("step 1 — log in through the OIDC issuer", async ({ page }) => {
     test.skip(
@@ -240,6 +337,12 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     // And the API now answers as an authenticated principal rather than 401.
     const whoami = await apiGet(page.request, "/projects?limit=1");
     expect(whoami.status(), await whoami.text()).toBe(200);
+
+    // Saved so the later steps carry THIS session forward instead of authenticating again. See
+    // `gotoAsOperator`: repeating a real IdP round trip per test is what made those steps flaky, and
+    // it proves nothing that this step has not already proved.
+    fs.mkdirSync(path.dirname(SESSION_STATE_PATH), { recursive: true });
+    await page.context().storageState({ path: SESSION_STATE_PATH });
   });
 
   test("step 2 — create a project pointing at the fixture app", async ({ page }) => {
@@ -264,6 +367,21 @@ test.describe("Criterion 10: the end-to-end journey", () => {
   });
 
   test("step 3 — mint a pairing code and pair the real agent", async ({ page }) => {
+    // PUBLISH THE POLICY BUNDLE BEFORE PAIRING, because pairing is when the device is pinned to it.
+    //
+    // The governance chokepoint admits a submission only when the device's pinned bundle digest
+    // equals the project's active one, so a device paired while nothing is published is pinned to
+    // nothing and every later submission is refused with "policy bundle stale". That is the control
+    // working; the missing step is this one. §1.7's order is publish, then pair.
+    const published = await page.request.post(`${API}/policies/publish`, {
+      headers: authHeaders(),
+      data: {},
+    });
+    expect(published.status(), await published.text()).toBe(202);
+    const bundle = await published.json();
+    expect(bundle.digest, "publish must name the digest it activated").toMatch(/^sha256:[0-9a-f]{64}$/);
+    journey.bundleDigest = bundle.digest as string;
+
     const minted = await page.request.post(`${API}/agents/pairing-codes`, {
       headers: authHeaders(),
       data: { project_id: journey.projectId },
@@ -272,6 +390,18 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     const body = await minted.json();
     journey.pairingCode = body.code as string;
     expect(journey.pairingCode).toMatch(/^[0-9A-HJKMNP-TV-Z]{4,}/); // Crockford base32, no I/L/O/U
+
+    // The agent refuses to pair twice, by design: `session: this agent is already paired; wipe
+    // credentials first`. Its credential file lives in a named volume, so on a stack that has run
+    // this journey before it survives -- and the step failed with that error rather than pairing.
+    //
+    // Wiped here rather than left to the operator, because a journey that only passes the first time
+    // it is ever run against a stack is a journey that fails on every rerun, and the failure looks
+    // like a product defect. In CI the volume is new and this removes nothing. The agent's own error
+    // message names this as the remedy, and pairing again is the step being tested.
+    composeExec("agent", ["sh", "-c", "rm -f /var/lib/forgeops/credentials.json"], {
+      allowFailure: true,
+    });
 
     // ASSERTION: the real binary, in its own container, exits 0 and prints the device it was given.
     const output = composeExec("agent", [
@@ -286,6 +416,16 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     const match = /device id:\s+(\S+)/.exec(output);
     expect(match, `pair output did not name a device id:\n${output}`).not.toBeNull();
     journey.deviceId = match![1];
+
+    // ASSERTION: the exchange PINNED the device to the bundle published above. Without this the
+    // chokepoint refuses every submission later with "policy bundle stale", and the reason is three
+    // steps away from the symptom.
+    const pinned = sqlScalar(
+      `SELECT policy_bundle_digest FROM agent_devices WHERE id = '${journey.deviceId}'`,
+    );
+    expect(pinned, "pairing must pin the device to the active policy bundle").toBe(
+      journey.bundleDigest,
+    );
 
     // And the code is single-use: a second attempt must fail.
     const replay = composeExec(
@@ -344,12 +484,63 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     // is what makes step 10's improvement meaningful rather than a tautology.
     expect(Number(readiness.categories.containerization_score)).toBeLessThan(50);
 
-    await page.goto(`/readiness?project=${journey.projectId}`);
-    await page.getByLabel(/project id/i).fill(journey.projectId!);
-    // The rendered chart must carry the SAME numbers the API returned.
-    const chart = page.getByRole("img", { name: /readiness/i }).or(page.locator("svg").first());
-    await expect(chart).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(String(readiness.overall_score))).toBeVisible();
+    await gotoAsOperator(page, `/readiness?project=${journey.projectId}`);
+
+    // A `<select>`, so `selectOption` rather than `fill`, and its label is "Project". This step used
+    // to call `getByLabel(/project id/i).fill(...)`, which described a free-text "Project id" box that
+    // no longer exists: the screen now offers the projects the API actually returns, precisely so a
+    // project id that was never created cannot be typed in.
+    //
+    // The wait is EXPLICIT and reports what the screen says when it fails. `selectOption` on a
+    // missing locator waits until the whole test times out, and a 180s timeout naming a locator says
+    // nothing about which of the picker's states is on screen -- it has four, and three of them have
+    // no label: still loading, the list request failed, and the tenant has no projects.
+    const picker = page.getByLabel(/^project$/i);
+    try {
+      await picker.waitFor({ state: "attached", timeout: 45_000 });
+    } catch {
+      const shown = (await page.locator("main").innerText()).slice(0, 800);
+      throw new Error(
+        `the readiness screen never offered a project selector. What it showed instead:\n${shown}`,
+      );
+    }
+    await picker.selectOption(journey.projectId!);
+
+    // The rendered breakdown must carry the SAME numbers the API returned.
+    //
+    // There is no SVG and no `img` role to find: `features/readiness/RadarChart.tsx` exports
+    // `ReadinessRadarChart` but renders a labelled bar per category, and `features/README.md` calls
+    // the filename a misnomer for exactly this reason. The old assertion looked for
+    // `getByRole("img", {name:/readiness/i})` falling back to `page.locator("svg").first()`, so it
+    // resolved to the first decorative icon in the shell and failed with "Received: hidden" -- a
+    // result about a sidebar glyph, not about the chart.
+    await expect(
+      page.getByRole("heading", { name: /Production Readiness Breakdown/i }),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // Every category the API returned is rendered, with its own score. This is what "renders with a
+    // category breakdown" means, and it fails if the response gains a category the screen drops.
+    //
+    // Asserted against the rendered TEXT of <main> rather than with per-element visibility checks.
+    // The bars are nested divs, so a locator built from a text pair matches both a row and its
+    // wrapper, and whichever one it settles on may be a zero-height container -- which produced
+    // `toBeVisible` failing with "Received: hidden" about an element nobody was asking about. What
+    // matters here is that the numbers reached the screen.
+    const shown = await page.locator("main").innerText();
+    for (const [key, score] of Object.entries(readiness.categories)) {
+      const label = key
+        .replace(/_score$/, "")
+        .split("_")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+      expect(shown, `the breakdown must name ${label}`).toContain(label);
+      expect(shown, `${label} must be shown at ${score}%`).toMatch(
+        new RegExp(`${label}\\s*${score}%`),
+      );
+    }
+    // `score`, which is what ReadinessReportResponse declares. `overall_score` does not exist on the
+    // wire, so this assertion used to search the page for the text "undefined".
+    expect(shown, "the overall score must be on the screen").toContain(String(readiness.score));
   });
 
   test("step 6 — generate the Dockerfile and Kubernetes manifests", async ({ page }) => {
@@ -428,7 +619,7 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     const detail = await apiGet(page.request, `/approvals/${journey.changeSetId}`);
     expect(detail.status()).toBe(200);
 
-    await page.goto("/approvals");
+    await gotoAsOperator(page, "/approvals");
     await page.getByRole("button", { name: new RegExp(journey.changeSetId!) }).click();
 
     const diff = page.getByRole("region", { name: /diff for Dockerfile/i });
@@ -440,8 +631,12 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     await expect(unified).toHaveAttribute("aria-pressed", "true");
     await split.click();
     await expect(split).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText("Before")).toBeVisible();
-    await expect(page.getByText("After")).toBeVisible();
+    // Scoped to the Dockerfile region, and `.first()` within it. Side-by-side labels every file's
+    // panes, so an unscoped `getByText("Before")` matched one per change item and failed with
+    // "strict mode violation: resolved to 2 elements" -- a fact about the change set having more than
+    // one file, not about the view mode this line is asserting.
+    await expect(diff.getByText("Before").first()).toBeVisible();
+    await expect(diff.getByText("After").first()).toBeVisible();
     await unified.click();
     await expect(unified).toHaveAttribute("aria-pressed", "true");
 
@@ -455,7 +650,7 @@ test.describe("Criterion 10: the end-to-end journey", () => {
   });
 
   test("step 9 — approve with a comment", async ({ page }) => {
-    await page.goto("/approvals");
+    await gotoAsOperator(page, "/approvals");
     await page.getByRole("button", { name: new RegExp(journey.changeSetId!) }).click();
     await page.getByLabel(/reason/i).fill("approved by the criterion-10 journey");
     await page.getByRole("button", { name: "Approve" }).click();
@@ -566,7 +761,7 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     const events = await apiGet(page.request, "/audit/events?limit=100");
     expect(events.status()).toBe(200);
 
-    await page.goto("/audit");
+    await gotoAsOperator(page, "/audit");
     // The viewer must render an action that is genuinely in the database for THIS change set.
     await expect(page.getByText(actions[0])).toBeVisible({ timeout: 30_000 });
   });

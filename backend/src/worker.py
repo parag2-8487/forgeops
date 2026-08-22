@@ -42,7 +42,18 @@ def _import_task_modules() -> None:
     from .policies import tasks  # noqa: F401 - registers policy.bundle.publish
 
 
-def _startup(ctx: dict[str, Any]) -> None:
+async def _startup(ctx: dict[str, Any]) -> None:
+    """Configure the worker process before it takes its first job.
+
+    ASYNC because ARQ awaits it: `await self.on_startup(self.ctx)` in `arq/worker.py`. Declared as a
+    plain function this raised
+
+        TypeError: object NoneType can't be used in 'await' expression
+
+    during `main()`, so the worker exited before consuming anything -- and `make worker` had therefore
+    never started successfully. The symptom elsewhere was an approved change set that never applied,
+    because the apply job sat in Redis with no consumer.
+    """
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_format)
     ctx["settings"] = settings

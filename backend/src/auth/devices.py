@@ -504,11 +504,16 @@ class AgentMeta:
 class DeviceCredentials:
     """What a successful exchange issues (§3.1's `201` body).
 
-    `policy_bundle` and `policy_bundle_digest` are still absent: they come from
-    `PolicyBundleService.publish`, which leaf 9.3 builds. Absent rather than empty, because an
-    agent handed a zero-byte bundle would evaluate policy against nothing and D-30 makes
-    `ErrNoBundle` a **deny** — so the honest intermediate state is "no field" rather than "a field
-    that means deny and looks like a bundle".
+    `policy_bundle` and `policy_bundle_digest` are the project's active bundle at the moment of
+    pairing, and `None` when nothing has been published. Absent rather than empty, because an agent
+    handed a zero-byte bundle would evaluate policy against nothing and D-30 makes `ErrNoBundle` a
+    **deny** -- so the honest representation of "no bundle" is "no field" rather than "a field that
+    means deny and looks like a bundle".
+
+    They used to be permanently absent, with a note that they awaited leaf 9.3. The consequence was
+    not a missing feature but a broken one: `agent_devices.policy_bundle_digest` was never set by
+    anything, and `GovernanceChokepoint` refuses a submission whose device is not pinned to the
+    project's active digest. Every generation run therefore ended in `submission_refused`.
     """
 
     device_id: uuid.UUID
@@ -522,6 +527,10 @@ class DeviceCredentials:
     cert_fingerprint: str
     cert_not_after: datetime
     renew_after: datetime
+    #: The gzipped, canonical bundle archive `PolicyBundleService.build` produced.
+    policy_bundle: bytes | None = None
+    #: `sha256:<64 hex>` over exactly those bytes.
+    policy_bundle_digest: str | None = None
 
 
 def csr_spki_fingerprint(csr_pem: bytes) -> str:
@@ -933,6 +942,43 @@ class DeviceService:
             },
         )
 
+        # ─── the policy bundle §3.1 says this response carries ────────────────────────────────
+        #
+        # Until this existed, nothing anywhere set `agent_devices.policy_bundle_digest`. It stayed
+        # empty for the life of every device, and `GovernanceChokepoint` requires the device's pinned
+        # digest to equal the project's active one -- so EVERY submission was refused with
+        # "policy bundle stale: device pinned <none>", which is the control behaving correctly on a
+        # fact that no code ever established. The refusal was right and unfixable from outside.
+        #
+        # Read with raw SQL rather than through `src.policies.models`, because §2.2.1's banned-api
+        # table forbids importing another domain's models. The ORDER BY is COPIED FROM
+        # `GovernanceChokepoint._active_bundle_digest` deliberately: the digest a device is pinned to
+        # and the digest the chokepoint calls active must be chosen by the same rule, or a
+        # project-scoped bundle published alongside a global one would pin one and admit the other.
+        #
+        # Absent rather than empty when nothing is published, per D-30: a missing bundle is a DENY on
+        # the agent side, so a zero-byte bundle would be a field meaning "refuse everything" while
+        # looking like a bundle. A device paired before any bundle exists is pinned to nothing and its
+        # submissions are refused until one is published and it pairs again. That is honest behaviour
+        # rather than a gap.
+        bundle_row = (
+            await session.execute(
+                text(
+                    "SELECT digest, bundle FROM policy_bundles "
+                    "WHERE active AND (project_id = :project OR project_id IS NULL) "
+                    "ORDER BY (project_id IS NULL), created_at DESC LIMIT 1"
+                ),
+                {"project": project_id},
+            )
+        ).first()
+        bundle_digest = "" if bundle_row is None else str(bundle_row[0])
+        bundle_body = None if bundle_row is None else bytes(bundle_row[1])
+        if bundle_digest:
+            await session.execute(
+                text("UPDATE agent_devices SET policy_bundle_digest = :digest WHERE id = :id"),
+                {"digest": bundle_digest, "id": device_id},
+            )
+
         await self._recorder.record(
             session,
             DeviceAuditEvent(
@@ -966,6 +1012,8 @@ class DeviceService:
             cert_fingerprint=issued.fingerprint,
             cert_not_after=issued.not_after,
             renew_after=issued.renew_after,
+            policy_bundle=bundle_body,
+            policy_bundle_digest=bundle_digest or None,
         )
 
     async def rotate_certificate(

@@ -36,6 +36,7 @@ recorded rather than papered over with a check that would always pass.
 
 from __future__ import annotations
 
+import base64
 import uuid
 from typing import Annotated
 
@@ -114,17 +115,24 @@ class ExchangeRequest(BaseModel):
 
 
 class ExchangeResponse(BaseModel):
-    """What the exchange issues (§3.1's `201` body, as far as Phase 1 has built it).
+    """What the exchange issues (§3.1's `201` body).
 
-    §3.1's response also carries `policy_bundle` and `policy_bundle_digest`. Both come from
-    `PolicyBundleService.publish`, which leaf 9.3 builds; they are absent rather than empty,
-    because D-30 makes a missing bundle a **deny** on the agent side, so a zero-byte bundle would
-    be a field that means "refuse everything" while looking like a bundle.
+    `policy_bundle` and `policy_bundle_digest` are the project's active bundle at the moment of
+    pairing. They are `None` when nothing has been published -- absent rather than empty, because
+    D-30 makes a missing bundle a **deny** on the agent side, so a zero-byte bundle would be a field
+    that means "refuse everything" while looking like a bundle.
+
+    They were previously always absent, waiting on leaf 9.3. That was not a missing feature but a
+    broken one: nothing set `agent_devices.policy_bundle_digest`, and the governance chokepoint
+    refuses any submission whose device is not pinned to the project's active digest, so every
+    generation run ended `submission_refused` no matter what the operator did.
 
     The token and the key are hex-encoded. They are 32 random bytes each and JSON has no byte
     type; hex rather than base64url because the agent stores them as bytes and one decoding
     mistake there is a credential that silently never matches. The certificate and CA bundle are
-    PEM strings, which are already text and already have exactly one spelling.
+    PEM strings, which are already text and already have exactly one spelling. The bundle is
+    base64 because it is a gzip archive rather than text, and base64 is what the agent's own
+    handshake already speaks.
     """
 
     device_id: uuid.UUID
@@ -138,6 +146,8 @@ class ExchangeResponse(BaseModel):
     cert_fingerprint: str
     cert_not_after: str
     renew_after: str
+    policy_bundle: str | None = None
+    policy_bundle_digest: str | None = None
 
 
 class RevokeRequest(BaseModel):
@@ -247,6 +257,15 @@ async def exchange_pairing_code(
         cert_fingerprint=credentials.cert_fingerprint,
         cert_not_after=credentials.cert_not_after.isoformat(),
         renew_after=credentials.renew_after.isoformat(),
+        # `None` stays `None`: base64 of nothing is the empty string, which would put a field on the
+        # wire that reads as "a bundle containing no rules" rather than "no bundle". D-30 makes those
+        # two mean opposite things to the agent.
+        policy_bundle=(
+            base64.b64encode(credentials.policy_bundle).decode("ascii")
+            if credentials.policy_bundle is not None
+            else None
+        ),
+        policy_bundle_digest=credentials.policy_bundle_digest,
     )
 
 

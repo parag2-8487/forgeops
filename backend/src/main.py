@@ -228,6 +228,35 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.sessionmaker = sessionmaker
     app.state.redis = redis_client
 
+    # --- the ARQ pool the task dispatcher enqueues onto ----------------------
+    #
+    # `.env.example` ships `TASK_DISPATCHER=arq`, and `build_dispatcher` raises
+    # "TASK_DISPATCHER=arq requires an ARQ pool; call create_arq_pool first" when handed no pool.
+    # Nothing called `create_arq_pool`, and nothing set `app.state.arq_pool`, so every route that
+    # builds a dispatcher answered 500 on the committed default configuration.
+    # `POST /api/v1/policies/publish` is one, which is why no policy bundle could ever be published
+    # -- and therefore why no device could be pinned to one, and therefore why the governance
+    # chokepoint refused every generation submission as "policy bundle stale". One unset attribute,
+    # three symptoms, none of them near it.
+    #
+    # Constructed here for the same reason as the Redis client above and with the same contract: no
+    # eager handshake. `create_pool` connects lazily, and an unreachable Redis must change readiness
+    # rather than liveness (§4.4). A failure to construct is logged and leaves the attribute None,
+    # so `build_dispatcher` raises a message naming the cause instead of the app refusing to start.
+    app.state.arq_pool = None
+    if str(getattr(settings, "task_dispatcher", "inline")) == "arq":
+        # Imported here rather than at module scope so `arq` is only required when it is the
+        # configured dispatcher. `inline` is a fully supported mode, not a dev fallback.
+        from .core.tasks import create_arq_pool  # noqa: PLC0415
+
+        try:
+            app.state.arq_pool = await create_arq_pool(settings)
+        except Exception as exc:  # noqa: BLE001 - a pool is not required for liveness
+            logger.warning(
+                "the ARQ pool could not be created; routes that enqueue work will report it",
+                extra={"reason": str(exc)},
+            )
+
     # --- MCP Gateway collaborators (§11.1, §11.4) ---------------------------
     # All constructed non-destructively: the shared HTTP client, the JWKS-caching
     # verifier, the OPA client and the Redis-backed cache/task store each validate

@@ -69,15 +69,42 @@ services:
     # never pass is worse than no gate. Recorded rather than silently dropped.
     image: openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5
     env_file: *service-env
-    # `/policies/mcp`, not `/policies` — D-57. Task 6.4 put Cerbos's YAML policies in
-    # `policies/cerbos/`, and `opa run /policies` loads every YAML under the path as a
-    # DATA document: six files each declaring `apiVersion` at the top level collide and
-    # OPA exits with "6 errors occurred during loading: ... merge error" before it binds
-    # a port. Each engine is given only its own subtree, so adding a third can never
-    # break a second.
-    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-level=info", "/policies/mcp"]
+    # `/policies/mcp` AND `/policies/agent`, not `/policies` — D-57. Task 6.4 put Cerbos's
+    # YAML policies in `policies/cerbos/`, and `opa run /policies` loads every YAML under
+    # the path as a DATA document: six files each declaring `apiVersion` at the top level
+    # collide and OPA exits with "6 errors occurred during loading: ... merge error" before
+    # it binds a port. Each engine is given only its own subtree, so adding a third can
+    # never break a second.
+    #
+    # `/policies/agent` was MISSING, and its absence disabled the governance chokepoint
+    # entirely. `policies/agent/governance.rego` declares `package forgeops.governance` with
+    # the `decision` rule, and `src/policies/opa.py` queries
+    # `/v1/data/forgeops/governance/decision` for every submission. With that subtree
+    # unloaded the document does not exist, OPA answers with no result, and the client fails
+    # closed — correctly — so every generation run ended:
+    #
+    #     ERROR src.policies.opa: governance policy document undefined
+    #       at /v1/data/forgeops/governance/decision
+    #
+    # and the SSE stream terminated `error` instead of `complete`. Nothing was broken except
+    # that OPA had never been given the policy it was being asked about.
+    #
+    # `--ignore=*_test.rego` keeps `governance_test.rego` out of the server: those rules
+    # exist for `opa test`, and loading them puts test fixtures in the same data tree the
+    # chokepoint reads.
+    command:
+      [
+        "run",
+        "--server",
+        "--addr=0.0.0.0:8181",
+        "--log-level=info",
+        "--ignore=*_test.rego",
+        "/policies/mcp",
+        "/policies/agent",
+      ]
     volumes:
       - ./policies/mcp:/policies/mcp:ro
+      - ./policies/agent:/policies/agent:ro
     ports:
       - "127.0.0.1:${OPA_PORT:-8181}:8181"
     healthcheck:
@@ -219,6 +246,38 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # The ARQ worker that RUNS the work the API enqueues.
+  #
+  # Without this service the stack accepts work and never performs it, silently. `.env.example` sets
+  # `TASK_DISPATCHER=arq`, so `POST /approvals/{id}/approve` enqueues the apply and returns 200; the
+  # job lands in Redis and stays there. `docker compose exec redis redis-cli --scan` showed a growing
+  # list of `arq:job:*` keys and no consumer. What an operator saw was a change set stuck at
+  # `approved` for ever, with nothing in any log to say why: the approval had succeeded and the apply
+  # had never been attempted.
+  #
+  # `make worker` has always existed and runs exactly this command, so the worker was documented and
+  # simply absent from the stack that `make up` starts. Same image and same env_file as the backend --
+  # a worker that disagrees with the API about configuration is a class of bug worth designing out --
+  # and no ports, because it serves nothing.
+  worker:
+    build: { context: ./backend, target: runtime }
+    env_file: *service-env
+    # `python -m arq`, not `arq`. The runtime image installs the library but no console script, so
+    # `arq src.worker.WorkerSettings` fails at container start with
+    # `exec: "arq": executable file not found in $PATH`. The module entry point is the same code.
+    command: ["python", "-m", "arq", "src.worker.WorkerSettings"]
+    depends_on:
+      postgres: { condition: service_started }
+      redis: { condition: service_started }
+      opa: { condition: service_started }
+    healthcheck:
+      # The worker holds no socket, so liveness is "the process that runs jobs is still there".
+      # `pgrep -f` rather than a port probe, and it fails the moment arq exits.
+      test: ["CMD-SHELL", "pgrep -f 'src.worker.WorkerSettings' >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   # Added by task 13.15: Infisical vault for BYO-key secret management.
   # Only starts with `docker compose --profile vault up -d --wait`.

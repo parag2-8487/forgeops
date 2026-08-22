@@ -30,7 +30,13 @@ class PolicyBundleService:
         self._tasks = tasks
 
     async def active_digest(self, *, project_id: uuid.UUID | None) -> str:
-        stmt = select(PolicyBundle.digest).where(PolicyBundle.active is True)
+        # `.is_(True)`, NOT `is True`. `PolicyBundle.active is True` is a PYTHON identity test
+        # between an InstrumentedAttribute and the singleton `True`, so it evaluates to the bool
+        # `False` before SQLAlchemy sees anything -- and `where(False)` compiles to `WHERE false`,
+        # which matches no row ever. This method therefore returned "" for every project even with an
+        # active bundle published, and it does so silently: no error, no warning, just an empty
+        # answer that reads like "nothing has been published yet".
+        stmt = select(PolicyBundle.digest).where(PolicyBundle.active.is_(True))
         if project_id:
             stmt = stmt.where(PolicyBundle.project_id == project_id)
         else:
@@ -39,8 +45,26 @@ class PolicyBundleService:
         return result.scalar() or ""
 
     async def publish(self, bundle: PolicyBundle, *, actor: Any) -> None:
-        # Mark all other bundles as inactive
-        stmt = update(PolicyBundle).where(PolicyBundle.active is True).values(active=False)
+        """Activate `bundle` for its scope, replacing whatever was active there.
+
+        IDEMPOTENT, because the digest is content-addressed and `uq_policy_bundles_digest` is unique
+        across the table. Publishing twice without editing a policy produces the same bytes and
+        therefore the same digest, and the second call used to reach the INSERT and fail with
+
+            duplicate key value violates unique constraint "uq_policy_bundles_digest"
+
+        surfacing as a 500 from `POST /policies/publish`. Republishing an unchanged bundle is a
+        perfectly reasonable thing for an operator -- or a re-run of the end-to-end journey -- to do,
+        and the honest answer is "that bundle is now active", not an internal error.
+        """
+        # Deactivate whatever is active in this scope FIRST. The partial unique indexes
+        # `uq_policy_bundles_one_active_global` and `uq_policy_bundles_one_active_per_project` allow
+        # exactly one active row per scope, so activating before clearing would violate them.
+        #
+        # `.is_(True)` for the reason given in `active_digest`: with `is True` this UPDATE matched
+        # nothing, so every published bundle stayed active and "the active bundle" became whichever
+        # row a later `ORDER BY` happened to put first.
+        stmt = update(PolicyBundle).where(PolicyBundle.active.is_(True)).values(active=False)
         if bundle.project_id:
             stmt = stmt.where(PolicyBundle.project_id == bundle.project_id)
         else:
@@ -48,23 +72,47 @@ class PolicyBundleService:
 
         await self._session.execute(stmt)
 
-        # Insert the new active bundle
-        bundle.active = True
-        self._session.add(bundle)
+        existing = (
+            await self._session.execute(select(PolicyBundle).where(PolicyBundle.digest == bundle.digest))
+        ).scalar_one_or_none()
+
+        if existing is None:
+            bundle.active = True
+            self._session.add(bundle)
+            published = bundle
+        else:
+            # The digest is unique table-wide, so identical content cannot belong to two scopes. Say
+            # so rather than silently moving the existing row into a different project.
+            if existing.project_id != bundle.project_id:
+                raise ValueError(
+                    f"bundle {bundle.digest} is already published for project "
+                    f"{existing.project_id!s}, so it cannot also be published for "
+                    f"{bundle.project_id!s}: the digest is content-addressed and unique table-wide"
+                )
+            existing.active = True
+            published = existing
+
         await self._session.commit()
 
         if self._tasks:
             await self._tasks.enqueue(
                 "policy.bundle.publish",
                 payload={
-                    "bundle_id": str(bundle.id),
-                    "project_id": str(bundle.project_id) if bundle.project_id else None,
+                    "bundle_id": str(published.id),
+                    "project_id": str(published.project_id) if published.project_id else None,
                 },
             )
 
     async def build(self, *, project_id: uuid.UUID | None) -> PolicyBundle:
-        # 1. Query policies
-        stmt = select(Policy).where(Policy.enabled is True)
+        # 1. Query policies.
+        #
+        # `.is_(True)`, NOT `is True`. The identity form evaluated to the bool `False` in Python, so
+        # this compiled to `WHERE false` and selected NO policies -- and the bundle was still built,
+        # still digested, still published. The result was a well-formed, correctly-digested archive
+        # whose data.json contained an empty policy list: an agent evaluating against it would allow
+        # or deny on nothing at all, and nothing about the digest or the publish response hinted at
+        # it. A bundle that is empty for a reason nobody can see is worse than a publish that fails.
+        stmt = select(Policy).where(Policy.enabled.is_(True))
         if project_id:
             stmt = stmt.where(Policy.project_id == project_id)
         else:
