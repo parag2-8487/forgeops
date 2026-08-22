@@ -115,7 +115,7 @@ jobs:
       # build failure is its own red step instead of a confusing startup timeout.
       - name: Build the backend, frontend and agent images
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml build 
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml build
             backend worker frontend agent
 
       - name: Start the stack's infrastructure
