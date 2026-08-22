@@ -248,6 +248,17 @@ def _nothing_actually_ran(output: str) -> bool:
     return skipped > 0 and executed == 0
 
 
+# The summary shapes that constitute proof a test actually failed. Matched against the whole
+# captured output, not just the last line, because `-q` puts the counts in the summary line while an
+# internal error can push text after it.
+#
+# The counts are REQUIRED rather than looking for the word "failed": a run can print
+# "0 failed" in some summary shapes, and the word also appears in unrelated text such as
+# "Coverage failure" or a warning about a failed import. `[1-9]` is the whole point -- a control
+# that broke nothing must not satisfy this.
+_FAILED_SUMMARY = re.compile(r"\b[1-9]\d*\s+(failed|error|errors)\b", re.IGNORECASE)
+
+
 def run_python_row(row: Row, tmp: Path) -> Result:
     property_file = REPO_ROOT / row.property_path
     if not property_file.is_file():
@@ -283,6 +294,22 @@ def run_python_row(row: Row, tmp: Path) -> Result:
             "--no-header",
             "-p",
             "no:cacheprovider",
+            # `--no-cov` IS LOAD-BEARING, not a convenience.
+            #
+            # `backend/pyproject.toml` puts `--cov=src --cov-branch --cov-fail-under=70` in
+            # `addopts`, deliberately, so the gate applies to every invocation including a
+            # developer's. Its own comment states both the consequence and the remedy: "running a
+            # single test file fails the threshold, because one file does not cover the package ...
+            # pass `--no-cov` for a targeted run."
+            #
+            # This harness runs ONE property file, so coverage of `src` is near zero and pytest
+            # exits 1. Below, an exit of 1 is what the harness reads as "the property failed", which
+            # is how it concludes a control killed it. So without this flag EVERY control appears to
+            # kill, including one aimed at a property it cannot touch: the vacuous fixture reported
+            # "2 passed" and still exited 1, and the harness recorded OK where it owed VACUOUS.
+            # A coverage threshold over the whole package says nothing about whether one property
+            # observed one behaviour, and letting it decide that question inverts the answer.
+            "--no-cov",
         ],
         cwd=str(BACKEND_ROOT),
         env=env,
@@ -316,6 +343,22 @@ def run_python_row(row: Row, tmp: Path) -> Result:
         # ran, which must not be reported as a healthy failure.
         tail = ((completed.stdout or "") + (completed.stderr or "")).strip().splitlines()[-6:]
         return Result(row, ERROR, f"pytest exited {completed.returncode} (control never ran): " + " | ".join(tail))
+
+    # A NON-ZERO EXIT IS NOT ON ITS OWN EVIDENCE THAT THE PROPERTY FAILED, and treating it as such
+    # is how a control comes to look effective when it never was. The coverage gate excluded above
+    # is one way to exit 1 with every test passing; a plugin raising during teardown is another.
+    # So the summary must actually name a failing test before this is called a kill. Anything else
+    # is an ERROR, which stops the run, rather than an OK, which would quietly certify a control
+    # that demonstrated nothing.
+    combined = (completed.stdout or "") + (completed.stderr or "")
+    if not _FAILED_SUMMARY.search(combined):
+        tail = combined.strip().splitlines()[-6:]
+        return Result(
+            row,
+            ERROR,
+            f"pytest exited {completed.returncode} but reported no failing test, so the control was "
+            "not shown to break the property: " + " | ".join(tail),
+        )
     return Result(row, OK, f"failed as required (exit {completed.returncode})")
 
 

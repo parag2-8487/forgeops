@@ -461,7 +461,16 @@ jobs:
         # Both capability markers, because task 6.3 names both halves. `-m` is an
         # expression over MARKERS rather than paths, so moving either module cannot drop
         # it from the job that exists to run it.
-        run: python -m pytest -m 'mandatory and (oidc or cerbos)' --report-log=auth.jsonl -q
+        #
+        # `--no-cov` because this is a MARKER SELECTION, not the whole suite. `addopts` in
+        # pyproject.toml carries `--cov-fail-under=70` deliberately, so the gate reaches every
+        # invocation including a developer's -- and its own comment prescribes this flag for a
+        # targeted run. Without it the job reported "116 passed, 2258 deselected" and then failed on
+        # "Required test coverage of 70% not reached. Total coverage: 47.29%": every test it exists to
+        # run had passed, against a real Authentik and a real Cerbos, and the job still went red on a
+        # threshold that cannot be met by 116 of 2,374 tests. The `secrets` job below already does
+        # this, for the same reason.
+        run: python -m pytest -m 'mandatory and (oidc or cerbos)' --report-log=auth.jsonl -q --no-cov
       - name: The mandatory selection recorded zero skips
         run: python scripts/check-no-skips.py backend/auth.jsonl
       - name: Authentik logs on failure

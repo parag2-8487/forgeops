@@ -62,11 +62,30 @@ import src.main as main_module
 from src.ai.routing.tiers import load_tier_config as _real_load_tier_config
 
 _committed = Path(main_module.__file__).resolve().parent.parent / "config" / "model-tiers.yaml"
-_frozen = _real_load_tier_config(_committed, env=os.environ)
+
+# FROZEN ON FIRST CALL, not at import. The committed YAML interpolates environment variables, so
+# loading it while this plugin is being imported ran before the test environment was in place and
+# raised
+#
+#     ValueError: Endpoint gpt-5.6-sol: base_url references unset variable(s): OPENAI_BASE_URL
+#
+# out of the plugin itself. pytest exited 3, the property never ran, and the harness scored the
+# non-zero exit as a kill -- so this control certified Q-27 while proving nothing about it. Deferring
+# the load to the first call keeps the mutation exactly as Appendix B words it (the configured path is
+# ignored) and lets the application's own environment satisfy the interpolation.
+#
+# A DICT rather than a module global. The harness indents every patch into
+# `def pytest_sessionstart(session):`, so this whole body runs inside a function: a `global _frozen`
+# would bind to a module attribute that no statement here creates, and the first call would raise
+# NameError. That still fails the property, so it still looks like a kill -- for a reason that has
+# nothing to do with the mutation. Mutating a dict captured by closure needs no declaration.
+_frozen = {}
 
 
 def _ignores_the_configured_path(path, env=None):
-    return _frozen
+    if "tiers" not in _frozen:
+        _frozen["tiers"] = _real_load_tier_config(_committed, env=env if env is not None else os.environ)
+    return _frozen["tiers"]
 
 
 main_module.load_tier_config = _ignores_the_configured_path
@@ -470,9 +489,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parent
+_REPO = Path.cwd().resolve()
+# NOT `Path(__file__)`. §0.4.5 requires this plugin to be written OUTSIDE the repository tree, and
+# the harness honours that by putting it in a temp directory -- so walking up from the plugin's own
+# location never finds docker-compose.yml. It climbed to the filesystem root instead and the guard
+# fired as `assert WindowsPath('C:/') != WindowsPath('C:/')`, an INTERNALERROR that made pytest exit
+# 3 before the property ran. The harness read that as a kill. The working directory is `backend/`,
+# inside the tree, so the walk terminates there.
 while not (_REPO / "docker-compose.yml").exists():
-    assert _REPO != _REPO.parent, "could not locate the repository root from the plugin"
+    assert _REPO != _REPO.parent, f"could not locate the repository root from {Path.cwd()}"
     _REPO = _REPO.parent
 
 _compose = (_REPO / "docker-compose.yml").read_text(encoding="utf-8")
@@ -486,27 +511,44 @@ shutil.copytree(_REPO / "policies" / "cerbos", _tmp / "policies")
 shutil.copytree(_REPO / "config" / "cerbos", _tmp / "config")
 
 _secret = _tmp / "policies" / "secret.yaml"
-_text = _secret.read_text(encoding="utf-8")
 
-_deny_before = '''    - actions: ["read_value"]
-      effect: EFFECT_DENY
-      roles: ["admin", "developer", "viewer"]'''
-_deny_after = '''    - actions: ["read_value"]
-      effect: EFFECT_DENY
-      roles: ["admin", "developer"]'''
-assert _deny_before in _text, "the blanket read_value deny is not where the control expects it"
-_text = _text.replace(_deny_before, _deny_after)
+# EDITED THROUGH THE PARSER, not by matching text. The previous version asserted on two exact
+# snippets including their leading whitespace, and failed with
+#
+#     AssertionError: the blanket read_value deny is not where the control expects it
+#
+# because those snippets carried four spaces before `- actions:` and six before the keys under it,
+# while the policy file uses six and eight. That is not a discrepancy anyone could see by reading:
+# the harness indents every patch into `pytest_sessionstart` and strips the COMMON leading indent as
+# it does so, which dedents the first line of a multi-line string relative to its continuations. Any
+# edit to the policy's comments or indentation would break it again. Working on the parsed document
+# expresses what the control actually means -- take `viewer` off the blanket deny, and add
+# `read_value` to what the viewer may do -- and formatting cannot break it.
+import yaml  # noqa: E402
 
-_allow_before = '''    - actions: ["read_metadata"]
-      effect: EFFECT_ALLOW
-      roles: ["viewer"]'''
-_allow_after = '''    - actions: ["read_metadata", "read_value"]
-      effect: EFFECT_ALLOW
-      roles: ["viewer"]'''
-assert _allow_before in _text, "the viewer allow rule is not where the control expects it"
-_text = _text.replace(_allow_before, _allow_after)
+_doc = yaml.safe_load(_secret.read_text(encoding="utf-8"))
+_rules = _doc["resourcePolicy"]["rules"]
 
-_secret.write_text(_text, encoding="utf-8")
+_denies = [
+    rule
+    for rule in _rules
+    if rule.get("effect") == "EFFECT_DENY" and "read_value" in rule.get("actions", [])
+]
+assert _denies, "no blanket read_value deny in the copied policy, so the control has nothing to relax"
+for rule in _denies:
+    rule["roles"] = [role for role in rule.get("roles", []) if role != "viewer"]
+
+_allows = [
+    rule
+    for rule in _rules
+    if rule.get("effect") == "EFFECT_ALLOW" and rule.get("roles") == ["viewer"]
+]
+assert _allows, "no viewer allow rule in the copied policy, so the grant has nowhere to go"
+for rule in _allows:
+    if "read_value" not in rule["actions"]:
+        rule["actions"].append("read_value")
+
+_secret.write_text(yaml.safe_dump(_doc, sort_keys=False), encoding="utf-8")
 
 _name = "forgeops-q20-mutation-cerbos"
 subprocess.run(["docker", "rm", "-f", _name], capture_output=True, check=False)
@@ -751,31 +793,52 @@ shape the integration tests never exercise.
 patch = """
 import src.websocket.hub as hub_module
 
-_real_live = hub_module.AgentHub._live
-_answered: dict[tuple[int, str], bool] = {}
+# THE GUARD IS LOAD-BEARING. pytest can import a `-p` plugin more than once in a session, and a
+# second import used to re-read `AgentHub._live` -- by then already `_once_per_connection` -- and wrap
+# the wrapper. `_real_live` then pointed at itself, so the first frame recursed until Python raised
+# RecursionError, which is an `Exception`, which `_live`'s own fail-closed handler caught, which
+# called `self._reject` on a duck-typed probe that has no such attribute. The visible result was
+#
+#     INTERNALERROR> AttributeError: 'types.SimpleNamespace' object has no attribute '_reject'
+#
+# and pytest exited 3. The harness read any non-zero exit as "the property failed", so this control
+# was recorded as a kill while the property had never run at all.
+if not getattr(hub_module.AgentHub._live, "_q16_mutation_installed", False):
+    _real_live = hub_module.AgentHub._live
+    _answered: dict[tuple[int, str], bool] = {}
 
+    async def _once_per_connection(self, ws, device_id):
+        key = (id(ws), str(device_id))
+        if key not in _answered:
+            _answered[key] = await _real_live(self, ws, device_id)
+        return _answered[key]
 
-async def _once_per_connection(self, ws, device_id):
-    key = (id(ws), str(device_id))
-    if key not in _answered:
-        _answered[key] = await _real_live(self, ws, device_id)
-    return _answered[key]
-
-
-hub_module.AgentHub._live = _once_per_connection
+    _once_per_connection._q16_mutation_installed = True
+    hub_module.AgentHub._live = _once_per_connection
 
 # The mutation must be OBSERVABLE before the property runs, or the control proves nothing. A
 # duck-typed self is enough: `_live` reads `self._deps.devices.is_revoked` and, for an unrevoked
 # device, returns True without touching the socket.
+#
+# A LIST rather than a module global, and that is the whole reason this control never worked. The
+# harness indents every patch into `def pytest_sessionstart(session):`, so this body runs inside a
+# function: `_calls = 0` was a local, `global _calls` in the probe bound to a module attribute nothing
+# created, and `_calls += 1` raised NameError. That happened inside `_live`'s `try`, whose fail-closed
+# handler catches any Exception and calls `self._reject` -- which a SimpleNamespace does not have. So
+# the visible failure was
+#
+#     INTERNALERROR> AttributeError: 'types.SimpleNamespace' object has no attribute '_reject'
+#
+# pytest exited 3, no test ran, and the old harness counted the non-zero exit as a kill. Appending to
+# a list captured by closure needs no declaration and cannot fail this way.
 import asyncio  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 
-_calls = 0
+_calls = []
 
 
 async def _is_revoked(device_id):
-    global _calls
-    _calls += 1
+    _calls.append(device_id)
     return False
 
 
@@ -789,9 +852,9 @@ async def _observe():
 
 
 asyncio.run(_observe())
-assert _calls == 1, (
-    f"the underlying revocation check ran {_calls} times for two frames; the cache did not install "
-    "and the control would be a no-op"
+assert len(_calls) == 1, (
+    f"the underlying revocation check ran {len(_calls)} times for two frames; the cache did not "
+    "install and the control would be a no-op"
 )
 """
 
