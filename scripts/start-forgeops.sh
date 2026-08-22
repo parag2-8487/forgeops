@@ -683,7 +683,7 @@ fi
 # ─── Images ──────────────────────────────────────────────────────────────────────────────────────
 
 head_ 'Build and start'
-step_ 'Building the backend, frontend and agent images'
+step_ 'Building the backend, worker, frontend and agent images'
 
 NEED_BUILD=0
 [ "$REBUILD" -eq 1 ] && NEED_BUILD=1
@@ -694,7 +694,7 @@ fi
 
 if [ "$NEED_BUILD" -eq 1 ]; then
   info_ 'this takes several minutes on a first run'
-  dc build backend frontend agent || die_ 'the image build failed.'
+  dc build backend worker frontend agent || die_ 'the image build failed.'
   ok_ 'images built'
 else
   ok_ 'images already present and the API base URL is unchanged; skipping the build'
@@ -1011,8 +1011,13 @@ ok_ 'the schema is at head'
 
 # ─── Application ─────────────────────────────────────────────────────────────────────────────────
 
-step_ 'Starting the backend, frontend and agent'
+step_ 'Starting the backend, worker, frontend and agent'
 
+# THE WORKER IS STARTED TOO, and leaving it out is not a cosmetic omission. `.env.example` sets
+# `TASK_DISPATCHER=arq`, so the API enqueues jobs onto Redis and something has to run them.
+# Without it `POST /policies/publish` returns 202 and the bundle is never distributed -- work is
+# accepted and silently never performed, which is worse than a refusal.
+#
 # COMPOSE READS `env_file` ONLY WHEN IT CREATES A CONTAINER, so `up -d --wait` on one that is already
 # running leaves the OLD environment in place and a corrected .env has no effect at all. The hash is
 # taken before the edits above and compared here. A cold machine never sees this; it bites on the
@@ -1024,7 +1029,7 @@ if [ "$ENV_HASH_AFTER" != "$ENV_HASH_BEFORE" ]; then
   RECREATE='--force-recreate'
 fi
 # shellcheck disable=SC2086  # RECREATE is a single optional flag or empty, and must not be one word
-dc up -d --wait $RECREATE backend frontend agent \
+dc up -d --wait $RECREATE backend worker frontend agent \
   || warn_ 'compose reported a problem; checking readiness directly'
 
 # ─── Prove it ────────────────────────────────────────────────────────────────────────────────────

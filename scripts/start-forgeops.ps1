@@ -761,7 +761,7 @@ if ($caPresent) {
 # --- 7. Images -----------------------------------------------------------------------------------
 
 Write-Head 'Build and start'
-Write-Step 'Building the backend, frontend and agent images'
+Write-Step 'Building the backend, worker, frontend and agent images'
 
 $needBuild = $Rebuild -or $apiBaseChanged
 if (-not $needBuild) {
@@ -772,7 +772,7 @@ if (-not $needBuild) {
 
 if ($needBuild) {
     Write-Info 'this takes several minutes on a first run; output is summarised'
-    $build = Invoke-Compose -Arguments 'build backend frontend agent'
+    $build = Invoke-Compose -Arguments 'build backend worker frontend agent'
     if (-not $build.Ok) {
         Stop-WithAdvice -Problem 'the image build failed.' -Advice @(
             ($build.Lines | Select-Object -Last 30) -join [Environment]::NewLine
@@ -1137,7 +1137,7 @@ Write-Ok 'the schema is at head'
 
 # --- 11. Application -----------------------------------------------------------------------------
 
-Write-Step 'Starting the backend, frontend and agent'
+Write-Step 'Starting the backend, worker, frontend and agent'
 
 # See the note beside Get-EnvHash: Compose bakes env_file values in at CREATE time, so when .env has
 # changed during this run the containers must be REPLACED, not merely started. Without this a
@@ -1149,7 +1149,7 @@ if ($envHashAfter -ne $envHashBefore) {
     $recreate = ' --force-recreate'
 }
 
-$app = Invoke-Compose -Arguments ('up -d --wait' + $recreate + ' backend frontend agent')
+$app = Invoke-Compose -Arguments ('up -d --wait' + $recreate + ' backend worker frontend agent')
 if (-not $app.Ok) {
     Write-Warn2 'compose reported a problem; checking readiness directly before giving up'
 }
