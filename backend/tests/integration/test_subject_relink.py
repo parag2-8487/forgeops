@@ -135,9 +135,7 @@ class TestASubjectChangeDoesNotLockTheOperatorOut:
 
         async with sessions() as session:
             count = (
-                await session.execute(
-                    text("SELECT count(*) FROM users WHERE idp_subject = :s"), {"s": subject}
-                )
+                await session.execute(text("SELECT count(*) FROM users WHERE idp_subject = :s"), {"s": subject})
             ).scalar()
         assert count == 1, "one subject must never own two rows"
 
@@ -157,18 +155,12 @@ class TestASubjectChangeDoesNotLockTheOperatorOut:
         service = _service()
 
         async with sessions() as session:
-            await service.upsert_user(
-                session, idp_subject=subject_a, email=shared, name="A", role=UserRole.VIEWER
-            )
-            await service.upsert_user(
-                session, idp_subject=subject_b, email=other, name="B", role=UserRole.VIEWER
-            )
+            await service.upsert_user(session, idp_subject=subject_a, email=shared, name="A", role=UserRole.VIEWER)
+            await service.upsert_user(session, idp_subject=subject_b, email=other, name="B", role=UserRole.VIEWER)
             await session.commit()
 
         # B now presents A's email. There is nothing safe to do, so the constraint must speak.
         with pytest.raises(Exception, match="uq_users_email"):
             async with sessions() as session:
-                await service.upsert_user(
-                    session, idp_subject=subject_b, email=shared, name="B", role=UserRole.VIEWER
-                )
+                await service.upsert_user(session, idp_subject=subject_b, email=shared, name="B", role=UserRole.VIEWER)
                 await session.commit()
