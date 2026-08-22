@@ -177,9 +177,40 @@ jobs:
             --entrypoint /bin/sh backend -c "alembic upgrade head"
 
       - name: Start the backend, frontend and agent
+        # SPLIT HORIZON, and the reason this step needs an `env:` block of its own.
+        #
+        # The provision step above appends its output to $GITHUB_ENV, and among it is
+        # `E2E_OIDC_ISSUER=http://localhost:9000/application/o/forgeops/` -- correct, because that is
+        # the URL the provisioner was handed and the URL a browser uses. It is wrong for the backend:
+        # inside that container `localhost` is the container, so OIDC discovery cannot be read and
+        # `/auth/login` answers 503. docker-compose.e2e.yml does default OIDC_ISSUER to the
+        # service-name form, but it spells it `${E2E_OIDC_ISSUER:-http://authentik-server:9000/...}`,
+        # and a `:-` default is discarded the moment the variable exists -- which, after the provision
+        # step, it does.
+        #
+        # The visible failure was journey step 1 timing out on `page.waitForURL`: the click on
+        # "single sign-on" navigated to the backend, the backend could not read the discovery
+        # document, and the browser therefore never returned to the frontend host the assertion waits
+        # for. Nothing in that message mentions an issuer.
+        #
+        # Step-level `env:` takes precedence over $GITHUB_ENV, so this corrects the values for the
+        # containers being CREATED here without disturbing the browser-facing values the journey step
+        # below needs. It is also the same split the "Check the IdP is reachable from both sides" step
+        # already encodes, which is where the correct pair of values is documented.
+        env:
+          OIDC_ISSUER: http://authentik-server:9000/application/o/forgeops/
+          E2E_OIDC_ISSUER: http://authentik-server:9000/application/o/forgeops/
+          OIDC_PUBLIC_BASE_URL: http://localhost:9000
+          E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: |
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
             backend frontend agent
+          # Proof rather than assumption: the value the container actually received. A wrong issuer
+          # here is the difference between a working sign-in and a 503, and it is invisible until a
+          # browser tries.
+          echo "OIDC_ISSUER inside the backend container:"
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T backend \
+            sh -c 'echo "  $OIDC_ISSUER"'
           # Readiness, not liveness: /health does no dependency I/O by design (§4.4), so a green
           # /health proves only that the process is up.
           for i in $(seq 1 60); do
