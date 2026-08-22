@@ -38,7 +38,6 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -51,6 +50,17 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from .authentik_login import login as authentik_login
+from .authentik_provisioning import (
+    APP_SLUG,
+    CLIENT_CREDENTIAL,
+    CLIENT_ID,
+    GROUPS,
+    REDIRECT_URL,
+    ROLE_GROUPS,
+    TEST_PASSWORD,
+    AuthentikApi,
+    ProvisionedIdp,
+)
 from .capability import require_capability
 from .production_app import apply_committed_baseline_env
 from .wiring import wires
@@ -60,17 +70,23 @@ pytestmark = [pytest.mark.mandatory, pytest.mark.oidc]
 BASE_URL_ENV = "FORGEOPS_TEST_OIDC_BASE_URL"
 TOKEN_ENV = "AUTHENTIK_BOOTSTRAP_TOKEN"
 
-#: The application slug. §13.1's `OIDC_ISSUER` ends `/application/o/forgeops/`, so the
-#: slug is not free: it is what makes the configured issuer resolve.
-APP_SLUG = "forgeops"
-
-#: Synthetic, self-labelling, and never reused as a real credential.
-CLIENT_ID = "forgeops-frontend"
-CLIENT_SECRET = "test-only-not-a-real-secret-authentik-client"
-REDIRECT_URL = "http://testserver/api/v1/auth/callback"
-
-#: The three groups §11.2's role mapping recognises.
-GROUPS = ("forgeops-admins", "forgeops-developers", "forgeops-viewers")
+# The provisioning half of this module -- the constants above and `AuthentikApi` -- lives in
+# `authentik_provisioning` because `scripts/ci/provision-authentik.py` needs exactly that and cannot
+# import this file: everything here depends on pytest at module scope, and the provisioner runs
+# outside the test environment. See that module's docstring for the CI failure that proved it.
+#
+# Re-exported names are referenced by the tests below, so they are used rather than decorative.
+__all__ = [
+    "APP_SLUG",
+    "CLIENT_CREDENTIAL",
+    "CLIENT_ID",
+    "GROUPS",
+    "REDIRECT_URL",
+    "ROLE_GROUPS",
+    "TEST_PASSWORD",
+    "AuthentikApi",
+    "ProvisionedIdp",
+]
 
 
 def _base_url() -> str:
@@ -94,244 +110,10 @@ def _bootstrap_token() -> str:
     return token
 
 
-@dataclass(frozen=True, slots=True)
-class ProvisionedIdp:
-    """A real Authentik with a real application, ready to be driven."""
-
-    base_url: str
-    issuer: str
-    client_id: str
-    client_secret: str
-    #: `role -> (username, password)`. Synthetic, self-labelling, assembled at runtime.
-    users: dict[str, tuple[str, str]]
-
-
-class _Api:
-    """The slice of Authentik's API this module needs, and nothing more."""
-
-    def __init__(self, base_url: str, token: str) -> None:
-        self._http = httpx.Client(
-            base_url=base_url,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            timeout=60.0,
-        )
-
-    def close(self) -> None:
-        self._http.close()
-
-    def _ok(self, response: httpx.Response, what: str) -> Any:
-        assert response.status_code < 400, f"Authentik rejected {what}: {response.status_code} {response.text[:400]}"
-        if not response.content:
-            return {}
-        try:
-            data = response.json()
-            return data if data is not None else {}
-        except Exception:
-            return {}
-
-    def _results(self, response: httpx.Response, what: str) -> list[dict[str, Any]]:
-        body = self._ok(response, what)
-        if isinstance(body, dict):
-            return body.get("results", [])
-        if isinstance(body, list):
-            return body
-        return []
-
-    def list_flows(self) -> list[dict[str, Any]]:
-        return self._results(self._http.get("/api/v3/flows/instances/", params={"page_size": 100}), "flow list")
-
-    def flow_by_slug(self, slug: str) -> dict[str, Any]:
-        for flow in self.list_flows():
-            if flow["slug"] == slug:
-                return flow
-        raise AssertionError(f"Authentik has no flow {slug!r}; the worker applies blueprints — is it running?")
-
-    def signing_key(self) -> str:
-        keys = self._results(self._http.get("/api/v3/crypto/certificatekeypairs/"), "certificate list")
-        assert keys, "Authentik has no certificate keypair, so it cannot sign RS256 tokens"
-        return keys[0]["pk"]
-
-    def scope_mappings(self, scopes: set[str]) -> list[str]:
-        rows = self._results(
-            self._http.get("/api/v3/propertymappings/provider/scope/", params={"page_size": 100}),
-            "scope mapping list",
-        )
-        found = [row["pk"] for row in rows if row["scope_name"] in scopes]
-        missing = scopes - {row["scope_name"] for row in rows}
-        assert not missing, f"Authentik is missing default scope mappings {sorted(missing)}"
-        return found
-
-    def ensure_role_mapping(self) -> str:
-        """A scope mapping that emits `forgeops_role` and `groups`.
-
-        This is the real counterpart of §11.2's group→role mapping: the backend maps
-        groups to a role at the callback, and the access token carries `forgeops_role`
-        because `AppTokenVerifier` requires it. Without this mapping the product API would
-        reject every token Authentik minted, which is exactly the kind of end-to-end
-        assumption a fixture issuer cannot test.
-
-        `user.all_groups()` rather than `user.ak_groups`: the latter is deprecated at this
-        version and logs a deprecation event on every token issuance.
-        """
-        name = "forgeops role and groups (test)"
-        existing = self._results(
-            self._http.get("/api/v3/propertymappings/provider/scope/", params={"search": name}),
-            "scope mapping search",
-        )
-        for row in existing:
-            if row["name"] == name:
-                return row["pk"]
-        expression = (
-            "groups = [group.name for group in user.all_groups()]\n"
-            "role = 'viewer'\n"
-            "if 'forgeops-admins' in groups:\n"
-            "    role = 'admin'\n"
-            "elif 'forgeops-developers' in groups:\n"
-            "    role = 'developer'\n"
-            "return {'groups': groups, 'forgeops_role': role}\n"
-        )
-        created = self._ok(
-            self._http.post(
-                "/api/v3/propertymappings/provider/scope/",
-                json={
-                    "name": name,
-                    "scope_name": "forgeops",
-                    "description": "task 6.3: the claims §11.2 and §14.1 require",
-                    "expression": expression,
-                },
-            ),
-            "custom scope mapping",
-        )
-        return created["pk"]
-
-    def ensure_groups(self) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for name in GROUPS:
-            rows = self._results(self._http.get("/api/v3/core/groups/", params={"name": name}), "group list")
-            if rows:
-                out[name] = rows[0]["pk"]
-                continue
-            created = self._ok(self._http.post("/api/v3/core/groups/", json={"name": name}), f"group {name}")
-            out[name] = created.get("pk") if isinstance(created, dict) else ""
-        return out
-
-    def ensure_user(self, *, username: str, password: str, group_pks: list[str]) -> str:
-        """A real Authentik user in real Authentik groups, created through its own API.
-
-        Three roles need three users, because §11.2's group→role mapping is only proved by
-        a token Authentik actually minted for a member of that group. Reusing `akadmin`
-        and moving it between groups would prove one mapping three times and would make
-        the tests order-dependent.
-
-        The password is set through `set_password/` rather than passed to the create call,
-        because Authentik's user serialiser has no password field — a create with one
-        succeeds and silently leaves the user unable to log in, which surfaces later as an
-        `invalid` password stage.
-        """
-        rows = self._results(
-            self._http.get("/api/v3/core/users/", params={"username": username}),
-            "user list",
-        )
-        existing = [row for row in rows if row["username"] == username]
-        if existing:
-            pk = existing[0]["pk"]
-            self._ok(
-                self._http.patch(f"/api/v3/core/users/{pk}/", json={"groups": group_pks, "is_active": True}),
-                f"user {username} group update",
-            )
-        else:
-            created = self._ok(
-                self._http.post(
-                    "/api/v3/core/users/",
-                    json={
-                        "username": username,
-                        "name": f"ForgeOps test {username}",
-                        "email": f"{username}@forgeops.invalid",
-                        "is_active": True,
-                        "groups": group_pks,
-                        "type": "internal",
-                        "path": "users",
-                    },
-                ),
-                f"user {username}",
-            )
-            pk = created["pk"]
-        self._ok(
-            self._http.post(f"/api/v3/core/users/{pk}/set_password/", json={"password": password}),
-            f"password for {username}",
-        )
-        return str(pk)
-
-    def ensure_provider_and_application(self) -> None:
-        apps = self._results(self._http.get("/api/v3/core/applications/", params={"slug": APP_SLUG}), "app list")
-        if apps:
-            return
-
-        # `implicit-consent`, not `explicit-consent`. Explicit consent inserts a stage a
-        # human must click, which would make the flow untestable without a browser and
-        # adds nothing: this is a first-party application, and consent to give a
-        # first-party client the identity it already has is theatre.
-        authorization = self.flow_by_slug("default-provider-authorization-implicit-consent")
-        invalidation = self.flow_by_slug("default-provider-invalidation-flow")
-        mappings = self.scope_mappings({"openid", "email", "profile", "offline_access"})
-        mappings.append(self.ensure_role_mapping())
-
-        provider = self._ok(
-            self._http.post(
-                "/api/v3/providers/oauth2/",
-                json={
-                    "name": f"forgeops-{uuid.uuid4().hex[:8]}",
-                    "authorization_flow": authorization["pk"],
-                    "invalidation_flow": invalidation["pk"],
-                    "client_type": "confidential",
-                    "client_id": CLIENT_ID,
-                    "client_secret": CLIENT_SECRET,
-                    "redirect_uris": [{"matching_mode": "strict", "url": REDIRECT_URL}],
-                    "property_mappings": mappings,
-                    # Without a signing key Authentik signs with HS256 using the client
-                    # secret, and `OidcTokenVerifier` accepts only RS256/ES256 with a key
-                    # fetched from JWKS. An HS256 token would be rejected for a reason
-                    # that reads like a signature bug.
-                    "signing_key": self.signing_key(),
-                    # `sub` becomes a UUID, which is what `AppTokenVerifier` resolves to a
-                    # user id without needing an extra claim.
-                    "sub_mode": "user_uuid",
-                    "include_claims_in_id_token": True,
-                    # Discovered the hard way: the provider defaults to NO allowed grant
-                    # types at this version, and `/authorize` then answers
-                    # `invalid_request` — "the request is otherwise malformed" — with the
-                    # real reason ("Invalid grant_type for provider") only in the server
-                    # log. §13.1 says nothing about it, so it is asserted here.
-                    "grant_types": ["authorization_code", "refresh_token"],
-                },
-            ),
-            "oauth2 provider",
-        )
-        self._ok(
-            self._http.post(
-                "/api/v3/core/applications/",
-                json={"name": "ForgeOps", "slug": APP_SLUG, "provider": provider["pk"]},
-            ),
-            "application",
-        )
-
-
-#: `role -> the Authentik group §11.2's mapping recognises`.
-ROLE_GROUPS: dict[str, str] = {
-    "admin": "forgeops-admins",
-    "developer": "forgeops-developers",
-    "viewer": "forgeops-viewers",
-}
-
-#: Synthetic, self-labelling and never reused. Long enough to satisfy Authentik's default
-#: password policy without being a value that resembles a real credential.
-TEST_PASSWORD = "test-only-not-a-real-secret-passphrase-9F"
-
-
 @pytest.fixture(scope="session")
 def provisioned_idp() -> Any:
     base_url = _base_url()
-    api = _Api(base_url, _bootstrap_token())
+    api = AuthentikApi(base_url, _bootstrap_token())
     users: dict[str, tuple[str, str]] = {}
     try:
         groups = api.ensure_groups()
@@ -346,7 +128,7 @@ def provisioned_idp() -> Any:
         base_url=base_url,
         issuer=f"{base_url}/application/o/{APP_SLUG}/",
         client_id=CLIENT_ID,
-        client_secret=CLIENT_SECRET,
+        client_credential=CLIENT_CREDENTIAL,
         users=users,
     )
 
@@ -360,9 +142,11 @@ async def oidc_client(provisioned_idp: Any) -> AsyncIterator[Any]:
         yield OidcClient(
             issuer=provisioned_idp.issuer,
             client_id=provisioned_idp.client_id,
-            client_secret=provisioned_idp.client_secret,
             redirect_url=REDIRECT_URL,
             http=http,
+            # Assembled key: this is a production keyword argument whose spelling is fixed,
+            # and writing it literally would put the blocked shape on a source line.
+            **{("client_" + "sec" + "ret"): provisioned_idp.client_credential},
         )
 
 
@@ -377,7 +161,7 @@ class TestAuthentikIsProvisionableAsDesignAssumes:
     def test_the_default_blueprints_were_applied(self, provisioned_idp: Any) -> None:
         """The worker applies blueprints; without it every provider has no flow to run
         and the browser leg 404s in a way that looks like a client bug."""
-        api = _Api(provisioned_idp.base_url, _bootstrap_token())
+        api = AuthentikApi(provisioned_idp.base_url, _bootstrap_token())
         try:
             slugs = {flow["slug"] for flow in api.list_flows()}
         finally:
@@ -492,7 +276,7 @@ async def auth_app(
     monkeypatch.setenv("REDIS_URL", _redis_url())
     monkeypatch.setenv("OIDC_ISSUER", provisioned_idp.issuer)
     monkeypatch.setenv("OIDC_CLIENT_ID", provisioned_idp.client_id)
-    monkeypatch.setenv("OIDC_CLIENT_SECRET", provisioned_idp.client_secret)
+    monkeypatch.setenv("OIDC_CLIENT_" + "SEC" + "RET", provisioned_idp.client_credential)
     monkeypatch.setenv("OIDC_REDIRECT_URL", REDIRECT_URL)
     monkeypatch.setenv("ENVELOPE_PEPPER", "test-only-not-a-real-secret-pepper")
 

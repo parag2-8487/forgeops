@@ -74,8 +74,9 @@ docker rm -f "$server_name" "$worker_name" >/dev/null 2>&1 || true
 docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" server >/dev/null
 docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
 
-echo "waiting for Authentik to answer its health endpoint and apply default blueprints..."
+echo "waiting for Authentik to finish migrating, then to apply its default blueprints..."
 SERVER_NAME="$server_name" WORKER_NAME="$worker_name" python3 - <<'EOF'
+import json
 import os
 import subprocess
 import sys
@@ -88,124 +89,185 @@ base_url = os.environ.get("FORGEOPS_TEST_OIDC_BASE_URL", "http://localhost:9000"
 # a second, weaker contract -- and it spelled a token literal to do it.
 token = os.environ["AUTHENTIK_BOOTSTRAP_TOKEN"]
 server_name = os.environ.get("SERVER_NAME", "forgeops-ci-authentik-server")
+worker_name = os.environ.get("WORKER_NAME", "forgeops-ci-authentik-worker")
 prefix = "Bear" + "er"
 hdr_val = f"{prefix} {token}"
 
 client = httpx.Client(base_url=base_url, headers={"Authorization": hdr_val, "Accept": "application/json"}, timeout=10.0)
-deadline = time.time() + 600
 
-# Authentik applies its own default blueprints during startup, once migrations finish. An earlier
-# revision of this loop ALSO ran `ak apply_blueprint` over every discovered file every 10 seconds
-# and kept doing it for the whole 600s window. The result is in the `auth` job's Postgres log on
-# the runs that failed then:
+
+def dump_diagnostics():
+    """Print both containers' logs. The failure this replaces produced none."""
+    for container in (server_name, worker_name):
+        print(f"\n===== docker logs (tail) {container} =====", file=sys.stderr, flush=True)
+        proc = subprocess.run(["docker", "logs", "--tail", "120", container], capture_output=True)
+        for stream in (proc.stdout, proc.stderr):
+            if stream:
+                print(stream.decode("utf-8", "replace"), file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------------------------------------
+# PHASE 1 -- migrations.
 #
-#   duplicate key value violates unique constraint "authentik_flows_flow_slug_key"
-#   duplicate key value violates unique constraint "authentik_policies_policy_name_..._uniq"
-#   deadlock detected
+# This phase did not exist, and its absence is what made the job fail for fourteen minutes while
+# reporting something that was not true. The old loop polled /api/v3/flows/instances/ from the
+# first second and treated ANY 200 as "the API works", including a 200 whose body is not JSON:
+# the response was fed to .json() inside `except Exception: data = {}`, so Authentik's router
+# answering while Django was still migrating became `results = []` became "flows (0)". The log
+# said the flow list was empty. The truth was that nothing had been asked yet.
 #
-# Two writers inserting the same fixtures on overlapping transactions.
+# `/-/health/ready/` is the endpoint that distinguishes those two, because it reports ready only
+# once the database is reachable AND migrations have been applied. Waiting on it first means the
+# blueprint phase below starts from a server that can actually answer.
 #
-# Replacing that storm with a SINGLE apply at 150s was also wrong, in the other direction. It
-# passed twice and then failed with `flows (0)` for the entire 600s: one attempt has to land in
-# the window after migrations finish and before the deadline, and nothing guarantees it does.
-#
-# So: bounded retry. Attempts are spaced a minute apart and capped, which keeps concurrent-write
-# pressure far below the original (5 attempts rather than ~60) while not betting the job on a
-# single moment. `ak apply_blueprint` is idempotent per file, so a repeat that races the worker
-# loses a transaction rather than corrupting anything.
-GRACE_BEFORE_MANUAL_APPLY = 60.0
-APPLY_INTERVAL = 60.0
-MAX_APPLY_ATTEMPTS = 5
+# The budget is generous on purpose. A GitHub-hosted runner has two cores and a cold page cache,
+# and the run this replaces was STILL emitting "Applying authentik_tasks.0001_initial" at the
+# fourteen-minute mark. Being slow is not the same as being broken, and a deadline shorter than
+# the work cannot tell the difference.
+MIGRATION_DEADLINE = 900.0
+READY_STATUSES = {200, 204}
 
 started = time.time()
+last_log = 0.0
+ready = False
+last_detail = "no response yet"
+
+while time.time() - started < MIGRATION_DEADLINE:
+    now = time.time()
+    try:
+        resp = client.get("/-/health/ready/", follow_redirects=True)
+        last_detail = f"HTTP {resp.status_code}"
+        if resp.status_code in READY_STATUSES:
+            ready = True
+            print(f"[start-authentik] migrations are done; the server is ready after {int(now - started)}s", flush=True)
+            break
+    except Exception as exc:
+        last_detail = f"{type(exc).__name__}: {exc}"
+    if now - last_log >= 15.0:
+        print(f"[start-authentik] still migrating... ({int(now - started)}s, {last_detail})", flush=True)
+        last_log = now
+    time.sleep(3)
+
+if not ready:
+    print(
+        f"FAIL: Authentik did not finish migrating within {int(MIGRATION_DEADLINE)}s "
+        f"(last: {last_detail})",
+        file=sys.stderr,
+    )
+    dump_diagnostics()
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------------------------
+# PHASE 2 -- blueprints.
+#
+# The WORKER applies the default blueprints once migrations are finished, so on a healthy start
+# this phase is a short wait and nothing else. The manual `ak apply_blueprint` remains as a
+# bounded fallback, because a worker that loses its scheduling window leaves the flow absent
+# with no error anywhere.
+#
+# It now scans /blueprints, which is where the image keeps them (41 files). It used to scan the
+# WHOLE ROOT FILESYSTEM -- `find / -xdev -name "*.yaml" -path "*blueprint*"` -- and that single
+# choice is what turned a slow start into a failed job: each attempt blocked the polling loop for
+# about four and a quarter minutes on the runner, measurable in the old log as the gap between
+# "applying blueprints (attempt 1/5)" at 10:09:20 and the next poll at 10:13:39. Three attempts
+# consumed roughly thirteen minutes of a ten-minute budget, so the deadline expired while the
+# loop was inside a filesystem scan and migrations never got the time they needed.
+BLUEPRINT_DEADLINE = 420.0
+GRACE_BEFORE_MANUAL_APPLY = 45.0
+APPLY_INTERVAL = 45.0
+MAX_APPLY_ATTEMPTS = 4
+REQUIRED_FLOW = "default-provider-authorization-implicit-consent"
+REQUIRED_SCOPES = {"openid", "email", "profile", "offline_access"}
+
+phase2_started = time.time()
 apply_attempts = 0
 last_apply = 0.0
-
 last_log = 0.0
-while time.time() < deadline:
-    now = time.time()
+last_seen = "nothing yet"
 
+
+def fetch_json(path, **params):
+    """Return a parsed body, or None when the response is not usable JSON.
+
+    Returning None rather than {} is the point. The old code could not tell an empty collection
+    from an unparseable body, so "not ready" and "ready and empty" were the same value.
+    """
+    resp = client.get(path, params=params or None, follow_redirects=True)
+    if resp.status_code != 200:
+        return None
     try:
-        resp = client.get("/api/v3/flows/instances/", params={"page_size": 100}, follow_redirects=True)
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-            except Exception:
-                data = {}
-            results = data.get("results", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-            slugs = {f.get("slug") for f in results if isinstance(f, dict)}
+        return resp.json()
+    except (json.JSONDecodeError, ValueError):
+        return None
 
-            scopes = set()
-            try:
-                s_resp = client.get("/api/v3/propertymappings/provider/scope/", params={"page_size": 100}, follow_redirects=True)
-                if s_resp.status_code == 200:
-                    try:
-                        s_data = s_resp.json()
-                    except Exception:
-                        s_data = {}
-                    s_results = s_data.get("results", []) if isinstance(s_data, dict) else (s_data if isinstance(s_data, list) else [])
-                    scopes = {r.get("scope_name") for r in s_results if isinstance(r, dict)}
-            except Exception:
-                pass
 
-            required_scopes = {"openid", "email", "profile", "offline_access"}
-            if "default-provider-authorization-implicit-consent" in slugs and required_scopes.issubset(scopes):
-                print(f"[start-authentik] Authentik is ready with blueprints and scopes! (flows: {len(slugs)}, scopes: {len(scopes)})", flush=True)
+def results_of(body):
+    if isinstance(body, dict):
+        return body.get("results", [])
+    if isinstance(body, list):
+        return body
+    return []
+
+
+while time.time() - phase2_started < BLUEPRINT_DEADLINE:
+    now = time.time()
+    try:
+        flows_body = fetch_json("/api/v3/flows/instances/", page_size=100)
+        if flows_body is None:
+            last_seen = "the flows endpoint did not return JSON"
+        else:
+            slugs = {f.get("slug") for f in results_of(flows_body) if isinstance(f, dict)}
+            scope_body = fetch_json("/api/v3/propertymappings/provider/scope/", page_size=100)
+            scopes = {r.get("scope_name") for r in results_of(scope_body) if isinstance(r, dict)} if scope_body else set()
+            last_seen = f"flows ({len(slugs)}), scopes ({len(scopes)})"
+
+            if REQUIRED_FLOW in slugs and REQUIRED_SCOPES.issubset(scopes):
+                print(
+                    f"[start-authentik] Authentik is ready with blueprints and scopes "
+                    f"(flows: {len(slugs)}, scopes: {len(scopes)})",
+                    flush=True,
+                )
                 sys.exit(0)
 
-            # The bounded manual apply, and only once the server is answering -- applying while it
-            # is still migrating is what produced the "column ... does not exist" errors.
             if (
                 apply_attempts < MAX_APPLY_ATTEMPTS
-                and (now - started) >= GRACE_BEFORE_MANUAL_APPLY
+                and (now - phase2_started) >= GRACE_BEFORE_MANUAL_APPLY
                 and (now - last_apply) >= APPLY_INTERVAL
             ):
                 apply_attempts += 1
                 print(
-                    f"[start-authentik] flow still absent; applying blueprints "
+                    f"[start-authentik] the flow is still absent; applying blueprints "
                     f"(attempt {apply_attempts}/{MAX_APPLY_ATTEMPTS})",
                     flush=True,
                 )
                 apply_cmd = (
-                    'find / -xdev -name "*.yaml" -path "*blueprint*" 2>/dev/null | head -n 200 | '
+                    'find /blueprints -name "*.yaml" | '
                     'while read -r bp; do ak apply_blueprint "$bp" 2>/dev/null || true; done'
                 )
                 proc = subprocess.run(
-                    ["docker", "exec", server_name, "sh", "-c", apply_cmd], capture_output=True
+                    ["docker", "exec", server_name, "sh", "-c", apply_cmd],
+                    capture_output=True,
+                    timeout=120,
                 )
                 if proc.returncode != 0:
                     tail = (proc.stderr or b"").decode("utf-8", "replace")[-400:]
                     print(f"[start-authentik] apply attempt returned {proc.returncode}: {tail}", flush=True)
-                last_apply = now
+                last_apply = time.time()
+    except Exception as exc:
+        last_seen = f"{type(exc).__name__}: {exc}"
 
-            if now - last_log >= 10.0:
-                print(f"[start-authentik] waiting for blueprints & scopes... flows ({len(slugs)}): {sorted([s for s in slugs if s])[:3]}, scopes ({len(scopes)}): {sorted([s for s in scopes if s])[:3]}", flush=True)
-                last_log = now
-        else:
-            if now - last_log >= 10.0:
-                print(f"[start-authentik] HTTP {resp.status_code}", flush=True)
-                last_log = now
-    except Exception as e:
-        if now - last_log >= 10.0:
-            print(f"[start-authentik] waiting for server... ({e})", flush=True)
-            last_log = now
+    if now - last_log >= 15.0:
+        print(f"[start-authentik] waiting for blueprints... ({int(now - phase2_started)}s, {last_seen})", flush=True)
+        last_log = now
     time.sleep(3)
 
-print("FAIL: Authentik did not become ready with default blueprints within deadline", file=sys.stderr)
-
-# Diagnostics, because the previous failure produced NONE. The job logged
-# "waiting for blueprints & scopes... flows (0)" thirteen times and then died, which says the API
-# answered and no blueprint was ever applied -- and nothing about why. Blueprints are applied by
-# the WORKER in current Authentik, so its log is the first place to look and it was never shown.
-for container in (server_name, os.environ.get("WORKER_NAME", "forgeops-ci-authentik-worker")):
-    print(f"\n===== docker logs (tail) {container} =====", file=sys.stderr, flush=True)
-    proc = subprocess.run(
-        ["docker", "logs", "--tail", "120", container], capture_output=True
-    )
-    for stream in (proc.stdout, proc.stderr):
-        if stream:
-            print(stream.decode("utf-8", "replace"), file=sys.stderr, flush=True)
-
+print(
+    f"FAIL: the server is ready but the default blueprints never appeared within "
+    f"{int(BLUEPRINT_DEADLINE)}s (last: {last_seen})",
+    file=sys.stderr,
+)
+# Blueprints are applied by the WORKER, so its log is the first place the reason can be.
+dump_diagnostics()
 sys.exit(1)
 EOF
 

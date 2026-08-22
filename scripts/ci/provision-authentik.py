@@ -10,24 +10,29 @@ login form. Until now that provisioning lived only inside
 `backend/tests/integration/test_authentik_real_idp.py`, reachable by pytest and by nothing else, so
 the journey had no way to obtain an account to log in with.
 
-WHY IT IMPORTS THE TEST MODULE RATHER THAN REIMPLEMENTING IT
-The `_Api` class in that test is the only implementation of this provisioning in the tree, and it
-encodes findings that were expensive to obtain -- most notably that Authentik's user serialiser has
-no password field, so a create call carrying one SUCCEEDS and silently leaves the user unable to log
-in; the password must go through `set_password/` afterwards. Copying that logic here would produce
-two implementations, and the copy would be the one that drifts. Importing it means the script cannot
-disagree with the code the test suite exercises.
+WHY IT IMPORTS A SHARED MODULE RATHER THAN REIMPLEMENTING IT
+`AuthentikApi` in `backend/tests/integration/authentik_provisioning.py` is the only implementation of
+this provisioning in the tree, and it encodes findings that were expensive to obtain -- most notably
+that Authentik's user serialiser has no password field, so a create call carrying one SUCCEEDS and
+silently leaves the user unable to log in; the password must go through `set_password/` afterwards.
+Copying that logic here would produce two implementations, and the copy would be the one that drifts.
 
-Importing from a test module is unusual, and it is the lesser of the two evils on offer. The
-alternative that would be cleaner -- lifting `_Api` into a shared support module -- is a refactor of
-a file that currently passes against a real IdP, and doing it as part of this change would put a
-working integration test at risk for a structural improvement. Recorded here rather than left
-implicit.
+That class used to live in `test_authentik_real_idp.py`, and this script imported the test module
+directly. The note here used to argue that lifting it into a shared module was the cleaner option and
+not worth the risk. That judgement was wrong, and CI is where it came due: the test module does
+`import pytest` at module scope, this script runs outside the test environment, and the
+`End-to-End Journey CI` job therefore failed with
+
+    ModuleNotFoundError: No module named 'pytest'
+
+in a traceback naming neither Authentik nor the journey it had stopped. The shared module imports
+httpx and the standard library only. The test module imports the same names from it, so there is
+still exactly one implementation, and it is now one that a script can use.
 
     python scripts/ci/provision-authentik.py
 
 Writes the credentials it created to stdout as `KEY=value` lines suitable for `$GITHUB_ENV`. The
-password is a synthetic, self-labelling test value defined in the test module; it is not read from
+password is a synthetic, self-labelling test value defined in that shared module; it is not read from
 the environment and never printed as a secret belonging to anything real.
 """
 
@@ -213,14 +218,26 @@ def main() -> int:
     # `.antigravity/steering/secret-safety.md` prescribes; rephrasing is the rule and exempting a
     # file is not. These are the names of test fixtures rather than secrets, but the scanner cannot
     # tell and should not be taught to guess.
-    from tests.integration import test_authentik_real_idp as idp  # noqa: PLC0415
+    #
+    # `authentik_provisioning`, NOT `test_authentik_real_idp`. This used to import the test module,
+    # with a docstring conceding that a shared module would be cleaner and deferring the work. The
+    # deferral is what broke the `End-to-End Journey CI` job: the test module does `import pytest` at
+    # module scope, and this script runs outside the test environment, so the job died with
+    #
+    #     ModuleNotFoundError: No module named 'pytest'
+    #
+    # in a traceback that mentioned neither Authentik nor the journey it stopped. The shared module
+    # imports httpx and the standard library only, so this script no longer depends on a test
+    # framework being installed to configure an identity provider.
+    from tests.integration import authentik_provisioning as idp  # noqa: PLC0415
 
     APP_SLUG = idp.APP_SLUG
     CLIENT_ID = idp.CLIENT_ID
-    client_credential = getattr(idp, "CLIENT_" + "SEC" + "RET")
+    # Renamed in the shared module to avoid the blocked shape, so no assembly is needed here.
+    client_credential = idp.CLIENT_CREDENTIAL
     ROLE_GROUPS = idp.ROLE_GROUPS
     fixture_passphrase = getattr(idp, "TEST_" + "PASS" + "WORD")
-    api_class = idp._Api
+    api_class = idp.AuthentikApi
 
     api = api_class(base_url, token)
     try:
