@@ -36,7 +36,14 @@ UUID_SUBJECT = "2fd643e7-2eb4-4463-8ab2-c2500b385a48"
 
 
 class _CapturingSession:
-    """Records the parameters the upsert binds, and returns them as the inserted row."""
+    """Records the parameters the upsert binds, and returns them as the inserted row.
+
+    `first()` returns None so the re-link probe finds nothing and the INSERT path below is the one
+    exercised. `upsert_user` runs two statements now -- an UPDATE that adopts an existing row when
+    the same email arrives under a new IdP subject, then the INSERT -- because `users` has two unique
+    constraints and one `ON CONFLICT` clause can name only one. `self.params` therefore ends holding
+    the INSERT's parameters, which is what these tests assert on.
+    """
 
     def __init__(self) -> None:
         self.params: dict[str, object] = {}
@@ -47,6 +54,10 @@ class _CapturingSession:
         class _Result:
             def one(self_inner) -> tuple[object, ...]:  # noqa: N805
                 return (params["id"], params["email"], params["name"], params["role"], None)
+
+            def first(self_inner) -> None:  # noqa: N805
+                """No row matched the re-link probe: these tests are about a fresh insert."""
+                return None
 
         return _Result()
 

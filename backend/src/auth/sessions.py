@@ -118,6 +118,15 @@ class SessionService:
         time someone changes theirs — and the audit trail would then split across two
         user ids for one human.
 
+        THE INVERSE CASE IS HANDLED SEPARATELY, because `users` has two unique constraints and one
+        `ON CONFLICT` clause can name only one of them. When the same email arrives under a NEW
+        subject — the IdP's database rebuilt, a user recreated there, or the issuer replaced, which
+        §1.11 contemplates by naming both Authentik and Keycloak — the INSERT below collided on
+        `uq_users_email` and PostgreSQL raised, which reached a browser mid-login as a 500 on
+        `/api/v1/auth/callback`. The existing row is now re-linked to the new subject instead,
+        keeping its `id` so its audit history stays attached. See the comment on that statement for
+        why it is safe and for the one case it deliberately leaves unresolved.
+
         `role` is written on every login. The IdP is authoritative for group
         membership, so a group removed there must take effect at the next login rather
         than persisting until someone notices.
@@ -149,6 +158,74 @@ class SessionService:
             local_id = uuid.UUID(idp_subject)
         except ValueError:
             local_id = uuid.uuid4()
+
+        # ─── the SECOND unique constraint, which the INSERT below cannot express ──────────────
+        #
+        # `users` has two: `uq_users_idp_subject` and `uq_users_email`. `ON CONFLICT (idp_subject)`
+        # names one of them, so an email collision under a NEW subject was never handled and
+        # PostgreSQL raised it:
+        #
+        #     duplicate key value violates unique constraint "uq_users_email"
+        #
+        # which surfaced to a browser mid-login as
+        # `500 {"type":"https://errors.forgeops.dev/internal", ...,"instance":"/api/v1/auth/callback"}`
+        # -- an internal error for a situation the system can resolve, on the one route where a
+        # failure locks the operator out entirely.
+        #
+        # The same email arrives under a new `sub` whenever the IdP's own database is rebuilt, a
+        # user is deleted and recreated there, or the issuer is replaced -- and §1.11 contemplates
+        # exactly that last case by naming both Authentik and Keycloak. The human is the same one;
+        # only the identifier the IdP minted for them has changed.
+        #
+        # So the row is RE-LINKED rather than duplicated, and it keeps its `id`, which is the same
+        # reason the statement below refuses to change one: every audit row, change set and
+        # generation run already references it.
+        #
+        # Safe because a single trusted issuer asserts both values -- `OidcTokenVerifier` has
+        # already verified the token against the configured issuer's JWKS before this is reached,
+        # so neither the subject nor the email is caller-supplied. An empty email is excluded
+        # explicitly: it would match every row that has none and re-link an arbitrary account.
+        #
+        # `NOT EXISTS` is what keeps this from creating a second problem. If a row ALREADY holds
+        # this subject, re-linking the email row would give two rows one subject and violate the
+        # other constraint. That case -- two accounts, one email, one of them already linked -- is
+        # a genuine conflict between two identities that no rule here can settle, and it is left to
+        # raise rather than resolved by guessing.
+        if email:
+            relinked = await session.execute(
+                text(
+                    """
+                    UPDATE users
+                       SET idp_subject = :idp_subject,
+                           name = :name,
+                           role = :role,
+                           is_active = true,
+                           updated_at = now()
+                     WHERE email = :email
+                       AND idp_subject <> :idp_subject
+                       AND NOT EXISTS (
+                             SELECT 1 FROM users existing
+                              WHERE existing.idp_subject = :idp_subject
+                           )
+                 RETURNING id, email, name, role, tenant_id
+                    """
+                ),
+                {
+                    "email": email,
+                    "name": name,
+                    "role": role.value,
+                    "idp_subject": idp_subject,
+                },
+            )
+            row = relinked.first()
+            if row is not None:
+                return ResolvedUser(
+                    id=row[0],
+                    email=str(row[1]),
+                    name=str(row[2]),
+                    role=UserRole(str(row[3])),
+                    tenant_id=row[4],
+                )
 
         result = await session.execute(
             text(
