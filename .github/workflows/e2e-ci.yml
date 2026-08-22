@@ -115,8 +115,8 @@ jobs:
       # build failure is its own red step instead of a confusing startup timeout.
       - name: Build the backend, frontend and agent images
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.e2e.yml build \
-            backend frontend agent
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml build 
+            backend worker frontend agent
 
       - name: Start the stack's infrastructure
         run: |
@@ -204,7 +204,7 @@ jobs:
           E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: |
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
-            backend frontend agent
+            backend worker frontend agent
           # Proof rather than assumption: the value the container actually received. A wrong issuer
           # here is the difference between a working sign-in and a 503, and it is invisible until a
           # browser tries.

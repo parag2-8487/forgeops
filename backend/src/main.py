@@ -249,12 +249,21 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # configured dispatcher. `inline` is a fully supported mode, not a dev fallback.
         from .core.tasks import create_arq_pool  # noqa: PLC0415
 
+        # BOUNDED, because `arq.create_pool` DOES connect and retries on failure. The docstring on
+        # `create_arq_pool` says it performs no mandatory handshake, and that is true of the intent
+        # rather than of the library: pointed at an unreachable host it logged
+        # "redis connection error redis:6379" once a second and eventually raised, which pushed the
+        # lifespan past the `ci / secrets` job's startup timeout and turned a passing job into
+        # `TimeoutError` with no test having failed.
+        #
+        # Three seconds is enough for a reachable Redis on any machine this runs on, and a stack whose
+        # Redis is unreachable must degrade to a readiness failure rather than a slow start (§4.4).
         try:
-            app.state.arq_pool = await create_arq_pool(settings)
-        except Exception as exc:  # noqa: BLE001 - a pool is not required for liveness
+            app.state.arq_pool = await asyncio.wait_for(create_arq_pool(settings), timeout=3.0)
+        except (Exception, TimeoutError) as exc:  # noqa: BLE001 - a pool is not required for liveness
             logger.warning(
                 "the ARQ pool could not be created; routes that enqueue work will report it",
-                extra={"reason": str(exc)},
+                extra={"reason": f"{type(exc).__name__}: {exc}"},
             )
 
     # --- MCP Gateway collaborators (§11.1, §11.4) ---------------------------
