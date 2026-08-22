@@ -6,6 +6,19 @@ import pytest
 from src.policies.bundle import PolicyBundleService
 from src.policies.models import Policy
 
+# IMPORTED FOR ITS SIDE EFFECT, and it is load-bearing rather than tidy.
+#
+# `policies.project_id` carries a foreign key to `projects`. SQLAlchemy resolves that lazily, and it
+# resolves it while sorting tables for a flush -- so a session that never imported the `Project`
+# mapper fails at `commit()` with
+#
+#     NoReferencedTableError: Foreign key associated with column 'policies.project_id' could not find
+#     table 'projects' with which to generate a foreign key to target column 'id'
+#
+# which reads like a schema fault and is an import that is not there. This test passed nothing to
+# `projects` and needed the table to exist in the metadata all the same.
+from src.projects.models import Project  # noqa: F401
+
 
 @pytest.mark.asyncio
 async def test_bundle_digest_stability(

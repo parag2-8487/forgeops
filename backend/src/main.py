@@ -228,43 +228,23 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.sessionmaker = sessionmaker
     app.state.redis = redis_client
 
-    # --- the ARQ pool the task dispatcher enqueues onto ----------------------
+    # --- the ARQ pool the task dispatcher enqueues onto -----------------------
     #
-    # `.env.example` ships `TASK_DISPATCHER=arq`, and `build_dispatcher` raises
-    # "TASK_DISPATCHER=arq requires an ARQ pool; call create_arq_pool first" when handed no pool.
-    # Nothing called `create_arq_pool`, and nothing set `app.state.arq_pool`, so every route that
-    # builds a dispatcher answered 500 on the committed default configuration.
-    # `POST /api/v1/policies/publish` is one, which is why no policy bundle could ever be published
-    # -- and therefore why no device could be pinned to one, and therefore why the governance
-    # chokepoint refused every generation submission as "policy bundle stale". One unset attribute,
-    # three symptoms, none of them near it.
+    # Declared here and created ON FIRST USE by `src.policies.routes.get_bundle_service`, not in this
+    # lifespan. `.env.example` ships `TASK_DISPATCHER=arq`, and `build_dispatcher` raises
+    # "TASK_DISPATCHER=arq requires an ARQ pool; call create_arq_pool first" when handed no pool --
+    # nothing called `create_arq_pool` and nothing set this attribute, so every route that enqueues
+    # work answered 500 on the committed default configuration. `POST /api/v1/policies/publish` is
+    # one, which is why no policy bundle could be published, no device pinned to one, and the
+    # governance chokepoint refused every generation submission as "policy bundle stale".
     #
-    # Constructed here for the same reason as the Redis client above and with the same contract: no
-    # eager handshake. `create_pool` connects lazily, and an unreachable Redis must change readiness
-    # rather than liveness (§4.4). A failure to construct is logged and leaves the attribute None,
-    # so `build_dispatcher` raises a message naming the cause instead of the app refusing to start.
+    # Creating it HERE was the first attempt and it was wrong twice over: `arq.create_pool` connects
+    # and retries despite `create_arq_pool`'s docstring, so on a host without that Redis the lifespan
+    # logged "redis connection error redis:6379" once a second until `ci / secrets` timed out; and
+    # bounding it still charged every app construction in the test suite for a connection attempt,
+    # which is a cost paid by more than a thousand tests to benefit one route. Lazy creation charges
+    # only the request that needs it, and leaves an unreachable Redis as a readiness matter (§4.4).
     app.state.arq_pool = None
-    if str(getattr(settings, "task_dispatcher", "inline")) == "arq":
-        # Imported here rather than at module scope so `arq` is only required when it is the
-        # configured dispatcher. `inline` is a fully supported mode, not a dev fallback.
-        from .core.tasks import create_arq_pool  # noqa: PLC0415
-
-        # BOUNDED, because `arq.create_pool` DOES connect and retries on failure. The docstring on
-        # `create_arq_pool` says it performs no mandatory handshake, and that is true of the intent
-        # rather than of the library: pointed at an unreachable host it logged
-        # "redis connection error redis:6379" once a second and eventually raised, which pushed the
-        # lifespan past the `ci / secrets` job's startup timeout and turned a passing job into
-        # `TimeoutError` with no test having failed.
-        #
-        # Three seconds is enough for a reachable Redis on any machine this runs on, and a stack whose
-        # Redis is unreachable must degrade to a readiness failure rather than a slow start (§4.4).
-        try:
-            app.state.arq_pool = await asyncio.wait_for(create_arq_pool(settings), timeout=3.0)
-        except (Exception, TimeoutError) as exc:  # noqa: BLE001 - a pool is not required for liveness
-            logger.warning(
-                "the ARQ pool could not be created; routes that enqueue work will report it",
-                extra={"reason": f"{type(exc).__name__}: {exc}"},
-            )
 
     # --- MCP Gateway collaborators (§11.1, §11.4) ---------------------------
     # All constructed non-destructively: the shared HTTP client, the JWKS-caching

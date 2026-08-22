@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -21,6 +23,8 @@ from .schemas import DryRunInput, PolicyCreate, PolicyRead, PolicyTemplateRead, 
 from .templates import TEMPLATES
 from .validation import validate_rego
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/policies",
     tags=["policies"],
@@ -35,7 +39,7 @@ async def get_bundle_service(request: Request, session: AsyncSession = Depends(g
             settings = get_settings()
         except Exception:
             settings = None
-    pool = getattr(request.app.state, "arq_pool", None)
+    pool = await _arq_pool(request, settings)
     dispatcher = build_dispatcher(settings, pool=pool) if settings is not None else None
     agent_policies_dir = (
         Path(settings.agent_policies_dir)
@@ -43,6 +47,52 @@ async def get_bundle_service(request: Request, session: AsyncSession = Depends(g
         else Path("policies/agent")
     )
     return PolicyBundleService(session, agent_policies_dir, tasks=dispatcher)
+
+
+async def _arq_pool(request: Request, settings: Any) -> Any | None:
+    """The ARQ pool, created once on first use and cached on `app.state`.
+
+    Nothing used to create it. `.env.example` ships `TASK_DISPATCHER=arq`, and `build_dispatcher`
+    raises "TASK_DISPATCHER=arq requires an ARQ pool; call create_arq_pool first" without one, so
+    `POST /policies/publish` answered 500 on the committed default configuration -- and therefore no
+    bundle could be published, no device pinned to one, and the governance chokepoint refused every
+    generation submission as "policy bundle stale".
+
+    HERE rather than in the lifespan, deliberately. `arq.create_pool` connects and retries, so doing
+    it at startup made an unreachable Redis a slow start instead of a readiness failure: `ci / secrets`
+    timed out with no test having failed. Bounding it still charged every one of the suite's app
+    constructions for a connection attempt. Creating it on the first request that needs it charges
+    only that request.
+
+    A failure returns None, so `build_dispatcher` raises a message naming the cause rather than this
+    dependency inventing a different one.
+    """
+    if settings is None or str(getattr(settings, "task_dispatcher", "inline")) != "arq":
+        return None
+    existing = getattr(request.app.state, "arq_pool", None)
+    if existing is not None:
+        return existing
+
+    # Imported here so `arq` is only required when it is the configured dispatcher; `inline` is a
+    # fully supported mode rather than a dev fallback.
+    from src.core.tasks import create_arq_pool  # noqa: PLC0415
+
+    lock = getattr(request.app.state, "arq_pool_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        request.app.state.arq_pool_lock = lock
+    async with lock:
+        # Re-read under the lock: two concurrent first requests must not build two pools.
+        existing = getattr(request.app.state, "arq_pool", None)
+        if existing is not None:
+            return existing
+        try:
+            pool = await create_arq_pool(settings)
+        except Exception:
+            logger.warning("the ARQ pool could not be created; work cannot be enqueued", exc_info=True)
+            return None
+        request.app.state.arq_pool = pool
+        return pool
 
 
 @router.post("/publish", status_code=status.HTTP_202_ACCEPTED)
