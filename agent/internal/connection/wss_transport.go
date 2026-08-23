@@ -108,6 +108,29 @@ func (t *WSSTransport) Receive(ctx context.Context) ([]byte, error) {
 	return data, err
 }
 
+// Ping sends a WebSocket ping and waits for the matching pong.
+//
+// # WHY THE SESSION NEEDS THIS AND CANNOT USE A JSON-RPC FRAME INSTEAD
+//
+// The agent has to notice a backend that has stopped answering — a half-open socket accepts writes
+// for a long time, so "my last Send succeeded" is not evidence of anything. But §7.3 makes
+// `session.heartbeat` a NOTIFICATION (only `command.result` is marked as correlated) and the hub's
+// `_respond` correctly sends nothing for a frame with a null id. A healthy but idle backend
+// therefore sends the agent no frames at all, so inbound silence cannot mean death.
+//
+// A ping is the layer that exists for exactly this, and it adds no tenth JSON-RPC method, which
+// §7.3 forbids. `coder/websocket`'s `Ping` blocks until the pong arrives or ctx is done, so a
+// bounded call is a direct liveness answer rather than a guess.
+func (t *WSSTransport) Ping(ctx context.Context) error {
+	t.mu.Lock()
+	conn := t.conn
+	t.mu.Unlock()
+	if conn == nil {
+		return ErrDisabled
+	}
+	return conn.Ping(ctx)
+}
+
 // Close gracefully closes the WebSocket connection.
 func (t *WSSTransport) Close(code StatusCode, reason string) error {
 	t.mu.Lock()

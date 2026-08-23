@@ -40,6 +40,7 @@ type fakeTransport struct {
 	endOnce  sync.Once
 	dialErr  error
 	recvErr  error
+	pingErr  error // when set, the far end has stopped answering pings
 	connect  *connectResult
 	rejectID string // when set, session.connect is answered with an error object
 	dialed   int
@@ -117,6 +118,38 @@ func (f *fakeTransport) Receive(ctx context.Context) ([]byte, error) {
 	case frame := <-f.inbound:
 		return frame, nil
 	}
+}
+
+// Ping answers the session's liveness check.
+//
+// Succeeds by default, because a healthy backend answering pings is the ordinary case and every
+// existing test assumes the session stays up. `pingErr` lets a test make the far end stop answering,
+// which is the condition that must drop the session now that inbound silence no longer does — see
+// `beat` for why that changed.
+func (f *fakeTransport) Ping(ctx context.Context) error {
+	f.mu.Lock()
+	err := f.pingErr
+	f.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	select {
+	case <-f.done:
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.recvErr
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
+// failPings makes every subsequent Ping report err, as an unresponsive backend does.
+func (f *fakeTransport) failPings(err error) {
+	f.mu.Lock()
+	f.pingErr = err
+	f.mu.Unlock()
 }
 
 func (f *fakeTransport) Close(code connection.StatusCode, reason string) error {
@@ -849,7 +882,24 @@ func TestServe_TheHeartbeatCarriesSeqUptimeAndQueueDepth(t *testing.T) {
 	<-done
 }
 
-func TestServe_SilencePastTheTimeoutDropsTheSession(t *testing.T) {
+func TestServe_AnUnansweredPingDropsTheSession(t *testing.T) {
+	// THIS TEST USED TO ASSERT THE OPPOSITE OF THE PROTOCOL, and it is worth saying why rather than
+	// quietly editing it. It was `TestServe_SilencePastTheTimeoutDropsTheSession`: it advanced the
+	// clock 91 s past a 90 s timeout, fired the heartbeat tick and required the socket to close.
+	//
+	// That is not a rule §7.3 supports. `session.heartbeat` is a NOTIFICATION there — only
+	// `command.result` is marked as correlated — and the hub's `_respond` correctly sends nothing for
+	// a frame with a null id. So a healthy backend with no command to send transmits NOTHING to the
+	// agent, and inbound silence is the ordinary idle state. Enforcing the timeout against it dropped
+	// every live session on a 90-second cycle: the agent logged `heartbeat timeout; dropping the
+	// session` while the hub logged a fresh `agent session connected` each time, and a command
+	// dispatched near the boundary was delivered to a session already going away.
+	//
+	// §7.3 gives the 90 s rule to the HUB ("Missing for 90 s ⇒ the hub drops the session"). The agent
+	// still has to notice a backend that stopped answering — a half-open socket accepts writes long
+	// after the peer is gone — so the evidence it uses is a WebSocket PING, which is transport-level
+	// and therefore adds no tenth JSON-RPC method. This test asserts that rule, and
+	// `TestServe_SilenceAloneDoesNotDropTheSession` below asserts the case that used to fail.
 	transport := newFakeTransport(okConnect())
 	harness := newServeHarness(t, transport)
 
@@ -860,9 +910,9 @@ func TestServe_SilencePastTheTimeoutDropsTheSession(t *testing.T) {
 
 	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
 
-	// 91 seconds of silence against a 90-second timeout. Driven by the injected clock, not
-	// by waiting: the test measures the rule, not the duration.
-	harness.now.advance(91 * time.Second)
+	// The far end stops answering pings. Nothing else changes: frames still flow nowhere, exactly as
+	// in the healthy idle case, so the ping is the only thing that can distinguish the two.
+	transport.failPings(errors.New("no pong: the peer is gone"))
 	harness.ticker.fire(harness.now.now())
 
 	waitFor(t, func() bool {
@@ -875,6 +925,42 @@ func TestServe_SilencePastTheTimeoutDropsTheSession(t *testing.T) {
 		}
 		return false
 	})
+	cancel()
+	<-done
+}
+
+func TestServe_SilenceAloneDoesNotDropTheSession(t *testing.T) {
+	// The regression this pair exists for. An idle backend answers pings and sends no frames; the
+	// session must survive that indefinitely, because it is what a healthy connection looks like
+	// whenever there is no work.
+	transport := newFakeTransport(okConnect())
+	harness := newServeHarness(t, transport)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- harness.manager.Serve(ctx) }()
+
+	waitFor(t, func() bool { return len(transport.frames("agent.status")) > 0 })
+
+	// Well past the timeout, and several heartbeat ticks. The clock is injected, so this measures
+	// the rule rather than waiting.
+	for range 3 {
+		harness.now.advance(91 * time.Second)
+		harness.ticker.fire(harness.now.now())
+	}
+	// Give the beat goroutine room to act on all three ticks before concluding it did not.
+	waitFor(t, func() bool { return len(transport.frames("session.heartbeat")) >= 3 })
+
+	transport.mu.Lock()
+	closes := append([]closeRecord(nil), transport.closes...)
+	transport.mu.Unlock()
+	for _, c := range closes {
+		if c.reason == "heartbeat timeout" {
+			t.Fatal("an idle backend that answers pings must not be treated as dead: " +
+				"§7.3 makes session.heartbeat a notification, so silence is the normal idle state")
+		}
+	}
 	cancel()
 	<-done
 }

@@ -39,6 +39,11 @@ func TestLoad_Phase1Defaults(t *testing.T) {
 		{"Session.HeartbeatInterval", cfg.Session.HeartbeatInterval, 30 * time.Second},
 		{"Session.HeartbeatTimeout", cfg.Session.HeartbeatTimeout, 90 * time.Second},
 		{"Session.EnvelopeClockSkew", cfg.Session.EnvelopeClockSkew, 60 * time.Second},
+		// §7.6's 300s. It was in `.env.example` and read by nobody, so the agent used
+		// `NewVerifier`'s hardcoded default and the setting did nothing.
+		{"Session.EnvelopeMaxAge", cfg.Session.EnvelopeMaxAge, 300 * time.Second},
+		// Empty means "the process working directory, resolved at use time", like StateDir.
+		{"Executor.WorkspaceRoot", cfg.Executor.WorkspaceRoot, ""},
 		{"Journal.MaxBytes", cfg.Journal.MaxBytes, int64(67108864)},
 		{"Journal.MaxAge", cfg.Journal.MaxAge, 168 * time.Hour},
 		{"Journal.DrainBatch", cfg.Journal.DrainBatch, 64},
@@ -225,7 +230,8 @@ func TestLoad_Phase1IgnoresUnrelatedAmbientKeys(t *testing.T) {
 			"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_BRANCH_PREFIX",
 			"GIT_PR_POLL_INTERVAL_SECONDS", "GIT_PR_POLL_TIMEOUT_SECONDS", "AGENT_MCP_TRANSPORT",
 			"AGENT_STATE_DIR", "AGENT_CREDENTIAL_STORE", "HEARTBEAT_INTERVAL_SECONDS",
-			"HEARTBEAT_TIMEOUT_SECONDS", "ENVELOPE_CLOCK_SKEW_SECONDS", "AGENT_JOURNAL_MAX_BYTES",
+			"HEARTBEAT_TIMEOUT_SECONDS", "ENVELOPE_CLOCK_SKEW_SECONDS", "ENVELOPE_MAX_AGE_SECONDS",
+			"AGENT_WORKSPACE_ROOT", "AGENT_JOURNAL_MAX_BYTES",
 			"AGENT_JOURNAL_MAX_AGE_HOURS", "AGENT_JOURNAL_DRAIN_BATCH", "AGENT_IDENTITY_PROVIDER",
 			"SPIFFE_ENDPOINT_SOCKET", "DEVICE_CERT_RENEW_BEFORE_HOURS", "SCAN_MAX_FILE_SIZE_BYTES",
 			"SCAN_WATCH_DEBOUNCE_MS", "SCAN_PARSER_CONCURRENCY", "CHUNK_TARGET_TOKENS",

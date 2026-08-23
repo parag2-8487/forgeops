@@ -5,7 +5,7 @@
   pool_pre_ping, pool_recycle=1800. Construction does NOT require a live database.
 - create_sessionmaker: expire_on_commit=False, autoflush=False.
 - MetaData naming_convention for deterministic constraint names.
-- get_session: request-scoped, commits on success, rolls back on exception.
+- get_session: connection-scoped (HTTP or WebSocket), commits on success, rolls back on exception.
 - with_ef_search: SET LOCAL hnsw.ef_search for transaction-scoped HNSW tuning.
 
 PgBouncer transaction-mode constraint:
@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from starlette.requests import Request
+from starlette.requests import HTTPConnection
 
 from .tenancy import current_tenant_id
 
@@ -96,14 +96,34 @@ def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]
     )
 
 
-async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
-    """Request-scoped session. Commits on success, rolls back on any exception.
+async def get_session(connection: HTTPConnection) -> AsyncIterator[AsyncSession]:
+    """Connection-scoped session. Commits on success, rolls back on any exception.
 
     Also issues `SET LOCAL app.tenant_id` when a tenant is in context (§6.7, D-35), so
     the value is scoped to THIS transaction and reverts at COMMIT or ROLLBACK. See
     `core.tenancy` for why `SET` would be a cross-tenant leak on a pooled connection.
+
+    THE PARAMETER IS `HTTPConnection` AND NOT `Request`, and that is what makes the agent
+    WebSocket work at all. `Request` is the HTTP-only subclass; a WebSocket scope produces a
+    `WebSocket`, and FastAPI cannot supply one for a parameter annotated `Request`. So
+    `/api/v1/ws/agent` — which depends on this — failed dependency resolution before its body
+    ever ran:
+
+        TypeError: get_session() missing 1 required positional argument: 'request'
+
+    Uvicorn reported it as `Exception in ASGI application`, then logged `connection open` and
+    `connection closed`, so from the agent's side the socket was accepted and dropped with no
+    close reason. The agent read that as a session that ended, backed off, and retried forever;
+    an approved change set therefore stayed `approved` because the command could never be
+    delivered. Nothing had noticed because until the session manager was wired the agent never
+    dialled, so this route had no client.
+
+    `HTTPConnection` is the common base of both and carries `.app`, which is the only thing this
+    function ever needed — it reads `app.state.sessionmaker` and nothing request-specific. So
+    widening the annotation removes a restriction that was never load-bearing rather than
+    special-casing the WebSocket path, and one session factory continues to serve every route.
     """
-    factory: async_sessionmaker[AsyncSession] = request.app.state.sessionmaker
+    factory: async_sessionmaker[AsyncSession] = connection.app.state.sessionmaker
     async with factory() as session:
         try:
             await apply_tenant_context(session)

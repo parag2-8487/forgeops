@@ -422,13 +422,21 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     });
 
     // ASSERTION: the real binary, in its own container, exits 0 and prints the device it was given.
+    //
+    // The exchange goes to the PLAINTEXT api port, not the mTLS listener, and that is not an
+    // oversight: `/api/v1/agents/pair/exchange` is the one unauthenticated route (§4.4), and it has
+    // to be, because the agent has no client certificate until this call issues one.
+    //
+    // The path is `/api/v1/ws/agent`. It read `/api/v1/agent/ws` here — the same transposition that
+    // was in docker-compose.e2e.yml — and it went unnoticed because `exchangeURL` only keeps the
+    // origin and appends the exchange path, so the wrong route name never mattered for pairing.
     const output = composeExec("agent", [
       "forgeops-agent",
       "pair",
       "--code",
       journey.pairingCode!,
       "--backend",
-      "ws://backend:8000/api/v1/agent/ws",
+      "ws://backend:8000/api/v1/ws/agent",
     ]);
     expect(output).toContain("Paired.");
     const match = /device id:\s+(\S+)/.exec(output);
@@ -453,7 +461,38 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     );
     expect(replay).not.toContain("Paired.");
 
-    composeExecDetached("agent", ["forgeops-agent", "run"]);
+    // ONE agent, its log kept, and a clean workspace.
+    //
+    // THE WORKSPACE IS RESET FIRST, and without that a rerun cannot pass. `/workspace` is a bind
+    // mount of `tests/e2e/fixture-project`, so the artifacts a successful run writes are still there
+    // on the next one. The generated change set then describes them as `create` with no pre-image,
+    // the file exists with different content, and `mutate` refuses the whole apply with
+    //
+    //     mutate: pre-image hash mismatch; the change-set is stale
+    //
+    // which is the atomic-apply guarantee working exactly as designed (Appendix A.9 aborts before
+    // any write) against a directory the previous run dirtied. A journey that only passes on a
+    // pristine checkout fails every time afterwards, which is the same reason pairing wipes the
+    // credential file first.
+    //
+    // Only the generated artifacts are removed, not the fixture's own files: deleting `package.json`
+    // or `server.js` would change what the readiness scorer and the generator see.
+    for (const artifact of EXPECTED_ARTIFACTS) {
+      composeExec("agent", ["rm", "-f", `/workspace/${artifact}`], { allowFailure: true });
+    }
+    composeExec("agent", ["rm", "-rf", "/workspace/.forgeops"], { allowFailure: true });
+
+    // Any previous `run` is stopped. A rerun re-pairs, and a still-running agent from the last
+    // attempt holds the PREVIOUS credential: two processes then compete for one device, the hub
+    // keeps the newest session, and the loser's heartbeats time out — which shows up as a command
+    // delivered to a session that is going away. That is an artefact of rerunning the test, so the
+    // test is what should prevent it.
+    //
+    // Output goes to a file because `exec -d` discards it, and the agent's own log is the only place
+    // a refusal reason appears: `refusing a command` names the check that failed, while the hub only
+    // records that the agent reported an error.
+    composeExec("agent", ["pkill", "-f", "forgeops-agent run"], { allowFailure: true });
+    composeExecDetached("agent", ["sh", "-c", "forgeops-agent run >> /tmp/agent-run.log 2>&1"]);
   });
 
   test("step 4 — the device is active and heartbeating", async ({ page }) => {

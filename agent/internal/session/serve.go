@@ -460,8 +460,17 @@ func (s *liveSession) read(ctx context.Context) error {
 			// A response to one of our own frames (a heartbeat acknowledgement, for
 			// instance). Nothing here needs its body; the fact that it arrived is what
 			// keeps the liveness deadline fresh, and that has already been recorded.
+			//
+			// Logged at debug WITH THE REASON, because this branch also swallows a frame the
+			// agent failed to parse. "A response" and "something we could not read" are
+			// different facts and were indistinguishable: a malformed inbound frame vanished
+			// here with no trace, which is the same observability hole the hub had on the
+			// other side of the wire.
+			s.manager.logger.Debug("inbound frame carried no method",
+				zap.Int("bytes", len(raw)), zap.Error(err))
 			continue
 		}
+		s.manager.logger.Info("inbound frame", zap.String("method", request.Method))
 
 		switch request.Method {
 		case "command.execute":
@@ -570,6 +579,14 @@ func (s *liveSession) execute(ctx context.Context, frame commandFrame) {
 	if len(outcome.Hashes) > 0 {
 		result["hashes"] = outcome.Hashes
 	}
+	// A SUCCESSFUL command used to log nothing at all, so "the agent executed it and the backend
+	// lost the result" and "the agent never received it" produced identical evidence: an empty
+	// agent log and a change set stuck at `applying`. One line per command closes that.
+	s.manager.logger.Info("command executed",
+		zap.String("command_id", commandID),
+		zap.String("operation", string(verified.Operation())),
+		zap.String("status", outcome.Status),
+		zap.Int("files", len(outcome.Hashes)))
 	s.notify(ctx, "command.result", result)
 }
 
@@ -588,7 +605,26 @@ func (s *liveSession) verify(ctx context.Context, params json.RawMessage) (*enve
 	return s.manager.verifier.Verify(ctx, params)
 }
 
-// beat sends `session.heartbeat` every interval and enforces the timeout in both directions.
+// beat sends `session.heartbeat` every interval and checks the backend is still answering.
+//
+// THE LIVENESS CHECK IS A PING, and it used to be "have we received anything in 90 s?" — which
+// dropped every healthy session on a 90-second cycle. §7.3 makes `session.heartbeat` a
+// NOTIFICATION: the hub computes a result (`server_time`, the active bundle digest, D-80's rotated
+// certificate) and `_respond` correctly discards it, because JSON-RPC forbids answering a frame with
+// a null id. Only `command.result` is marked as correlated in that table. So a healthy backend with
+// nothing to say sends the agent NOTHING, and inbound silence is the normal idle state rather than
+// evidence of death.
+//
+// The observable symptom was `heartbeat timeout; dropping the session` exactly 90 s after every
+// connect, in a loop, while the hub logged a fresh `agent session connected` each time — and a
+// command dispatched near the boundary went to a session that was already going away.
+//
+// §7.3's 90 s rule is the HUB's ("Missing for 90 s ⇒ the hub drops the session and marks the device
+// offline"). The agent still needs its own check, because a half-open socket accepts writes long
+// after the peer is gone, so `Send` succeeding proves nothing. A WebSocket ping is the mechanism for
+// that: it is transport-level, so it adds no tenth JSON-RPC method, and the pong is real evidence
+// from the far end. The timeout is reused as the ping deadline, so the agent still notices a dead
+// backend inside the window §7.4 allows.
 func (s *liveSession) beat(ctx context.Context, cancel context.CancelFunc) {
 	ticker := s.manager.newTicker(s.info.HeartbeatInterval)
 	defer ticker.Stop()
@@ -598,16 +634,6 @@ func (s *liveSession) beat(ctx context.Context, cancel context.CancelFunc) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C():
-			if s.stale() {
-				// Silence past the timeout is a dead session even though the socket is
-				// open. §7.4 drops it and reconnects; holding it open would leave the
-				// agent believing it is reachable.
-				s.manager.logger.Info("heartbeat timeout; dropping the session",
-					zap.Duration("timeout", s.info.HeartbeatTimeout))
-				_ = s.transport.Close(connection.StatusGoingAway, "heartbeat timeout")
-				cancel()
-				return
-			}
 			params := map[string]any{
 				"seq":            s.seq(),
 				"uptime_seconds": int(s.manager.uptime().Seconds()),
@@ -618,6 +644,27 @@ func (s *liveSession) beat(ctx context.Context, cancel context.CancelFunc) {
 				cancel()
 				return
 			}
+			// Bounded by the heartbeat timeout: a pong that has not arrived by then means the
+			// backend is not answering, which is the condition §7.4 wants acted on.
+			pingCtx, done := context.WithTimeout(ctx, s.info.HeartbeatTimeout)
+			err := s.transport.Ping(pingCtx)
+			done()
+			if err != nil {
+				if ctx.Err() != nil {
+					// The session is shutting down; the ping was cancelled with it rather than
+					// refused by the peer. Not a liveness failure.
+					return
+				}
+				s.manager.logger.Info("the backend stopped answering pings; dropping the session",
+					zap.Duration("timeout", s.info.HeartbeatTimeout), zap.Error(err))
+				_ = s.transport.Close(connection.StatusGoingAway, "heartbeat timeout")
+				cancel()
+				return
+			}
+			// A pong is evidence from the far end, so it refreshes the liveness clock exactly as an
+			// inbound frame does. `stale` is still read by `agent.status`, which reports how long it
+			// has been since anything was heard.
+			s.touch()
 		}
 	}
 }
@@ -754,7 +801,19 @@ func commandIDOf(params json.RawMessage) string {
 	return probe.CommandID
 }
 
+// reportError sends `agent.error` AND records it locally.
+//
+// The local log was missing, and its absence is what made this class of failure undiagnosable.
+// Three of `execute`'s refusal paths — no dispatcher, a stale bundle, and a rolled-back apply —
+// called this and wrote nothing to the agent's own log, so a refused command left an agent log
+// containing only "agent starting". On the backend the code arrives in `agent.error`'s params and is
+// logged into a structured `extra` field, which a plain-text log format drops. The result was a
+// change set stuck at `applying` with the reason recorded nowhere a human was looking.
 func (s *liveSession) reportError(ctx context.Context, code, message, commandID string) {
+	s.manager.logger.Warn("refusing a command",
+		zap.String("code", code),
+		zap.String("command_id", commandID),
+		zap.String("reason", message))
 	params := map[string]any{"code": code, "message": message, "retryable": false}
 	if commandID != "" {
 		params["command_id"] = commandID

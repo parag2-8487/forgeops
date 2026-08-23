@@ -7,8 +7,10 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -467,6 +469,12 @@ type exchangeResponse struct {
 	CertFingerprint string `json:"cert_fingerprint"`
 	CertNotAfter    string `json:"cert_not_after"`
 	RenewAfter      string `json:"renew_after"`
+	// PolicyBundle is base64 (the bundle is a gzipped tar, so it is not text) and
+	// PolicyBundleDigest is `sha256:…`. Both are absent when the project has no published
+	// bundle — absent rather than empty, per D-30, so "none published" is distinguishable
+	// from "published and empty".
+	PolicyBundle       *string `json:"policy_bundle"`
+	PolicyBundleDigest *string `json:"policy_bundle_digest"`
 }
 
 // problemDocument is the RFC 9457 body the backend returns on every failure path.
@@ -585,13 +593,53 @@ func credentialsFrom(r *exchangeResponse, keyPEM []byte, sentFingerprint string)
 		return zero, fmt.Errorf("session: the issued certificate does not match the local key: %w", err)
 	}
 
+	// The pinned bundle. Decoded and length-checked here for the same reason every other
+	// field is: a malformed bundle stored now becomes a `policy-bundle-stale` refusal at every
+	// future command, with an error that points at policy rather than at pairing.
+	//
+	// A MISSING bundle is not an error. The project may have none published yet, and §1.7's
+	// order (publish, then pair) is a recommendation to the operator rather than something the
+	// exchange can enforce. The agent then holds no bundle, `Current` is false, and mutations
+	// are refused — which is D-25's direction: absent policy is never permission.
+	var bundle []byte
+	var bundleDigest string
+	if r.PolicyBundleDigest != nil && *r.PolicyBundleDigest != "" {
+		bundleDigest = *r.PolicyBundleDigest
+		if !strings.HasPrefix(bundleDigest, "sha256:") {
+			return zero, fmt.Errorf(
+				"session: the pinned policy bundle digest is not sha256-prefixed")
+		}
+		if r.PolicyBundle == nil || *r.PolicyBundle == "" {
+			return zero, fmt.Errorf(
+				"session: the exchange pinned a policy bundle digest but sent no bundle")
+		}
+		decoded, err := base64.StdEncoding.DecodeString(*r.PolicyBundle)
+		if err != nil {
+			return zero, fmt.Errorf("session: the policy bundle is not valid base64")
+		}
+		if len(decoded) == 0 {
+			return zero, fmt.Errorf("session: the policy bundle is empty")
+		}
+		// Verified against the digest the backend pinned, so a bundle corrupted in transit is
+		// refused here rather than enforced. The digest is what the chokepoint compares, so a
+		// bundle that does not match it is not the policy this device was authorised under.
+		sum := sha256.Sum256(decoded)
+		if computed := "sha256:" + hex.EncodeToString(sum[:]); computed != bundleDigest {
+			return zero, fmt.Errorf(
+				"session: the policy bundle does not match its pinned digest")
+		}
+		bundle = decoded
+	}
+
 	return Credentials{
-		DeviceID:    r.DeviceID,
-		DeviceToken: token,
-		EnvelopeKey: envelopeKey,
-		ClientCert:  certPEM,
-		ClientKey:   keyPEM,
-		CABundle:    caPEM,
+		DeviceID:           r.DeviceID,
+		DeviceToken:        token,
+		EnvelopeKey:        envelopeKey,
+		ClientCert:         certPEM,
+		ClientKey:          keyPEM,
+		CABundle:           caPEM,
+		PolicyBundle:       bundle,
+		PolicyBundleDigest: bundleDigest,
 	}, nil
 }
 

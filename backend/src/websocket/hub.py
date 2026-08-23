@@ -126,6 +126,16 @@ CLOSE_HEARTBEAT_TIMEOUT: Final[int] = 4408
 #: Redis key shapes. All prefixed, so one Redis can serve more than this product.
 _SESSION_KEY: Final[str] = "forgeops:agentsession:{device_id}"
 _COMMAND_STREAM: Final[str] = "forgeops:agentcmd:{device_id}"
+
+#: Maps a command id back to the change set it applies, so any replica can finalise the result.
+#: §7.3 fixes `command.result`'s params at `command_id`, `status`, `output`, `backup_manifest?` and
+#: `hashes?` — none of which names the change set — and no column carries the pairing either.
+_COMMAND_CHANGE_SET: Final[str] = "forgeops:cmdchangeset:{command_id}"
+
+#: Comfortably longer than the longest operation timeout the agent applies (two minutes for a
+#: write), so a slow apply still finds its mapping, and short enough that the key is not a second
+#: durable record of every command ever sent.
+_COMMAND_CHANGE_SET_TTL_SECONDS: Final[int] = 900
 _RESULT_CHANNEL: Final[str] = "forgeops:cmdresult:{command_id}"
 _PROGRESS_CHANNEL: Final[str] = "forgeops:sse:command:{command_id}"
 
@@ -298,6 +308,23 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+@runtime_checkable
+class CommandResultRecorder(Protocol):
+    """How a `command.result` becomes a change-set state transition (§3.6, §2.2.1).
+
+    Declared HERE, by the consumer, and implemented in `governance/`. The hub must not be able to
+    move a change set itself — §2.2.1 confines that to the chokepoint — but it is the only component
+    that receives the result, so the two are joined by one method. Same arrangement as `ProgressSink`
+    and `DeviceDirectory`.
+
+    Optional on `HubDeps`: a hub composed without one still delivers commands and still resolves the
+    futures, it simply cannot finalise. That WAS the state, and it is why a fully successful apply
+    left its change set at `applying` for ever with an empty rollback manifest.
+    """
+
+    async def record(self, *, change_set_id: uuid.UUID, status: str, backup_manifest: Any) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
 class HubDeps:
     """Everything the hub needs, composed once in `create_app`'s lifespan.
@@ -314,6 +341,8 @@ class HubDeps:
     heartbeat_interval_seconds: int = 30
     heartbeat_timeout_seconds: int = 90
     clock: Callable[[], datetime] = _utc_now
+    #: Finalises a change set when its `command.result` arrives. See CommandResultRecorder.
+    results: Any = None
 
 
 class AgentHub:
@@ -638,6 +667,47 @@ class AgentHub:
                 json.dumps(dict(params), separators=(",", ":")),
             )
 
+        # Finalise the change set. Guarded so a hub composed without a recorder behaves exactly as
+        # before rather than raising on a healthy path — but a missing recorder is logged, because
+        # silently not finalising is the defect this exists to fix.
+        recorder = self._deps.results
+        if recorder is None:
+            logger.warning(
+                "no CommandResultRecorder is composed: the change set cannot leave `applying`",
+                extra={"command_id": command_id},
+            )
+            return
+        change_set_id = None
+        with contextlib.suppress(Exception):
+            change_set_id = await self._deps.redis.get(_COMMAND_CHANGE_SET.format(command_id=command_id))
+        if not change_set_id:
+            logger.warning(
+                "a command result arrived with no known change set; it cannot be finalised",
+                extra={"command_id": command_id},
+            )
+            return
+        try:
+            final = await recorder.record(
+                change_set_id=uuid.UUID(str(change_set_id)),
+                status=str(params.get("status") or ""),
+                backup_manifest=params.get("backup_manifest"),
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed finalise must not close a healthy socket
+            logger.error(
+                f"recording the command result failed: {type(exc).__name__}: {exc}",
+                extra={
+                    "command_id": command_id,
+                    "change_set_id": str(change_set_id),
+                    "reason": f"{type(exc).__name__}: {exc}",
+                },
+                exc_info=True,
+            )
+            return
+        logger.info(
+            "change set finalised from the agent's result",
+            extra={"command_id": command_id, "change_set_id": str(change_set_id), "status": final},
+        )
+
     # ── delivery (§2.2.1's confined surface) ──────────────────────────────────────────────
 
     async def send_command(self, *, device_id: uuid.UUID, command: Any) -> CommandFuture:
@@ -654,6 +724,25 @@ class AgentHub:
         """
         envelope = command.as_wire() if hasattr(command, "as_wire") else dict(command)
         command_id = str(envelope.get("command_id") or uuid.uuid4())
+
+        # Remember which change set this command belongs to, so ANY replica that receives the
+        # result can finalise it. `command.result`'s params are fixed by §7.3 and carry only the
+        # command id, and nothing in the schema maps one to the other — so without this the result
+        # arrives with no way to know what it completed, which is why nothing ever left `applying`.
+        #
+        # Redis rather than a column, because the mapping is needed only between delivery and
+        # result: it is bounded by the envelope's own freshness window plus the operation timeout,
+        # and a durable row would outlive its usefulness. The TTL is generous for the same reason
+        # the apply timeout is two minutes — losing the mapping leaves the set `applying` and
+        # retryable, which is the failure mode this whole path already treats as recoverable.
+        change_set_id = str((envelope.get("args") or {}).get("change_set_id") or "")
+        if change_set_id:
+            with contextlib.suppress(Exception):
+                await self._deps.redis.set(
+                    _COMMAND_CHANGE_SET.format(command_id=command_id),
+                    change_set_id,
+                    ex=_COMMAND_CHANGE_SET_TTL_SECONDS,
+                )
 
         # Refuse rather than enqueue for a device with no live session, and fail closed when Redis
         # cannot answer. This preserves exactly what `UnavailableCommandSink` guaranteed before the
@@ -750,31 +839,110 @@ class AgentHub:
         """
         stream = _COMMAND_STREAM.format(device_id=local.device_id)
         last_id = "$"
-        while not local.closing:
-            try:
-                entries = await self._deps.redis.xread({stream: last_id}, count=16, block=1000)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - a Redis blip must not close a healthy socket
-                await asyncio.sleep(0.5)
-                continue
-            if not entries:
-                continue
-            for _stream_name, records in entries:
-                for entry_id, fields in records:
-                    last_id = entry_id if isinstance(entry_id, str) else entry_id.decode("utf-8")
-                    raw = fields.get("frame") or fields.get(b"frame")
-                    if isinstance(raw, bytes | bytearray):
-                        raw = raw.decode("utf-8")
-                    if not raw:
-                        continue
-                    with contextlib.suppress(json.JSONDecodeError):
-                        frame = json.loads(raw)
+        logger.info(
+            "agent command delivery started",
+            extra={"device_id": str(local.device_id), "stream": stream},
+        )
+        failures = 0
+        polls = 0
+        try:
+            while not local.closing:
+                try:
+                    entries = await self._deps.redis.xread({stream: last_id}, count=16, block=1000)
+                    failures = 0
+                    polls += 1
+                    if polls == 1 or polls % 15 == 0:
+                        logger.info(
+                            f"agent command delivery polling {stream} cursor={last_id} polls={polls}",
+                            extra={"device_id": str(local.device_id), "polls": polls},
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - a Redis blip must not close a healthy socket
+                    # LOGGED, and it was not. A `continue` after a bare `sleep` turns a PERSISTENT
+                    # failure into an invisible one: the socket stays open, the device keeps
+                    # heartbeating, `send_command` keeps succeeding because the stream write is a
+                    # different call — and no command is ever delivered. The change set then sits at
+                    # `applying` with nothing in flight, which is the one state the chokepoint's
+                    # send-then-advance ordering exists to avoid.
+                    #
+                    # The first failure and every tenth after it, so a genuine blip costs one line
+                    # and a broken client cannot flood the log.
+                    failures += 1
+                    if failures == 1 or failures % 10 == 0:
+                        logger.warning(
+                            "agent command delivery could not read the stream",
+                            extra={
+                                "device_id": str(local.device_id),
+                                "stream": stream,
+                                "reason": f"{type(exc).__name__}: {exc}",
+                                "consecutive_failures": failures,
+                            },
+                        )
+                    await asyncio.sleep(0.5)
+                    continue
+                if not entries:
+                    continue
+                for _stream_name, records in entries:
+                    for entry_id, fields in records:
+                        last_id = entry_id if isinstance(entry_id, str) else entry_id.decode("utf-8")
+                        raw = fields.get("frame") or fields.get(b"frame")
+                        if isinstance(raw, bytes | bytearray):
+                            raw = raw.decode("utf-8")
+                        if not raw:
+                            continue
+                        # NOT `contextlib.suppress(json.JSONDecodeError)`, which discarded an
+                        # unparseable frame without a trace. That is indistinguishable from a frame
+                        # that was never written: the cursor has already advanced past the entry, so
+                        # it is gone and nothing anywhere says a command was dropped. It cost real
+                        # time during this session's diagnosis — a hand-injected probe frame mangled
+                        # by shell quoting vanished exactly as a genuine encoding bug would.
+                        try:
+                            frame = json.loads(raw)
+                        except json.JSONDecodeError as exc:
+                            logger.error(
+                                "agent command frame discarded: it is not valid JSON",
+                                extra={
+                                    "device_id": str(local.device_id),
+                                    "stream": stream,
+                                    "entry_id": last_id,
+                                    "reason": str(exc),
+                                },
+                            )
+                            continue
                         command_id = str(frame.get("id") or "")
                         if command_id:
                             loop = asyncio.get_running_loop()
                             local.pending.setdefault(command_id, loop.create_future())
                         await local.send(frame)
+                        logger.info(
+                            "agent command delivered to the socket",
+                            extra={
+                                "device_id": str(local.device_id),
+                                "method": str(frame.get("method") or ""),
+                                "command_id": command_id,
+                            },
+                        )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            # A delivery loop that dies takes command delivery with it and, before this, said
+            # nothing: `serve` awaits the task inside `contextlib.suppress(..., Exception)`, so the
+            # traceback was discarded and the session stayed up looking healthy.
+            logger.error(
+                "agent command delivery stopped",
+                extra={
+                    "device_id": str(local.device_id),
+                    "stream": stream,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "polls": polls,
+                },
+            )
+            raise
+        logger.warning(
+            "agent command delivery loop ended while the session was open",
+            extra={"device_id": str(local.device_id), "stream": stream, "polls": polls},
+        )
 
     async def broadcast_revocation(self, device_id: uuid.UUID) -> None:
         """Close this replica's socket for `device_id`, if it holds one (§3.1's proactive half).

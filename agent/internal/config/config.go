@@ -22,6 +22,7 @@ type Config struct {
 	Session         SessionConfig
 	Journal         JournalConfig
 	Identity        IdentityConfig
+	Executor        ExecutorConfig
 	Scanner         ScannerConfig
 	Validator       ValidatorConfig
 }
@@ -72,11 +73,36 @@ type SessionConfig struct {
 	CredentialStore   string
 	HeartbeatInterval time.Duration
 	HeartbeatTimeout  time.Duration
+	// EnvelopeMaxAge is ENVELOPE_MAX_AGE_SECONDS (§7.6, default 300s): how far ahead of
+	// now an envelope's `not_after` may sit.
+	//
+	// It was in `.env.example` and read by nobody, so the agent verified against
+	// `NewVerifier`'s hardcoded 300s default and an operator who changed the setting saw
+	// no effect. It also sizes the replay guard's age window, which is why the two must
+	// come from one value: a nonce set that forgets sooner than an envelope stays fresh
+	// would narrow uniqueness to "unique among the recent", which is not what §7.6 says.
+	EnvelopeMaxAge time.Duration
 	// EnvelopeClockSkew is the tolerated clock difference when checking an envelope's
 	// freshness (§10.4). Separate from the max age because they fail differently: a
 	// stale envelope is a slow backend, a skewed one is a wrong clock, and `doctor`
 	// reports the measured skew so the second is diagnosable.
 	EnvelopeClockSkew time.Duration
+}
+
+// ExecutorConfig bounds where named operations may write (§10.5, §7.7).
+type ExecutorConfig struct {
+	// WorkspaceRoot is the directory every path in a change set is resolved against and
+	// confined to.
+	//
+	// Configuration and NOT a member of the envelope, which is the whole point: a root
+	// carried in the signed arguments would let a command relocate the write boundary,
+	// and a signature proves who sent something rather than that where it points is safe.
+	// `executor`'s `applyArgs` deliberately has no `Root` field for the same reason.
+	//
+	// Empty means "resolve the process working directory at use time", following
+	// StateDir's precedent above: resolving it during Load would make configuration
+	// depend on the filesystem, and the container sets it explicitly anyway.
+	WorkspaceRoot string
 }
 
 // JournalConfig bounds the offline outbound queue (§10.3, D-41, NFR-18).
@@ -185,6 +211,8 @@ func Load(getenv func(string) string) (*Config, error) {
 			heartbeatTimeout, heartbeatInterval))
 	}
 	envelopeClockSkew := parseDurationDefault(getenv, "ENVELOPE_CLOCK_SKEW_SECONDS", "60", &errs)
+	envelopeMaxAge := parseDurationDefault(getenv, "ENVELOPE_MAX_AGE_SECONDS", "300", &errs)
+	workspaceRoot := getenvDefault(getenv, "AGENT_WORKSPACE_ROOT", "")
 
 	journalMaxBytes := parseInt64Default(getenv, "AGENT_JOURNAL_MAX_BYTES", 67108864, 0, &errs)
 	journalMaxAge := parseHoursDefault(getenv, "AGENT_JOURNAL_MAX_AGE_HOURS", "168", &errs)
@@ -257,6 +285,7 @@ func Load(getenv func(string) string) (*Config, error) {
 			CredentialStore:   credentialStore,
 			HeartbeatInterval: heartbeatInterval,
 			HeartbeatTimeout:  heartbeatTimeout,
+			EnvelopeMaxAge:    envelopeMaxAge,
 			EnvelopeClockSkew: envelopeClockSkew,
 		},
 		Journal: JournalConfig{
@@ -268,6 +297,9 @@ func Load(getenv func(string) string) (*Config, error) {
 			Provider:             identityProvider,
 			SPIFFEEndpointSocket: spiffeSocket,
 			CertRenewBefore:      certRenewBefore,
+		},
+		Executor: ExecutorConfig{
+			WorkspaceRoot: workspaceRoot,
 		},
 		Scanner: ScannerConfig{
 			MaxFileSize:       scanMaxFileSize,

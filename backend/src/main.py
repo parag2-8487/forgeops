@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -197,6 +198,38 @@ async def _check_opa(http: Any, opa_url: str) -> None:
     """
     response = await http.get(f"{opa_url.rstrip('/')}/health", timeout=2.0)
     response.raise_for_status()
+
+
+class _ChangeSetResultRecorder:
+    """Joins the hub's `command.result` to the chokepoint's change-set state (§3.6, §2.2.1).
+
+    The hub declares `CommandResultRecorder` and must not move a change set itself; the chokepoint
+    owns that state and never sees a socket. This is the composition-root adapter between them, and
+    it is the only thing either side needs to know about the other.
+
+    The chokepoint is resolved LAZILY, because the hub is composed before it in this lifespan — the
+    hub is a dependency of the chokepoint's `sink`, so the order cannot be reversed. Resolving at
+    call time is safe: a result cannot arrive before startup has finished, since it requires an
+    agent session and a delivered command.
+
+    It opens its own session because it runs on the socket's task, not inside a request.
+    """
+
+    def __init__(self, sessionmaker: Any, chokepoint: Callable[[], Any]) -> None:
+        self._sessionmaker = sessionmaker
+        self._chokepoint = chokepoint
+
+    async def record(self, *, change_set_id: uuid.UUID, status: str, backup_manifest: Any) -> str:
+        chokepoint = self._chokepoint()
+        if chokepoint is None:
+            raise RuntimeError("the governance chokepoint is not composed yet")
+        async with self._sessionmaker() as session:
+            return await chokepoint.record_command_result(
+                session,
+                change_set_id=change_set_id,
+                status=status,
+                backup_manifest=backup_manifest,
+            )
 
 
 @asynccontextmanager
@@ -437,6 +470,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             progress=RedisProgressSink(redis_client),
             heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
             heartbeat_timeout_seconds=settings.heartbeat_timeout_seconds,
+            results=_ChangeSetResultRecorder(sessionmaker, lambda: getattr(app.state, "governance_chokepoint", None)),
         )
     )
     app.state.agent_hub = agent_hub

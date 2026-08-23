@@ -160,3 +160,12 @@ PRESENTATION-GUIDE.md
 # whether or not the values matter, and the next person to add a real value to it will not notice
 # that the rule changed.
 credentials.md
+
+# Architecture diagrams generated for the presentation, from a snapshot of the tree at one
+# commit. Same reasoning as `PRESENTATION-GUIDE.md` above: nothing gates them, so a committed
+# copy becomes a diagram that describes a tree it no longer matches — the exact defect this
+# repository has spent five sessions correcting in `api.md`, `architecture.md` and
+# `deployment.md`. They carry the commit they were read from and are meant to be regenerated,
+# not maintained. Folding them into `docs/architecture.md` is fine, but only alongside a check
+# that asserts every service they name still exists in `docker-compose.yml`.
+ARCHITECTURE-DIAGRAMS.md

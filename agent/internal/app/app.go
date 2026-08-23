@@ -257,6 +257,10 @@ func (a *App) MCP() *mcp.Server       { return a.mcpSrv }
 // The error is memoised with the manager: a failed keychain probe fails the same way on
 // every call, and retrying it per command would produce a different diagnosis for the
 // same machine depending on which command ran.
+//
+// The dependency set is assembled by `buildSessionDeps`, which is where the reasoning for each
+// collaborator lives. It used to be `{Store, Logger, AgentVersion}` and nothing else, so `Serve`
+// refused at the first dial for want of an identity provider.
 func (a *App) Session() (*session.Manager, error) {
 	a.sessionOnce.Do(func() {
 		store, err := session.NewStore(a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
@@ -264,11 +268,12 @@ func (a *App) Session() (*session.Manager, error) {
 			a.sessionErr = err
 			return
 		}
-		a.sessionMgr, a.sessionErr = session.NewManager(a.cfg.BackendWSSURL, session.Deps{
-			Store:        store,
-			Logger:       a.logger.Named("session"),
-			AgentVersion: a.bi.Version,
-		})
+		deps, err := a.buildSessionDeps(store)
+		if err != nil {
+			a.sessionErr = err
+			return
+		}
+		a.sessionMgr, a.sessionErr = session.NewManager(a.cfg.BackendWSSURL, deps)
 	})
 	return a.sessionMgr, a.sessionErr
 }

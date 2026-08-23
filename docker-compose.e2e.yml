@@ -50,12 +50,33 @@ services:
     environment:
       # Over the compose network, so the journey exercises the real WebSocket path rather than a
       # loopback shortcut that would not survive a container boundary.
-      AGENT_BACKEND_WSS_URL: "ws://backend:8000/api/v1/agent/ws"
+      #
+      # `wss://` AND A DEDICATED LISTENER, because the hub authenticates with two secrets and one of
+      # them is a client certificate. `TlsPeerCertificate` reads it from the TLS connection the
+      # backend terminated and returns None on a plaintext socket, so `session.connect` over `ws://`
+      # was refused with "client certificate and bearer device token are both required". Requiring a
+      # client certificate is a property of the LISTENER, so it cannot be turned on for the port the
+      # browser uses — see `backend/src/agent_listener.py` for why this is a second listener rather
+      # than a trusted header.
+      #
+      # THE PATH IS `/api/v1/ws/agent`, and this said `/api/v1/agent/ws`. `WS_AGENT_PATH` in
+      # `backend/src/websocket/routes.py` and `.env.example` both spell it the first way; only this
+      # file had the segments transposed. It was harmless for exactly as long as the agent never
+      # dialled — `App.Run` served a Phase 0 stub that returned nil without opening a socket — so
+      # nothing ever resolved the URL. `socketURL` APPENDS the route when the configured URL does
+      # not already end in it, which is the right behaviour for a bare origin and means the
+      # transposed value would have produced `/api/v1/agent/ws/api/v1/ws/agent` and a 404 that
+      # looks like the hub being down.
+      AGENT_BACKEND_WSS_URL: "wss://backend-agent:8443/api/v1/ws/agent"
       AGENT_STATE_DIR: "/var/lib/forgeops"
       # `file` rather than `auto`: `auto` prefers an OS keychain, and a container has none, so
       # leaving it to fall back would make the journey depend on a negative probe succeeding.
       AGENT_CREDENTIAL_STORE: "file"
       AGENT_IDENTITY_PROVIDER: "paired_device"
+      # Where `changeset.apply` may write, and the only place it may. The executor confines every
+      # path in a change set to this root; it is configuration and not an envelope member, because
+      # a root carried in signed arguments would let a command relocate its own write boundary.
+      AGENT_WORKSPACE_ROOT: "/workspace"
       AGENT_LOG_FORMAT: "json"
     volumes:
       # The fixture project, read-write because the journey's whole point is that the agent WRITES
@@ -66,8 +87,69 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      backend-agent:
+        condition: service_healthy
     # The agent is a client. It must not be reachable from outside the compose network, and it
     # publishes no port.
+    networks:
+      default: {}
+
+  # ── the agent's own mTLS listener ─────────────────────────────────────────
+  #
+  # The SAME application, on a second port, with `ssl_cert_reqs=CERT_REQUIRED`. It exists because
+  # `/api/v1/ws/agent` authenticates the peer with a client certificate AND a bearer token, and a
+  # client certificate can only be required for a whole TLS listener — not for one route. The
+  # browser's port must stay plaintext-friendly, so the two audiences get two listeners.
+  #
+  # Adding this is what made the handshake possible at all. Before it, the agent dialled
+  # `ws://backend:8000`, `TlsPeerCertificate` correctly found no peer certificate on a plaintext
+  # socket, and every `session.connect` was refused with "client certificate and bearer device token
+  # are both required" — so an approved change set could never be delivered.
+  #
+  # No published port: only the agent talks to it, over the compose network. Publishing it would
+  # expose an mTLS endpoint whose whole access-control story is the client certificate.
+  backend-agent:
+    build: { context: ./backend, target: runtime }
+    # Spelled out rather than `*service-env`: a YAML anchor is file-scoped, and this service exists
+    # only in this file so there is no base definition to merge one in from. The two paths and their
+    # `required` flags are copied from `x-service-env` in docker-compose.yml deliberately — the
+    # listener must see the SAME configuration as the API it is a second listener for, and in
+    # particular the same INTERNAL_CA_* pair, or it would issue its server certificate from a
+    # different CA than the one the agent was given at pairing.
+    env_file:
+      - path: ./.env.example
+        required: true
+      - path: ./.env
+        required: false
+    environment:
+      # `backend-agent` is the name the agent dials, so it must be in the server certificate's SAN
+      # list or the agent's own verification rejects it.
+      AGENT_TLS_SERVER_NAMES: "backend-agent,localhost,127.0.0.1"
+      AGENT_TLS_PORT: "8443"
+    command: ["python", "-m", "src.agent_listener"]
+    depends_on:
+      postgres: { condition: service_started }
+      redis: { condition: service_started }
+      opa: { condition: service_started }
+    healthcheck:
+      # Checked THROUGH mTLS, presenting the probe certificate the listener issues at start. So a
+      # green check means the chain, the server key and `CERT_REQUIRED` all work — not merely that a
+      # process holds the port. `/health` performs no dependency I/O (§4.4), so this stays liveness.
+      #
+      # A certificate is REQUIRED here, not optional: `--ssl-cert-reqs 2` is enforced for every
+      # client, so a probe without one fails the handshake, the container is marked unhealthy, and
+      # the agent's `depends_on: service_healthy` never releases. That is precisely what happened
+      # before this presented one — the journey reported `service "agent" is not running`.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import ssl,urllib.request;d='/tmp/forgeops-agent-tls';ctx=ssl.create_default_context(cafile=d+'/ca.crt');ctx.load_cert_chain(d+'/probe.crt',d+'/probe.key');urllib.request.urlopen('https://localhost:8443/health',timeout=5,context=ctx)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     networks:
       default: {}
 

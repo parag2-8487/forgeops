@@ -33,6 +33,24 @@ type Credentials struct {
 	ClientCert  []byte `json:"client_cert"`  // PEM, <=24h
 	ClientKey   []byte `json:"client_key"`   // PEM, generated locally, never transmitted
 	CABundle    []byte `json:"ca_bundle"`    // PEM
+
+	// PolicyBundle and PolicyBundleDigest are the bundle the backend pinned to this device at
+	// the pairing exchange (§10.6, D-30).
+	//
+	// They belong in the credential set and not beside it, because they are pinned by the same
+	// single-use exchange that issues the token: the backend writes
+	// `agent_devices.policy_bundle_digest` in that transaction, the governance chokepoint then
+	// admits a submission only when the device's pin equals the project's active digest, and
+	// every minted envelope carries that digest in `policy_context.bundle_digest`. Storing the
+	// digest anywhere else would let the two drift, and a drifted digest refuses every command
+	// with `policy-bundle-stale` — a correct refusal about a fact the agent got wrong.
+	//
+	// This does NOT widen what can be replayed, which is the bound the type comment sets. A
+	// bundle digest is a public content hash and the bundle is signed policy the backend
+	// published; neither is an authority to do anything, unlike the cached envelope D-41
+	// refuses to store.
+	PolicyBundle       []byte `json:"policy_bundle,omitempty"`
+	PolicyBundleDigest string `json:"policy_bundle_digest,omitempty"`
 }
 
 // Store persists the device credential set.

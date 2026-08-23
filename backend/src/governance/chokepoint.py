@@ -49,6 +49,7 @@ one outcome this whole module exists to prevent.
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -497,7 +498,12 @@ class GovernanceChokepoint:
             decision=decision,
             report=report,
             operation=APPLY_OPERATION,
-            args={"change_set_id": str(change_set_id), "version": 1, "item_count": len(req.items)},
+            args={
+                "change_set_id": str(change_set_id),
+                "version": 1,
+                "item_count": len(req.items),
+                "entries": await self._apply_entries(session, change_set_id),
+            },
             status_after_delivery="applying",
             outcome="applying",
         )
@@ -591,7 +597,12 @@ class GovernanceChokepoint:
             decision=decision,
             report=None,
             operation=APPLY_OPERATION,
-            args={"change_set_id": str(change_set_id), "version": version + 1, "approval_id": str(approval_id)},
+            args={
+                "change_set_id": str(change_set_id),
+                "version": version + 1,
+                "approval_id": str(approval_id),
+                "entries": await self._apply_entries(session, change_set_id),
+            },
             status_after_delivery="applying",
             outcome="applying",
             blast_radius_score=int(row["blast_radius_score"]),
@@ -719,7 +730,10 @@ class GovernanceChokepoint:
                 detail=f"change set {change_set_id} is {row['status']}; only an applied set can be reverted (§3.6)",
             )
         handle = await session.execute(
-            text("SELECT id, consumed, expires_at FROM rollback_handles WHERE change_set_id = :cs FOR UPDATE"),
+            text(
+                "SELECT id, consumed, expires_at, backup_manifest FROM rollback_handles "
+                "WHERE change_set_id = :cs FOR UPDATE"
+            ),
             {"cs": change_set_id},
         )
         handle_row = handle.mappings().first()
@@ -838,6 +852,12 @@ class GovernanceChokepoint:
                 "change_set_id": str(reverse_id),
                 "reverts_change_set_id": str(change_set_id),
                 "rollback_handle_id": str(handle_row["id"]),
+                # The manifest the apply returned, round-tripped. `executor.revertArgs` reads
+                # `backup_manifest` and nothing else, and it MUST arrive inside the signed args: the
+                # agent deliberately keeps no local index of manifests (D-41 forbids persisting
+                # anything that authorises a mutation), so a revert that only named a handle id
+                # would have nothing to restore from.
+                "backup_manifest": handle_row["backup_manifest"],
             },
             status_after_delivery="applying",
             outcome="reverting",
@@ -1347,6 +1367,123 @@ class GovernanceChokepoint:
             blast_radius_verdict=(report.verdict if report is not None else (blast_radius_verdict or "")),
             command=command,
         )
+
+    async def record_command_result(
+        self,
+        session: AsyncSession,
+        *,
+        change_set_id: uuid.UUID,
+        status: str,
+        backup_manifest: Any = None,
+    ) -> str:
+        """Finalise a change set from the agent's `command.result` (§3.6, Appendix A.9).
+
+        WITHOUT THIS NOTHING EVER LEFT `applying`. `_deliver` advances to `applying` after a
+        successful send, `send_command` returns a `CommandFuture` that no caller awaited, and no
+        code anywhere wrote `applied`. So a fully successful apply — envelope verified, files
+        written, `command.result` returned — left the change set at `applying` for ever, and the
+        `rollback_handles` row kept the empty `'{}'` manifest that `_reserve_rollback_handle`'s
+        docstring says is "filled by the agent's `ApplyReport`". The reverting path then had nothing
+        to restore from.
+
+        It lives here rather than in the hub because §2.2.1 confines change-set state to
+        `governance/`: the hub is a transport and must not be able to move a change set. The hub
+        calls this through a one-method Protocol it declares itself, which is the same arrangement
+        `ProgressSink` and `DeviceDirectory` already use.
+
+        NO AUDIT ROW IS WRITTEN, deliberately. Q-04 requires exactly one row per transit and
+        `_deliver` already documents that delivery is the transit's outcome leaving the building
+        rather than a transit of its own. The result arriving is the other end of that same
+        delivery, so a row here would be the second for one transit.
+
+        Returns the status it set, so a caller can log what happened.
+        """
+        succeeded = status == "succeeded"
+        # `failed`, not `rolled_back`: the agent rolls back internally and reports that through
+        # `agent.error` (code `apply-rolled-back`), so a `command.result` that arrives at all means
+        # the operation ran to completion and is reporting its own outcome.
+        final = "applied" if succeeded else "failed"
+
+        # Guarded on the current status so a duplicate result — a redelivered frame, or two replicas
+        # both resolving the same future — cannot move a set that has already moved on. `applying`
+        # is the only state this transition is valid from (§3.6).
+        result = await session.execute(
+            text(
+                "UPDATE change_sets SET status = :status, applied_at = :applied_at "
+                "WHERE id = :id AND status = 'applying'"
+            ),
+            {
+                "status": final,
+                "applied_at": datetime.now(UTC) if succeeded else None,
+                "id": change_set_id,
+            },
+        )
+        if result.rowcount == 0:
+            # Not an error. It means the set was not `applying` — already finalised, or reverted —
+            # and re-reporting is a legitimate consequence of at-least-once delivery.
+            await session.commit()
+            return "ignored"
+
+        if succeeded and backup_manifest is not None:
+            # The manifest is what makes the apply reversible, so it is stored on the reserved
+            # handle rather than anywhere new. Only on success: a failed apply rolled itself back,
+            # and a manifest describing backups that were already restored would invite a second
+            # restore over the top of the originals.
+            await session.execute(
+                text(
+                    "UPDATE rollback_handles SET backup_manifest = CAST(:manifest AS jsonb) "
+                    "WHERE change_set_id = :cs AND consumed = false"
+                ),
+                {"manifest": json.dumps(backup_manifest), "cs": change_set_id},
+            )
+        await session.commit()
+        return final
+
+    async def _apply_entries(self, session: AsyncSession, change_set_id: uuid.UUID) -> list[dict[str, Any]]:
+        """Build `changeset.apply`'s `entries`, which the ENVELOPE has to carry.
+
+        THE TWO HALVES OF THIS OPERATION WERE NEVER CONNECTED. The backend sent
+        `{change_set_id, version, item_count}` — a reference — and `executor.applyArgs` reads
+        `entries`, the content. So every apply was refused by the agent with
+
+            executor: the operation's args are malformed: a change set with no entries
+
+        which arrives as `agent.error` code `apply-rolled-back`, leaving the change set at
+        `applying` for ever. Nothing had noticed because no agent had ever received a command: the
+        session manager was unwired, so this side of the protocol had no counterparty.
+
+        THE CONTENT TRAVELS IN THE SIGNED ARGS, and that is a requirement rather than a convenience.
+        `mutate.ApplyVerified` takes a `*Verified` precisely so that nothing unauthenticated can
+        reach a file write (D-45); if the agent fetched the items over a separate API call instead,
+        the bytes it wrote would not be covered by the envelope signature, and the approval would
+        authorise a change set whose content could differ from what was applied. Appendix A.9 takes
+        `entries` as an argument to the algorithm for the same reason.
+
+        The field names are the agent's wire names, not this schema's: `path` for `file_path` and
+        `expected_hash` for `old_hash`. `mode` is deliberately omitted — `mutate.Entry` documents
+        zero as 0o644, and the platform stores no mode, so sending one would be inventing a fact.
+        """
+        result = await session.execute(
+            text(
+                "SELECT file_path, action, new_content, old_hash FROM change_items "
+                "WHERE change_set_id = :cs ORDER BY ordinal"
+            ),
+            {"cs": change_set_id},
+        )
+        entries: list[dict[str, Any]] = []
+        for row in result.mappings():
+            action = str(row["action"])
+            entry: dict[str, Any] = {"path": str(row["file_path"]), "action": action}
+            if action != "delete":
+                # An empty string is a legitimate file body; None is not, and would serialise to a
+                # JSON null that the agent's decoder would read as no content at all.
+                entry["content"] = row["new_content"] or ""
+            if action != "create":
+                # The pre-image hash is what makes the apply refuse a file that changed under it
+                # (Appendix A.9's ErrConflict). Absent for a create, because there is no pre-image.
+                entry["expected_hash"] = str(row["old_hash"] or "")
+            entries.append(entry)
+        return entries
 
     async def _mint_and_sign(
         self,
