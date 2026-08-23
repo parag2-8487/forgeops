@@ -774,18 +774,27 @@ class GovernanceChokepoint:
         await self._insert_change_items(session, reverse_id, items)
         await self._store_blast_radius(session, reverse_id, report)
 
-        if report.verdict == "block":
-            return await self._blocked(
-                session,
-                principal=principal,
-                admitted=admitted,
-                change_set_id=reverse_id,
-                report=report,
-                reason=f"blast radius block on the reverse of {change_set_id}: score {report.score}",
-            )
+        # A BLOCKED REVERT ESCALATES TO A HUMAN; IT IS NOT REFUSED. This branch used to call
+        # `_blocked`, which raises 409 — and that made §3.6's `applied → reverted` edge unreachable
+        # for the ordinary case. The reverse of a change set that CREATED files is a set of deletes,
+        # and the analyser scores deletes as high risk: the journey's four-file create scored 8 while
+        # its reverse scored 64, over the block threshold. So every applied change set was permanently
+        # unrevertable and the rollback handle reserved before every apply could never be used.
+        #
+        # Refusing is the worse safety outcome, which is why this is not a weakening. The alternative
+        # to reverting is leaving a change in place that somebody has decided is wrong, and the
+        # platform offers no other way back. The control is not removed — the decision is routed to
+        # the person the approval gate exists to involve, the transit is still recorded, and the
+        # reverse set still waits at `pending_approval` until a human authorises it.
+        #
+        # The scoring itself is not adjusted, deliberately. A revert IS a mutation and is analysed as
+        # one (the six stages run with fresh authority, so rollback is not a privileged back door);
+        # what changes is only what a `block` verdict MEANS for an operation whose whole purpose is
+        # to restore a pre-image the platform recorded and hash-verified.
+        blocked_revert = report.verdict == "block"
 
         gate = await self._gate.submit(report, StageContext())
-        if gate == ApprovalDecision.BLOCKED:
+        if gate == ApprovalDecision.BLOCKED and not blocked_revert:
             return await self._blocked(
                 session,
                 principal=principal,
@@ -794,8 +803,19 @@ class GovernanceChokepoint:
                 report=report,
                 reason=f"the approval gate blocked the reverse of {change_set_id}",
             )
-        if gate == ApprovalDecision.REQUIRES_APPROVAL or decision.result == "require_approval":
+        if (
+            blocked_revert
+            or gate in (ApprovalDecision.REQUIRES_APPROVAL, ApprovalDecision.BLOCKED)
+            or decision.result == "require_approval"
+        ):
             await self._set_status(session, reverse_id, "pending_approval")
+            reason = (
+                f"human approval required to revert {change_set_id}: blast radius {report.score} "
+                f"({report.verdict}) on the reverse set; a revert restores a recorded pre-image, so "
+                f"the decision is escalated rather than refused"
+                if blocked_revert
+                else f"human approval required to revert {change_set_id}: {decision.reason}"
+            )
             event = await self._append_audit(
                 session,
                 principal=principal,
@@ -804,7 +824,7 @@ class GovernanceChokepoint:
                 outcome="pending",
                 resource_kind="change_set",
                 resource_id=str(reverse_id),
-                reason=f"human approval required to revert {change_set_id}: {decision.reason}",
+                reason=reason,
                 after_state={**_blast_radius_state(report), "reverts": str(change_set_id)},
             )
             await session.commit()
@@ -1436,6 +1456,33 @@ class GovernanceChokepoint:
                 ),
                 {"manifest": json.dumps(backup_manifest), "cs": change_set_id},
             )
+
+        if succeeded:
+            # §3.6's `applied → reverted` edge, which D-66 named as a gap: the original stayed
+            # `applied` for ever after its reverse set was minted, so the state machine had an edge
+            # nothing traversed and an operator could not tell a reverted change from a live one.
+            #
+            # The link is read from the audit trail rather than from a new column, because the trail
+            # already records it immutably: `revert` writes `after_state.reverts` naming the original
+            # when it authorises the reverse set. Using the record that already exists keeps one
+            # source of truth instead of a second that could disagree with it.
+            #
+            # Guarded on `status = 'applied'` for the same reason as the transition above: at-least-
+            # once delivery means this can run twice, and only the first should move anything.
+            reverted = await session.execute(
+                text(
+                    "UPDATE change_sets SET status = 'reverted' WHERE status = 'applied' AND id = ("
+                    "  SELECT CAST(after_state->>'reverts' AS uuid) FROM audit_events"
+                    "  WHERE resource_id = :reverse AND after_state ? 'reverts'"
+                    "  ORDER BY seq DESC LIMIT 1"
+                    ")"
+                ),
+                {"reverse": str(change_set_id)},
+            )
+            # No log line: this module deliberately has no logger, because a chokepoint that logged
+            # would be a second, unordered account of decisions that `audit_events` already records
+            # as an immutable chain. The transition is visible in `change_sets.status`.
+            del reverted
         await session.commit()
         return final
 

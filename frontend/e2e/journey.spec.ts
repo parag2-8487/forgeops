@@ -890,7 +890,37 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     });
     expect(reverted.status()).toBe(200);
 
-    // ASSERTION: the change set reached `reverted`.
+    // THE REVERSE SET NEEDS ITS OWN APPROVAL, and this step assumed the revert applied itself.
+    //
+    // A revert is a mutation and runs all six stages with fresh authority, so the same policy that
+    // required a human for the apply requires one for its reverse — and the reverse of a create is a
+    // delete, which the blast-radius analyser scores far higher (64 against the apply's 8). So the
+    // reverse set arrives at `pending_approval`, exactly as the original did in step 9, and a
+    // journey that skipped this was asserting a rollback that bypassed the approval gate.
+    const body = await reverted.json();
+    const reverseId = body.reverse_change_set_id;
+    expect(reverseId, "the revert must compile a reverse change set").toBeTruthy();
+
+    if (body.status === "pending_approval") {
+      const approved = await page.request.post(`${API}/approvals/${reverseId}/approve`, {
+        headers: authHeaders(),
+        data: { comment: "journey step 13: authorising the revert" },
+      });
+      expect(approved.status(), await approved.text()).toBe(200);
+    }
+
+    // ASSERTION: the reverse set is applied by the agent, which is what actually restores the files.
+    const reverseStatus = await eventually(
+      "the reverse change set to be applied",
+      () => {
+        const value = sqlScalar(`SELECT status FROM change_sets WHERE id = '${reverseId}'`);
+        return value === "applied" ? value : null;
+      },
+      { timeoutMs: 120_000 },
+    );
+    expect(reverseStatus).toBe("applied");
+
+    // ASSERTION: the original reached `reverted`.
     const status = await eventually("the change set to be reverted", () => {
       const value = sqlScalar(`SELECT status FROM change_sets WHERE id = '${journey.changeSetId}'`);
       return value === "reverted" ? value : null;
