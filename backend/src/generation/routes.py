@@ -26,8 +26,8 @@ have nothing to render.
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator
-from typing import Annotated
+from collections.abc import AsyncGenerator, Mapping
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -113,6 +113,21 @@ class GenerationEventEnvelope(BaseModel):
     )
 
 
+async def _load_project_for_generation(session: AsyncSession, project_id: uuid.UUID) -> Mapping[str, Any] | None:
+    """The project's name and settings, for naming the generated artifacts.
+
+    Returns None rather than raising when the row is absent: the run itself is already scoped by the
+    caller's authorisation, and `_render` documents what it falls back to. Failing the stream here
+    would turn a naming detail into a failed generation.
+    """
+    result = await session.execute(
+        text("SELECT name, path, repo_url, settings FROM projects WHERE id = :id"),
+        {"id": project_id},
+    )
+    row = result.mappings().first()
+    return dict(row) if row is not None else None
+
+
 @router.post(
     "/runs",
     summary="Generate deployment artifacts, streaming progress as SSE",
@@ -164,7 +179,12 @@ async def create_generation_run(
         # Only this function knows the real outcome, because the outcome includes whether the
         # chokepoint accepted the artifacts. So the terminal frame belongs here.
         withheld: str | None = None
-        async for frame in service.stream_generation(body.project_id, body.prompt, outcome=outcome):
+        # The project row, so the rendered manifests name the REAL application. Loaded here because
+        # this is where the session lives; the service takes facts, not a database handle.
+        project_row = await _load_project_for_generation(session, body.project_id)
+        async for frame in service.stream_generation(
+            body.project_id, body.prompt, outcome=outcome, project=project_row
+        ):
             if _is_terminal(frame):
                 withheld = frame
                 break
