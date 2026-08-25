@@ -169,3 +169,23 @@ credentials.md
 # not maintained. Folding them into `docs/architecture.md` is fine, but only alongside a check
 # that asserts every service they name still exists in `docker-compose.yml`.
 ARCHITECTURE-DIAGRAMS.md
+
+# What the journey's agent WRITES into the fixture project.
+#
+# `tests/e2e/fixture-project` is mounted into the agent container read-write because criterion 10's
+# whole point is that the agent applies generated artifacts to a real working tree and step 10 then
+# verifies them on disk with the hashes the backend recorded. So a passing run necessarily leaves
+# them there, plus the `<name>.backup.<timestamp>` copies `mutate` writes beside a pre-existing
+# target before overwriting it — which is what makes the apply reversible.
+#
+# They are OUTPUT, not source. The fixture's own files (`package.json`, `server.js`, `README.md`)
+# stay committed, because they are the input the readiness scorer and the generator read; committing
+# what the generator produced from them would freeze one run's answer as the expected one.
+#
+# The journey resets these at the start of its pairing step, so a rerun is not fighting the previous
+# run's leftovers — the atomic apply correctly refuses a stale pre-image. Ignoring them keeps a test
+# run from also dirtying the checkout.
+tests/e2e/fixture-project/Dockerfile
+tests/e2e/fixture-project/k8s/
+tests/e2e/fixture-project/.forgeops/
+tests/e2e/fixture-project/*.backup.*

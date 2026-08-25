@@ -508,6 +508,15 @@ test.describe("Criterion 10: the end-to-end journey", () => {
       composeExec("agent", ["rm", "-f", `/workspace/${artifact}`], { allowFailure: true });
     }
     composeExec("agent", ["rm", "-rf", "/workspace/.forgeops"], { allowFailure: true });
+    // AND THE APPLY'S OWN BACKUPS. `mutate` copies a pre-existing target to
+    // `<name>.backup.<timestamp>` BESIDE it before overwriting, so a run that overwrites the
+    // Dockerfile a previous run created leaves one behind. They accumulate in the checkout — four had
+    // built up during this work — and `git status` noise from a test run is a defect in the test.
+    composeExec(
+      "agent",
+      ["sh", "-c", "find /workspace -name '*.backup.*' -maxdepth 2 -delete || true"],
+      { allowFailure: true },
+    );
 
     // Any previous `run` is stopped. A rerun re-pairs, and a still-running agent from the last
     // attempt holds the PREVIOUS credential: two processes then compete for one device, the hub
