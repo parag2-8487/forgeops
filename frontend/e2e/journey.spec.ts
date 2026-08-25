@@ -112,16 +112,43 @@ async function apiGet(request: APIRequestContext, path: string) {
   return request.get(`${API}${path}`, { headers: authHeaders() });
 }
 
-/** Exchanges the httpOnly session cookie for an access token, as `lib/api/client.ts` does. */
+/**
+ * Exchanges the httpOnly session cookie for an access token, as `lib/api/client.ts` does.
+ *
+ * RETRIED, BECAUSE THE REFRESH TOKEN IS SINGLE-USE AND ROTATES. The app's own `AuthBoundary` posts
+ * `/auth/refresh` the moment the dashboard mounts, which is the behaviour under test — and it
+ * consumes the cookie and is issued a new one. A call from the test that lands in that window
+ * presents a token the backend has just rotated away and is correctly refused:
+ *
+ *     POST /api/v1/auth/refresh 200   <- the application, on load
+ *     POST /api/v1/auth/refresh 401   <- this function, 300ms later
+ *
+ * That is exactly what happened in CI while passing locally: the race resolves differently depending
+ * on how quickly the dashboard hydrates, which is why it looked like an authentication failure rather
+ * than a timing one.
+ *
+ * The retry re-reads the context's cookie jar, so the second attempt presents the ROTATED cookie.
+ * Nothing is weakened: the property asserted is still "this session exchanges for an access token",
+ * and refusing a consumed token is the control working. A retry that never succeeds still fails, and
+ * the message carries the body rather than a bare status.
+ */
 async function mintAccessToken(page: Page): Promise<string> {
-  const refreshed = await page.request.post(`${API}/auth/refresh`, {
-    headers: { Accept: "application/json" },
-  });
-  expect(refreshed.status(), await refreshed.text()).toBe(200);
-  const body = await refreshed.json();
-  expect(body.access_token, "the refresh response carried no access token").toBeTruthy();
-  journey.accessToken = body.access_token as string;
-  return journey.accessToken;
+  let last = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const refreshed = await page.request.post(`${API}/auth/refresh`, {
+      headers: { Accept: "application/json" },
+    });
+    if (refreshed.status() === 200) {
+      const body = await refreshed.json();
+      expect(body.access_token, "the refresh response carried no access token").toBeTruthy();
+      journey.accessToken = body.access_token as string;
+      return journey.accessToken;
+    }
+    last = `attempt ${attempt}: ${refreshed.status()} ${await refreshed.text()}`;
+    // Long enough for the application's own in-flight refresh to have committed its rotation.
+    await page.waitForTimeout(1_000);
+  }
+  throw new Error(`the session never exchanged for an access token; ${last}`);
 }
 
 /**
