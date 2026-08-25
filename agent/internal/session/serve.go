@@ -833,10 +833,23 @@ func (s *liveSession) touch() {
 	s.mu.Unlock()
 }
 
-func (s *liveSession) stale() bool {
+// sinceLastFrame is how long since anything arrived from the backend: an inbound frame, or a pong.
+//
+// One reader of `lastSeen`, so the field has a single meaning. `stale` is expressed in terms of it
+// rather than re-reading the clock, which keeps the two from disagreeing about what "last seen" is.
+func (s *liveSession) sinceLastFrame() time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.manager.now().Sub(s.lastSeen) > s.info.HeartbeatTimeout
+	return s.manager.now().Sub(s.lastSeen)
+}
+
+// stale reports whether the link has been quiet for longer than the heartbeat window.
+//
+// REPORTED, NOT ENFORCED. See `beat` and `reportStatus`: this used to drop the session, which was a
+// misreading of §7.3 — the heartbeat is a notification, so silence is the ordinary idle state. Its
+// consumer is now `agent.status`'s degraded flag.
+func (s *liveSession) stale() bool {
+	return s.sinceLastFrame() > s.info.HeartbeatTimeout
 }
 
 func (s *liveSession) observeSeq(seq int64) {
@@ -878,11 +891,24 @@ func (s *liveSession) bundleCurrent() bool {
 // the next `command.execute` and a backend that believed it was `ready` would keep sending.
 func (s *liveSession) reportStatus(ctx context.Context) {
 	skew, beyond := s.manager.skewBeyondTolerance()
+	// SILENCE IS REPORTED, NOT ACTED ON. `beat` used to drop the session when nothing had been
+	// received inside the heartbeat window, which was wrong -- §7.3 makes `session.heartbeat` a
+	// notification, so a healthy idle backend sends nothing and every live session was dropped on a
+	// 90-second cycle. Liveness is now a WebSocket ping.
+	//
+	// The observation is still worth having, and this is its consumer: an operator asking why a
+	// command has not arrived is asking exactly how long the link has been quiet, and `agent doctor`
+	// parity (§7.3) is the reason `agent.status` carries the measured skew for the same purpose. With
+	// pings refreshing the clock, `stale` true means pings are landing while nothing else is, which is
+	// a genuine degradation rather than the ordinary idle state.
+	quiet := s.sinceLastFrame()
 	state := "ready"
 	switch {
 	case beyond:
 		state = "degraded"
 	case !s.bundleCurrent():
+		state = "degraded"
+	case s.stale():
 		state = "degraded"
 	}
 	digest := ""
@@ -899,6 +925,9 @@ func (s *liveSession) reportStatus(ctx context.Context) {
 		"clock_skew_within_bounds": !beyond,
 		"queue_depth":              s.queueDepth(ctx),
 		"credential_store":         s.manager.store.Backend(),
+		// How long since ANY frame or pong arrived. Reported rather than asserted on, for the reason
+		// above: on an idle session this simply grows, and that is what healthy looks like.
+		"seconds_since_last_frame": quiet.Seconds(),
 	}
 	s.notify(ctx, "agent.status", params)
 }
