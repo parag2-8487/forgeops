@@ -1,4 +1,4 @@
-# The criterion-10 end-to-end journey (design.md §8.3.2, §12.6).
+# The criterion-10 end-to-end journey (design.md ?8.3.2, ?12.6).
 #
 # RENAMED BACK, and this time the name is earned. The history is worth keeping:
 #
@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── the fast gate: no backend, no containers ───────────────────────────────
+  # ?? the fast gate: no backend, no containers ???????????????????????????????
   shell-smoke:
     name: Shell smoke
     runs-on: ubuntu-latest
@@ -66,7 +66,7 @@ jobs:
       - name: Run the shell smoke spec
         run: cd frontend && npx playwright test e2e/shell.spec.ts
 
-  # ── the real journey ──────────────────────────────────────────────────────
+  # ?? the real journey ??????????????????????????????????????????????????????
   e2e-journey:
     name: Criterion 10 journey
     runs-on: ubuntu-latest
@@ -111,12 +111,16 @@ jobs:
           # Exported for the provisioning step, which talks to the API rather than the database.
           grep '^AUTHENTIK_BOOTSTRAP_TOKEN=' .env >> "$GITHUB_ENV"
 
-      # §8.3.2: "Builds the backend and frontend images". Explicit rather than implicit in `up`, so a
+      # ?8.3.2: "Builds the backend and frontend images". Explicit rather than implicit in `up`, so a
       # build failure is its own red step instead of a confusing startup timeout.
+      #
+      # `backend-agent` is the agent's mTLS listener. It shares the backend image, so building it is
+      # cheap, but naming it here keeps the "explicit rather than implicit in `up`" rule: a missing
+      # image would otherwise surface as a startup timeout on the service the journey depends on.
       - name: Build the backend, worker, frontend and agent images
         run: |
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml build \
-            backend worker frontend agent
+            backend backend-agent worker frontend agent
 
       - name: Start the stack's infrastructure
         run: |
@@ -133,7 +137,7 @@ jobs:
         run: bash scripts/postgres-init/20-authentik-database.sh
 
       # Authentik is a DEFAULT, digest-pinned compose service with an `ak healthcheck` healthcheck,
-      # so it is started through compose rather than through scripts/ci/start-authentik.sh — that
+      # so it is started through compose rather than through scripts/ci/start-authentik.sh ? that
       # script runs its own containers on the host network for the `auth` job's `services:` topology,
       # and mixing the two would give two Authentiks racing for one database.
       - name: Start Authentik and wait for its authorization flow
@@ -212,14 +216,14 @@ jobs:
           E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: |
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
-            backend worker frontend agent
+            backend backend-agent worker frontend agent
           # Proof rather than assumption: the value the container actually received. A wrong issuer
           # here is the difference between a working sign-in and a 503, and it is invisible until a
           # browser tries.
           echo "OIDC_ISSUER inside the backend container:"
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T backend \
             sh -c 'echo "  $OIDC_ISSUER"'
-          # Readiness, not liveness: /health does no dependency I/O by design (§4.4), so a green
+          # Readiness, not liveness: /health does no dependency I/O by design (?4.4), so a green
           # /health proves only that the process is up.
           for i in $(seq 1 60); do
             if curl -fsS http://localhost:8000/health/ready >/dev/null 2>&1; then
@@ -244,7 +248,7 @@ jobs:
           OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: python scripts/check-oidc-reachability.py
 
-      # §8.3.2: the journey drives the browser through §12.6. The stack is already up, so
+      # ?8.3.2: the journey drives the browser through ?12.6. The stack is already up, so
       # FORGEOPS_E2E_EXTERNAL_STACK tells playwright.config.ts not to start its own server.
       - name: Run the thirteen-step journey
         env:
@@ -255,13 +259,13 @@ jobs:
           E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: cd frontend && npx playwright test --project=journey
 
-      # §8.3.2: "Playwright traces and the agent's logs are uploaded on failure, because an e2e
+      # ?8.3.2: "Playwright traces and the agent's logs are uploaded on failure, because an e2e
       # failure with no artifacts is a rerun rather than a diagnosis."
       - name: Collect the agent and service logs
         if: failure()
         run: |
           mkdir -p e2e-artifacts
-          for service in agent backend frontend postgres authentik-server authentik-worker opa cerbos; do
+          for service in agent backend backend-agent worker frontend postgres authentik-server authentik-worker opa cerbos; do
             docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color \
               "$service" > "e2e-artifacts/${service}.log" 2>&1 || true
           done
@@ -270,10 +274,22 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T agent \
             sh -c 'find /workspace -type f -not -path "*/node_modules/*" | sort' \
             > e2e-artifacts/agent-workspace.txt 2>&1 || true
+          # THE AGENT'S RUN LOG, which `exec -d` would otherwise discard. It is the ONLY place a
+          # refusal reason appears: `refusing a command` names the check that failed, while the hub
+          # records only that the agent reported an error. Diagnosing step 10 without this meant
+          # rebuilding the agent to add a log line, which is not a thing CI can do.
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T agent \
+            sh -c 'cat /tmp/agent-run.log' \
+            > e2e-artifacts/agent-run.log 2>&1 || true
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T postgres \
             psql -U forgeops -d forgeops -c \
             'SELECT id, status, version, origin FROM change_sets ORDER BY created_at DESC LIMIT 20' \
             > e2e-artifacts/change-sets.txt 2>&1 || true
+          # The transit, in order. A blocked or refused step is a row here with a reason.
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T postgres \
+            psql -U forgeops -d forgeops -c \
+            'SELECT seq, action, outcome, left(reason, 160) FROM audit_events ORDER BY seq DESC LIMIT 30' \
+            > e2e-artifacts/audit-events.txt 2>&1 || true
 
       - name: Upload Playwright traces and reports
         if: failure()
