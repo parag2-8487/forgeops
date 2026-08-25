@@ -208,7 +208,28 @@ jobs:
           python -m pip install --quiet httpx
           # Credentials for step 1, appended to the job environment. The password is the synthetic,
           # self-labelling value the provisioning module defines; it is not a real credential.
-          python scripts/ci/provision-authentik.py >> "$GITHUB_ENV"
+          python scripts/ci/provision-authentik.py > provisioned.env
+          cat provisioned.env >> "$GITHUB_ENV"
+          # AND INTO `.env`, because the BACKEND CONTAINER does not read the job environment.
+          #
+          # The provisioner patches Authentik's OAuth2 provider to a fixed synthetic client
+          # credential and prints it. `$GITHUB_ENV` makes that visible to later STEPS, but the backend
+          # takes its configuration from `env_file` — so it kept using `.env.example`'s value, the
+          # token exchange failed, and Authentik logged `Invalid client secret`. The callback then
+          # answered 401 and the journey timed out at step 1 waiting to leave `/login`, with the
+          # problem document rendered in the page as the only clue.
+          #
+          # Appending to `.env` is this workflow's established route for exactly this: the seed step
+          # overrides Authentik's own keys the same way, and compose takes the last definition.
+          #
+          # ONLY THE CLIENT KEYS. The provisioner also prints `OIDC_ISSUER` as the PUBLIC origin, and
+          # the backend must use the INTERNAL one — the split horizon the next step's `env:` block
+          # exists for. Compose's `environment:` wins over `env_file`, so appending it would be
+          # harmless, but taking only what is needed keeps that reasoning from having to be rechecked.
+          grep '^OIDC_CLIENT' provisioned.env >> .env
+          rm -f provisioned.env
+          # Names only, never values: proof the backend will see a client id and a credential.
+          awk -F= '/^OIDC_CLIENT/ { printf "%s: %d chars\n", $1, length($2) }' .env
 
       - name: Run the database migrations
         run: |

@@ -114,14 +114,53 @@ class TestTheStreamShape:
         # would each fail here.
         assert emitted <= allowed, f"emitted names outside §7.4: {emitted - allowed}"
 
-    async def test_it_produces_the_two_artifacts_step_six_asks_for(self) -> None:
+    async def test_it_produces_the_four_artifacts_step_six_asks_for(self) -> None:
+        """§12.6 names a Dockerfile AND Kubernetes manifests, and this asserted two.
+
+        It was `test_it_produces_the_two_artifacts_step_six_asks_for` and required exactly
+        `['Dockerfile', 'k8s/deployment.yaml']`. A Deployment with no Service is not a deployable
+        manifest set — nothing can reach the pod — so the assertion pinned an incomplete generator
+        rather than a requirement, and journey step 10 failed on the missing `k8s/service.yaml`.
+        """
         outcome = GenerationOutcome(run_id=uuid.uuid4())
         async for _ in GenerationService().stream_generation(uuid.uuid4(), "a python service", outcome=outcome):
             pass
-        assert [f.path for f in outcome.files] == ["Dockerfile", "k8s/deployment.yaml"]
+        assert [f.path for f in outcome.files] == [
+            "Dockerfile",
+            "k8s/deployment.yaml",
+            "k8s/service.yaml",
+            "k8s/ingress.yaml",
+        ]
         assert outcome.validation_passed is True
         assert outcome.status == "accepted"
         assert outcome.completion_tokens >= 1
+
+    async def test_the_service_and_ingress_address_the_deployment(self) -> None:
+        """The manifests have to refer to each other, or four files are worse than two.
+
+        A Service whose selector matches no pod, or an Ingress naming a Service that does not exist,
+        would satisfy the path list above and deploy nothing. So the wiring is asserted, not the
+        file count.
+        """
+        outcome = GenerationOutcome(run_id=uuid.uuid4())
+        async for _ in GenerationService().stream_generation(uuid.uuid4(), "a python service", outcome=outcome):
+            pass
+        by_path = {f.path: f.content for f in outcome.files}
+
+        deployment = by_path["k8s/deployment.yaml"]
+        service = by_path["k8s/service.yaml"]
+        ingress = by_path["k8s/ingress.yaml"]
+
+        # The label the Deployment stamps on its pods is the label the Service selects on.
+        assert "app: forgeops-app" in deployment
+        assert "app: forgeops-app" in service
+        # The Ingress backend names the Service, and addresses the port the Service publishes.
+        assert "name: forgeops-app" in ingress
+        assert "number: 80" in ingress
+        assert "port: 80" in service
+        # And the Service targets the container's port rather than repeating 80.
+        assert "targetPort: 8000" in service
+        assert "containerPort: 8000" in deployment
 
     async def test_the_prompt_selects_the_runtime(self) -> None:
         node = GenerationOutcome(run_id=uuid.uuid4())
