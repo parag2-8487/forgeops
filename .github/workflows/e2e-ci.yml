@@ -236,6 +236,27 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm \
             --entrypoint /bin/sh backend -c "alembic upgrade head"
 
+      # The agent runs UNPRIVILEGED and has to write into a bind-mounted checkout.
+      #
+      # `tests/e2e/fixture-project` is mounted read-write because the journey's whole point is that
+      # the agent writes generated artifacts into it and step 10 then verifies them on disk. But the
+      # checkout is owned by the runner's user and the agent container runs as `forgeops`
+      # (`check-container-nonroot.sh` enforces that), so the apply failed with
+      #
+      #     create temp for Dockerfile: open /workspace/.forgeops-206260492: permission denied
+      #
+      # which the agent correctly reported as `apply-rolled-back` -- `mutate` writes to a temp file in
+      # the target directory and renames, so it needs to CREATE in the directory, not merely write the
+      # file. Docker Desktop's bind mounts are permissive, so this never appeared locally.
+      #
+      # `a+rwX` and not `777`: the capital X adds execute only where it already applies, so the
+      # directories stay traversable without marking every fixture file executable. Scoped to the one
+      # fixture directory the agent is allowed to touch.
+      - name: Make the fixture project writable by the agent's user
+        run: |
+          chmod -R a+rwX tests/e2e/fixture-project
+          ls -ld tests/e2e/fixture-project
+
       - name: Start the backend, frontend and agent
         # SPLIT HORIZON, and the reason this step needs an `env:` block of its own.
         #
