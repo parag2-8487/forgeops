@@ -122,6 +122,33 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml build \
             backend backend-agent worker frontend agent
 
+      # An internal CA, because the journey needs BOTH ends of one mTLS connection.
+      #
+      # `.env.example` ships `INTERNAL_CA_CERT_PEM` and `INTERNAL_CA_KEY_PEM` empty on purpose — key
+      # material does not belong in a committed file — and a fresh checkout has no `.env`. Without
+      # them the backend composes `UnavailableCertificateAuthority`, so the pairing exchange answers
+      # 503 and no device is ever issued a client certificate; and `src/agent_listener.py` exits 2
+      # rather than serving a plaintext agent port that would refuse every handshake for a missing
+      # certificate. That exit is exactly how this job failed before this step existed:
+      # `dependency failed to start: container forgeops-backend-agent-1 exited (2)`.
+      #
+      # Appended to `.env`, which compose reads after `.env.example` (`required: false`), so every
+      # service in the stack gets the SAME CA. That matters: the listener issues its server
+      # certificate from this CA and the agent verifies against the `ca_bundle` pairing gave it, so
+      # two CAs would fail the handshake with a message about trust rather than about configuration.
+      #
+      # Generated inside the backend image because it needs the pinned `cryptography`, and by
+      # `generate_development_ca` rather than a second implementation. `scripts/` is mounted because
+      # the runtime image deliberately carries only `src/`.
+      - name: Generate a development internal CA for the stack
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml run --rm --no-deps -T \
+            -v "${PWD}/scripts:/scripts:ro" \
+            --entrypoint python backend /scripts/ci/print-development-ca.py >> .env
+          # Proof rather than assumption, and no key material in the log: the names and the fact that
+          # each value is a single escaped line.
+          awk -F= '/^INTERNAL_CA_/ { printf "%s: %d chars\n", $1, length($0) }' .env
+
       - name: Start the stack's infrastructure
         run: |
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
