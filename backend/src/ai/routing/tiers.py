@@ -105,6 +105,14 @@ def load_tier_config(path: str | Path, env: Mapping[str, str] | None = None) -> 
     earlier revision merely *allowed* a `${` prefix through validation, so the
     literal `${OPENAI_BASE_URL}/chat/completions` reached httpx and every endpoint
     was silently unreachable in a real deployment.
+
+    `model` is expanded by the same rule, and for the same reason one step further along. A tier
+    entry names a SLOT in the cascade; which weights occupy that slot is a property of the
+    deployment, and for the self-hosted slot it is whichever tag the local server has actually
+    pulled. Hard-coding it meant the request body named a model the server did not have, and the
+    provider answered 404 `model "..." not found` — a failure that reads as a routing bug rather
+    than as a configuration mismatch. An unset variable is still a load error rather than a
+    default, because a default here would reintroduce exactly that 404 silently.
     """
     path = Path(path)
     environ: Mapping[str, str] = os.environ if env is None else env
@@ -123,12 +131,15 @@ def load_tier_config(path: str | Path, env: Mapping[str, str] | None = None) -> 
         base_url = _expand_vars(edata.get("base_url", ""), environ, eid)
         if not base_url.startswith(("http://", "https://")):
             raise ValueError(f"Endpoint {eid}: base_url must be absolute HTTP(S) URL")
+        model = _expand_vars(edata["model"], environ, eid)
+        if not model.strip():
+            raise ValueError(f"Endpoint {eid}: model must be a non-empty identifier")
         if "leaderboard_score" in edata or "vendor_score" in edata:
             raise ValueError(f"Endpoint {eid}: vendor leaderboard score fields are forbidden")
         endpoints[eid] = EndpointDescriptor(
             id=eid,
             provider=edata["provider"],
-            model=edata["model"],
+            model=model,
             protocol=EndpointProtocol(protocol),
             base_url=base_url,
             key_ref=edata.get("key_ref"),

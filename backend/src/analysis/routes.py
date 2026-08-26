@@ -8,12 +8,21 @@ blast_radius, verdict, and approval_decision.
 
 from __future__ import annotations
 
-from typing import Any
+import uuid
+from datetime import datetime
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import require_principal
+from ..auth.principal import Principal
+from ..core.db import get_session
+from ..core.errors import forbidden_problem
+from ..core.tenancy import load_visible_project
+from .indexer import IndexResult, ScanReportIn, build_embedder, persist_scan_report
 from .plan_analyzer import (
     PlanDocument,
     SemanticPlanAnalyzer,
@@ -135,14 +144,33 @@ async def analyse_plan(body: PlanAnalysisRequest) -> PlanAnalysisResponse:
     )
 
 
-# ─── Codebase Index API (Leaf 11.8) ──────────────────────────────────────────
+# ─── Codebase Index API (Leaf 11.8, phases.md §1.3) ──────────────────────────
+#
+# All three read endpoints previously returned LITERALS on a live route:
+# `indexed_files=42, total_chunks=128, status="ready"`, a `NewParser` symbol at a fixed
+# line, and a chunk body of `"func NewParser() ..."` for any chunk id at all. That is the
+# worst shape a defect can take here, because the answer asserted that an index existed
+# while `file_tree`, `file_contents` and `embeddings` were empty — a caller could not tell
+# a real index from none, and the readiness screen and retrieval both read through this
+# surface.
+#
+# They are now queries. Every one is scoped by project id and by the caller's tenant, and
+# an unindexed project answers with zeros, an empty list, or the non-disclosing 403 —
+# never with a number nobody counted.
 
 
 class CodebaseStatusResponse(BaseModel):
     indexed_files: int
     total_chunks: int
     languages: list[str]
+    #: `empty` — nothing indexed. `indexed_without_vectors` — tree and contents stored but
+    #: no embeddings, which is what an unavailable embedding provider honestly looks like
+    #: and which means retrieval is sparse-only. `indexed` — both.
     status: str
+    total_bytes: int = 0
+    resolved_dependencies: int = 0
+    unresolved_dependencies: int = 0
+    last_indexed_at: datetime | None = None
 
 
 class SymbolQueryResponse(BaseModel):
@@ -150,6 +178,9 @@ class SymbolQueryResponse(BaseModel):
     kind: str
     file_path: str
     line_number: int
+    parent_symbol: str | None = None
+    signature: str | None = None
+    chunk_id: uuid.UUID
 
 
 class ChunkDetailResponse(BaseModel):
@@ -159,40 +190,221 @@ class ChunkDetailResponse(BaseModel):
     start_line: int
     end_line: int
     language: str
+    symbol: str | None = None
+    parent_symbol: str | None = None
+    kind: str | None = None
+    token_count: int | None = None
+    model_id: str
 
 
-@router.get("/codebase/status", response_model=CodebaseStatusResponse)
-async def get_codebase_status() -> CodebaseStatusResponse:
-    """Return indexing status and summary metrics for the codebase."""
-    return CodebaseStatusResponse(
-        indexed_files=42,
-        total_chunks=128,
-        languages=["python", "go", "typescript"],
-        status="ready",
+async def _require_visible_project(
+    session: AsyncSession, *, project_id: uuid.UUID, tenant_id: uuid.UUID | None
+) -> None:
+    """Refuse the request unless the caller's tenant may see this project.
+
+    Delegates to `projects.load_visible_project` rather than re-deriving the rule, so the
+    index surface and the project surface cannot disagree about who may read a project.
+    A 403 whose body is identical for "no such project" and "another tenant's project" is
+    required by §4.2 and Q-20: any difference is an enumeration oracle for project ids.
+    """
+    await load_visible_project(session, project_id=project_id, tenant_id=tenant_id)
+
+
+@router.post(
+    "/codebase/{project_id}/index",
+    response_model=IndexResult,
+    summary="Persist an agent scan report into the codebase index",
+)
+async def index_scan_report(
+    project_id: uuid.UUID,
+    report: ScanReportIn,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> IndexResult:
+    """Write a scan report into `file_tree`, `file_contents`, `file_dependencies` and the
+    vector tables.
+
+    This endpoint is what makes the index non-empty; nothing else writes these tables. The
+    content it stores is already redacted — the agent redacts before serialising, because
+    `file_contents` is a redacted-only store (design §6.3, §7.11) and redaction after
+    transmission would mean the unredacted text had already left the machine.
+
+    Vectors are written only when an embedding provider is configured. When there is none,
+    the tree, the contents and the dependency graph are still persisted and
+    `vectors_absent_reason` says why retrieval will be sparse-only — a zero or random
+    vector would be indistinguishable from a real one at query time.
+    """
+    await _require_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    embedder, reason = build_embedder(request.app.state.settings)
+    return await persist_scan_report(
+        session,
+        project_id=project_id,
+        tenant_id=principal.tenant_id,
+        report=report,
+        embedder=embedder,
+        embedder_absent_reason=reason,
     )
 
 
-@router.get("/codebase/symbols", response_model=list[SymbolQueryResponse])
-async def query_symbols(query: str = "") -> list[SymbolQueryResponse]:
-    """Query indexed symbols matching a substring search."""
+@router.get("/codebase/{project_id}/status", response_model=CodebaseStatusResponse)
+async def get_codebase_status(
+    project_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CodebaseStatusResponse:
+    """Report what is actually in the index for one project."""
+    await _require_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+
+    files = await session.execute(
+        text(
+            "SELECT count(*) AS files, coalesce(sum(size_bytes), 0) AS bytes, max(last_modified) AS newest "
+            "FROM file_tree WHERE project_id = :project_id"
+        ),
+        {"project_id": project_id},
+    )
+    file_row = files.mappings().one()
+
+    chunks = await session.execute(
+        text(
+            "SELECT (SELECT count(*) FROM embeddings e JOIN file_tree f ON f.id = e.file_id "
+            "WHERE f.project_id = :project_id) "
+            "+ (SELECT count(*) FROM embeddings_local l JOIN file_tree f ON f.id = l.file_id "
+            "WHERE f.project_id = :project_id) AS total"
+        ),
+        {"project_id": project_id},
+    )
+    total_chunks = int(chunks.scalar() or 0)
+
+    # Languages come from `file_contents`, which is where the agent's tiered detection
+    # result was stored. NULL is excluded rather than reported as a language called
+    # "unknown", which would be a value the detector never produced.
+    languages = await session.execute(
+        text(
+            "SELECT DISTINCT c.language FROM file_contents c JOIN file_tree f ON f.id = c.file_id "
+            "WHERE f.project_id = :project_id AND c.language IS NOT NULL ORDER BY c.language"
+        ),
+        {"project_id": project_id},
+    )
+
+    dependencies = await session.execute(
+        text(
+            "SELECT coalesce(sum(CASE WHEN resolved THEN 1 ELSE 0 END), 0) AS resolved, "
+            "coalesce(sum(CASE WHEN resolved THEN 0 ELSE 1 END), 0) AS unresolved "
+            "FROM file_dependencies WHERE project_id = :project_id"
+        ),
+        {"project_id": project_id},
+    )
+    dependency_row = dependencies.mappings().one()
+
+    indexed_files = int(file_row["files"] or 0)
+    if indexed_files == 0:
+        status = "empty"
+    elif total_chunks == 0:
+        status = "indexed_without_vectors"
+    else:
+        status = "indexed"
+
+    return CodebaseStatusResponse(
+        indexed_files=indexed_files,
+        total_chunks=total_chunks,
+        languages=[str(row[0]) for row in languages],
+        status=status,
+        total_bytes=int(file_row["bytes"] or 0),
+        resolved_dependencies=int(dependency_row["resolved"] or 0),
+        unresolved_dependencies=int(dependency_row["unresolved"] or 0),
+        last_indexed_at=file_row["newest"],
+    )
+
+
+@router.get("/codebase/{project_id}/symbols", response_model=list[SymbolQueryResponse])
+async def query_symbols(
+    project_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    query: str = "",
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[SymbolQueryResponse]:
+    """Substring search over indexed symbols, scoped to one project.
+
+    Reads the cAST metadata revision `0003` added to `embeddings`, so a project whose
+    chunks were stored without vectors — the honest outcome when no embedding provider is
+    configured — has no symbols to return and gets an empty list. That is the correct
+    answer, and it is the one the previous implementation replaced with a fixed
+    `NewParser`.
+    """
+    await _require_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+
+    rows = await session.execute(
+        text(
+            "SELECT e.id, e.symbol, e.parent_symbol, e.signature, e.kind, e.start_line, f.path "
+            "FROM embeddings e JOIN file_tree f ON f.id = e.file_id "
+            "WHERE f.project_id = :project_id AND e.symbol IS NOT NULL "
+            # `position(... in lower(...)) > 0` rather than `LIKE '%' || :q || '%'`, so a
+            # `%` or `_` typed into the search box is a literal character rather than a
+            # wildcard the caller did not ask for.
+            "AND (:query = '' OR position(lower(:query) in lower(e.symbol)) > 0) "
+            "ORDER BY length(e.symbol), e.symbol, f.path, e.start_line LIMIT :limit"
+        ),
+        {"project_id": project_id, "query": query.strip(), "limit": limit},
+    )
     return [
         SymbolQueryResponse(
-            name="NewParser",
-            kind="function",
-            file_path="agent/internal/scanner/ast/ast.go",
-            line_number=35,
+            name=str(row["symbol"]),
+            kind=str(row["kind"] or "unknown"),
+            file_path=str(row["path"]),
+            line_number=int(row["start_line"] or 0),
+            parent_symbol=row["parent_symbol"],
+            signature=row["signature"],
+            chunk_id=row["id"],
         )
+        for row in rows.mappings()
     ]
 
 
-@router.get("/codebase/chunks/{chunk_id}", response_model=ChunkDetailResponse)
-async def get_chunk_details(chunk_id: str) -> ChunkDetailResponse:
-    """Retrieve chunk content and line range by chunk_id."""
+@router.get("/codebase/{project_id}/chunks/{chunk_id}", response_model=ChunkDetailResponse)
+async def get_chunk_details(
+    project_id: uuid.UUID,
+    chunk_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ChunkDetailResponse:
+    """Return one stored chunk, or the non-disclosing 403.
+
+    A chunk that does not exist and a chunk belonging to another project answer
+    identically, for the same reason §4.2 gives for projects: a distinguishable answer is
+    an oracle for ids. The content returned is the redacted text that was stored — there
+    is no unredacted copy to return.
+    """
+    await _require_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+
+    rows = await session.execute(
+        text(
+            "SELECT e.id, e.chunk_text, e.start_line, e.end_line, e.symbol, e.parent_symbol, "
+            "e.kind, e.token_count, e.model_id, f.path, c.language "
+            "FROM embeddings e JOIN file_tree f ON f.id = e.file_id "
+            "LEFT JOIN file_contents c ON c.file_id = f.id "
+            "WHERE e.id = :chunk_id AND f.project_id = :project_id"
+        ),
+        {"chunk_id": chunk_id, "project_id": project_id},
+    )
+    row = rows.mappings().first()
+    if row is None:
+        raise forbidden_problem()
+
     return ChunkDetailResponse(
-        chunk_id=chunk_id,
-        file_path="agent/internal/scanner/ast/ast.go",
-        content="func NewParser() ...",
-        start_line=35,
-        end_line=60,
-        language="go",
+        chunk_id=str(row["id"]),
+        file_path=str(row["path"]),
+        content=str(row["chunk_text"]),
+        start_line=int(row["start_line"] or 0),
+        end_line=int(row["end_line"] or 0),
+        # The detected language of the file, or the empty string when the file has no
+        # `file_contents` row. Not a guess from the extension: the detector's answer is
+        # stored, and re-deriving it here could disagree with what the index holds.
+        language=str(row["language"] or ""),
+        symbol=row["symbol"],
+        parent_symbol=row["parent_symbol"],
+        kind=row["kind"],
+        token_count=row["token_count"],
+        model_id=str(row["model_id"]),
     )

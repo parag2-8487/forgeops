@@ -660,14 +660,21 @@ func decodeCredentialBytes(value, field string) ([]byte, error) {
 	return decoded, nil
 }
 
-// exchangeURL turns the configured backend URL into the exchange endpoint.
+// HTTPOrigin turns the configured backend WSS URL into the HTTP origin of the same backend.
 //
-// The agent is configured with a `wss://` URL because that is what the session uses; the
-// exchange is an ordinary HTTPS POST to the same origin. Mapping the scheme here rather
-// than adding a second configuration key keeps the two from ever disagreeing about which
-// backend this agent belongs to. `ws://` maps to `http://` so a local development stack
-// works, and any other scheme is refused rather than guessed at.
-func exchangeURL(raw string) (string, error) {
+// EXPORTED SO THERE IS ONE COPY OF THIS RULE. `exchangeURL` below needs it, and so does the app
+// layer's codebase indexer, which POSTs a scan report to the same origin. A second implementation
+// beside this one is two copies of a fact — the failure the journal calls pattern H — and the way
+// it would show up is an agent that pairs against one backend and uploads its index to another.
+//
+// The agent is configured with a `wss://` URL because that is what the session uses. `ws://` maps
+// to `http://` so a local development stack works, and any other scheme is REFUSED rather than
+// guessed at: guessing `https` for an unrecognised scheme would silently send a device token
+// somewhere the operator did not name.
+//
+// Any path on the configured URL is discarded. The WSS URL points at the socket route, so keeping
+// it would produce `/api/v1/ws/agent/api/v1/...` at every caller.
+func HTTPOrigin(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", fmt.Errorf("%w: pair needs --backend or AGENT_BACKEND_WSS_URL", connection.ErrDisabled)
@@ -688,8 +695,24 @@ func exchangeURL(raw string) (string, error) {
 	if parsed.Host == "" {
 		return "", fmt.Errorf("session: backend URL has no host")
 	}
-	// Any path on the configured URL is discarded rather than joined: the WSS URL points
-	// at the socket route, and joining would produce /api/v1/ws/agent/api/v1/agents/...
+	parsed.Path = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+// exchangeURL turns the configured backend URL into the exchange endpoint.
+//
+// The scheme and host come from `HTTPOrigin`; this adds the one path the exchange uses.
+func exchangeURL(raw string) (string, error) {
+	origin, err := HTTPOrigin(raw)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return "", fmt.Errorf("session: backend origin is not a URL: %w", err)
+	}
 	parsed.Path = exchangePath
 	parsed.RawQuery = ""
 	parsed.Fragment = ""

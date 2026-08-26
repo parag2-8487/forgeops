@@ -94,3 +94,58 @@ def _resolve_tenant(request: Request) -> str | None:
         return None
     tenant = getattr(principal, "tenant_id", None)
     return str(tenant) if tenant else None
+
+
+# ─── Project row visibility (§4.2, Q-20) ──────────────────────────────────────
+#
+# WHY THIS IS HERE AND NOT IN `projects`
+#
+# Two domains scope by project: `projects` serves the project itself, and `analysis` serves the
+# codebase index for one. §2.2.1 bans them from importing each other, so a rule both must obey
+# cannot live in either — and this rule in particular must not be duplicated, because the whole
+# point of it is that two endpoints answer IDENTICALLY. It is a tenancy rule, which is what this
+# module is for.
+
+import uuid  # noqa: E402
+from typing import Any  # noqa: E402
+
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+
+from .errors import forbidden_problem  # noqa: E402
+
+#: The columns every project read returns. One list, so two endpoints cannot return different
+#: shapes for the same row.
+PROJECT_COLUMNS = "id, tenant_id, name, path, repo_url, settings, created_at, updated_at"
+
+
+def tenant_clause(tenant_id: uuid.UUID | None) -> str:
+    """Row visibility. `IS NULL` is matched explicitly rather than skipped.
+
+    A principal with no tenant must see only rows with no tenant. Omitting the predicate in that
+    case would show it every project in the installation.
+    """
+    return "tenant_id IS NULL" if tenant_id is None else "tenant_id = :tenant_id"
+
+
+def tenant_params(tenant_id: uuid.UUID | None) -> dict[str, Any]:
+    return {} if tenant_id is None else {"tenant_id": tenant_id}
+
+
+async def load_visible_project(
+    session: AsyncSession, *, project_id: uuid.UUID, tenant_id: uuid.UUID | None
+) -> dict[str, Any]:
+    """One project the tenant may see, or the non-disclosing 403.
+
+    A 404 here would distinguish "no such project" from "another tenant's project", which §4.2 and
+    Q-20 forbid: the body must be byte-identical either way or it becomes an enumeration oracle for
+    project ids. `GovernanceChokepoint._admit` takes the same line for the same reason.
+    """
+    result = await session.execute(
+        text(f"SELECT {PROJECT_COLUMNS} FROM projects WHERE id = :id AND {tenant_clause(tenant_id)}"),  # noqa: S608
+        {"id": project_id, **tenant_params(tenant_id)},
+    )
+    row = result.mappings().first()
+    if row is None:
+        raise forbidden_problem()
+    return dict(row)

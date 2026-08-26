@@ -750,6 +750,7 @@ class TestOpenAICompatibleIsOnlyProductionAdapter:
     def test_model_endpoint_protocol_only_openai_impl(self):
         """Verify only OpenAICompatibleEndpoint implements ModelEndpoint in production."""
         import inspect
+        import typing
 
         from src.ai.routing import endpoints as ep_module
 
@@ -757,7 +758,12 @@ class TestOpenAICompatibleIsOnlyProductionAdapter:
         # (endpoint_id, provider_kind properties and async complete method)
         classes_with_complete = []
         for name, obj in inspect.getmembers(ep_module, inspect.isclass):
-            if name == "ModelEndpoint":
+            # PROTOCOLS are excluded by what they ARE, not by name. This read `if name ==
+            # "ModelEndpoint": continue`, so the first `Protocol` added beside it — the streaming
+            # variant `ModelRouter` checks with `isinstance` — was counted as a second production
+            # adapter and failed a test about CONCRETE implementations. Naming one protocol also
+            # meant a renamed protocol would silently start being counted.
+            if getattr(obj, "_is_protocol", False) or obj is typing.Protocol:
                 continue
             # Check for the three required interface members
             has_endpoint_id = isinstance(getattr(obj, "endpoint_id", None), property) or "endpoint_id" in getattr(

@@ -201,6 +201,61 @@ services:
       timeout: 5s
       retries: 30
 
+  # ── §11.7's self_hosted tier, made actually reachable ───────────────────────
+  # Every other endpoint in `backend/config/model-tiers.yaml` needs a hosted key, and
+  # `.env.example` ships `LLM_KEY_*=placeholder` on purpose. So the six-tier cascade had
+  # no endpoint it could reach: `ModelRouter.complete` returned EXHAUSTED for every tier,
+  # generation could only render templates, and `generation_runs.served_from` could never
+  # say anything but `template`. This service is the endpoint that changes that.
+  #
+  # UNPROFILED, and that is the decision. Behind a profile the default stack would still
+  # have no reachable model, so `served_from='provider'` would be unreachable on a fresh
+  # clone and the fallback would silently be the only path again — the exact condition
+  # this service exists to remove. Registered in `scripts/compose-default-services.txt`
+  # alongside the other defaults.
+  #
+  # No service `depends_on` it. The backend builds its router from configuration and
+  # discovers reachability per request through the breaker, so gating backend startup on a
+  # multi-gigabyte model pull would trade a working degradation for a slow boot.
+  ollama:
+    image: ollama/ollama:0.12.6@sha256:a61a8fd395dbb931cc8cb1b5da7a2510746575c87113fdc45b647ee59ef7f808
+    env_file: *service-env
+    # The image's entrypoint is `/bin/ollama` and `serve` blocks, so the pull cannot be a
+    # second command — it has to run against the server this process starts. Pulling at
+    # first boot rather than baking weights into an image is also what keeps the reference
+    # above digest-pinnable: a layer carrying a gigabyte of weights would have to be built
+    # and published somewhere before it could be pinned at all.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        /bin/ollama serve &
+        until /bin/ollama list >/dev/null 2>&1; do sleep 1; done
+        /bin/ollama pull "$${SELF_HOSTED_MODEL_ID}"
+        /bin/ollama pull "$${SELF_HOSTED_EMBEDDING_MODEL_ID}"
+        wait
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      # The weights, so a restart is not another gigabyte of download.
+      - ollamamodels:/root/.ollama
+    healthcheck:
+      # Green means THE CONFIGURED MODELS ARE PRESENT, not merely that a port is open. A
+      # probe that only checked the port would report ready while every completion came
+      # back `model "..." not found`, which reads as a routing bug rather than an
+      # unfinished download.
+      test:
+        [
+          "CMD-SHELL",
+          "/bin/ollama list 2>/dev/null | grep -Fq \"$${SELF_HOSTED_MODEL_ID}\" && /bin/ollama list 2>/dev/null | grep -Fq \"$${SELF_HOSTED_EMBEDDING_MODEL_ID}\"",
+        ]
+      interval: 10s
+      timeout: 10s
+      # First boot downloads both models over the network, which is minutes rather than
+      # seconds — the same reasoning as Authentik's 30 retries above.
+      retries: 60
+      start_period: 30s
+
   frontend:
     build:
       context: ./frontend
@@ -328,3 +383,6 @@ volumes:
   pgdata: {}
   redisdata: {}
   tofucache: {}
+  # The Ollama model store. Named rather than anonymous so `docker compose down` without
+  # `-v` does not throw away the weights and make the next `up` another long download.
+  ollamamodels: {}

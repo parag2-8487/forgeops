@@ -93,8 +93,13 @@ var handlerTable = map[Operation]entry{
 	OpProjectRegister:   {timeout: timeoutQuick, run: unimplemented("group 12's workspace registry")},
 	OpProjectUnregister: {timeout: timeoutQuick, run: unimplemented("group 12's workspace registry")},
 
-	OpScanFull:        {timeout: timeoutScan, run: unimplemented("group 11's analysis engine")},
-	OpScanIncremental: {timeout: timeoutScan, run: unimplemented("group 11's incremental rescan")},
+	// `implemented` is deliberately absent here and computed in `Operations` instead: these two
+	// are implemented in this package but need a `CodebaseIndexer` supplied by the app layer, so
+	// whether the agent can actually scan is a property of the wiring rather than of the table.
+	// Advertising them unconditionally would have the backend send a command the agent then
+	// refuses, and §7.4 uses the advertised capability set to decide what to send.
+	OpScanFull:        {timeout: timeoutScan, run: scanFull},
+	OpScanIncremental: {timeout: timeoutScan, run: scanIncremental},
 
 	OpValidateCompose: {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
 	OpValidateK8s:     {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
@@ -146,11 +151,16 @@ type Deps struct {
 	Root string
 	// Clock is time.Now unless a test replaces it.
 	Clock func() time.Time
+	// Indexer builds and submits the codebase index. Optional: an agent wired without one
+	// advertises `scan.full` and `scan.incremental` as unimplemented and refuses them by name,
+	// which is the honest report for a build that cannot reach a backend to submit to.
+	Indexer CodebaseIndexer
 }
 
 type dispatcher struct {
-	root string
-	now  func() time.Time
+	root    string
+	now     func() time.Time
+	indexer CodebaseIndexer
 }
 
 // New builds a Dispatcher and refuses to build an unusable one.
@@ -162,7 +172,7 @@ func New(deps Deps) (Dispatcher, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &dispatcher{root: deps.Root, now: clock}, nil
+	return &dispatcher{root: deps.Root, now: clock, indexer: deps.Indexer}, nil
 }
 
 // Execute runs one verified command (§10.5).
@@ -213,10 +223,26 @@ func (d *dispatcher) Operations() []OperationInfo {
 			Mutating:         row.mutating,
 			RequiresApproval: row.requiresApproval,
 			Timeout:          row.timeout,
-			Implemented:      row.implemented,
+			Implemented:      d.implemented(op, row),
 		})
 	}
 	return out
+}
+
+// implemented answers whether THIS dispatcher can run an operation, not merely whether the table
+// has a body for it.
+//
+// The distinction exists because the two scan operations need a collaborator the app layer
+// supplies. A table-only answer would advertise a capability the agent then refuses, and §7.4 has
+// the backend choose what to send from the advertised set — so the disagreement would surface as a
+// failed command rather than as a command never sent.
+func (d *dispatcher) implemented(op Operation, row entry) bool {
+	switch op {
+	case OpScanFull, OpScanIncremental:
+		return d.indexer != nil
+	default:
+		return row.implemented
+	}
 }
 
 // ── changeset.apply ────────────────────────────────────────────────────────────────────────

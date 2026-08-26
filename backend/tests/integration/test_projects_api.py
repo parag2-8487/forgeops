@@ -188,22 +188,48 @@ async def test_another_tenant_cannot_read_the_project(projects_app: Any, client:
     assert created["id"] not in {p["id"] for p in listed}
 
 
-async def test_readiness_exposes_the_five_category_breakdown(client: AsyncClient) -> None:
-    """§12.6 step 5 asserts a category breakdown; the response model used to drop it."""
+async def test_readiness_exposes_the_six_category_breakdown(client: AsyncClient) -> None:
+    """§12.6 step 5 asserts a category breakdown; the response model used to drop it.
+
+    The SET changed with the move to index-derived scoring: it is now phases.md §1.4's six
+    weighted categories. It was five, which omitted Orchestration, Env Config and IaC entirely and
+    scored two categories §1.4 does not name. Test evidence is now a check inside CI/CD, which is
+    also what removed the old `has_tests` default of true.
+    """
     created = (await client.post("/api/v1/projects", json=_payload("Scored"))).json()
 
     response = await client.get(f"/api/v1/projects/{created['id']}/readiness")
     assert response.status_code == 200, response.text
     body = response.json()
     assert set(body["categories"]) == {
-        "documentation_score",
-        "test_coverage_score",
-        "ci_config_score",
-        "security_policy_score",
         "containerization_score",
+        "ci_config_score",
+        "orchestration_score",
+        "env_config_score",
+        "security_policy_score",
+        "iac_score",
     }
     assert all(isinstance(v, int) for v in body["categories"].values())
     assert 0 <= body["score"] <= 100
+
+
+async def test_readiness_of_an_unscanned_project_is_zero_and_says_so(client: AsyncClient) -> None:
+    """The defect this closes: the score was computed from `projects.settings`.
+
+    `config_files` was literally `sorted(settings.keys())`, so this payload — which sets `favourite`
+    and `embedding_backend` — used to earn documentation and CI points for having been configured.
+    The project has no indexed files, so the honest score is zero, `indexed` is false, and the
+    recommendation is to run a scan.
+    """
+    created = (await client.post("/api/v1/projects", json=_payload("Configured but unscanned"))).json()
+
+    body = (await client.get(f"/api/v1/projects/{created['id']}/readiness")).json()
+    assert body["score"] == 0
+    assert body["level"] == "blocked"
+    assert body["indexed"] is False
+    assert body["evaluated_paths"] == 0
+    assert any("scan" in r.lower() for r in body["recommendations"])
+    assert all(v == 0 for v in body["categories"].values())
 
 
 async def test_readiness_refuses_an_unknown_project(client: AsyncClient) -> None:

@@ -94,14 +94,14 @@ def _build_router_from_chain(
 
             if behavior:
                 # Success
-                async def _success(req, *, api_key=None, _eid=eid):
+                async def _success(req, *, credential=None, _eid=eid):
                     invocation_counts[_eid] += 1
                     return CompletionResponse(content=f"ok from {_eid}", model="test")
 
                 mock_ep.complete = _success
             else:
                 # Failure
-                async def _fail(req, *, api_key=None, _eid=eid):
+                async def _fail(req, *, credential=None, _eid=eid):
                     invocation_counts[_eid] += 1
                     raise RuntimeError(f"provider error from {_eid}")
 

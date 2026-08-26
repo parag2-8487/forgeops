@@ -223,3 +223,21 @@ class EmbeddingLocal(SQLModel, table=True):
     model_id: str = Field(max_length=100)
     embedding: list[float] = Field(sa_column=Column("embedding", Vector(EMBEDDING_DIMS_LOCAL), nullable=False))
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))
+    # --- revision 0012: the cAST metadata `embeddings` has carried since 0003 -------------
+    # This table was created without them, and the omission was invisible until a scan actually
+    # wrote here: `_persist_embeddings` issues ONE insert for whichever table `embedder.table`
+    # names, so the first self-hosted scan failed on `column "symbol" does not exist` having
+    # already paid for every vector.
+    #
+    # Declared here as well as in the migration for the reason the HNSW index above gives: model
+    # and database must agree, or `alembic check` reports a pending removal on every run. Widths
+    # match `Embedding` exactly — a `symbol` capped differently on one table would truncate the
+    # same declaration differently depending on which backend a project used.
+    symbol: str | None = Field(default=None, max_length=512)
+    parent_symbol: str | None = Field(default=None, max_length=512)
+    signature: str | None = Field(default=None, sa_column=Column("signature", Text, nullable=True))
+    kind: str | None = Field(default=None, max_length=32)
+    start_line: int | None = Field(default=None)
+    end_line: int | None = Field(default=None)
+    token_count: int | None = Field(default=None)
+    chunk_metadata: dict | None = Field(default=None, sa_column=Column("chunk_metadata", JSONB, nullable=True))

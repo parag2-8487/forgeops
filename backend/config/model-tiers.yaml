@@ -58,7 +58,12 @@ endpoints:
     rank_source: internal_golden
   qwen3-coder-next:
     provider: self_hosted
-    model: qwen3-coder-next
+    # The self_hosted tier's primary, and the ONE endpoint in this file a fresh clone can
+    # actually reach. The tag comes from SELF_HOSTED_MODEL_ID rather than being written here,
+    # because this entry names a slot in the cascade while the weights in that slot are a
+    # property of the deployment — whatever the local server has pulled. A literal here that
+    # disagreed with the server produced 404 `model "..." not found` for every request.
+    model: ${SELF_HOSTED_MODEL_ID}
     protocol: openai_compatible
     base_url: ${SELF_HOSTED_BASE_URL}
     key_ref: null

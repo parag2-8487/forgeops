@@ -24,7 +24,8 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
-from .ai.embeddings import EmbeddingOrchestrator
+from .ai.embeddings import EmbeddingOrchestrator, SelfHostedEmbedder
+from .ai.generation_port import build_artifact_model
 from .ai.rate_limit.redis_bucket import RedisTokenBucketLimiter
 from .ai.routes import AIDeps
 from .ai.routing.breaker import CircuitBreaker
@@ -32,7 +33,7 @@ from .ai.routing.cache import TieredSemanticCache
 from .ai.routing.endpoints import EndpointRegistry
 from .ai.routing.keys import EnvKeyResolver
 from .ai.routing.router import ModelRouter
-from .ai.routing.tiers import load_tier_config
+from .ai.routing.tiers import ModelTier, load_tier_config
 from .analysis.plan_analyzer.approval import ThresholdApprovalGate
 from .analysis.plan_analyzer.semantic import SemanticPlanAnalyzer
 from .audit.writer import AuditWriter
@@ -108,7 +109,35 @@ def _build_cache_embedder(settings: Settings) -> Callable[[str], Awaitable[Seque
     So L2 is enabled only when the embedder is input-sensitive. Absent that, the cache
     stays exact-match, which is correct and safe rather than degraded — and the startup
     log names which tier is live so an operator is never guessing.
+
+    WHAT CHANGED: THE SELF-HOSTED SERVER IS TRIED FIRST
+    ---------------------------------------------------
+    The reasoning above is intact and the conclusion it reached — L1 only on a fresh clone —
+    was correct given the choices available at the time. It is no longer the only option:
+    the same local server the `self_hosted` tier routes to also serves `POST /embeddings` on
+    its OpenAI-compatible surface, so an input-SENSITIVE embedder is available with no paid
+    key at all. `SelfHostedEmbedder` raises rather than returning a default vector, which is
+    what makes it usable as a similarity key.
+
+    It is tried FIRST rather than as a fallback, because it costs nothing per call and stays
+    inside the network — which is the whole premise of the `self_hosted` tier (OQ-22 records
+    that an air-gapped project cannot call Voyage by definition). Voyage remains the choice
+    for a deployment that has configured it and has NOT configured a local server.
     """
+    self_hosted_base_url = settings.self_hosted_base_url.strip()
+    self_hosted_embedding_model = settings.self_hosted_embedding_model_id.strip()
+    if self_hosted_base_url and self_hosted_embedding_model:
+        embedder = SelfHostedEmbedder(
+            base_url=self_hosted_base_url,
+            model=self_hosted_embedding_model,
+            timeout_seconds=settings.outbound_http_timeout_seconds,
+        )
+
+        async def embed_self_hosted(text: str) -> Sequence[float]:
+            return await embedder(text)
+
+        return embed_self_hosted
+
     if settings.embedding_backend != "voyage":
         # `bge_m3` selects the local table (D-48) but has no local model yet, so it
         # returns the input-independent fallback. Not usable as a similarity key.
@@ -543,8 +572,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         semantic_cache = TieredSemanticCache(redis=redis_client)
         logger.info(
             "semantic cache: L1 exact-match only. L2 similarity is inactive because no "
-            "input-sensitive embedding backend is configured (EMBEDDING_BACKEND=%s, "
-            "LLM_KEY_VOYAGE unset or placeholder); set a real Voyage key to enable it",
+            "input-sensitive embedding backend is configured; set "
+            "SELF_HOSTED_EMBEDDING_MODEL_ID with SELF_HOSTED_BASE_URL, or a real "
+            "LLM_KEY_VOYAGE with EMBEDDING_BACKEND=voyage (current backend=%s)",
             settings.embedding_backend,
         )
     else:
@@ -554,8 +584,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             similarity_threshold=settings.semantic_cache_threshold,
         )
         logger.info(
-            "semantic cache: L1 exact-match and L2 similarity active (backend=%s, threshold=%s)",
-            settings.embedding_backend,
+            "semantic cache: L1 exact-match and L2 similarity active (embedder=%s, threshold=%s)",
+            # Which embedder, not which pgvector backend. The two are independent since the
+            # self-hosted path landed, and an operator debugging an L2 miss rate needs to know
+            # which model produced the vectors.
+            settings.self_hosted_embedding_model_id or settings.embedding_backend,
             settings.semantic_cache_threshold,
         )
     model_router = ModelRouter(
@@ -572,6 +605,37 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.breakers = breakers
     app.state.semantic_cache = semantic_cache
     app.state.model_router = model_router
+
+    # ── §1.5's generation pipeline finally has a model to reach ────────────────
+    # `generation/routes.py` returned a bare `GenerationService()` and `_insert_run` wrote
+    # `served_from` as the SQL literal `'template'`, so the six-tier cascade above had exactly one
+    # consumer — `/api/v1/ai/complete`, which no product surface calls — and a generation row could
+    # not record a provider call, a cache hit or anything else.
+    #
+    # Composed HERE and handed over as `core.model_port.ArtifactModelPort`, because
+    # `src/generation/` may not import `src.ai` (§2.2.1) and that ban is re-asserted by parsing in
+    # `scripts/chokepoint_graph.py` rather than by a lint. `main.py` is the one module allowed to
+    # know the whole graph, which is exactly what composing an adapter across two domains requires.
+    #
+    # `None` is a supported outcome, not a failure: a deployment whose configured tier has no
+    # reachable model runs generation's template path and records `served_from='template'`, which
+    # is a true row. Refusing to boot would make a model server a hard dependency of every surface.
+    app.state.artifact_model = build_artifact_model(
+        router=model_router,
+        tier_config=tier_config,
+        tier_name=settings.generation_tier,
+    )
+    if app.state.artifact_model is None:
+        logger.info(
+            "generation: no model port for tier %s; runs will render templates and record served_from='template'",
+            settings.generation_tier,
+        )
+    else:
+        logger.info(
+            "generation: routing to tier %s via endpoint chain %s",
+            settings.generation_tier,
+            tier_config.tiers[ModelTier(settings.generation_tier)].ordered_ids(),
+        )
 
     # `ai/routes.py` reads `app.state.ai_deps` and the Phase 0 lifespan never set
     # it, so every request to `/api/v1/ai/tiers` and `/api/v1/ai/complete` raised

@@ -76,8 +76,33 @@ class GenerationRequest(BaseModel):
     environment: str | None = Field(default=None, max_length=32)
 
 
-def _service() -> GenerationService:
-    return GenerationService()
+def _service(request: Request) -> GenerationService:
+    """The generation service, wired to the model port the lifespan already composed.
+
+    The port is READ from `app.state` rather than constructed here, and that is the point of this
+    function existing at all. It used to be `return GenerationService()` — a service with no
+    provider path — so `backend/src/ai/routing/` was a complete six-tier cascade with a cache, per
+    endpoint breakers and a key resolver that generation never called. The only consumer was
+    `POST /api/v1/ai/complete`, which no product surface uses.
+
+    `app.state.artifact_model` and not `app.state.model_router`, because `src/generation/` may not
+    import `src.ai` (§2.2.1) and that ban is re-asserted by parsing rather than by a lint — the
+    first version of this function named `ai.routing.tiers.ModelTier` and the parse check refused
+    it. `ai/generation_port.py` builds the adapter; `core/model_port.py` is the only seam this
+    module knows.
+
+    Sharing the composed object rather than building a second one is load-bearing for a second
+    reason: the router behind it holds per-endpoint breaker state, and a private set would let
+    generation keep hammering an endpoint that `/ai/complete` had already opened the circuit on.
+
+    A MISSING PORT IS A CONFIGURATION, NOT AN ERROR
+    `_chokepoint` below raises when its collaborator is absent, because a generation run that
+    cannot be submitted for approval is not a run worth streaming. This one does not: a deployment
+    with no reachable endpoint still generates artifacts from the template path and records
+    `served_from='template'`, which is a true row. Refusing to serve would turn a degraded
+    configuration into an outage.
+    """
+    return GenerationService(model=getattr(request.app.state, "artifact_model", None))
 
 
 def _chokepoint(request: Request) -> GovernanceChokepoint:
@@ -164,7 +189,7 @@ async def create_generation_run(
         # The row is inserted BEFORE the first frame, as `running`. A row written only on success
         # would leave a crashed run with no trace at all, which is the opposite of what an
         # evidence table is for.
-        await _insert_run(session, run_id=run_id, body=body, principal=principal)
+        await _insert_run(session, run_id=run_id, body=body, principal=principal, service=service)
 
         # THE SERVICE'S TERMINAL FRAME IS WITHHELD, and this route emits the single terminal frame
         # itself. §7.4 permits exactly one, and it must be last.
@@ -263,44 +288,77 @@ async def create_generation_run(
 
 
 async def _insert_run(
-    session: AsyncSession, *, run_id: uuid.UUID, body: GenerationRequest, principal: Principal
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    body: GenerationRequest,
+    principal: Principal,
+    service: GenerationService,
 ) -> None:
     """Record the attempt as `running`.
 
-    `served_from='template'` is stated rather than inferred: Phase 1's pipeline renders templates,
-    and `GENERATION_STATUSES`/`SERVED_FROM` both carry CHECK constraints, so a value outside either
-    vocabulary is refused by the database rather than stored and misread later.
+    `served_from` AND `tier` ARE NOW BOUND PARAMETERS, WHICH IS THE POINT
+    They were SQL string literals: `'template'` and `'deterministic'`, written directly into the
+    INSERT text. So `generation_runs.served_from` could not record a provider call, a cache hit or
+    anything else regardless of what the pipeline did — and `SERVED_FROM` already contained
+    `('l1', 'l2', 'l3', 'provider', 'template')`, four of which were unreachable by construction.
+    `'deterministic'` is not a `ModelTier` at all.
+
+    `served_from='pending'` because this row is written BEFORE the first frame, and at that moment
+    the run has not been served from anywhere. `pending` was added to `SERVED_FROM` by revision
+    `0011` for exactly this state; the alternative was to state the path the service was about to
+    ATTEMPT, which is a claim about an outcome that has not happened and is wrong for every run
+    that crashes mid-stream. `_finish_run` overwrites it with what actually served the run.
+
+    The row is still inserted first, for the reason it always was: a row written only on success
+    would leave a crashed run with no trace, which is the opposite of what an evidence table is for.
     """
     await session.execute(
         text(
             "INSERT INTO generation_runs "
             "(id, project_id, tenant_id, requested_by, status, iterations_used, served_from, tier, "
             " prompt_tokens, completion_tokens) "
-            "VALUES (:id, :project_id, :tenant_id, :requested_by, 'running', 0, 'template', "
-            " 'deterministic', 0, 0)"
+            "VALUES (:id, :project_id, :tenant_id, :requested_by, 'running', 0, :served_from, :tier, "
+            " 0, 0)"
         ),
         {
             "id": run_id,
             "project_id": body.project_id,
             "tenant_id": principal.tenant_id,
             "requested_by": principal.user_id if principal.kind == "user" else None,
+            "served_from": "pending",
+            "tier": service.attempted_tier,
         },
     )
     await session.commit()
 
 
 async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: GenerationOutcome) -> None:
-    """Close the row out with the real counts and the terminal status."""
+    """Close the row out with the real counts, origin and terminal status.
+
+    `served_from`, `tier`, `endpoint_id` and `iterations_used` are all written from the outcome the
+    stream filled in, so the row reports what happened rather than what the schema was seeded with.
+    A run served from L1 says `l1` and consumed zero iterations; a genuine model call says
+    `provider` and names the endpoint that answered; a template fallback says `template` and
+    carries status `template_fallback`, which distinguishes it from a deployment that never had a
+    provider path at all.
+    """
     await session.execute(
         text(
             "UPDATE generation_runs SET status = :status, prompt_tokens = :prompt_tokens, "
-            "completion_tokens = :completion_tokens, finished_at = now() WHERE id = :id"
+            "completion_tokens = :completion_tokens, served_from = :served_from, tier = :tier, "
+            "endpoint_id = :endpoint_id, iterations_used = :iterations_used, finished_at = now() "
+            "WHERE id = :id"
         ),
         {
             "id": run_id,
             "status": outcome.status,
             "prompt_tokens": outcome.prompt_tokens,
             "completion_tokens": outcome.completion_tokens,
+            "served_from": outcome.served_from,
+            "tier": outcome.tier,
+            "endpoint_id": outcome.endpoint_id,
+            "iterations_used": outcome.iterations_used,
         },
     )
     await session.commit()

@@ -34,7 +34,14 @@ GENERATION_STATUSES: tuple[str, ...] = (
     "failed",
 )
 
-SERVED_FROM: tuple[str, ...] = ("l1", "l2", "l3", "provider", "template")
+#: Where a completed run's content came from.
+#:
+#: `pending` is the state of a row that has been INSERTed as `running` and not yet resolved. It
+#: exists because `routes.py::_insert_run` wrote the SQL literal `'template'` into that row — a
+#: claim about which pipeline served a run, made before the run had started. Four of the five
+#: values below were unreachable by construction as a result. A NOT NULL column needs *some*
+#: value for a row in flight, and the honest one is the one that says "not yet".
+SERVED_FROM: tuple[str, ...] = ("pending", "l1", "l2", "l3", "provider", "template")
 
 
 def in_list(column: str, values: tuple[str, ...]) -> str:

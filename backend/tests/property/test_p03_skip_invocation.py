@@ -79,7 +79,7 @@ class TestOpenBreakerZeroInvocations:
             mock_ep.endpoint_id = eid
             mock_ep.provider_kind = "test"
 
-            async def _invoke(req, *, api_key=None, _eid=eid):
+            async def _invoke(req, *, credential=None, _eid=eid):
                 invocation_counts[_eid] += 1
                 return CompletionResponse(content="should not reach", model="m")
 
@@ -116,7 +116,7 @@ class TestOpenBreakerZeroInvocations:
         mock_final.endpoint_id = final_eid
         mock_final.provider_kind = "test"
 
-        async def _final_invoke(req, *, api_key=None):
+        async def _final_invoke(req, *, credential=None):
             invocation_counts[final_eid] += 1
             return CompletionResponse(content="final ok", model="m")
 
@@ -223,7 +223,7 @@ class TestUnsupportedProtocolZeroInvocations:
         mock_final.endpoint_id = final_eid
         mock_final.provider_kind = "test"
 
-        async def _final_invoke(req, *, api_key=None):
+        async def _final_invoke(req, *, credential=None):
             invocation_counts[final_eid] += 1
             return CompletionResponse(content="final ok", model="m")
 

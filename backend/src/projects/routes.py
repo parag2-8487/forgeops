@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Project CRUD, activity and readiness (design.md §6.5 revision `0009`, §11.3, §11.4).
+"""Project CRUD, activity and readiness (design.md Â§6.5 revision `0009`, Â§11.3, Â§11.4).
 
 **No migration accompanies this.** The `projects` table and the `Project` SQLModel have existed
 since revision `0009`, with `tenant_id`, a JSONB `settings` column, `created_at` and an `onupdate`
-`updated_at` — and `change_sets.project_id` and `generation_runs.project_id` are both foreign keys
+`updated_at` â€” and `change_sets.project_id` and `generation_runs.project_id` are both foreign keys
 into it. What was missing was never the schema: these handlers simply never opened a session.
 
 That is the same shape as `src/approvals/` in this pass, and it is worth naming because it changes
 how the remaining gaps should be read. `create_project` built a `ProjectResponse` from its own
 request body and returned it with a fresh UUID, so a create appeared to succeed and stored nothing.
-`get_project` returned a fixed record — name `"Sample Project"`, path `/workspace/sample` — **for any
+`get_project` returned a fixed record â€” name `"Sample Project"`, path `/workspace/sample` â€” **for any
 id at all**, including ids that had never existed, which is worse than a 404 because a caller cannot
 tell a real project from the fixture. The `/projects` screen said so on its own face; that
 disclaimer is removed in the same commit as the fix, because it is no longer true.
@@ -85,21 +85,46 @@ class ActivityFeedItem(BaseModel):
     details: str
 
 
+class ReadinessCheckResponse(BaseModel):
+    """One checklist item, with the indexed path that satisfied it.
+
+    Â§1.4 asks for "checklist checks" and a report that says "why it matters"; this is that, on the
+    wire. `evidence` is what makes a score auditable â€” a category at 40 with no evidence anywhere is
+    indistinguishable from a bug in the scorer.
+    """
+
+    id: str
+    category: str
+    passed: bool
+    points: int
+    max_points: int
+    evidence: str
+    why_it_matters: str
+
+
 class ReadinessReportResponse(BaseModel):
     project_id: uuid.UUID
     score: int
     level: str
     summary_report: str
     recommendations: list[str]
-    #: The five-category breakdown, which `ReadinessEngine` has always computed and this response
-    #: model dropped. §12.6 step 5 asserts on a "category breakdown", so the chart on the readiness
-    #: screen had nothing real to render and was reduced to a single "Overall" bar. Exposed here
-    #: rather than recomputed client-side: the engine owns the weighting.
-    #: Exactly the five fields of `ReadinessBreakdown`: documentation_score, test_coverage_score,
-    #: ci_config_score, security_policy_score and containerization_score. Serialised straight from
-    #: the engine's own model, so this cannot drift into a different set of categories than the one
-    #: it computes.
+    #: The Â§1.4 category breakdown: Containerization, CI/CD, Orchestration, Env Config, Security,
+    #: IaC â€” each 0-100. Â§12.6 step 5 asserts on a "category breakdown", so the chart on the
+    #: readiness screen had nothing real to render while this was dropped. Serialised straight from
+    #: the engine's own model, so it cannot drift into a different set of categories than the one it
+    #: computes.
+    #:
+    #: The set CHANGED with this commit. It was five categories â€” documentation, test coverage, CI
+    #: config, security policy, containerisation â€” which omitted three of Â§1.4's six and scored two
+    #: that Â§1.4 does not name. Test evidence is now a check inside CI/CD rather than a category of
+    #: its own, which is also what removes the old `has_tests` default of true.
     categories: dict[str, int] = Field(default_factory=dict)
+    #: False when the project has no indexed files. A caller must be able to tell "scored zero" from
+    #: "never scanned", and a score alone cannot.
+    indexed: bool = True
+    #: How many indexed paths the score was computed from.
+    evaluated_paths: int = 0
+    checks: list[ReadinessCheckResponse] = Field(default_factory=list)
 
 
 def _tenant_clause(tenant_id: uuid.UUID | None) -> str:
@@ -119,7 +144,7 @@ def encode_cursor(created_at: Any, project_id: uuid.UUID) -> str:
     """A URL-safe keyset cursor over `(created_at, id)`.
 
     Base64url rather than the raw `"<iso>|<uuid>"`, and not for tidiness. An ISO-8601 timestamp
-    contains `+00:00`, and `+` in a query string decodes to a space — so a raw cursor round-tripped
+    contains `+00:00`, and `+` in a query string decodes to a space â€” so a raw cursor round-tripped
     through a URL arrives as `2026-08-20T23:28:19.866059 00:00` and no longer parses. Encoding
     removes the whole class of problem rather than escaping one character.
     """
@@ -153,7 +178,7 @@ async def create_project(
 ) -> ProjectResponse:
     """Insert a project row owned by the caller's tenant.
 
-    The settings validation is unchanged and still refuses an unknown key rather than dropping it —
+    The settings validation is unchanged and still refuses an unknown key rather than dropping it â€”
     a typo in `embedding_backend` that silently kept the default would only surface later as a
     project whose vectors are in the wrong table (D-48).
     """
@@ -233,12 +258,17 @@ async def list_projects(
     )
 
 
-async def _load_project(session: AsyncSession, *, project_id: uuid.UUID, tenant_id: uuid.UUID | None) -> dict[str, Any]:
+async def load_visible_project(
+    session: AsyncSession, *, project_id: uuid.UUID, tenant_id: uuid.UUID | None
+) -> dict[str, Any]:
     """One project the tenant may see, or the non-disclosing 403.
 
-    A 404 here would distinguish "no such project" from "another tenant's project", which §4.2 and
+    A 404 here would distinguish "no such project" from "another tenant's project", which Â§4.2 and
     Q-20 forbid: the body must be byte-identical either way or it becomes an enumeration oracle for
     project ids. `GovernanceChokepoint._admit` takes the same line for the same reason.
+
+    Public rather than `_load_project` because `analysis/routes.py` scopes the codebase index by
+    project too, and a second copy of this rule is a second place for it to drift.
     """
     result = await session.execute(
         text(f"SELECT {_COLUMNS} FROM projects WHERE id = :id AND {_tenant_clause(tenant_id)}"),
@@ -261,7 +291,7 @@ async def get_project(
     This returned a fixed `"Sample Project"` for every id, including ids that had never existed.
     A create-then-read now returns what was created.
     """
-    return ProjectResponse(**await _load_project(session, project_id=project_id, tenant_id=principal.tenant_id))
+    return ProjectResponse(**await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id))
 
 
 @router.get("/{project_id}/activity", response_model=list[ActivityFeedItem], summary="Project activity")
@@ -274,13 +304,13 @@ async def get_project_activity(
 
     This returned a single hardcoded `project_created` item dated 2026-08-06. The audit log is
     append-only, hash-chained and already indexed on `(project_id, created_at)`, so an activity feed
-    is a query over it rather than a second store — and using it means the feed cannot disagree with
+    is a query over it rather than a second store â€” and using it means the feed cannot disagree with
     the audit viewer about what happened.
 
     Existence is checked first so a caller cannot use an empty feed to learn that an id is
     unallocated.
     """
-    await _load_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
     result = await session.execute(
         text(
             "SELECT id, action, created_at, reason, outcome FROM audit_events "
@@ -307,42 +337,68 @@ async def get_project_readiness(
     principal: Annotated[Principal, Depends(require_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ReadinessReportResponse:
-    """Score the project with `ReadinessEngine` and return the full breakdown.
+    """Score the project from its INDEX and return the Â§1.4 category breakdown.
 
-    Two things change here. The project must exist, so a readiness score is no longer returned for
-    an unallocated id. And the **five-category breakdown is exposed**: the engine has always
-    computed it and `ReadinessReportResponse` dropped it, which is why §12.6 step 5's "category
-    breakdown" had nothing to render and the radar chart was reduced to one bar.
+    What this used to score was `projects.settings`: `config_files` was literally
+    `sorted(settings.keys())` and `manifests` was `["Dockerfile"] if repo_url else []`, with
+    `"README.md"` substituted when the settings were empty. So the number described what an operator
+    had typed into the create form â€” it moved when the settings changed and stayed still when the
+    repository did â€” and a project with a `favourite` flag scored points for documentation.
 
-    What it scores is still derived from the project's stored `settings` and `path` rather than from
-    a filesystem walk of the repository, and that limit is real: wiring repository contents into the
-    engine is analysis work, not a response-model change. The score is honest about its input rather
-    than pretending to have read the tree.
+    It now reads `file_tree` and `file_contents`: the rows an agent scan persisted through
+    `POST /analysis/codebase/{project_id}/index`. `projects.settings` still participates, but only as
+    a REFINEMENT â€” `ignore_globs` removes paths from the evidence, because a path the operator has
+    declared out of scope is not evidence about the deployment. It can no longer stand in for the
+    repository.
+
+    A project with no indexed files scores zero, says `indexed: false`, and recommends running a
+    scan. That is the honest answer; scoring the settings instead would produce a number that looks
+    like a measurement of a repository nobody has read.
     """
-    project = await _load_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    project = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
 
-    from .readiness import ReadinessEngine
+    from ..core.index_evidence import load_index_evidence
+    from .readiness import ReadinessEngine, apply_ignore_globs
 
-    engine = ReadinessEngine()
+    evidence = await load_index_evidence(session, project_id=project_id)
     settings = project.get("settings") or {}
-    # Derived from what is stored about the project. `ignore_globs` and `max_file_size_bytes` being
-    # set is evidence someone configured the project; it is not a substitute for scanning it.
-    evaluation_input = {
-        "manifests": ["Dockerfile"] if project.get("repo_url") else [],
-        "config_files": sorted(str(k) for k in settings) or ["README.md"],
-    }
-    result = engine.evaluate_project(evaluation_input)
+    ignore_globs = settings.get("ignore_globs") if isinstance(settings, dict) else None
+    refined = evidence.model_copy(update={"paths": apply_ignore_globs(evidence.paths, ignore_globs)})
 
-    categories = result.breakdown.model_dump()
+    result = ReadinessEngine().evaluate(refined)
+
+    if result.indexed:
+        summary = (
+            f"{project['name']} scored {result.overall_score}/100 and is categorised as "
+            f"'{result.level}', from {result.evaluated_paths} indexed file(s) in this project's "
+            f"codebase index."
+        )
+    else:
+        summary = (
+            f"{project['name']} has no indexed files, so there is nothing to score. Run an agent "
+            f"scan for this project; readiness is measured from the repository, not from its "
+            f"stored settings."
+        )
+
     return ReadinessReportResponse(
         project_id=project_id,
         score=result.overall_score,
         level=result.level,
-        summary_report=(
-            f"{project['name']} scored {result.overall_score}/100 and is categorised as "
-            f"'{result.level}'. Scored from the project's stored settings and repository "
-            f"reference, not from a scan of its working tree."
-        ),
+        summary_report=summary,
         recommendations=result.recommendations,
-        categories=categories,
+        categories=result.breakdown.model_dump(),
+        indexed=result.indexed,
+        evaluated_paths=result.evaluated_paths,
+        checks=[
+            ReadinessCheckResponse(
+                id=check.id,
+                category=check.category,
+                passed=check.passed,
+                points=check.points,
+                max_points=check.max_points,
+                evidence=check.evidence,
+                why_it_matters=check.why_it_matters,
+            )
+            for check in result.checks
+        ],
     )

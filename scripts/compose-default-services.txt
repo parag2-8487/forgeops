@@ -41,3 +41,12 @@ frontend
 # Recorded here rather than gated behind a profile, because a stack that accepts work it will never
 # perform is not a working default.
 worker
+# The local OpenAI-compatible model server that makes §11.7's `self_hosted` tier reachable.
+#
+# A TENTH service, and unprofiled for the same class of reason as `worker`. Every other endpoint in
+# `backend/config/model-tiers.yaml` needs a hosted key, and `.env.example` ships those as
+# placeholders by design — so without this service the whole six-tier cascade has nothing it can
+# reach, `ModelRouter.complete` answers EXHAUSTED for every tier, and generation's template
+# fallback is not a fallback but the only path. Behind a profile the default stack would be in
+# exactly that state, which is the condition this service was added to remove.
+ollama

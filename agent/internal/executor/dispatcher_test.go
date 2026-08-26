@@ -271,7 +271,16 @@ func TestNoHandlerIsReachableOutsideTheTable(t *testing.T) {
 	// The handlers are the top-level funcs whose signature ends in (Result, error) and which
 	// take a *envelope.Verified. Derived from the source rather than listed, so a new handler is
 	// covered the day it is written.
+	//
+	// The declaration POSITION is recorded, not just the name. The previous version asked
+	// `ident.Obj.Decl` whether an identifier was its own declaration, and `ast.Object` resolution
+	// is per FILE — so the moment a handler lived in any file other than the one holding
+	// `handlerTable`, `Obj` was nil and this test panicked on the nil dereference instead of
+	// checking anything. It reads every non-test file in the package, so package-wide was always
+	// the intent; comparing positions is what makes that true. The property asserted is
+	// unchanged, and a nil `Obj` can no longer be mistaken for "this is the declaration".
 	handlers := map[string]bool{}
+	handlerDecl := map[string]token.Pos{}
 	var tableStart, tableEnd token.Pos
 	for _, file := range files {
 		for _, decl := range file.Decls {
@@ -279,6 +288,7 @@ func TestNoHandlerIsReachableOutsideTheTable(t *testing.T) {
 			case *ast.FuncDecl:
 				if typed.Recv == nil && isHandlerSignature(typed.Type) {
 					handlers[typed.Name.Name] = true
+					handlerDecl[typed.Name.Name] = typed.Name.Pos()
 				}
 			case *ast.GenDecl:
 				for _, spec := range typed.Specs {
@@ -309,7 +319,7 @@ func TestNoHandlerIsReachableOutsideTheTable(t *testing.T) {
 				return true
 			}
 			// Its own declaration is fine.
-			if decl, ok := ident.Obj.Decl.(*ast.FuncDecl); ok && decl.Name == ident {
+			if handlerDecl[ident.Name] == ident.Pos() {
 				return true
 			}
 			if ident.Pos() >= tableStart && ident.Pos() <= tableEnd {
@@ -432,8 +442,12 @@ func TestExecute_AnUnknownOperationIsDistinctFromAnUnimplementedOne(t *testing.T
 		t.Errorf("an off-catalogue operation gave %v (code %q)", unknown, Code(unknown))
 	}
 
+	// `validate.compose`, not `scan.full`: the scan operations became implemented when the
+	// codebase indexer landed, and an example that quietly stops being an example of the thing it
+	// illustrates is how this assertion would go vacuous. Group 14's validators are still absent,
+	// so this row is a real one.
 	_, unimplemented := d.Execute(context.Background(),
-		verified(t, OpScanFull, "", map[string]any{}, 4), nil)
+		verified(t, OpValidateCompose, "", map[string]any{}, 4), nil)
 	if !isErr(unimplemented, ErrUnimplemented) || Code(unimplemented) != "operation-unimplemented" {
 		t.Errorf("a catalogued-but-unimplemented operation gave %v (code %q)",
 			unimplemented, Code(unimplemented))
@@ -447,13 +461,18 @@ func TestExecute_AReadOnlyOperationNeedsNoApprovalToReachItsHandler(t *testing.T
 	// §7.7's third column, and the whole reason D-83 moved the check. An empty `approval_id` on
 	// `scan.full` must reach the handler — which then refuses for its own reason — rather than be
 	// refused as malformed.
+	//
+	// The handler's own reason is now `ErrNoIndexer` rather than `ErrUnimplemented`, because
+	// `scan.full` has a body and `newDispatcher` wires no `CodebaseIndexer`. The property under
+	// test is unchanged and still the same one: what matters is that an operation §7.7 marks
+	// read-only got past the approval gate and into its body.
 	d := newDispatcher(t, t.TempDir())
 	_, err := d.Execute(context.Background(), verified(t, OpScanFull, "", map[string]any{}, 5), nil)
 	if isErr(err, ErrApprovalRequired) {
 		t.Fatal("a read-only operation was refused for having no approval_id")
 	}
-	if !isErr(err, ErrUnimplemented) {
-		t.Fatalf("err = %v, want the handler's own ErrUnimplemented", err)
+	if !isErr(err, ErrNoIndexer) {
+		t.Fatalf("err = %v, want the handler's own ErrNoIndexer", err)
 	}
 }
 

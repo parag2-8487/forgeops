@@ -170,6 +170,14 @@ credentials.md
 # that asserts every service they name still exists in `docker-compose.yml`.
 ARCHITECTURE-DIAGRAMS.md
 
+# The rendered diagrams and their archive, for the same reason as the file above: they are
+# generated from a snapshot of the tree at one commit, nothing gates them, and a committed copy
+# becomes a picture that describes a tree it no longer matches. The archive is also 3.4 MB, which
+# `check-added-large-files` refuses at 2 MB — and it is right to, because a binary blob in git
+# history cannot be diffed or removed.
+docs/diagrams.zip
+docs/diagrams/
+
 # What the journey's agent WRITES into the fixture project.
 #
 # `tests/e2e/fixture-project` is mounted into the agent container read-write because criterion 10's

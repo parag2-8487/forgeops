@@ -54,6 +54,11 @@ CAPABILITIES: Final[dict[str, str]] = {
     "trivy": "agent job (pinned trivy in the agent-dev devtools image)",
     "infisical": "secrets job (digest-pinned Infisical container)",
     "agent_binary": "e2e job (the real forgeops-agent binary)",
+    # The local OpenAI-compatible model server that makes §11.7's `self_hosted` tier reachable.
+    # Every hosted endpoint in `config/model-tiers.yaml` needs a key and `.env.example` ships
+    # placeholders, so without this there is no endpoint any test can genuinely call — which is why
+    # `served_from='provider'` had never been produced by anything.
+    "self_hosted_model": "the `ollama` Compose service, with SELF_HOSTED_MODEL_ID pulled",
 }
 
 

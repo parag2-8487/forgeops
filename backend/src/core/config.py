@@ -87,6 +87,14 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "ANTHROPIC_BASE_URL",
         "GOOGLE_BASE_URL",
         "SELF_HOSTED_BASE_URL",
+        # The self-hosted model server's identity. `SELF_HOSTED_BASE_URL` said where it is and
+        # nothing said WHAT it serves, so `config/model-tiers.yaml` carried a literal model tag
+        # that no real server had — every request to the only reachable endpoint answered 404.
+        "SELF_HOSTED_MODEL_ID",
+        "SELF_HOSTED_EMBEDDING_MODEL_ID",
+        # Compose-only, like CERBOS_HTTP_PORT: the published port of the `ollama` service. The
+        # application reaches the server through SELF_HOSTED_BASE_URL and never reads this.
+        "OLLAMA_PORT",
         "INFISICAL_URL",
         "INFISICAL_CLIENT_ID",
         "INFISICAL_CLIENT_SECRET",
@@ -180,6 +188,10 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "JUDGE_TIER",
         "JUDGE_PROMPT_VERSION",
         "TEMPLATE_LIBRARY_PATH",
+        # Which of §11.7's six tiers a generation run routes to. Registered because generation
+        # had no tier at all: `generation_runs.tier` was the SQL literal `'deterministic'`, a
+        # value that is not a `ModelTier`, because nothing routed.
+        "GENERATION_TIER",
         # Governance, policy, audit (§1.7 §1.9 §1.10)
         "GOVERNANCE_POLICY_PACKAGE",
         "POLICY_BUNDLE_REFRESH_SECONDS",
@@ -257,6 +269,28 @@ class Settings(BaseSettings):
     cb_window_seconds: int = Field(default=30, ge=1)
     cb_open_seconds: int = Field(default=60, ge=1)
     semantic_cache_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
+    #: Where the self-hosted, OpenAI-compatible model server is.
+    #:
+    #: `load_tier_config` has always expanded `${SELF_HOSTED_BASE_URL}` straight from `os.environ`,
+    #: so the key was declared in `PROJECT_CONFIG_KEYS` and had no field here. It needs one now
+    #: because `_build_cache_embedder` reads it to decide whether L2 can be served locally, and
+    #: reading it out of the process environment there would bypass the one validated view of
+    #: configuration the rest of the composition root uses.
+    self_hosted_base_url: str = Field(default="")
+    #: What the self-hosted model server actually serves.
+    #:
+    #: `SELF_HOSTED_BASE_URL` said WHERE the server is and nothing said WHAT it serves, so
+    #: `config/model-tiers.yaml` carried a literal model tag (`qwen3-coder-next`) that no real
+    #: server has. Every request to the one endpoint a fresh clone can reach therefore came back
+    #: 404 `model "..." not found`. Empty means "not configured", which leaves the tier YAML's
+    #: `${SELF_HOSTED_MODEL_ID}` unexpandable and is a startup error — deliberately louder than a
+    #: default, because a default reintroduces the same 404 silently.
+    self_hosted_model_id: str = Field(default="")
+    #: The embedding model behind the L2 semantic cache, on the same server.
+    #:
+    #: Empty leaves the cache L1-only, which is correct and safe rather than degraded — see
+    #: `main.py::_build_cache_embedder` for why an input-INSENSITIVE embedder is worse than none.
+    self_hosted_embedding_model_id: str = Field(default="")
     outbound_http_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
     ai_rate_limit_capacity: int = Field(default=20, ge=1)
     ai_rate_limit_refill_per_second: float = Field(default=0.2, gt=0)
@@ -364,6 +398,27 @@ class Settings(BaseSettings):
     judge_tier: str = Field(default="medium_value")
     judge_prompt_version: int = Field(default=1, ge=1)
     template_library_path: str = Field(default="src/generation/templates")
+    #: Which tier a generation run routes to (§11.5.4).
+    #:
+    #: A `Literal` rather than a free string, because an unknown tier makes
+    #: `ModelRouter.complete` return EXHAUSTED for every request — the run falls back to a
+    #: template and looks like a provider outage instead of a typo.
+    #:
+    #: The six names are RESTATED here rather than read from `ai.routing.tiers.ModelTier`, which is
+    #: not the repository's usual preference. `TID251` bans a cross-domain import from `src.core`,
+    #: and correctly: configuration is the lowest layer and every module that reads settings would
+    #: pay for a cycle through `src.ai`. The drift that restating invites is closed by
+    #: `tests/unit/test_generation_tier_setting.py`, which asserts this tuple equals `ModelTier`
+    #: exactly — so a tier added to the enum fails a test rather than becoming quietly
+    #: unconfigurable.
+    generation_tier: Literal[
+        "high_coding",
+        "high_analysis",
+        "medium",
+        "medium_value",
+        "low_logs",
+        "self_hosted",
+    ] = "self_hosted"
 
     # ─── Phase 1 §1.7 §1.9 §1.10 governance, policy, audit ───────────────────
     governance_policy_package: str = Field(default="forgeops/governance")

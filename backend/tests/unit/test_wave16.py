@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 import pytest
 from src.core.errors import ProblemException
 
+from tests.synthetic_secrets import openai_style_key
+
 # ===========================================================================
 # Task 12.8: tools/call gateway path tests
 # ===========================================================================
@@ -330,7 +332,7 @@ class TestEndpointRegistry:
             messages=[{"role": "user", "content": "Hi"}],
         )
 
-        result = await ep.complete(request, api_key="sk-test")
+        result = await ep.complete(request, credential=openai_style_key())
         assert isinstance(result, CompletionResponse)
         assert result.content == "Hello!"
         assert result.model == "gpt-test"

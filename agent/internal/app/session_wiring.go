@@ -20,6 +20,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"github.com/parag8487/ForgeOps/agent/internal/envelope"
 	"github.com/parag8487/ForgeOps/agent/internal/executor"
 	"github.com/parag8487/ForgeOps/agent/internal/identity"
+	"github.com/parag8487/ForgeOps/agent/internal/scanner"
 	"github.com/parag8487/ForgeOps/agent/internal/session"
 )
 
@@ -193,7 +195,38 @@ func (a *App) buildSessionDeps(store *session.FileStore) (session.Deps, error) {
 	if err != nil {
 		return zero, err
 	}
-	dispatcher, err := executor.New(executor.Deps{Root: root})
+
+	// The codebase indexer, which is what makes `scan.full` and `scan.incremental` real rather
+	// than a named refusal (phases.md §1.3). It reads the workspace and POSTs the report to the
+	// SAME backend the session dials — `session.HTTPOrigin` derives both from the one configured
+	// URL, so an agent cannot pair with one backend and upload its index to another.
+	//
+	// The bearer credential is read at CALL time from the credential store rather than captured
+	// here. A device token is rotated on renewal, and a value captured at assembly would keep
+	// being sent after it stopped being valid, which surfaces as a 401 the agent cannot explain.
+	origin, err := session.HTTPOrigin(a.cfg.BackendWSSURL)
+	if err != nil {
+		return zero, fmt.Errorf("agent: backend origin: %w", err)
+	}
+	indexer, err := newCodebaseIndexer(
+		root, origin, "", a.cfg.Scanner.MaxFileSize,
+		scanner.TokenFunc(func(ctx context.Context) (string, error) {
+			creds, err := store.Load(ctx)
+			if err != nil {
+				return "", fmt.Errorf("agent: reading the device token: %w", err)
+			}
+			if len(creds.DeviceToken) == 0 {
+				return "", errors.New("agent: this agent is not paired, so it has no token to submit a scan with")
+			}
+			return base64.RawURLEncoding.EncodeToString(creds.DeviceToken), nil
+		}),
+		scanSubmitTimeout,
+	)
+	if err != nil {
+		return zero, fmt.Errorf("agent: codebase indexer: %w", err)
+	}
+
+	dispatcher, err := executor.New(executor.Deps{Root: root, Indexer: indexer})
 	if err != nil {
 		return zero, fmt.Errorf("agent: executor: %w", err)
 	}

@@ -50,6 +50,7 @@ async def _app_from(
     tier_yaml: Path,
     monkeypatch: pytest.MonkeyPatch,
     env: dict[str, str] | None = None,
+    unset: tuple[str, ...] = (),
 ) -> Iterator[FastAPI]:
     """Build the app through the production factory against `tier_yaml`.
 
@@ -58,6 +59,11 @@ async def _app_from(
     beforehand is silently overwritten by the committed default. The L2 wiring tests below
     found that the hard way — they set `LLM_KEY_VOYAGE` first and watched it come back as
     `placeholder`.
+
+    `unset` exists for the same reason in the opposite direction. Some of the L2 tests assert what
+    happens when NO embedder is configured, and since there are two independent sources of one —
+    a Voyage key and a self-hosted embedding model — the baseline supplying either is enough to
+    make such a test assert nothing. Removing a key is therefore as load-bearing as setting one.
     """
     from src.main import create_app
 
@@ -68,6 +74,8 @@ async def _app_from(
     monkeypatch.setenv("MODEL_TIER_CONFIG_PATH", str(tier_yaml))
     for key, value in (env or {}).items():
         monkeypatch.setenv(key, value)
+    for key in unset:
+        monkeypatch.delenv(key, raising=False)
 
     app = create_app()
     async with LifespanManager(app):
@@ -272,11 +280,22 @@ class TestTheSemanticCacheIsWiredForL2:
         which ignores its argument: two unrelated prompts embed identically, cosine
         similarity is 1.0, and every prompt becomes a near-duplicate of every other. So the
         wiring must refuse that path, and this asserts the refusal rather than trusting it.
+
+        `SELF_HOSTED_EMBEDDING_MODEL_ID` is unset here, and that is not a weakening. There are now
+        TWO sources of an embedder and this test is about ONE of them: the baseline configures a
+        self-hosted embedding model, which is input-SENSITIVE and correctly enables L2, so leaving
+        it set would make the assertion below fail for a reason that has nothing to do with the
+        Voyage placeholder it is about. The Voyage refusal is still asserted exactly as before.
         """
         shutil.copyfile(COMMITTED_TIER_YAML, tmp_path / "model-tiers.yaml")
         env = {"EMBEDDING_BACKEND": "voyage", "LLM_KEY_VOYAGE": "placeholder"}
 
-        async for app in _app_from(tmp_path / "model-tiers.yaml", monkeypatch, env=env):
+        async for app in _app_from(
+            tmp_path / "model-tiers.yaml",
+            monkeypatch,
+            env=env,
+            unset=("SELF_HOSTED_EMBEDDING_MODEL_ID",),
+        ):
             assert app.state.semantic_cache._embed is None, (
                 "L2 was enabled over the placeholder key, whose embedding fallback ignores "
                 "its input -- the cache would serve an arbitrary completion for any prompt"
@@ -288,10 +307,43 @@ class TestTheSemanticCacheIsWiredForL2:
         """L2 is optional by design: no embedder means exact-match, not a startup failure."""
         shutil.copyfile(COMMITTED_TIER_YAML, tmp_path / "model-tiers.yaml")
 
-        async for app in _app_from(tmp_path / "model-tiers.yaml", monkeypatch, env={"EMBEDDING_BACKEND": "bge_m3"}):
+        async for app in _app_from(
+            tmp_path / "model-tiers.yaml",
+            monkeypatch,
+            env={"EMBEDDING_BACKEND": "bge_m3"},
+            # BOTH sources of an embedder have to be absent for "unconfigured" to mean anything.
+            # The committed baseline configures the self-hosted one, so clearing it is what makes
+            # this test about `bge_m3` rather than about which source happened to win.
+            unset=("SELF_HOSTED_EMBEDDING_MODEL_ID",),
+        ):
             cache = app.state.semantic_cache
             assert cache is not None, "no cache was constructed at all"
             assert cache._embed is None
+
+    async def test_the_self_hosted_embedder_enables_l2_without_a_paid_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The committed baseline alone must produce a LIVE L2 tier.
+
+        The two tests above document why L2 stayed off: the only input-sensitive embedder needed a
+        Voyage key, and `.env.example` ships a placeholder. So on a fresh clone criterion 14's L2
+        clause had no runtime path, and every near-duplicate prompt was a miss — while the L2
+        implementation and its five tests sat there passing against a fixture embedder.
+
+        This asserts the fresh-clone case directly: NO env override at all, and the constructed
+        cache must hold an embedder. It is the fresh-clone half of finding 79, which the class
+        docstring's "a tested capability with an untested construction site is not a shipped
+        feature" applies to just as much as to the argument not being passed.
+        """
+        shutil.copyfile(COMMITTED_TIER_YAML, tmp_path / "model-tiers.yaml")
+
+        async for app in _app_from(tmp_path / "model-tiers.yaml", monkeypatch):
+            cache = app.state.semantic_cache
+            assert cache._embed is not None, (
+                "the committed baseline produced an L1-only cache, so criterion 14's L2 clause "
+                "has no runtime path on a fresh clone"
+            )
+            assert cache._threshold == pytest.approx(0.95)
 
 
 class TestALoadFailureIsNotMasked:

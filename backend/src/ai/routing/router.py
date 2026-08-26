@@ -23,6 +23,8 @@ from .endpoints import (
     CompletionResponse,
     EndpointRegistry,
     MalformedResponseError,
+    StreamingModelEndpoint,
+    TokenSink,
 )
 from .keys import KeyResolver
 from .tiers import ModelTier, TierConfig
@@ -56,6 +58,14 @@ class RoutingResult:
     served_from: str | None = None  # "L1_exact", "endpoint", etc.
     degraded: bool = False
     staleness_seconds: float = 0.0
+    #: Set only when an endpoint answered, so a caller can record real token counts.
+    #:
+    #: `None` on a cache hit, and that distinction is the point: a hit cost no tokens, and
+    #: reporting the ORIGINAL call's usage against it would inflate NFR-04's cost evidence every
+    #: time the cache did its job.
+    usage: dict[str, int] | None = None
+    #: True when the content reached the caller as it was produced rather than in one piece.
+    streamed: bool = False
 
 
 class ModelRouter:
@@ -90,10 +100,24 @@ class ModelRouter:
         tier: ModelTier,
         request: CompletionRequest,
         prompt: RedactedPrompt,
+        on_token: TokenSink | None = None,
     ) -> RoutingResult:
         """Route a completion request through the tier cascade.
 
         Returns a RoutingResult with outcome OK or EXHAUSTED.
+
+        `on_token`, when supplied, asks each endpoint for its output AS IT IS PRODUCED. It changes
+        the transport and nothing else: the cache lookup, the breaker accounting, the dedup, the
+        attempt records and the cached content are all identical, because `complete_streaming`
+        returns the same `CompletionResponse` the whole-response path does. An endpoint that does
+        not implement `StreamingModelEndpoint` is invoked the ordinary way and the caller simply
+        receives no deltas — a provider without server-sent frames must be a slower stream, never a
+        failed one.
+
+        A CACHE HIT DELIVERS NOTHING TO `on_token`, deliberately. The hit's content is returned in
+        full, and it is the CALLER's business to decide how to present it; replaying it through the
+        sink here would make a cache hit indistinguishable from a provider call at the point where
+        `served_from` is decided, which is the distinction this whole path exists to record.
         """
         attempts: list[Attempt] = []
 
@@ -170,16 +194,23 @@ class ModelRouter:
 
             # Resolve API key
             descriptor = self._tier_config.endpoints.get(eid)
-            api_key: str | None = None
+            credential: str | None = None
             if descriptor and descriptor.key_ref:
                 secret = self._key_resolver.resolve(descriptor.key_ref)
                 if secret is not None:
-                    api_key = secret.get_secret_value()
+                    credential = secret.get_secret_value()
 
             # Invoke endpoint
             start = time.perf_counter()
             try:
-                response: CompletionResponse = await endpoint.complete(request, api_key=api_key)
+                streaming = on_token is not None and isinstance(endpoint, StreamingModelEndpoint)
+                if streaming:
+                    assert on_token is not None  # narrowed by `streaming`
+                    response: CompletionResponse = await endpoint.complete_streaming(
+                        request, credential=credential, on_token=on_token
+                    )
+                else:
+                    response = await endpoint.complete(request, credential=credential)
                 latency_ms = (time.perf_counter() - start) * 1000
 
                 # Record success on breaker
@@ -210,6 +241,8 @@ class ModelRouter:
                     served_from="endpoint",
                     degraded=len(attempts) > 1,
                     staleness_seconds=0.0,
+                    usage=dict(response.usage),
+                    streamed=streaming,
                 )
 
             except Exception as exc:
