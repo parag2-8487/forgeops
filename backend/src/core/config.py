@@ -571,11 +571,39 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_production_secrets(self) -> Settings:
-        """Every credential production needs, reported together (P-15).
+        """Every credential a deployment needs, reported together (P-15).
 
-        One error per missing value would make bringing up a production environment a
-        sequence of restarts. The Phase 0 contract is that configuration problems are
-        accumulated into ONE report, so this collects them all before raising.
+        One error per missing value would make bringing up an environment a sequence of restarts.
+        The Phase 0 contract is that configuration problems are accumulated into ONE report, so this
+        collects them all before raising.
+
+        ENVELOPE_PEPPER IS REQUIRED IN EVERY ENVIRONMENT, NOT ONLY PRODUCTION
+
+        Everything else in this list is a credential a developer legitimately does not need to run
+        tests — nobody should require an OIDC client secret to exercise the tier router. The pepper
+        is different in kind. An empty one is not a MISSING credential, it is a SILENTLY BROKEN one:
+
+        * `HMAC-SHA256` under an empty key still computes. Device tokens and pairing codes would be
+          stored under an unkeyed digest, so anyone able to read `agent_devices` could forge the
+          stored HMAC for any device by hashing a value of their own choosing.
+        * `derive_key_encryption_key` HKDFs the pepper (D-62), so an empty pepper derives the SAME
+          key-encryption key in every deployment on earth. `envelope_key_enc` from one installation
+          would unseal in another, while the column name still asserted ciphertext.
+
+        Neither fails loudly at the point of use, which is the argument for checking at the boundary.
+
+        WHAT THIS REPLACES. `DeviceService`, `derive_key_encryption_key`, `auth/sessions.py` and
+        `GovernanceChokepoint` each raise on an empty pepper already — four separate voices, each
+        reached only when something first tries to use it. So the process started, answered
+        `/health/live`, and then died on the first pairing attempt with a message about whichever
+        component got there first. `credentials.md` said "the backend refuses to start without it",
+        which was the intent and not the behaviour; this makes the document true rather than
+        weakening it to match the code. The downstream guards stay: they are constructed directly in
+        tests and could be handed a pepper that never came through `Settings`.
+
+        Checked INSIDE this validator rather than in one of its own, so P-15's single report survives
+        — a separate validator raising first would have hidden every other missing production
+        credential behind the pepper, turning one report back into a sequence of restarts.
         """
         if self.app_env != "production":
             return self
@@ -594,6 +622,50 @@ class Settings(BaseSettings):
         missing = [name for name, value in required if not str(value).strip()]
         if missing:
             raise ValueError("the following must be non-empty when APP_ENV=production: " + ", ".join(sorted(missing)))
+        return self
+
+    @model_validator(mode="after")
+    def _require_envelope_pepper_everywhere(self) -> Settings:
+        """`ENVELOPE_PEPPER` must also be non-empty OUTSIDE production.
+
+        WHY IT IS NOT ENOUGH TO LEAVE IT IN THE LIST ABOVE
+
+        That validator returns early unless `APP_ENV=production`, which is right for the credentials
+        beside it — nobody should need an OIDC client secret to exercise the tier router. The pepper
+        is different in kind. An empty one is not a MISSING credential, it is a SILENTLY BROKEN one:
+
+        * `HMAC-SHA256` under an empty key still computes. Device tokens and pairing codes would be
+          stored under an unkeyed digest, so anyone able to read `agent_devices` could forge the
+          stored HMAC for any device by hashing a value of their own choosing.
+        * `derive_key_encryption_key` HKDFs the pepper (D-62), so an empty pepper derives the SAME
+          key-encryption key in every deployment on earth. `envelope_key_enc` from one installation
+          would unseal in another, while the column name still asserted ciphertext.
+
+        Neither fails loudly at the point of use, which is the argument for the boundary.
+
+        WHAT THIS REPLACES. `DeviceService`, `derive_key_encryption_key`, `auth/sessions.py` and
+        `GovernanceChokepoint` each raise on an empty pepper already — four separate voices, each
+        reached only when something first tries to use it. So the process started, answered
+        `/health/live`, and then died on the first pairing attempt with a message about whichever
+        component got there first. `credentials.md` said "the backend refuses to start without it",
+        which was the intent and not the behaviour; this makes the document true rather than
+        weakening it to match the code. The downstream guards stay: they are constructed directly in
+        tests and could be handed a pepper that never came through `Settings`.
+
+        DECLARED AFTER the production validator ON PURPOSE. Pydantic runs `mode="after"` validators
+        in definition order, so in production the accumulated report still raises first and still
+        names the pepper among everything else — P-15's one-report contract is untouched. Declaring
+        this first would have hidden every other missing production credential behind the pepper,
+        turning one report back into a sequence of restarts, which a test caught by name.
+        """
+        if not self.envelope_pepper.get_secret_value().strip():
+            raise ValueError(
+                "ENVELOPE_PEPPER must be non-empty in every environment. An empty pepper is not a "
+                "missing credential but a broken one: HMAC-SHA256 under an empty key still computes, "
+                "so every device token and pairing code would be stored unkeyed, and the "
+                "HKDF-derived key-encryption key (D-62) would be identical in every deployment. "
+                "Set it in .env; .env.example ships a development value."
+            )
         return self
 
     @property

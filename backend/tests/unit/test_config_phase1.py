@@ -24,6 +24,16 @@ pytestmark = pytest.mark.mandatory
 BASE = {
     "database_url": "postgresql+asyncpg://forgeops:pw@localhost:5432/forgeops",
     "redis_url": "redis://localhost:6379/0",
+    # Required in EVERY environment since `_require_production_secrets` started checking it
+    # unconditionally, and required here in particular because `_no_ambient_project_config` below
+    # strips the environment — so nothing else can supply it.
+    #
+    # An empty pepper is not a missing credential but a broken one: HMAC-SHA256 under an empty key
+    # still computes, so device tokens would be stored unkeyed, and D-62's HKDF-derived
+    # key-encryption key would be identical in every deployment. `Settings` therefore refuses one,
+    # and these tests are about OTHER fields, so they need a valid value to get past the boundary.
+    # `test_config_envelope_pepper.py` is where the refusal itself is asserted.
+    "envelope_pepper": "config-test-pepper-not-a-deployment-value",
 }
 
 
@@ -81,7 +91,12 @@ class TestTheCommittedBaselineIsComplete:
         """The fresh-clone guarantee: no committed `.env` needed (design §13.3)."""
         settings = get_settings(load_project_dotenv((".env.example",)))
         assert settings.oidc_app_audience == "forgeops-api"
-        assert settings.embedding_backend == "voyage"
+        # `bge_m3` since the self-hosted embedder landed. It is the backend a FRESH CLONE can
+        # actually reach -- `voyage` needs LLM_KEY_VOYAGE, `.env.example` ships that as
+        # `placeholder`, and with `voyage` selected every scan persisted the tree and the contents
+        # with `vectors_written = 0` while the HNSW index on `embeddings_local` never held a row.
+        # The same reasoning as GENERATION_TIER=self_hosted, which this file already asserts.
+        assert settings.embedding_backend == "bge_m3"
         assert settings.task_dispatcher == "arq"
 
     def test_the_app_audience_is_distinct_from_the_gateway_audience(self) -> None:
@@ -196,7 +211,10 @@ class TestProductionSecretsAreReportedTogether:
 
     def test_every_missing_credential_appears_in_one_report(self) -> None:
         with pytest.raises(ValidationError) as excinfo:
-            build(app_env="production", mcp_oidc_issuers="https://issuer.test")
+            # `envelope_pepper=""` explicitly, because `BASE` now supplies a valid one -- and the
+            # point of this test is that EVERY missing credential appears in ONE report, so the
+            # pepper has to be among the missing ones for it to prove anything.
+            build(app_env="production", mcp_oidc_issuers="https://issuer.test", envelope_pepper="")
         message = str(excinfo.value)
         for name in (
             "OIDC_ISSUER",
@@ -269,6 +287,9 @@ class TestPhase0MechanismsStillHold:
             monkeypatch.setenv(name, value)
         monkeypatch.setenv("DATABASE_URL", BASE["database_url"])
         monkeypatch.setenv("REDIS_URL", BASE["redis_url"])
+        # The autouse fixture above strips every project variable, including this one, and
+        # `Settings` requires it in every environment.
+        monkeypatch.setenv("ENVELOPE_PEPPER", BASE["envelope_pepper"])
         settings = get_settings()
         assert settings.database_url is not None
 

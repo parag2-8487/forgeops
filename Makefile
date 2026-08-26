@@ -40,6 +40,13 @@ test-agent: ## Run Go agent tests with the race detector (PRD §9)
 
 test-backend: ## Run Python backend tests
 	@printf '==> test-backend: pytest tests/ -q\n'
+	@# The preflight REFUSES a run whose backing services are down, rather than letting it proceed.
+	@# Without it the DB-backed property tests skip, the mutation harness then correctly reports that
+	@# Q-04/Q-16/Q-17 executed no tests and Q-05 passed under its own negative control -- and all of
+	@# that arrives 66 minutes in, under a summary line that reads like success. It does not start
+	@# anything: a test command that mutated the developer's environment would produce results that
+	@# depend on state they did not choose. See scripts/check-test-services.sh.
+	@bash scripts/check-test-services.sh
 	@cd backend && .venv/Scripts/python -m pytest tests/ -q
 
 # ─── Lint targets ───────────────────────────────────────────────────────────

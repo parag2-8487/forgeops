@@ -762,9 +762,13 @@ def create_app() -> FastAPI:
 
     app.include_router(agent_hub_router)
 
+    from .analysis.routes import agent_router as analysis_agent_router
     from .analysis.routes import router as analysis_router
 
     app.include_router(analysis_router)
+    # The device-authenticated half of the same prefix. See `analysis/routes.py::agent_router` for
+    # why it is a separate router rather than a per-route dependency override.
+    app.include_router(analysis_agent_router)
 
     from .projects.routes import router as projects_router
 

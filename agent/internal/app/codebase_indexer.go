@@ -4,7 +4,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -73,18 +73,42 @@ func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
 	}
 	return newCodebaseIndexer(
 		root, origin, "", a.cfg.Scanner.MaxFileSize, provider,
-		scanner.TokenFunc(func(ctx context.Context) (string, error) {
-			creds, err := store.Load(ctx)
-			if err != nil {
-				return "", fmt.Errorf("agent: reading the device token: %w", err)
-			}
-			if len(creds.DeviceToken) == 0 {
-				return "", errors.New("agent: this agent is not paired, so it has no token to submit a scan with")
-			}
-			return base64.RawURLEncoding.EncodeToString(creds.DeviceToken), nil
-		}),
+		deviceTokenSource(store),
 		scanSubmitTimeout,
 	)
+}
+
+// deviceTokenSource reads the device token from the credential store at CALL time and presents it
+// the way the backend decodes it.
+//
+// AT CALL TIME, because a device token is rotated on renewal and a value captured at assembly would
+// keep being sent after it stopped being valid — a 401 the agent cannot explain.
+//
+// HEX, because that is the backend's contract, not a preference.
+// `DeviceService.authenticate_session` decodes with `bytes.fromhex(...)` inside
+// `except ValueError: presented = b""`. That guard is deliberate: an undecodable token must cost the
+// same constant-time comparison as a wrong one, or timing tells them apart. The consequence for a
+// caller is that A WRONG ENCODING IS NEVER REPORTED AS ONE — it becomes an ordinary "no active
+// device matches", a 401 explaining nothing. A base64url token cost a journey run to diagnose.
+// `session/serve.go` already sends hex on the WebSocket handshake; one encoding for one credential,
+// because two would eventually disagree and the disagreement is invisible.
+//
+// A named function rather than an inline closure so a test can assert the WIRE BYTES against the
+// backend's decoder, which a test of the caller could not reach.
+func deviceTokenSource(store *session.FileStore) scanner.TokenFunc {
+	return func(ctx context.Context) (string, error) {
+		creds, err := store.Load(ctx)
+		if err != nil {
+			return "", fmt.Errorf("agent: reading the device token: %w", err)
+		}
+		if len(creds.DeviceToken) == 0 {
+			// Refused here rather than sent. An empty token hex-encodes to the empty string, which
+			// the backend decodes successfully to `b""` and then compares — a well-formed request
+			// that can only ever 401. Refusing locally names the real problem.
+			return "", errors.New("agent: this agent is not paired, so it has no token to submit a scan with")
+		}
+		return hex.EncodeToString(creds.DeviceToken), nil
+	}
 }
 
 // codebaseIndexer joins the scanner to the executor's `CodebaseIndexer`.

@@ -43,6 +43,12 @@ AUTH_DEPENDENCY_QUALNAMES: Final[tuple[str, ...]] = (
     "require_principal",
     "require_role.<locals>.dependency",
     "require_mcp_principal",
+    # An AGENT cannot satisfy `require_principal`: that verifies a user OIDC token through JWKS and
+    # the agent holds a device token plus a short-lived client certificate. `require_device`
+    # authenticates BOTH factors through the same `authenticate_session` the WebSocket handshake
+    # uses, so it is a peer of the entries above rather than a weaker alternative -- see
+    # `auth/device_dependencies.py` for why a token-only variant was rejected.
+    "require_device",
 )
 
 

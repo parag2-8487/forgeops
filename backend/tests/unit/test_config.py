@@ -120,6 +120,10 @@ class TestSettingsAmbientEnv:
         env = {
             "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost:5432/db",
             "REDIS_URL": "redis://localhost:6379/0",
+            # Required in every environment: an empty pepper stores device tokens under an unkeyed
+            # HMAC and derives an identical key-encryption key everywhere (D-62). Supplied because
+            # this test is about tolerating ambient OS variables, not about the pepper.
+            "ENVELOPE_PEPPER": "config-test-pepper-not-a-deployment-value",
             # These are ambient OS vars that must be tolerated:
             "PATH": "/usr/bin:/bin",
             "HOME": "/home/user",
@@ -197,6 +201,8 @@ class TestSettingsProductionIssuer:
                 "REDIS_URL": "redis://localhost:6379/0",
                 "APP_ENV": "development",
                 "MCP_OIDC_ISSUERS": "",
+                # See above: required in every environment, and this test is about issuers.
+                "ENVELOPE_PEPPER": "config-test-pepper-not-a-deployment-value",
             }
         )
         assert settings.mcp_oidc_issuers == ""

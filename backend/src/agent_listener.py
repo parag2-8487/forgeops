@@ -51,11 +51,13 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from uvicorn.protocols.http.h11_impl import H11Protocol
 from uvicorn.protocols.websockets.websockets_impl import WebSocketProtocol
 
 from .auth.ca import load_pem
 
 __all__ = [
+    "TlsAwareH11Protocol",
     "TlsAwareWebSocketProtocol",
     "issue_probe_certificate",
     "issue_server_certificate",
@@ -250,6 +252,42 @@ class TlsAwareWebSocketProtocol(WebSocketProtocol):
         await super().run_asgi()
 
 
+class TlsAwareH11Protocol(H11Protocol):
+    """Uvicorn's HTTP/1.1 protocol, with the ASGI TLS extension populated — same gap, same fix.
+
+    WHY THIS IS NEEDED SEPARATELY FROM THE WEBSOCKET CLASS ABOVE
+
+    It would be reasonable to assume the HTTP path already works, since `TlsPeerCertificate` reads
+    `scope["transport"]` first and an HTTP server has an obvious transport. It does not. Uvicorn's
+    `H11Protocol` builds its scope with `type/asgi/http_version/server/client/scheme/method/
+    root_path/path/raw_path/query_string/headers/state` and NOTHING ELSE — no `transport` key and no
+    `extensions` key at all. `transport` is an attribute of the protocol object, exactly as with the
+    WebSocket implementations. Verified by reading `h11_impl.py` in the pinned version rather than
+    assumed, because the assumption is the plausible one and it is wrong.
+
+    So a device-authenticated HTTP route would see no client certificate on a correctly configured
+    mTLS listener, and would refuse every request while reporting it as a client fault — the same
+    misleading failure the WebSocket path had.
+
+    `handle_events` is the interception point, and the timing is the same argument the WebSocket
+    class makes: it builds `self.scope`, constructs the cycle, and then SCHEDULES the application
+    with `loop.create_task(...)`. A scheduled task does not run until the loop next yields, which is
+    after this method returns — so attaching here lands before the application sees the scope.
+
+    Attaching is idempotent because `handle_events` is also called for body events on an existing
+    scope, and writing the same verified certificate twice is harmless.
+    """
+
+    def handle_events(self) -> None:
+        super().handle_events()
+        # `self.scope` is None until the first request line has been parsed, so this is guarded
+        # rather than assumed — a connection that is closed before sending anything would otherwise
+        # raise here instead of being dropped quietly.
+        scope = getattr(self, "scope", None)
+        if scope is not None:
+            _attach_tls_extension(scope, self.transport)
+
+
 def _attach_tls_extension(scope: MutableMapping[str, Any], transport: Any) -> None:
     """Populate `scope["extensions"]["tls"]` from the live TLS transport.
 
@@ -365,6 +403,10 @@ def main(argv: list[str] | None = None) -> int:
         # See TlsAwareWebSocketProtocol. Passed as a CLASS, which is why this is `uvicorn.Server`
         # and not the `uvicorn` CLI: `--ws` accepts only the built-in names.
         ws=TlsAwareWebSocketProtocol,
+        # And the same for HTTP. `h11` rather than `auto`, because `auto` resolves to httptools
+        # when it is installed and the class passed here would be ignored -- a silently
+        # certificate-blind listener, which is the failure this whole file exists to prevent.
+        http=TlsAwareH11Protocol,
     )
     uvicorn.Server(config).run()
     return 0

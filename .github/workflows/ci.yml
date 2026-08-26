@@ -273,7 +273,7 @@ jobs:
       # and the HNSW index on that table never holds a row.
       SELF_HOSTED_BASE_URL: http://localhost:11434/v1
       SELF_HOSTED_MODEL_ID: qwen2.5-coder:1.5b
-      SELF_HOSTED_EMBEDDING_MODEL_ID: bge-m3
+      SELF_HOSTED_EMBEDDING_MODEL_ID: bge-m3:567m
       EMBEDDING_BACKEND: bge_m3
       GENERATION_TIER: self_hosted
       # tests/integration/conftest.py gates the schema tests on this variable.
@@ -378,7 +378,7 @@ jobs:
           done
           docker exec forgeops-ci-ollama ollama list >/dev/null
           docker exec forgeops-ci-ollama ollama pull qwen2.5-coder:1.5b
-          docker exec forgeops-ci-ollama ollama pull bge-m3
+          docker exec forgeops-ci-ollama ollama pull bge-m3:567m
           # Asserted, not assumed: a completion and an embedding of the declared width. Without
           # this the tests would report "connection refused" from inside a fixture, which names
           # the symptom rather than the missing model.
@@ -389,7 +389,7 @@ jobs:
 
           request = urllib.request.Request(
               "http://localhost:11434/v1/embeddings",
-              data=json.dumps({"input": "probe", "model": "bge-m3"}).encode(),
+              data=json.dumps({"input": "probe", "model": "bge-m3:567m"}).encode(),
               headers={"Content-Type": "application/json"},
           )
           with urllib.request.urlopen(request, timeout=120) as response:

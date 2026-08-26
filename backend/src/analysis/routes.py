@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import require_principal
+from ..auth.device_dependencies import require_device
 from ..auth.principal import Principal
 from ..core.db import get_session
 from ..core.errors import forbidden_problem
@@ -42,6 +43,24 @@ router = APIRouter(
     # public set by path matching, and a path matcher is where an unauthenticated route
     # hides. `scripts/check-route-auth.py` asserts the result over the real router.
     dependencies=[Depends(require_principal)],
+)
+
+# A SECOND ROUTER, for the one route an AGENT calls rather than a user.
+#
+# Same prefix and tag, so the API surface is unchanged from a caller's point of view. Separate
+# because the dependency above is attached at the ROUTER and FastAPI applies it to every route the
+# router carries — which is exactly the property that makes deny-by-default work, and exactly why
+# a route with a different authentication mechanism cannot live on it. Overriding per route would
+# mean the router-level dependency still ran first and still refused the agent.
+#
+# The alternative considered was one router with a dependency that accepted either credential. It
+# was rejected: a route's authentication would then be decided by which of two branches happened to
+# match, and a bug in that branch would silently widen every route on the router at once. Two
+# routers make each route's mechanism a structural fact.
+agent_router = APIRouter(
+    prefix="/api/v1/analysis",
+    tags=["analysis"],
+    dependencies=[Depends(require_device)],
 )
 
 
@@ -210,7 +229,7 @@ async def _require_visible_project(
     await load_visible_project(session, project_id=project_id, tenant_id=tenant_id)
 
 
-@router.post(
+@agent_router.post(
     "/codebase/{project_id}/index",
     response_model=IndexResult,
     summary="Persist an agent scan report into the codebase index",
@@ -219,7 +238,7 @@ async def index_scan_report(
     project_id: uuid.UUID,
     report: ScanReportIn,
     request: Request,
-    principal: Annotated[Principal, Depends(require_principal)],
+    device: Annotated[Any, Depends(require_device)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> IndexResult:
     """Write a scan report into `file_tree`, `file_contents`, `file_dependencies` and the
@@ -234,13 +253,26 @@ async def index_scan_report(
     the tree, the contents and the dependency graph are still persisted and
     `vectors_absent_reason` says why retrieval will be sparse-only — a zero or random
     vector would be indistinguishable from a real one at query time.
+
+    AUTHENTICATED AS A DEVICE, NOT AS A USER, and this is the only route in the module that is.
+    An agent cannot satisfy `require_principal` — that verifies a user OIDC token through JWKS —
+    so while this route sat behind it the agent's scan submit was refused with
+    `Unauthenticated` after doing all of the work. `require_device` requires the client
+    certificate AND the token, the same two factors the WebSocket handshake requires, because a
+    token-only door here would be the softer one for the same credential.
+
+    SCOPED TO THE DEVICE'S OWN PROJECT. The path carries a project id, and the authenticated
+    device is paired to exactly one; a device that could index any id could overwrite another
+    tenant's index with its own workspace. The mismatch answers with the same non-disclosing 403
+    the read routes use, so it cannot be used to discover which project ids exist.
     """
-    await _require_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    if device.project_id != project_id:
+        raise forbidden_problem()
     embedder, reason = build_embedder(request.app.state.settings)
     return await persist_scan_report(
         session,
         project_id=project_id,
-        tenant_id=principal.tenant_id,
+        tenant_id=device.tenant_id,
         report=report,
         embedder=embedder,
         embedder_absent_reason=reason,

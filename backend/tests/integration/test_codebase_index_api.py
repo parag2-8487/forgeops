@@ -26,11 +26,13 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 from src.auth.dependencies import require_principal
+from src.auth.device_dependencies import require_device
 from src.auth.models import UserRole
 from src.auth.principal import Principal
 
@@ -41,6 +43,36 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 TENANT = uuid.UUID("6d1b7a90-5c31-4d2e-9f77-2a3b4c5d6e71")
 OTHER_TENANT = uuid.UUID("7e2c8ba1-6d42-4e3f-8a88-3b4c5d6e7f82")
 USER = uuid.UUID("8f3d9cb2-7e53-4f40-9b99-4c5d6e7f8a93")
+
+
+class _StubDevice:
+    """What `authenticate_session` returns, reduced to the two fields the route reads."""
+
+    def __init__(self, project_id: uuid.UUID, tenant_id: uuid.UUID | None) -> None:
+        self.project_id = project_id
+        self.tenant_id = tenant_id
+
+
+def _device(request: Request) -> _StubDevice:
+    """A device paired to WHICHEVER project the request names.
+
+    Reads the path parameter rather than pinning an id, because these tests create their projects
+    dynamically. That deliberately makes the project-scoping check a no-op HERE -- it is asserted in
+    `test_index_route_device_auth.py`, together with the two-factor refusals, which is where a
+    weaker credential is proved insufficient. `_device_pinned_to` below is how a test in this file
+    exercises the mismatch.
+    """
+    return _StubDevice(uuid.UUID(str(request.path_params["project_id"])), TENANT)
+
+
+def _device_pinned_to(project_id: uuid.UUID, tenant_id: uuid.UUID | None = TENANT):
+    """A device paired to one specific project, for the cross-boundary refusal."""
+
+    def _dep(request: Request) -> _StubDevice:
+        return _StubDevice(project_id, tenant_id)
+
+    return _dep
+
 
 #: The 1536-d fixture vector. A constant so the assertions are about the query path rather
 #: than about a number, and 1536 because D-2 fixes `embeddings.embedding` at that width —
@@ -76,6 +108,13 @@ async def analysis_app(monkeypatch: pytest.MonkeyPatch, schema_at_head: str) -> 
     monkeypatch.setenv("APP_ENV", "test")
     app = create_app()
     app.dependency_overrides[require_principal] = _principal
+    # The index route authenticates a DEVICE, not a user: an agent holds a device token plus a
+    # client certificate and can never satisfy `require_principal` (see
+    # `auth/device_dependencies.py`). These tests are about what the endpoint PERSISTS, so the
+    # authentication is overridden the same way the principal is — the two-factor check itself is
+    # asserted in `test_index_route_device_auth.py`, which is where a weaker credential is proved
+    # to be refused.
+    app.dependency_overrides[require_device] = _device
     async with LifespanManager(app):
         yield app
     app.dependency_overrides.clear()
@@ -328,8 +367,16 @@ async def test_an_unknown_report_schema_is_refused(client: AsyncClient) -> None:
 
 
 async def test_ingest_into_another_tenants_project_is_refused(analysis_app: Any, client: AsyncClient) -> None:
+    """A device may only index the project it is paired to.
+
+    Expressed as a PROJECT mismatch rather than a tenant one, because that is what the mechanism
+    now is: an agent authenticates as a device, and `agent_devices` pairs each device to exactly
+    one project. The refusal is the same non-disclosing 403, so it is not an oracle for ids.
+    """
     project_id = await _create_project(client, "Not yours")
-    analysis_app.dependency_overrides[require_principal] = lambda: _principal(OTHER_TENANT)
+    analysis_app.dependency_overrides[require_device] = _device_pinned_to(
+        uuid.UUID("11111111-2222-3333-4444-555555555555"), OTHER_TENANT
+    )
 
     response = await client.post(
         f"/api/v1/analysis/codebase/{project_id}/index",
