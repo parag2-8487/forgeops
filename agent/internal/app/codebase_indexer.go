@@ -3,13 +3,16 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/parag8487/ForgeOps/agent/internal/executor"
+	"github.com/parag8487/ForgeOps/agent/internal/identity"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner"
 	"github.com/parag8487/ForgeOps/agent/internal/secretscan"
 	"github.com/parag8487/ForgeOps/agent/internal/session"
@@ -52,8 +55,24 @@ func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
 	// The bearer credential is read at CALL time rather than captured here. A device token is
 	// rotated on renewal, and a value captured at assembly would keep being sent after it stopped
 	// being valid, which surfaces as a 401 the agent cannot explain.
+	// THE SUBMIT IS mTLS, NOT PLAIN HTTPS, and getting this wrong cost a journey run. The agent is
+	// configured with the mTLS listener's URL, so the origin `HTTPOrigin` derives points at a
+	// listener running with `ssl_cert_reqs=CERT_REQUIRED` -- it demands the device certificate and
+	// is signed by the INTERNAL CA, which no public root store contains. A default `http.Client`
+	// therefore fails the handshake before the bearer token is ever read, and the error names the
+	// POST rather than the missing certificate.
+	//
+	// The certificate comes from the same `identity.Provider` the session dials with, so the two
+	// present the same device to the same backend. It is short-lived by contract (`ClientTLS`
+	// documents the invariant and `assertShortLived` enforces it), which is why the config is
+	// fetched per indexer rather than cached for the process lifetime.
+	provider, err := identityProvider(
+		a.cfg.Identity.Provider, store, a.cfg.Identity.CertRenewBefore)
+	if err != nil {
+		return nil, fmt.Errorf("agent: identity provider for the scan submit: %w", err)
+	}
 	return newCodebaseIndexer(
-		root, origin, "", a.cfg.Scanner.MaxFileSize,
+		root, origin, "", a.cfg.Scanner.MaxFileSize, provider,
 		scanner.TokenFunc(func(ctx context.Context) (string, error) {
 			creds, err := store.Load(ctx)
 			if err != nil {
@@ -140,7 +159,8 @@ func (c *codebaseIndexer) submit(
 // `maxFileSize` and the project language come from configuration; the redactor is mandatory and
 // `NewReportScanner` enforces that itself rather than accepting a nil and skipping redaction.
 func newCodebaseIndexer(
-	root, baseURL, projectLang string, maxFileSize int64, tokens scanner.TokenSource, timeout time.Duration,
+	root, baseURL, projectLang string, maxFileSize int64, provider identity.Provider,
+	tokens scanner.TokenSource, timeout time.Duration,
 ) (*codebaseIndexer, error) {
 	if root == "" {
 		return nil, errors.New("a workspace root is required to scan")
@@ -150,6 +170,9 @@ func newCodebaseIndexer(
 	}
 	if tokens == nil {
 		return nil, errors.New("a token source is required to submit a scan report")
+	}
+	if provider == nil {
+		return nil, errors.New("an identity provider is required: the index endpoint is behind mTLS")
 	}
 	redactor, err := secretscan.NewScanner()
 	if err != nil {
@@ -166,7 +189,30 @@ func newCodebaseIndexer(
 			BaseURL: baseURL,
 			// A bounded client, because a submit that never returns holds the operation's whole
 			// `timeoutScan` budget and the session sees no result until it expires.
-			Client: &http.Client{Timeout: timeout},
+			//
+			// THE SUBMIT IS mTLS, NOT PLAIN HTTPS, and a default client cannot do it. The agent is
+			// configured with the mTLS listener's URL, so the origin points at a listener running
+			// with `ssl_cert_reqs=CERT_REQUIRED` whose certificate is signed by the INTERNAL CA —
+			// which no public root store contains. A default client fails the handshake before the
+			// bearer token is ever read, and the error names the POST rather than the missing
+			// certificate. That cost a journey run to learn.
+			Client: &http.Client{
+				Timeout: timeout,
+				Transport: &http.Transport{
+					// Fetched PER DIAL, not captured once. The device certificate is short-lived by
+					// contract — `ClientTLS` documents the invariant and `assertShortLived` enforces
+					// it — so a config built here at assembly would keep presenting an expired
+					// certificate on a long-running agent, and the failure would be a handshake
+					// error naming neither the certificate nor its age.
+					DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+						config, cerr := provider.ClientTLS(ctx)
+						if cerr != nil {
+							return nil, fmt.Errorf("device certificate for the scan submit: %w", cerr)
+						}
+						return tls.Dial(network, addr, config)
+					},
+				},
+			},
 			Tokens: tokens,
 		},
 	}, nil
