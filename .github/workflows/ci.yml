@@ -383,21 +383,7 @@ jobs:
           # this the tests would report "connection refused" from inside a fixture, which names
           # the symptom rather than the missing model.
           curl -fsS http://localhost:11434/v1/models >/dev/null
-          python - <<'PY'
-          import json
-          import urllib.request
-
-          request = urllib.request.Request(
-              "http://localhost:11434/v1/embeddings",
-              data=json.dumps({"input": "probe", "model": "bge-m3:567m"}).encode(),
-              headers={"Content-Type": "application/json"},
-          )
-          with urllib.request.urlopen(request, timeout=120) as response:
-              width = len(json.load(response)["data"][0]["embedding"])
-          if width != 1024:
-              raise SystemExit(f"bge-m3 returned {width} dimensions; embeddings_local is vector(1024)")
-          print(f"model server ready: bge-m3 embedding width {width}")
-          PY
+          python scripts/ci/check-embedding-width.py
       # Criterion 11's BACKEND third rides on this step: `--cov=src --cov-branch
       # --cov-fail-under=70` is in `backend/pyproject.toml`'s addopts, so this invocation
       # enforces the gate without naming it. That is deliberate — the gate applies to every

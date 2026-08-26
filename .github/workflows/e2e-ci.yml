@@ -160,6 +160,35 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
             postgres redis opa cerbos
 
+      # THE MODEL SERVER, and the reason this is its own step.
+      #
+      # `ollama` is a default-profile service, but the step above named four services explicitly and
+      # this was not among them — so the e2e job ran the whole journey with no reachable model.
+      # Generation fell back to templates (a documented fallback, and a true `served_from='template'`
+      # row), step 6 finished in THIRTEEN SECONDS instead of minutes, and step 7's event-order
+      # assertions then failed on a stream that had carried no model tokens. The failure named the SSE
+      # ordering, which is three layers from the cause.
+      #
+      # `--wait` is what makes this correct rather than hopeful: the service's healthcheck greps
+      # `ollama list` for BOTH configured models, so green means the weights are on disk — not merely
+      # that a port is open. A port-only probe would report ready while every completion came back
+      # `model "..." not found`, which reads as a routing bug.
+      #
+      # Separate from the infrastructure step because it is the slow one: two model pulls over the
+      # network, which the healthcheck's 60 retries at 10s allow ten minutes for. Attributing that
+      # time to a step named for it beats hiding it inside "start the infrastructure".
+      - name: Start the model server and wait for both models to be pulled
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait ollama
+          # Asserted, not assumed. The healthcheck proves the weights are present; this proves the
+          # OpenAI-compatible surface answers and that the embedding model is the width
+          # `embeddings_local` is declared at (D-48). A 768-d model would otherwise fail inside an
+          # INSERT much later, naming neither the model nor the setting that chose it.
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml exec -T ollama \
+            /bin/ollama list
+          curl -fsS http://localhost:11434/v1/models >/dev/null
+          python scripts/ci/check-embedding-width.py
+
       - name: Create Authentik's database
         env:
           PGHOST: localhost
