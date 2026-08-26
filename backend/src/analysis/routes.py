@@ -269,7 +269,7 @@ async def index_scan_report(
     if device.project_id != project_id:
         raise forbidden_problem()
     embedder, reason = build_embedder(request.app.state.settings)
-    return await persist_scan_report(
+    result = await persist_scan_report(
         session,
         project_id=project_id,
         tenant_id=device.tenant_id,
@@ -277,6 +277,21 @@ async def index_scan_report(
         embedder=embedder,
         embedder_absent_reason=reason,
     )
+    # COMMITTED HERE, not left to the dependency's teardown, because success has to mean DURABLE.
+    #
+    # `get_session` commits after `yield session` returns, and FastAPI runs a `yield` dependency's
+    # exit code AFTER the response has been sent. So the client received `200 {"files_indexed": 3}`
+    # while the rows were still uncommitted, and a caller that immediately read the index saw
+    # nothing. That is exactly what happened: the journey scanned, got a success naming three files,
+    # then asked for the readiness score and was told the project had zero indexed paths — and the
+    # rows appeared moments later, which made it look like the scorer was broken rather than the
+    # ordering.
+    #
+    # This endpoint is the one where the race matters, because the only reason to call it is so that
+    # something else can read what it wrote. The double commit is free: the dependency's own commit
+    # finds a clean session and does nothing.
+    await session.commit()
+    return result
 
 
 @router.get("/codebase/{project_id}/status", response_model=CodebaseStatusResponse)

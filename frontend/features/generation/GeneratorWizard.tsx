@@ -52,6 +52,7 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
   const [prompt, setPrompt] = useState("");
   const [state, setState] = useState<RunState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
+  const [liveOutput, setLiveOutput] = useState("");
   const [files, setFiles] = useState<GeneratedFileState[]>([]);
   const [validation, setValidation] = useState<ValidationPayload | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -75,9 +76,22 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
         body: JSON.stringify({ project_id: projectId, prompt }),
       });
 
-      // Accumulated per path rather than into one buffer: the stream interleaves tokens for several
-      // files, and one buffer would splice a Dockerfile into a Kubernetes manifest.
+      // Accumulated per path where the stream says which file a token belongs to, and into ONE live
+      // buffer where it does not.
+      //
+      // THE PER-PATH-ONLY VERSION DROPPED EVERY TOKEN. Its comment claimed "the stream interleaves
+      // tokens for several files, and one buffer would splice a Dockerfile into a Kubernetes
+      // manifest" — a reasonable-sounding assumption about a wire shape that does not exist.
+      // `generation/service.py` emits `{run_id, text, attempt}` and no `path`, and it cannot do
+      // otherwise: while the model is still producing, the output is one undifferentiated blob and
+      // which file a given token lands in is not known until `parse_artifacts` runs at the end.
+      //
+      // So `if (payload.path)` was false for every token, nothing was ever buffered, and no artifact
+      // element was ever rendered. The bytes arrived correctly and the screen stayed empty — which is
+      // why the well-formedness tests all passed while criterion 13's "tokens stream to the frontend"
+      // was not true of the frontend at all.
       const buffers = new Map<string, string>();
+      let live = "";
 
       for await (const message of readSSEResponse<unknown>(response)) {
         if (!isSseEvent(message.event)) {
@@ -106,6 +120,12 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
                 a.path.localeCompare(b.path),
               ),
             );
+          } else if (payload.text) {
+            // No path: the model is mid-blob. Painted as it arrives, because a spinner followed by a
+            // finished document is indistinguishable to a user from a buffered response, and this is
+            // the only place the stream is observable at all.
+            live += payload.text;
+            setLiveOutput(live);
           }
         } else if (event === "validation") {
           setValidation(message.data as ValidationPayload);
@@ -174,6 +194,21 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
         <p className="text-xs text-muted-foreground" data-testid="event-log">
           Events received: {seen.join(" \u2192 ")}
         </p>
+      ) : null}
+
+      {liveOutput !== "" ? (
+        <section aria-label="Model output" className="space-y-2">
+          <h3 className="text-sm font-semibold">Model output</h3>
+          {/* The stream as it arrives, before `parse_artifacts` has split it into files. Rendered
+              because a screen that shows nothing until the run finishes cannot be told apart from a
+              buffered response, and the tokens are the only evidence the stream is live. */}
+          <pre
+            className="max-h-64 overflow-auto rounded-md border border-border p-3 text-xs"
+            data-testid="stream-output"
+          >
+            {liveOutput}
+          </pre>
+        </section>
       ) : null}
 
       {files.length > 0 ? (

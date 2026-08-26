@@ -671,7 +671,12 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     // and every assertion below still has to hold. The alternative — capping iterations to fit a
     // 180s budget — would change the product's behaviour to suit the test, which is the wrong way
     // round.
-    test.setTimeout(600_000);
+    //
+    // 1200s rather than 600s: the observed cost is 528s when the deterministic gate accepts the
+    // first attempt and beyond 600s when it asks for another, so 600 was a coin toss — it passed
+    // once and timed out on the next run with no code change between them. The budget covers three
+    // attempts with margin, because a flaky timeout teaches people to re-run rather than to read.
+    test.setTimeout(1_200_000);
     const response = await page.request.post(`${API}/generation/runs`, {
       headers: authHeaders(),
       data: {
