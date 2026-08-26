@@ -111,9 +111,7 @@ async def require_device(request: Request, session: Annotated[AsyncSession, Depe
         return cached
 
     devices: DeviceAuthenticator | None = getattr(request.app.state, "device_service", None)
-    certificates: ClientCertificateSource | None = getattr(
-        request.app.state, "client_certificate_source", None
-    )
+    certificates: ClientCertificateSource | None = getattr(request.app.state, "client_certificate_source", None)
     if devices is None or certificates is None:
         # Deliberately NOT a 401, following `require_principal`'s reasoning exactly: a missing
         # collaborator is a composition error in the app factory, not a fact about the caller.

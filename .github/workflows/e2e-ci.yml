@@ -72,7 +72,12 @@ jobs:
     runs-on: ubuntu-latest
     # Authentik's cold start plus two image builds plus a real apply. Generous on purpose: a tight
     # limit here produces a timeout that reads as a product failure.
-    timeout-minutes: 60
+    # Raised from 60 when step 6 started calling a REAL model rather than rendering a template.
+    # The job now pulls a coder model and an embedding model and then runs up to three generation
+    # iterations on CPU, where one provider run costs 200-340s. The budget is for latency the
+    # product genuinely has; capping the product's iterations to fit a shorter one would change
+    # behaviour to suit the runner.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 

@@ -660,6 +660,18 @@ test.describe("Criterion 10: the end-to-end journey", () => {
   });
 
   test("step 6 — generate the Dockerfile and Kubernetes manifests", async ({ page }) => {
+    // A REAL MODEL CALL, so a real model's latency.
+    //
+    // This step used to render a template, which returned in milliseconds. It now goes through the
+    // six-tier router to a live `qwen2.5-coder:1.5b`, and the deterministic gate may ask for up to
+    // three iterations before it accepts the artifacts — so several minutes on CPU is ordinary, not
+    // a symptom. The observed cost of one provider run in the integration suite is 200-340s.
+    //
+    // Raising a TIMEOUT is not weakening an assertion: nothing about what the step checks changes,
+    // and every assertion below still has to hold. The alternative — capping iterations to fit a
+    // 180s budget — would change the product's behaviour to suit the test, which is the wrong way
+    // round.
+    test.setTimeout(600_000);
     const response = await page.request.post(`${API}/generation/runs`, {
       headers: authHeaders(),
       data: {
