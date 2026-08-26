@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/parag8487/ForgeOps/agent/internal/executor"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner"
 	"github.com/parag8487/ForgeOps/agent/internal/secretscan"
+	"github.com/parag8487/ForgeOps/agent/internal/session"
 )
 
 // scanSubmitTimeout bounds the HTTP POST that uploads a scan report.
@@ -21,6 +23,50 @@ import (
 // inside the executor's fifteen, so the agent's own deadline is the one that fires first and the
 // error names the submit rather than the operation.
 const scanSubmitTimeout = 5 * time.Minute
+
+// codebaseIndexer builds the workspace indexer this agent's credentials authorise.
+//
+// ONE BUILDER FOR TWO CALLERS. `Session` wires it into the dispatcher so a `scan.full` command can
+// run, and `forgeops-agent scan` calls it directly. A second construction site would be a second
+// place for the workspace root, the backend origin or the token source to be resolved differently,
+// and the failure that produces — an agent that scans one tree and uploads to another backend — is
+// silent until somebody reads the index.
+func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
+	root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	// `session.HTTPOrigin` derives the HTTP origin from the SAME configured URL the session dials,
+	// so an agent cannot pair with one backend and upload its index to another.
+	origin, err := session.HTTPOrigin(a.cfg.BackendWSSURL)
+	if err != nil {
+		return nil, fmt.Errorf("agent: backend origin: %w", err)
+	}
+	// The credential store is opened here rather than passed in, because `forgeops-agent scan`
+	// has no session to take one from. `session.NewStore` is idempotent — it opens the same
+	// on-disk store `Session` uses, so the two cannot read different credentials.
+	store, err := session.NewStore(a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
+	if err != nil {
+		return nil, fmt.Errorf("agent: credential store: %w", err)
+	}
+	// The bearer credential is read at CALL time rather than captured here. A device token is
+	// rotated on renewal, and a value captured at assembly would keep being sent after it stopped
+	// being valid, which surfaces as a 401 the agent cannot explain.
+	return newCodebaseIndexer(
+		root, origin, "", a.cfg.Scanner.MaxFileSize,
+		scanner.TokenFunc(func(ctx context.Context) (string, error) {
+			creds, err := store.Load(ctx)
+			if err != nil {
+				return "", fmt.Errorf("agent: reading the device token: %w", err)
+			}
+			if len(creds.DeviceToken) == 0 {
+				return "", errors.New("agent: this agent is not paired, so it has no token to submit a scan with")
+			}
+			return base64.RawURLEncoding.EncodeToString(creds.DeviceToken), nil
+		}),
+		scanSubmitTimeout,
+	)
+}
 
 // codebaseIndexer joins the scanner to the executor's `CodebaseIndexer`.
 //

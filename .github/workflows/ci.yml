@@ -264,6 +264,18 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://forgeops_app:ci-only-not-a-real-secret@localhost:5432/forgeops
       REDIS_URL: redis://localhost:6379/0
       FORGEOPS_TEST_REDIS_URL: redis://localhost:6379/0
+      # The local model server this job starts below. Named here rather than exported inside the
+      # step, because the tests read them through `Settings` and a value set in one step's shell
+      # does not reach another's.
+      #
+      # `bge_m3` selects `embeddings_local` (D-48) and is the backend a fresh clone can reach —
+      # `voyage` needs a paid key, and with it selected every scan writes `vectors_written = 0`
+      # and the HNSW index on that table never holds a row.
+      SELF_HOSTED_BASE_URL: http://localhost:11434/v1
+      SELF_HOSTED_MODEL_ID: qwen2.5-coder:1.5b
+      SELF_HOSTED_EMBEDDING_MODEL_ID: bge-m3
+      EMBEDDING_BACKEND: bge_m3
+      GENERATION_TIER: self_hosted
       # tests/integration/conftest.py gates the schema tests on this variable.
       # It was never set, so all seven of criterion 14's assertions — vector(1536),
       # the HNSW cosine index, transaction-scoped ef_search, clean autogenerate and
@@ -336,6 +348,56 @@ jobs:
         run: python scripts/check-test-credentials.py backend/tests
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
+      # The local OpenAI-compatible model server, so §11.7's `self_hosted` tier is REACHABLE in
+      # CI rather than merely configured.
+      #
+      # A STEP, NOT A SERVICE, and for a sharper reason than the OPA note below: a service
+      # container starts before checkout AND its options cannot run a second command, so there is
+      # no point at which `ollama pull` could happen. A service would come up healthy with no
+      # models and every completion would 404.
+      #
+      # WHY THIS IS NOT OPTIONAL. `tests/integration/capability.py` FAILS rather than skips when
+      # `FORGEOPS_REQUIRE_INTEGRATION` is set, which is the whole point of that guard: a capability
+      # CI claims to provide and then silently skips is how criterion 14's L2 clause sat unproven
+      # for a phase. `served_from='provider'`, the real token stream and the L2 semantic hit all
+      # need an actual model, so CI has to supply one or admit it cannot.
+      #
+      # The two models are small on purpose — a coder model at 1.5B and a 1024-d embedding model.
+      # `bge-m3` is the width `embeddings_local` is declared at (D-48); `nomic-embed-text` is 768
+      # and would be refused by `SelfHostedChunkEmbedder`'s dimension check.
+      - name: Start the local model server and pull the two models
+        working-directory: .
+        run: |
+          docker run -d --name forgeops-ci-ollama -p 11434:11434 \
+            ollama/ollama:0.12.6@sha256:a61a8fd395dbb931cc8cb1b5da7a2510746575c87113fdc45b647ee59ef7f808
+          # Readiness before pulling: `ollama pull` against a server still starting exits
+          # non-zero, and a retry loop around the pull would hide a server that never came up.
+          for _ in $(seq 1 60); do
+            if docker exec forgeops-ci-ollama ollama list >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec forgeops-ci-ollama ollama list >/dev/null
+          docker exec forgeops-ci-ollama ollama pull qwen2.5-coder:1.5b
+          docker exec forgeops-ci-ollama ollama pull bge-m3
+          # Asserted, not assumed: a completion and an embedding of the declared width. Without
+          # this the tests would report "connection refused" from inside a fixture, which names
+          # the symptom rather than the missing model.
+          curl -fsS http://localhost:11434/v1/models >/dev/null
+          python - <<'PY'
+          import json
+          import urllib.request
+
+          request = urllib.request.Request(
+              "http://localhost:11434/v1/embeddings",
+              data=json.dumps({"input": "probe", "model": "bge-m3"}).encode(),
+              headers={"Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(request, timeout=120) as response:
+              width = len(json.load(response)["data"][0]["embedding"])
+          if width != 1024:
+              raise SystemExit(f"bge-m3 returned {width} dimensions; embeddings_local is vector(1024)")
+          print(f"model server ready: bge-m3 embedding width {width}")
+          PY
       # Criterion 11's BACKEND third rides on this step: `--cov=src --cov-branch
       # --cov-fail-under=70` is in `backend/pyproject.toml`'s addopts, so this invocation
       # enforces the gate without naming it. That is deliberate — the gate applies to every

@@ -42,6 +42,7 @@ func NewRootCommand(a *App) *cobra.Command {
 		newDoctorCmd(a),
 		newPairCmd(a),
 		newRunCmd(a),
+		newScanCmd(a),
 		newMCPServeCmd(a),
 	)
 
@@ -238,6 +239,69 @@ func newRunCmd(a *App) *cobra.Command {
 			return a.Run(cmd.Context())
 		},
 	}
+}
+
+// newScanCmd indexes the agent's workspace and submits the result (phases.md §1.3, §1.4).
+//
+// # WHY A CLI VERB AND NOT ONLY A COMMAND FROM THE BACKEND
+//
+// The two `scan.*` operations are implemented and dispatchable, so a backend that mints one gets a
+// real index. But nothing on the backend mints one yet, and it cannot be added casually: §2.2.1
+// makes `websocket.hub.send_command` a confined name that only `governance/` may reach, so a scan
+// trigger is a governance decision rather than a route.
+//
+// That leaves a gap this verb closes honestly. The agent OWNS its workspace — it is the only party
+// that can read the files at all — so an operator asking it to index that workspace needs no
+// authority from the backend beyond the device token it already holds. The index write is still
+// authorised server-side: `POST /analysis/codebase/{id}/index` requires the principal and scopes by
+// tenant, so this verb cannot write into a project the device may not see.
+//
+// It is also what makes the readiness score honest. The score reads `file_tree`/`file_contents`, so
+// before anything scans, a project's readiness is `0` and `indexed=false` — correct, and useless.
+func newScanCmd(a *App) *cobra.Command {
+	var projectID string
+	cmd := &cobra.Command{
+		Use:   "scan",
+		Short: "Index this agent's workspace into a project's codebase index",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if projectID == "" {
+				return errors.New("scan needs --project: the index is per project")
+			}
+			indexer, err := a.codebaseIndexer()
+			if err != nil {
+				return err
+			}
+			a.logger.Info("scanning the workspace",
+				zap.String("project_id", projectID),
+				zap.String("workspace_root", a.cfg.Executor.WorkspaceRoot))
+			summary, err := indexer.IndexFull(cmd.Context(), projectID)
+			if err != nil {
+				return err
+			}
+			// Printed to stdout as well as logged, so a caller can read it without parsing the log
+			// stream — the journey does exactly that.
+			// The write is checked: a caller that parses this line (the journey does) would
+			// otherwise read a truncated report as a smaller index.
+			if _, werr := fmt.Fprintf(cmd.OutOrStdout(),
+				"indexed %d file(s), %d chunk(s), %d dependency edge(s); %d redaction(s); inventory %s\n",
+				summary.FilesIndexed, summary.ChunksIndexed, summary.Dependencies,
+				summary.RedactionCount, summary.InventoryHash); werr != nil {
+				return werr
+			}
+			if summary.VectorsAbsentReason != "" {
+				// Not an error: the tree, the contents and the graph are persisted and the readiness
+				// score works. Saying so is the difference between a sparse-only index and one the
+				// operator believes is searchable.
+				if _, werr := fmt.Fprintf(cmd.OutOrStdout(),
+					"no vectors were written: %s\n", summary.VectorsAbsentReason); werr != nil {
+					return werr
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&projectID, "project", "", "the project id to index against (required)")
+	return cmd
 }
 
 func newMCPServeCmd(a *App) *cobra.Command {

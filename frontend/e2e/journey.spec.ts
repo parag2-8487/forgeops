@@ -560,19 +560,42 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     page,
     request,
   }) => {
+    // THE SCAN COMES FIRST, and that is this step's substance rather than a setup detail.
+    //
+    // Readiness reads `file_tree` and `file_contents` now, not `projects.settings`. It used to score
+    // a dict the caller built out of operator-entered configuration, so the number described what
+    // somebody had typed rather than what the repository contained -- and it scored a project that
+    // had never been scanned at all. With the index as the source an unscanned project honestly
+    // scores zero with `indexed=false`, so criterion 2 -- "agent scans codebase and produces
+    // readiness score" -- is only satisfied if a scan actually ran. This is where it runs.
+    //
+    // Through the agent's own CLI, because the agent OWNS the workspace: it is the only party that
+    // can read the files. The write is still authorised server-side -- the index endpoint requires
+    // the principal and scopes by tenant -- so this cannot index into a project the device may not
+    // see.
+    const scan = composeExec("agent", ["forgeops-agent", "scan", "--project", journey.projectId!]);
+    const indexedFiles = Number(/indexed (\d+) file/.exec(scan)?.[1] ?? 0);
+    expect(indexedFiles, `the agent indexed nothing. Its output was:\n${scan}`).toBeGreaterThan(0);
+
     // ASSERTION on the API first, so the chart is checked against known numbers.
     const report = await apiGet(page.request, `/projects/${journey.projectId}/readiness`);
     expect(report.status()).toBe(200);
     const readiness = await report.json();
 
-    // The five categories the response model used to drop entirely.
+    // phases.md 1.4's six weighted categories. The previous five were the settings-derived set,
+    // which had no `orchestration` and no `iac` category at all -- so a project with no Kubernetes
+    // manifests and no Terraform scored identically to one carrying both.
     expect(Object.keys(readiness.categories).sort()).toEqual([
       "ci_config_score",
       "containerization_score",
-      "documentation_score",
+      "env_config_score",
+      "iac_score",
+      "orchestration_score",
       "security_policy_score",
-      "test_coverage_score",
     ]);
+    // The score has to come from files, so it must say how many it read -- and the count must be
+    // the one the scan reported, not merely non-zero.
+    expect(Number(readiness.evaluated_paths)).toBe(indexedFiles);
     // The fixture ships no Dockerfile, so containerisation must score low BEFORE step 6 runs. This
     // is what makes step 10's improvement meaningful rather than a tautology.
     expect(Number(readiness.categories.containerization_score)).toBeLessThan(50);
