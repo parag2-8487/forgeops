@@ -212,6 +212,24 @@ def main() -> int:
         failures = check(args.app)
     except Exception as exc:  # noqa: BLE001 - any build failure must be exit 2, not 0
         print(f"FAIL: could not build the app from {args.app!r}: {exc!r}", file=sys.stderr)
+        # A CONFIGURATION failure looks nothing like a routing failure, and this check is where a
+        # reader least expects to meet one — they ran a route auditor and got a wall of pydantic.
+        #
+        # This happens because the check enumerates `create_app().routes` rather than reading a
+        # document about them, which is precisely what makes it a checker rather than a list. The
+        # cost is that it needs a constructible `Settings`, so a missing required value stops it
+        # before it can look at a single route. `Settings` requires `ENVELOPE_PEPPER` in every
+        # environment — an empty one stores every device token under an unkeyed HMAC and derives an
+        # identical key-encryption key in every deployment (D-62) — and a fresh clone has no `.env`.
+        #
+        # Naming the fix beats leaving somebody to infer it from a validation error.
+        if "ENVELOPE_PEPPER" in str(exc):
+            print(
+                "\nThis is a configuration problem, not a routing one. The check builds the real app,\n"
+                "so it needs the same settings the app needs. Either run `make init-env` to create\n"
+                "`.env` from the committed baseline, or export ENVELOPE_PEPPER for this shell.",
+                file=sys.stderr,
+            )
         return 2
 
     if failures:
