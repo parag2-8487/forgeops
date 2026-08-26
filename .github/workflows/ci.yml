@@ -264,6 +264,21 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://forgeops_app:ci-only-not-a-real-secret@localhost:5432/forgeops
       REDIS_URL: redis://localhost:6379/0
       FORGEOPS_TEST_REDIS_URL: redis://localhost:6379/0
+      # `Settings` refuses an empty ENVELOPE_PEPPER in every environment, because an empty one is not
+      # a missing credential but a broken one: HMAC-SHA256 under an empty key still computes, so every
+      # device token would be stored unkeyed, and D-62's HKDF-derived KEK would be identical in every
+      # deployment.
+      #
+      # Needed HERE and not only inside pytest, because two steps in this job build the real app
+      # OUTSIDE it — `scripts/check-route-auth.py` enumerates `create_app().routes` rather than
+      # reading a document about them, which is what makes it a checker rather than a list. Adding
+      # the validator broke that step, and the error it gave was the right one: the app genuinely
+      # cannot be constructed without a pepper. `backend/conftest.py` supplies one for the test
+      # session; this supplies one for the steps that are not a test session.
+      #
+      # Synthetic and self-labelling, like the database passwords above: this value exists for the
+      # duration of one job and is reachable only from it.
+      ENVELOPE_PEPPER: ci-only-not-a-real-pepper
       # The local model server this job starts below. Named here rather than exported inside the
       # step, because the tests read them through `Settings` and a value set in one step's shell
       # does not reach another's.
