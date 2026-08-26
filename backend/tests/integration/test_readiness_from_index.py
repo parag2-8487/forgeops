@@ -24,8 +24,10 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from src.auth.dependencies import require_principal
+from src.auth.device_dependencies import require_device
 from src.auth.models import UserRole
 from src.auth.principal import Principal
 
@@ -44,6 +46,47 @@ MULTI_STAGE_DOCKERFILE = (
 SINGLE_STAGE_DOCKERFILE = "FROM golang:1.24\nWORKDIR /src\nRUN go build ./...\n"
 K8S_DEPLOYMENT = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  replicas: 2\n"
 TERRAFORM = 'terraform {\n  backend "s3" {\n    bucket = "state"\n  }\n}\n'
+
+
+class _StubDevice:
+    """What `authenticate_session` returns, reduced to the two fields the index route reads."""
+
+    def __init__(self, project_id: uuid.UUID) -> None:
+        self.project_id = project_id
+        self.tenant_id = None
+
+
+def _device(request: Request) -> _StubDevice:
+    """A device paired to WHICHEVER project the request names.
+
+    The index route authenticates a DEVICE, not a user: an agent holds a device token plus a client
+    certificate and can never satisfy `require_principal`. These tests are about what the SCORE does
+    with an index, so the authentication is overridden -- the two-factor requirement and the
+    project-scoping refusal are asserted in `test_index_route_device_auth.py`, which is where a
+    weaker credential is proved insufficient.
+
+    Adopts the requested project rather than pinning one, because these tests create projects
+    dynamically.
+    """
+    return _StubDevice(uuid.UUID(str(request.path_params["project_id"])))
+
+
+class _StubDevice:
+    """What `authenticate_session` returns, reduced to the two fields the index route reads."""
+
+    def __init__(self, project_id: uuid.UUID) -> None:
+        self.project_id = project_id
+        self.tenant_id = None
+
+
+def _device(request: Request) -> _StubDevice:
+    """A device paired to WHICHEVER project the request names.
+
+    Adopts the requested project rather than pinning one, because these tests create their projects
+    dynamically. That makes the route's project-scoping check a no-op here, which is deliberate: it
+    is asserted in `test_index_route_device_auth.py` together with the two-factor refusals.
+    """
+    return _StubDevice(uuid.UUID(str(request.path_params["project_id"])))
 
 
 def _principal() -> Principal:
@@ -68,6 +111,12 @@ async def readiness_app(monkeypatch: pytest.MonkeyPatch, schema_at_head: str) ->
     monkeypatch.setenv("APP_ENV", "test")
     app = create_app()
     app.dependency_overrides[require_principal] = _principal
+    # The index route authenticates a DEVICE, not a user: an agent holds a device token plus a
+    # client certificate and can never satisfy `require_principal`. These tests are about what the
+    # SCORE does with an index, so the authentication is overridden — the two-factor requirement and
+    # the project-scoping refusal are asserted in `test_index_route_device_auth.py`, which is where a
+    # weaker credential is proved insufficient.
+    app.dependency_overrides[require_device] = _device
     async with LifespanManager(app):
         yield app
     app.dependency_overrides.clear()

@@ -48,6 +48,7 @@ from src.generation.service import GenerationOutcome, GenerationService
 from src.secrets.redaction import create_redacted_prompt
 
 from .capability import require_capability
+from .wiring import wires
 
 pytestmark = pytest.mark.asyncio
 
@@ -282,6 +283,15 @@ class TestTheCommittedConfigurationReachesARealModel:
 
 
 class TestGenerationProducesArtifactsFromARealModel:
+    # `app.state.artifact_model` is composed in `create_app`, and §0.4.1 requires every composed
+    # collaborator to be driven through the REAL object graph by a declared wiring test —
+    # `test_wiring_coverage.py` asserts `composed ⊆ declared` and named this one as undeclared.
+    #
+    # This test qualifies rather than merely claiming to: `_generation_service` builds the port with
+    # the production `build_artifact_model` factory over the committed tier config, and the assertions
+    # below run a real model through it. A declaration on a test that used a hand-built adapter would
+    # satisfy the checker while proving nothing about the composition.
+    @wires("artifact_model")
     async def test_a_run_is_served_from_provider_and_the_artifacts_pass_the_gate(self) -> None:
         """The end-to-end claim: a real model's output satisfies §11.5.5's deterministic gate.
 
