@@ -128,6 +128,28 @@
 
 ### Deliverables
 
+> **Status of the 91 boxes below, recorded rather than ticked.**
+>
+> They are left unticked on purpose. Each would have to be exercised on its own to be ticked
+> honestly, and a tick meaning "this looks done" is worse than no tick — it is the state these
+> documents were already in, and it is what made them useless. What CAN be said with evidence is
+> stated per subsection here; the Completion Criteria at the end of this phase carry the per-item
+> evidence.
+>
+> | § | State | Evidence, or the gap |
+> |:--|:--|:--|
+> | 1.1 Agent pairing & connection | verified end to end | The journey pairs a real agent over mTLS and runs signed commands. `session.heartbeat` is a notification, so liveness is a WebSocket **ping** rather than the inbound-silence timeout written below — that timeout dropped every healthy session on a 90-second cycle. |
+> | 1.2 Multi-project workspace | verified | Projects created and read through the API in journey steps 2 and 5. |
+> | 1.3 Codebase analysis engine | verified, one gap | A real scan of `backend/src` persists 141 files, 1857 dependency edges (243 resolved), 977 chunks; the fixture yields 7 files with genuine 1024-d BGE-M3 vectors. **Gap:** `scan.incremental` is implemented and unit-tested but nothing on the backend mints one — §2.2.1 confines `send_command` to `governance/`, so a scan trigger is a governance decision rather than a route. `forgeops-agent scan` covers the operator path. |
+> | 1.4 Deployment readiness | verified | Scored from the index with `projects.settings` empty, over this section's six weighted categories. `settings` may only REFINE, through `ignore_globs`. |
+> | 1.5 AI generation & validation | verified, one gap | `served_from` reaches `provider`, `l1` and `l2` on real calls. **Gap:** the browser-observable SSE assertion, as the criteria record. |
+> | 1.6 Change approval centre | verified | Journey steps 8–9, and 13 for revert. A blocked revert escalates to approval rather than being refused, which is what makes §3.6's `applied → reverted` edge reachable at all. |
+> | 1.7 Policy engine | verified | 102 tests over OPA and the policy-evaluation surface. |
+> | 1.8 Secret management | verified | Encryption at rest, redaction before LLM context, deploy-time injection; Q-12, Q-24, Q-28. |
+> | 1.9 Audit logging | verified | Unbroken hash chain asserted in journey step 12. **Known limitation:** `GovernanceAction` is a closed vocabulary with no `applied` action, so an audit reader cannot ask "was this applied?" and must consult `change_sets` — Q-04 allows one row per transit. |
+> | 1.10 Governance control plane | verified | Every mutation passes the chokepoint; `check-chokepoint.sh` proves it over both runtimes by parsing the import graph and reports "both halves clean". |
+> | 1.11 Auth integration | verified | Real Authentik OIDC in journey step 1. The agent authenticates as a DEVICE on both factors, which `require_principal` cannot express. |
+
 #### 1.1 Agent Pairing & Connection (JSON-RPC 2.0 over WSS)
 - [ ] Implement **JSON-RPC 2.0 protocol** over WSS (structured `method`, `params`, `id`, `error` schema)
 - [ ] Implement message types: `session.connect`, `session.heartbeat`, `command.execute`, `command.result`, `command.progress`, `approval.request`, `approval.response`, `agent.error`, `agent.status`
@@ -255,20 +277,58 @@
 - [ ] Implement basic RBAC (admin, developer, viewer)
 
 ### Completion Criteria
-- [ ] User can install agent, pair with dashboard, import a project
-- [ ] Agent scans codebase and produces readiness score
-- [ ] AI generates Dockerfile and K8s manifests from real project
-- [ ] Generated files pass validation pipeline
-- [ ] User can view diff, approve, and apply changes
-- [ ] Files are applied atomically with backup
-- [ ] Policies are enforced (block Friday deploys, require approvals)
-- [ ] Secrets are stored encrypted and injected at deploy time
-- [ ] All actions are logged in immutable audit trail
-- [ ] End-to-end test: import Node.js project → generate Dockerfile + K8s → approve → apply
-- [ ] Test coverage ≥ 70%
-- [ ] HNSW indexes created on pgvector embedding columns for production performance
-- [ ] SSE streaming verified: LLM tokens stream to frontend without WebSocket overhead
-- [ ] Redis semantic caching operational: repeated LLM prompts return cached responses
+
+> **How these are ticked.** A box is ticked only where something was RUN and its output recorded;
+> the evidence is named on the line so a reader can re-run it rather than trust the tick. Two are
+> deliberately left open with the reason stated. "the journey" means
+> `frontend/e2e/journey.spec.ts`, which was observed at 13/13 twice back to back with no cleanup
+> between the runs (10.7 min then 1.4 min — the second faster because the semantic cache serves the
+> repeated prompt, which is itself the evidence for the last criterion below).
+
+- [x] User can install agent, pair with dashboard, import a project — journey steps 1–4: a real
+      `forgeops-agent` binary pairs over mTLS with a 6-character code and the device reaches `active`
+- [x] Agent scans codebase and produces readiness score — journey step 5 runs
+      `forgeops-agent scan --project <id>`; the score is computed from `file_tree`/`file_contents`
+      with `projects.settings` empty, and `evaluated_paths` equals the file count the scan reported
+- [x] AI generates Dockerfile and K8s manifests from real project — journey step 6 through the
+      six-tier router to a live `qwen2.5-coder:1.5b`; `generation_runs.served_from='provider'`,
+      `endpoint_id='qwen3-coder-next'`, 287 completion tokens. The four artifacts are derived from
+      the `projects` row, not from keyword-sniffing the prompt
+- [x] Generated files pass validation pipeline — journey step 6's `validation` event, plus the
+      `Templates Library Validation Pipeline` workflow
+- [x] User can view diff, approve, and apply changes — journey steps 8 and 9, both diff view modes
+- [x] Files are applied atomically with backup — journey steps 10 and 11: artifacts on disk match the
+      hashes the backend recorded, and a rollback manifest exists for every overwritten file
+- [x] Policies are enforced (block Friday deploys, require approvals) — 102 tests across
+      `test_governance_policy_opa.py` and `test_policy_evaluations.py`
+- [x] Secrets are stored encrypted and injected at deploy time — `test_0006_secrets.py`,
+      `test_secrets_api.py`, and properties Q-12 (redaction), Q-24 (secret absence), Q-28 (injection
+      confinement)
+- [x] All actions are logged in immutable audit trail — journey step 12 asserts the hash chain is
+      unbroken with `lag(hash) OVER (ORDER BY seq)`; properties Q-04 and Q-05
+- [x] End-to-end test: import Node.js project → generate Dockerfile + K8s → approve → apply — the
+      journey, over `tests/e2e/fixture-project` (a real Node service; the scanner detects
+      `javascript`)
+- [x] Test coverage ≥ 70% — backend 85.52% (2405 passed), enforced by `--cov-fail-under=70` in
+      `backend/pyproject.toml`'s addopts so every pytest run applies it
+- [x] HNSW indexes created on pgvector embedding columns for production performance — both confirmed
+      from `pg_indexes`: `ix_embeddings_embedding_hnsw` and `ix_embeddings_local_embedding_hnsw`, each
+      `USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')`
+- [ ] SSE streaming verified: LLM tokens stream to frontend without WebSocket overhead — **PARTIAL,
+      and left open deliberately.** The six §7.4 event types and their order are asserted on the real
+      stream (journey step 7, property Q-26), and a defect was found and fixed that had made this
+      untrue of the frontend: `token` events carry no `path` — they cannot, since the file is unknown
+      until `parse_artifacts` runs — and `GeneratorWizard` buffered only pathed tokens, so it dropped
+      every one and rendered nothing. Un-pathed tokens now paint into `stream-output`, covered by
+      `frontend/__tests__/generator-wizard-tokens.test.tsx`. What is NOT yet landed is a
+      browser-observable assertion that the painted text grows across deltas; a draft observed real
+      growth (984 → 1102 characters) but could not capture three increments on a ~1100-character
+      artifact. Until that assertion exists, "streams to the frontend" is proven at the transport and
+      at the component, not end to end in a browser
+- [x] Redis semantic caching operational: repeated LLM prompts return cached responses —
+      `generation_runs` rows recording `served_from='l1'` for an identical prompt and `'l2'` for a
+      near-duplicate above the 0.95 cosine threshold, both with `iterations_used = 0`. Also visible
+      on the live path: a second journey run costs 1.4 min against 10.7
 
 ### Excluded (for this phase)
 - ❌ Multi-environment management

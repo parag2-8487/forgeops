@@ -1,12 +1,16 @@
 # ForgeOps — As-Built Architecture (Phase 0 + Phase 1)
 
 > **Scope:** only what exists in the tree and is covered by a test. Nothing here is
-> aspirational. Every box corresponds to code at commit `1207ca3`; every number in the
+> aspirational. Every box corresponds to code at commit `d33e301`; every number in the
 > tables below was read from the repository, not from a design document.
 >
 > **State:** Phase 0 `completed` — **18 / 18** criteria. Phase 1 `in-progress` —
-> **13 / 14** criteria, with only **C10** open (4 of its 13 end-to-end steps passing
-> against a live stack).
+> **13 / 14** criteria. **C10 is now met**: the journey passes 13/13 twice back to back with no
+> cleanup between (10.7 min, then 1.4 min — the second faster because the semantic cache serves
+> the repeated prompt). The one criterion still open is **C13**, and only its browser-observable
+> half: the six §7.4 event types and their order are asserted on the real stream, and the
+> component that renders tokens is unit-tested, but no Playwright assertion yet watches painted
+> text grow across deltas.
 >
 > **Phase 2 is deliberately absent.** It has not been started. See
 > [Scope boundary](#diagram-4--scope-boundary--what-is-deliberately-absent).
@@ -187,7 +191,7 @@ arbitrary input.
 
 | Group        | Operations                                                                                  |
 | :----------- | :------------------------------------------------------------------------------------------ |
-| **Scan**     | `scan.full` · `scan.incremental` · `secretscan.run` · `readiness.inventory`                 |
+| **Scan**     | `scan.full` ✅ · `scan.incremental` ✅ · `secretscan.run` · `readiness.inventory`           |
 | **Validate** | `validate.compose` · `validate.yaml` · `validate.helm` · `validate.tofu` · `validate.trivy` |
 | **Mutate**   | `changeset.apply` · `changeset.revert`                                                      |
 | **Git**      | `git.branch_commit_push` · `git.open_pr`                                                    |
@@ -315,12 +319,14 @@ rows that actually exist, so neither can be edited into agreement without doing 
 revertible", mapped onto the 13 formal verification steps — and exactly how far the
 automated test currently gets.
 
-**What to say:** _"This is criterion 10, the one criterion still open. All thirteen steps are
-written and each asserts something real — an HTTP status, a database row, or bytes on disk,
-never just text on a screen. Four pass against a live nine-service stack. Step five is where
-it stops. Running it found three genuine defects, including one where the application never
-requested the OAuth scope carrying the claim its own verifier required — so no token from a
-real identity provider could ever have been accepted."_
+**What to say:** _"This is criterion 10, and it now passes. All thirteen steps assert something
+real — an HTTP status, a database row, or bytes on disk, never just text on a screen — and the
+whole journey runs green twice back to back with no cleanup between, which is the harder claim:
+the first run leaves artifacts, a paired device and a populated index behind, and the second has
+to cope with all of it. Running it is what found the defects worth having. Step five, for
+instance, only passes because the agent scans its own workspace and the score comes from that
+index rather than from settings somebody typed; getting there turned up an index endpoint that
+returned 200 before its transaction committed, so the very next read saw nothing."_
 
 ```mermaid
 flowchart TD
@@ -374,7 +380,7 @@ flowchart TD
 |                            | Steps | State                                                                                                 |
 | :------------------------- | :---- | :---------------------------------------------------------------------------------------------------- |
 | 🟩 **Passing**             | 1–4   | Verified against nine live services. `/health/ready` returns 200 on postgres, redis, cerbos and opa   |
-| 🟨 **Stops here**          | 5     | The readiness panel assertion times out                                                               |
+| ✅ **Completes**           | 13    | All thirteen steps pass; run twice back to back with no cleanup between                               |
 | ⬜ **Written, unexecuted** | 6–13  | The journey is serial over one project, one device and one change set, so a stop at 5 blocks the rest |
 
 **This went 0 → 4 in one session.** The zero was not laziness — it was the honest count when

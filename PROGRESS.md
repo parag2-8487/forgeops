@@ -1,7 +1,7 @@
 # PROGRESS
 
 **Current phase:** Phase 1 — MVP Core: Analysis, Generation & Approval
-**Last updated:** 2026-08-21
+**Last updated:** 2026-08-26
 
 This file is the project's durable progress record (design §18). It is updated in the same
 commit as the work it describes, so a fresh clone answers "where are we?" without reading
@@ -44,6 +44,38 @@ leaves are mandatory. Statuses move `pending` → `in-progress` → `done` in th
 the work, and task 20.15 finalises this section from captured evidence. A leaf that cannot
 run for want of local tooling is recorded `blocked` with the reason, never `done`.
 
+**Reconciled again 2026-08-26 — the two remaining hardcoded-data paths, and criterion 10.**
+
+What changed, and every claim here was RUN rather than reasoned about:
+
+- **Three endpoints returned fabricated data on live routes.** `analysis/routes.py` answered
+  `indexed_files=42, total_chunks=128, status="ready"`, a fixed `NewParser` symbol, and
+  `"func NewParser() ..."` as the body of ANY chunk id — while `file_tree`, `file_contents` and
+  `embeddings` were empty. A caller could not tell a real index from none. All three are queries now,
+  scoped by project and tenant, and an unindexed project answers with zeros or the non-disclosing 403.
+- **The codebase index is populated.** A real scan of `backend/src` persists 141 files, 1857
+  dependency edges (243 resolved) and 977 chunks; the fixture yields 7 files with genuine 1024-d
+  BGE-M3 vectors in `embeddings_local`. Redaction happens on the AGENT, before anything leaves the
+  machine, because `file_contents` is a redacted-only store (§6.3, §7.11).
+- **Readiness is scored from the index, not from `projects.settings`.** It scored a dict callers built
+  out of operator-entered configuration, so the number described what somebody had typed. Now over
+  phases.md §1.4's six weighted categories against scanned files, with `settings` able only to REFINE
+  through `ignore_globs`. `has_tests` no longer defaults to true, which had inflated every score.
+- **`served_from` can record where a run came from.** It was a SQL string literal, so four of the five
+  values `0008`'s CHECK constraint admits were unreachable and the template library was the only path
+  rather than the fallback. Rows now exist recording `provider` (endpoint `qwen3-coder-next`, 287
+  completion tokens), `l1` and `l2`; revision `0011` adds `pending` for a run still in flight.
+- **Criterion 10 is met.** The thirteen-step journey passes 13/13 twice back to back with no cleanup
+  (10.7 min, then 1.4 min — the second faster because the semantic cache serves the repeated prompt).
+  `tasks.md` 20.10 is ticked on that basis.
+- **`ENVELOPE_PEPPER` is refused at boot in every environment.** `credentials.md` claimed it already
+  was; the default was `SecretStr("")` and the check was gated on production, so elsewhere the process
+  started and died later in one of four voices. The document was made true rather than softened.
+
+Still open, and stated rather than ticked: **criterion 11** (backend 85.52 % passes with margin; the
+FRONTEND gate at 37.04 % is what keeps 20.11 unticked — raising it is real work, not a tracking fix)
+and the **browser-observable half of criterion 13** (the transport and the component are both proven;
+a Playwright assertion that watches painted text grow across deltas is not yet landed).
 **Reconciled 2026-07-31, and twice since — 2026-08-20 (criterion 14) and 2026-08-21 (this
 file's own contradictions).** The July date is when the drift described below was first
 corrected, not the last time anything was checked; `**Last updated**` at the top of the file

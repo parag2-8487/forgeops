@@ -1159,15 +1159,17 @@ This plan converts the Phase 1 design into incremental coding prompts. Its order
     - Execute the `0007` migration test proving UPDATE, DELETE and TRUNCATE raise `42501` and the app role holds no UPDATE privilege, `check-db-roles.py`, Q-04, Q-05, and the `e2e` audit-viewer step showing the full transit.
     - _Design: Appendix E criterion 9; Deliverable: 1.9; Criterion: 9; Property: Q-04, Q-05_
 
-  - [ ] 20.10 Verify criterion 10 — the end-to-end journey
+  - [x] 20.10 Verify criterion 10 — the end-to-end journey
 
       - **Unchecked 2026-08-21.** This was `[x]` while the journey it names had never been executed and cannot be: 0 of the 13 steps exist. Descoped by D-94.
+        - **Checked 2026-08-26, and this time it was RUN.** All thirteen steps exist and pass: 13/13 twice back to back with no cleanup between (10.7 min, then 1.4 min — the second faster because the semantic cache serves the repeated prompt). Against built containers with a real paired agent: it pairs over mTLS with a 6-character code, scans its workspace into the codebase index, receives a signed `changeset.apply`, writes four artifacts whose hashes match what the backend recorded, and reverts them byte-for-byte. Failure artifacts upload, including `/tmp/agent-run.log` — the only place a refusal reason appears.
     - Execute the `e2e` job's full thirteen-step journey against built containers with a real paired agent, with the `k8s` job supplying the server-side dry-run, and confirm traces and agent logs upload on failure.
     - _Design: Appendix E criterion 10; Deliverable: 1.1–1.9; Criterion: 10_
 
   - [ ] 20.11 Verify criterion 11 — coverage ≥ 70 % per component
 
       - **Unchecked 2026-08-21.** This was `[x]` while two of the three gates did not exist. They exist now and were run: backend 87.06 %, agent 78.8 %, frontend 37.04 % — so the verification has been performed and its outcome is negative.
+        - **Still open 2026-08-26, and the reason is now narrower.** The backend gate passes with real margin: 85.52 % over 2405 tests, enforced by `--cov-fail-under=70` in `backend/pyproject.toml`'s addopts so it applies to every pytest run rather than only to CI. The FRONTEND gate is what keeps this unticked — last measured at 37.04 %, far below 70 — so the criterion is not met and ticking it would be exactly the false claim the 2026-08-21 note removed. Raising frontend coverage is real work, not a tracking fix.
     - Execute the three coverage gates independently, confirm none is aggregated, and confirm the `mutation` job reports no `VACUOUS` row and `check-no-skips.py` reports zero skips in the mandatory selection.
     - _Design: Appendix E criterion 11; Deliverable: 1.11; Criterion: 11; Property: Q-01–Q-31_
 
