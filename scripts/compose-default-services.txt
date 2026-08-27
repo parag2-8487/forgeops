@@ -50,3 +50,19 @@ worker
 # fallback is not a fallback but the only path. Behind a profile the default stack would be in
 # exactly that state, which is the condition this service was added to remove.
 ollama
+# The SECOND model server, which is what makes the cascade's fallback hop real.
+#
+# AN ELEVENTH service, unprofiled for a reason that is one step further along than `ollama`'s. With
+# only one model server, the `self_hosted` tier's primary AND its secondary both pointed at the same
+# base URL — so the cascade had a second hop on paper and nowhere to go in practice, and stopping the
+# one server took both entries with it. Nothing could distinguish a working failover from a broken
+# one, and trying to prove it found that `ModelRouter` had never substituted each endpoint's declared
+# model, so a fallback would have been asked for the primary's model and refused.
+#
+# Behind a profile the default stack would be back in that state: a declared fallback that is always
+# down. Recorded here for the same reason `worker` is — a stack whose documented recovery path cannot
+# run is not a working default.
+#
+# It costs no second download. It shares the `ollamamodels` volume and waits for `ollama` to be
+# healthy, so the weights are already present and its own `pull` is a no-op.
+ollama-secondary

@@ -88,9 +88,7 @@ def _router(handler, *, models: dict[str, str]) -> ModelRouter:
     )
     return ModelRouter(
         tier_config=config,
-        registry=EndpointRegistry.from_config(
-            config, http=httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        ),
+        registry=EndpointRegistry.from_config(config, http=httpx.AsyncClient(transport=httpx.MockTransport(handler))),
         cache=TieredSemanticCache(redis=_Redis()),
         breakers={eid: CircuitBreaker() for eid in ids},
         key_resolver=EnvKeyResolver(),
@@ -183,9 +181,7 @@ class TestEachEndpointIsAskedForItsOwnModel:
                 return httpx.Response(503, json={"error": "unavailable"})
             return httpx.Response(200, json=_completion("cached body"))
 
-        router = _router(
-            handler, models={"primary": "vendor-a-large", "secondary": "vendor-b-large"}
-        )
+        router = _router(handler, models={"primary": "vendor-a-large", "secondary": "vendor-b-large"})
 
         first = await _complete(router, asked_for="self_hosted")
         assert first.endpoint_id == "secondary"

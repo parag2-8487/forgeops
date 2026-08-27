@@ -276,6 +276,12 @@ services:
   ollama-secondary:
     image: ollama/ollama:0.12.6@sha256:a61a8fd395dbb931cc8cb1b5da7a2510746575c87113fdc45b647ee59ef7f808
     env_file: *service-env
+    # WAITS FOR THE PRIMARY, so the weights are already in the shared volume and this container's own
+    # `pull` is a no-op. Without it, a fresh volume means both servers pull the same model at the same
+    # time into the same directory — twice the download, and two writers racing on one blob store.
+    depends_on:
+      ollama:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
