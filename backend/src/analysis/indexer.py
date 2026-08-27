@@ -452,6 +452,29 @@ async def persist_scan_report(
             )
         files_removed = removed.rowcount or 0
 
+        # AN EDGE WHOSE TARGET WAS JUST PRUNED IS NO LONGER RESOLVED.
+        #
+        # `fk_file_dependencies_to_file_id_file_tree` is `ON DELETE SET NULL`, so deleting a file
+        # nulls `to_file_id` on every edge that pointed at it — and leaves `resolved` alone. The row
+        # then claims the specifier resolves while pointing at nothing, which contradicts the
+        # invariant the INSERT below already encodes as `edge.resolved and to_id is not None`.
+        #
+        # Found by running it: deleting a module that two files imported left both edges reading
+        # `resolved = t` with `to_file_id = NULL`, so a reader asking "what still resolves?" was told
+        # yes about a file that no longer existed. A full scan afterwards did not correct it either,
+        # because `_persist_dependencies` only rewrites edges FROM the paths a report changed, and
+        # neither importer had changed — only the file they imported.
+        #
+        # This runs only in the non-partial branch because a partial report prunes nothing, so it is
+        # the only place a target can disappear.
+        await session.execute(
+            text(
+                "UPDATE file_dependencies SET resolved = false "
+                "WHERE project_id = :project_id AND to_file_id IS NULL AND resolved"
+            ),
+            {"project_id": project_id},
+        )
+
     dependencies_indexed = await _persist_dependencies(
         session,
         project_id=project_id,

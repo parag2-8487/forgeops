@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/parag8487/ForgeOps/agent/internal/connection"
+	"github.com/parag8487/ForgeOps/agent/internal/scanner"
 	"github.com/parag8487/ForgeOps/agent/internal/session"
 )
 
@@ -43,6 +45,7 @@ func NewRootCommand(a *App) *cobra.Command {
 		newPairCmd(a),
 		newRunCmd(a),
 		newScanCmd(a),
+		newWatchCmd(a),
 		newMCPServeCmd(a),
 	)
 
@@ -302,6 +305,199 @@ func newScanCmd(a *App) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&projectID, "project", "", "the project id to index against (required)")
 	return cmd
+}
+
+// newWatchCmd watches the workspace and re-indexes what changed, plus what depends on it (§1.3).
+//
+// # WHY THE AGENT SELF-TRIGGERS RATHER THAN WAITING TO BE TOLD
+//
+// The same reasoning that made `scan` a verb applies with more force here. §2.2.1 confines
+// `websocket.hub.send_command` to `governance/`, so a backend-initiated re-index would have to be a
+// governance decision — and a governance decision per keystroke is the wrong shape for something whose
+// trigger is "a file on this machine changed". The agent is the only party that can observe its own
+// workspace at all, so it needs no authority from the backend to notice; the WRITE is still authorised
+// server-side by the device token and scoped by tenant, exactly as `scan` is.
+//
+// # WHAT MAKES IT INCREMENTAL RATHER THAN JUST REPEATED
+//
+// A change to a file that others import invalidates more than that file. `BuildIncrementalReport`
+// computes `DirtyClosure` over the resolved dependency edges, so editing a module re-indexes the module
+// AND its dependants, and leaves everything else alone. That is the §1.3 requirement that "first scan
+// works" does not satisfy: the point is not that a scan can run again, it is that a small edit costs a
+// small re-index while still keeping dependants correct.
+//
+// # WHY IT PRINTS EVERY BATCH
+//
+// The line naming the re-indexed paths is the only way an operator can tell a watch that is working
+// from one that is running. It is also what makes this provable: a test can touch one file and read
+// back which paths were re-indexed, which is a claim about behaviour rather than about logs existing.
+func newWatchCmd(a *App) *cobra.Command {
+	var (
+		projectID  string
+		debounceMs int
+		once       bool
+	)
+	cmd := &cobra.Command{
+		Use:   "watch",
+		Short: "Watch this agent's workspace and incrementally re-index what changes",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if projectID == "" {
+				return errors.New("watch needs --project: the index is per project")
+			}
+			indexer, err := a.codebaseIndexer()
+			if err != nil {
+				return err
+			}
+			root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot)
+			if err != nil {
+				return err
+			}
+
+			dirs, err := scanner.WatchableDirectories(root)
+			if err != nil {
+				return fmt.Errorf("enumerating directories to watch under %s: %w", root, err)
+			}
+			fsw, err := scanner.NewFSNotifyWatcher()
+			if err != nil {
+				return fmt.Errorf("starting the file system watcher: %w", err)
+			}
+			defer func() { _ = fsw.Close() }()
+
+			// Concurrency 1: batches must be re-indexed IN ORDER. Two overlapping submissions for the
+			// same project would race on the same rows, and the later-finishing one would win
+			// regardless of which described the newer state.
+			batches, err := scanner.NewDebouncedWatcher(fsw, debounceMs, 1).
+				WatchCoalesced(cmd.Context(), dirs)
+			if err != nil {
+				return fmt.Errorf("watching %d directories under %s: %w", len(dirs), root, err)
+			}
+
+			a.logger.Info("watching the workspace",
+				zap.String("project_id", projectID),
+				zap.String("workspace_root", root),
+				zap.Int("directories", len(dirs)),
+				zap.Int("debounce_ms", debounceMs))
+			// Printed as well as logged so a caller can wait for readiness without parsing the log
+			// stream. Anything driving this needs to know the watch is established BEFORE it touches a
+			// file, or it races the registration and the edit is never seen.
+			if _, werr := fmt.Fprintf(cmd.OutOrStdout(),
+				"watching %d directory(ies) under %s, debounce %dms\n",
+				len(dirs), root, debounceMs); werr != nil {
+				return werr
+			}
+
+			for batch := range batches {
+				changed := make([]string, 0, len(batch))
+				for _, ev := range batch {
+					rel, rerr := filepath.Rel(root, ev.Path)
+					if rerr != nil {
+						continue
+					}
+					changed = append(changed, filepath.ToSlash(rel))
+				}
+				if len(changed) == 0 {
+					continue
+				}
+
+				// A DELETION CANNOT BE HANDLED INCREMENTALLY, and running it is how that was found.
+				//
+				// `BuildIncrementalReport` computes the dirty closure from a FRESH full scan of the
+				// tree. Once a file is gone, two things follow: it is absent from that scan, so the
+				// partial report contains no entry for it; and every specifier that pointed at it now
+				// fails to resolve, so it has no edges and `DirtyClosure` returns nothing. The report
+				// was therefore EMPTY, and the backend refused it — observed exactly that, deleting
+				// `depdemo/lib.js` gave `the backend refused the scan report (422)` and the file stayed
+				// in the index for good.
+				//
+				// Finding the dependants of a deleted file would need the PREVIOUS graph, which the
+				// agent does not keep. A full re-index is the correct answer rather than a fallback:
+				// the deletion changes the RESOLUTION STATUS of every specifier that referred to it,
+				// which is a whole-tree property, and a full scan also prunes the vanished path. It is
+				// rare enough that the cost does not matter.
+				missing := missingPaths(root, changed)
+				if len(missing) > 0 {
+					a.logger.Info("a deletion was seen, so the whole tree is re-indexed",
+						zap.Strings("missing", missing))
+					summary, ierr := indexer.IndexFull(cmd.Context(), projectID)
+					if ierr != nil {
+						a.logger.Error("the full re-index after a deletion failed", zap.Error(ierr))
+						if _, werr := fmt.Fprintf(cmd.ErrOrStderr(),
+							"full re-index after deleting %s failed: %v\n",
+							strings.Join(missing, ", "), ierr); werr != nil {
+							return werr
+						}
+						continue
+					}
+					if _, werr := fmt.Fprintf(cmd.OutOrStdout(),
+						"re-indexed the whole tree after %s was deleted: %d file(s), %d chunk(s), %d edge(s); inventory %s\n",
+						strings.Join(missing, ", "), summary.FilesIndexed, summary.ChunksIndexed,
+						summary.Dependencies, summary.InventoryHash); werr != nil {
+						return werr
+					}
+					if once {
+						return nil
+					}
+					continue
+				}
+				summary, ierr := indexer.IndexChanged(cmd.Context(), projectID, changed)
+				if ierr != nil {
+					// A failed batch must not end the watch: the next save should still be indexed,
+					// and an operator whose watch died silently on one transient error is worse off
+					// than one who sees the error and keeps working.
+					a.logger.Error("re-indexing the changed paths failed",
+						zap.Strings("changed", changed), zap.Error(ierr))
+					if _, werr := fmt.Fprintf(cmd.ErrOrStderr(),
+						"re-index failed for %s: %v\n", strings.Join(changed, ", "), ierr); werr != nil {
+						return werr
+					}
+					continue
+				}
+				// `submitted` rather than `re-indexed`, because those are different numbers and the
+				// difference is observable. One changed file produces a closure of several — the
+				// changed file plus everything importing it — and all of them are sent. The backend
+				// then rewrites only the rows whose content actually differs, so editing a module
+				// bumps `file_contents.updated_at` for the module and leaves its byte-identical
+				// dependants alone. Both behaviours are correct, and a line claiming to have
+				// re-indexed three files when one row moved would be describing neither.
+				if _, werr := fmt.Fprintf(cmd.OutOrStdout(),
+					"submitted %d file(s) in the closure of %s: %d chunk(s), %d new edge(s); inventory %s\n",
+					summary.FilesIndexed, strings.Join(changed, ", "),
+					summary.ChunksIndexed, summary.Dependencies, summary.InventoryHash); werr != nil {
+					return werr
+				}
+				if once {
+					return nil
+				}
+			}
+			return cmd.Context().Err()
+		},
+	}
+	cmd.Flags().StringVar(&projectID, "project", "", "the project id to index against (required)")
+	cmd.Flags().IntVar(&debounceMs, "debounce", 500,
+		"milliseconds of quiet before a batch of changes is re-indexed")
+	cmd.Flags().BoolVar(&once, "once", false,
+		"exit after the first batch, so a caller can observe one re-index without stopping a daemon")
+	return cmd
+}
+
+// missingPaths returns the repository-relative paths in changed that no longer exist under root.
+//
+// Extracted from the watch loop so the DECISION is testable without a backend, a device token and a
+// filesystem event. What it decides is which batches cannot be handled incrementally: a deleted file
+// is absent from the fresh scan the incremental report is built from, and every specifier that pointed
+// at it stops resolving, so the closure comes back empty and the report has nothing in it.
+//
+// A stat error other than "not there" is also treated as missing, deliberately. If the agent cannot
+// see the file, it cannot include it in a report either, and a full re-index is the outcome that
+// leaves the index consistent rather than the one that leaves a stale entry behind.
+func missingPaths(root string, changed []string) []string {
+	missing := make([]string, 0, len(changed))
+	for _, rel := range changed {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			missing = append(missing, rel)
+		}
+	}
+	return missing
 }
 
 func newMCPServeCmd(a *App) *cobra.Command {

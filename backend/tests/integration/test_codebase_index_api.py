@@ -331,6 +331,86 @@ async def test_a_full_report_prunes_a_file_that_left_the_repository(client: Asyn
     assert status["indexed_files"] == 1
 
 
+async def test_pruning_a_file_unresolves_the_edges_that_pointed_at_it(client: AsyncClient) -> None:
+    """An edge whose target was just pruned must stop claiming to resolve.
+
+    FOUND BY RUNNING WATCH MODE, not by reading the code. Deleting a module that two files
+    imported left both edges reading ``resolved = true`` with ``to_file_id = NULL``, so a reader
+    asking "what still resolves?" was told yes about a file that no longer existed.
+
+    The mechanism: ``fk_file_dependencies_to_file_id_file_tree`` is ``ON DELETE SET NULL``, so the
+    prune nulls the target and leaves ``resolved`` untouched. Nothing corrected it afterwards
+    either, because ``_persist_dependencies`` only rewrites edges FROM the paths a report changed
+    — and here neither importer changed, only the file they imported.
+
+    That combination is what makes this worth a test: every individual statement was behaving as
+    written, and the invariant between them was still broken.
+    """
+    project_id = await _create_project(client, "Unresolved after prune")
+
+    # Two importers of one module, both resolving.
+    first = _report(
+        [
+            _file("lib.go", "package lib\n", language="go"),
+            _file("a.go", 'package a\n\nimport "example.com/lib"\n', language="go"),
+            _file("b.go", 'package b\n\nimport "example.com/lib"\n', language="go"),
+        ],
+        dependencies=[
+            {
+                "from_path": "a.go",
+                "to_path": "lib.go",
+                "raw_specifier": "example.com/lib",
+                "kind": "import",
+                "resolved": True,
+            },
+            {
+                "from_path": "b.go",
+                "to_path": "lib.go",
+                "raw_specifier": "example.com/lib",
+                "kind": "import",
+                "resolved": True,
+            },
+        ],
+    )
+    assert (await client.post(f"/api/v1/analysis/codebase/{project_id}/index", json=first)).status_code == 200
+    status = (await client.get(f"/api/v1/analysis/codebase/{project_id}/status")).json()
+    assert status["resolved_dependencies"] == 2, status
+
+    # Now lib.go leaves the repository. The importers are UNCHANGED and still carry the same
+    # specifier, so the report repeats their edges exactly as before — which is the shape that
+    # used to leave the stale rows behind.
+    second = _report(
+        [
+            _file("a.go", 'package a\n\nimport "example.com/lib"\n', language="go"),
+            _file("b.go", 'package b\n\nimport "example.com/lib"\n', language="go"),
+        ],
+        dependencies=[
+            {
+                "from_path": "a.go",
+                "to_path": None,
+                "raw_specifier": "example.com/lib",
+                "kind": "import",
+                "resolved": False,
+            },
+            {
+                "from_path": "b.go",
+                "to_path": None,
+                "raw_specifier": "example.com/lib",
+                "kind": "import",
+                "resolved": False,
+            },
+        ],
+    )
+    result = (await client.post(f"/api/v1/analysis/codebase/{project_id}/index", json=second)).json()
+    assert result["files_removed"] == 1, result
+
+    status = (await client.get(f"/api/v1/analysis/codebase/{project_id}/status")).json()
+    assert status["indexed_files"] == 2, status
+    # THE ASSERTION: nothing resolves any more, because the only thing they pointed at is gone.
+    assert status["resolved_dependencies"] == 0, status
+    assert status["unresolved_dependencies"] == 2, status
+
+
 async def test_a_partial_report_prunes_nothing(client: AsyncClient) -> None:
     """A watch-mode rescan covers one file; treating it as authoritative would delete the
     index on the first incremental scan."""
