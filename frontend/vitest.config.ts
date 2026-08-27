@@ -30,6 +30,13 @@ export default defineConfig({
         "components/**/*.{ts,tsx}",
         "features/**/*.{ts,tsx}",
         "lib/**/*.{ts,tsx}",
+        // `stores/**` and `hooks/**` were missing while everything else that ships to a browser was
+        // listed. Omitting a whole directory is a stronger version of the failure mode described
+        // above: excluding one badly-covered FILE at least appears in the table as a gap, whereas an
+        // unlisted directory cannot move the number at all, no matter what it grows to contain.
+        // `hooks/` is empty today and is listed so the first hook added lands inside the gate.
+        "stores/**/*.{ts,tsx}",
+        "hooks/**/*.{ts,tsx}",
       ],
       exclude: [
         "**/*.test.{ts,tsx}",
@@ -40,10 +47,22 @@ export default defineConfig({
         "app/error.tsx",
         "app/not-found.tsx",
       ],
+      // WHY THESE ARE NOT 70. Criterion 11 asks for >=70% per component and the frontend measures
+      // 95.81% statements / 85.34% branch / 95.47% functions / 95.92% lines. A floor of 70 against
+      // that reality is not a gate, it is 25 points of permitted silent decay — a change could
+      // delete most of the suite and still be green. The floor sits just under the measured numbers
+      // so a REGRESSION fails while ordinary refactoring does not.
+      //
+      // Branches sit lower than the rest because they legitimately are: the remaining uncovered ones
+      // are defensive `??` fallbacks on framework-supplied values. Raising this to match statements
+      // would mean writing tests for cases the framework does not produce.
+      //
+      // Raise these when the numbers rise. Never lower them to make a change pass.
       thresholds: {
-        lines: 70,
-        functions: 70,
-        branches: 70,
+        statements: 90,
+        lines: 90,
+        functions: 90,
+        branches: 80,
       },
     },
   },

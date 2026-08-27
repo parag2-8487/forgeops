@@ -58,6 +58,19 @@ export default defineConfig({
           testMatch: /shell\.spec\.ts/,
           use: { ...devices["Desktop Chrome"] },
         },
+        {
+          // Criterion 13's browser half, kept OUT of the journey deliberately. The journey is serial
+          // and stateful, so adding a step to it would make "13/13" mean something different every
+          // time one was added — and this assertion needs a generation run of its own, because step 6
+          // posts through `page.request` and never touches the wizard at all.
+          //
+          // Its own project rather than a member of `journey` so it can carry its own timeout: it
+          // makes one real model call, which the journey's per-step 180s bound would cut off.
+          name: "paint",
+          testMatch: /sse-paint\.spec\.ts/,
+          use: { ...devices["Desktop Chrome"] },
+          timeout: 2_460_000,
+        },
       ]
     : [
         {
