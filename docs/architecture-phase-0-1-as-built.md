@@ -1,16 +1,22 @@
 # ForgeOps — As-Built Architecture (Phase 0 + Phase 1)
 
 > **Scope:** only what exists in the tree and is covered by a test. Nothing here is
-> aspirational. Every box corresponds to code at commit `d33e301`; every number in the
+> aspirational. Every box corresponds to code at commit `638aad5`; every number in the
 > tables below was read from the repository, not from a design document.
 >
 > **State:** Phase 0 `completed` — **18 / 18** criteria. Phase 1 `in-progress` —
-> **13 / 14** criteria. **C10 is now met**: the journey passes 13/13 twice back to back with no
+> **14 / 14** criteria. **C10 is met**: the journey passes 13/13 twice back to back with no
 > cleanup between (10.7 min, then 1.4 min — the second faster because the semantic cache serves
-> the repeated prompt). The one criterion still open is **C13**, and only its browser-observable
-> half: the six §7.4 event types and their order are asserted on the real stream, and the
-> component that renders tokens is unit-tested, but no Playwright assertion yet watches painted
-> text grow across deltas.
+> the repeated prompt). **C13 is now met too**, including the browser-observable half that was the
+> last one open: `frontend/e2e/sse-paint.spec.ts` installs a `MutationObserver` before the run
+> starts and recorded 149 strictly increasing text lengths in `#stream-output` on a real
+> generation — a timer could not do this, because the earlier 500 ms sampler and the stream are
+> independent clocks.
+>
+> **One limit is worth stating here rather than leaving to be discovered.** Only the self-hosted
+> tier has ever served a live model call. `LLM_KEY_*` are placeholders, so the five hosted vendor
+> tiers cannot be exercised and remain unconfigured pending keys; the cascade and the circuit
+> breaker are proven against doubles rather than across vendors.
 >
 > **Phase 2 is deliberately absent.** It has not been started. See
 > [Scope boundary](#diagram-4--scope-boundary--what-is-deliberately-absent).
@@ -58,7 +64,7 @@ Every box on this diagram is code that exists."_
 ```mermaid
 graph TB
     subgraph BROWSER["Browser"]
-        UI["<b>Next.js 16 Frontend</b><br/>10 routes · 7 feature modules<br/>coverage 90.99% lines / 87.36% fn / 77.28% br"]
+        UI["<b>Next.js 16 Frontend</b><br/>10 routes · 7 feature modules<br/>coverage 95.92% lines / 95.47% fn / 85.34% br"]
     end
 
     subgraph IDP["Identity"]
@@ -86,7 +92,7 @@ graph TB
     end
 
     subgraph MACHINE["Developer Machine"]
-        subgraph AGENT["Go Agent 1.26 — one signed static binary · 22 packages · coverage 78.8%"]
+        subgraph AGENT["Go Agent 1.26 — one signed static binary · 22 packages · coverage 76.7%"]
             CONN["connection · session<br/>WSS · backoff · pairing code"]
             ENVL["envelope<br/>HMAC-SHA256 verify"]
             APOL["policy<br/><b>OPA embedded in-process</b>"]
@@ -162,7 +168,7 @@ graph TB
 | CI        | GitHub Actions           | 6 workflows, 12 jobs on the main gate          | —                           |
 
 Coverage is measured by three **independent** gates, none aggregated with another:
-`pytest --cov-branch --cov-fail-under=70`, `vitest --coverage` against 70/70/70 thresholds,
+`pytest --cov-branch --cov-fail-under=70`, `vitest --coverage` against 90/90/90/80 thresholds,
 and `scripts/check-coverage.sh` parsing `go tool cover -func`.
 
 ### The nine services in the C10 journey
@@ -494,7 +500,7 @@ Source: `PROGRESS.md`. **13 done, 1 pending.**
 | C8      | Secrets stored encrypted and injected at deploy time             | 🟩 done                          |
 | C9      | All actions logged in an immutable audit trail                   | 🟩 done                          |
 | **C10** | **End-to-end: import → generate → approve → apply**              | 🟨 **pending — 4/13 steps**      |
-| C11     | Test coverage ≥ 70 %                                             | 🟩 done — 86.02 / 90.99 / 78.8 % |
+| C11     | Test coverage ≥ 70 %                                             | 🟩 done — 85.77 / 95.81 / 76.7 % |
 | C12     | HNSW indexes on pgvector embedding columns                       | 🟩 done                          |
 | C13     | SSE streaming without WebSocket overhead                         | 🟩 done                          |
 | C14     | Redis semantic caching operational                               | 🟩 done — both tiers wired       |

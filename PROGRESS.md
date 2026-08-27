@@ -1,7 +1,7 @@
 # PROGRESS
 
 **Current phase:** Phase 1 — MVP Core: Analysis, Generation & Approval
-**Last updated:** 2026-08-26
+**Last updated:** 2026-08-27
 
 This file is the project's durable progress record (design §18). It is updated in the same
 commit as the work it describes, so a fresh clone answers "where are we?" without reading
@@ -43,6 +43,32 @@ authority is its `design.md`; both are committed alongside this record. All 166 
 leaves are mandatory. Statuses move `pending` → `in-progress` → `done` in the same commit as
 the work, and task 20.15 finalises this section from captured evidence. A leaf that cannot
 run for want of local tooling is recorded `blocked` with the reason, never `done`.
+
+**Reconciled again 2026-08-27 — all fourteen Phase 1 criteria now tick, and two of the numbers
+that argued otherwise were stale.**
+
+- **C13 closed.** `frontend/e2e/sse-paint.spec.ts` installs a `MutationObserver` on the document
+  before generation starts and recorded **149 strictly increasing text lengths** in
+  `#stream-output` on a real run (24, 48, 49, 51 … 493, 497), with `status` first, sixty-odd
+  `token` events, `progress` present, no `error`, and `complete` terminal. A `MutationObserver`
+  rather than a timer: the earlier 500 ms sampler raced the stream, which is a design flaw and not
+  a tuning problem. Watching SSE frames instead would have proven only that bytes arrived — which
+  was TRUE while the paint bug was live, so it could not have caught it.
+- **C11 verified rather than assumed, and the record was wrong in both directions.** Measured each
+  component the way its own gate measures it: backend **85.77 %**, agent **76.7 %**, frontend
+  **95.81 %**. The tracking record said frontend 37.04 % (it was 90.58 % before any work this
+  session, and the gate was already wired) and agent 78.8 % (the gate's own method gives 76.7 %).
+  Frontend thresholds raised 70 → 90/90/90/80, because a floor of 70 against 95.81 % permits 25
+  points of silent decay instead of gating anything.
+- **§1.3's watch mode built and proven live.** `forgeops-agent watch` runs fsnotify → a real
+  debounce → an incremental submit; one edit of a module two files import gave `submitted 3 file(s)
+in the closure of depdemo/lib.js`. Running it found two defects: `DebouncedWatcher` accepted a
+  `debounceMs` it never read, and a deletion produced an empty report the backend refused with 422.
+  A third, in the backend and pre-existing, is also fixed: after a prune, edges pointing at the
+  removed file still read `resolved = true` with `to_file_id = NULL`.
+- **What remains unproven, stated plainly:** only the self-hosted tier has ever served a live model
+  call. `LLM_KEY_*` are placeholders, so the five hosted vendor tiers remain unconfigured pending
+  keys, and the cascade and circuit breaker are proven against doubles rather than across vendors.
 
 **Reconciled again 2026-08-26 — the two remaining hardcoded-data paths, and criterion 10.**
 

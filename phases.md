@@ -140,9 +140,9 @@
 > |:--|:--|:--|
 > | 1.1 Agent pairing & connection | verified end to end | The journey pairs a real agent over mTLS and runs signed commands. `session.heartbeat` is a notification, so liveness is a WebSocket **ping** rather than the inbound-silence timeout written below — that timeout dropped every healthy session on a 90-second cycle. |
 > | 1.2 Multi-project workspace | verified | Projects created and read through the API in journey steps 2 and 5. |
-> | 1.3 Codebase analysis engine | verified, one gap | A real scan of `backend/src` persists 141 files, 1857 dependency edges (243 resolved), 977 chunks; the fixture yields 7 files with genuine 1024-d BGE-M3 vectors. **Gap:** `scan.incremental` is implemented and unit-tested but nothing on the backend mints one — §2.2.1 confines `send_command` to `governance/`, so a scan trigger is a governance decision rather than a route. `forgeops-agent scan` covers the operator path. |
+> | 1.3 Codebase analysis engine | verified | A real scan of `backend/src` persists 141 files, 1857 dependency edges (243 resolved), 977 chunks; the fixture yields 7 files with genuine 1024-d BGE-M3 vectors. **Watch mode now exists and is proven live:** `forgeops-agent watch --project <id>` runs fsnotify → a real debounce → an incremental submit, and one edit of a module two files import gave `submitted 3 file(s) in the closure of depdemo/lib.js`. The fan-out's exact set is pinned deterministically — a change re-indexes the file, both direct importers and the TRANSITIVE one, and not the file that imports nothing. The agent self-triggers rather than waiting to be told, for the same reason `scan` is a verb: §2.2.1 confines `send_command` to `governance/`, so a backend-initiated re-index would be a governance decision per keystroke, and the agent already owns its workspace. Two defects were found by running it: `DebouncedWatcher` accepted a `debounceMs` it never read, and a DELETION produced an empty report the backend refused with 422 (a deleted file is absent from the fresh scan the closure is derived from, so finding its dependants would need the previous graph — deletions now trigger a full re-index). |
 > | 1.4 Deployment readiness | verified | Scored from the index with `projects.settings` empty, over this section's six weighted categories. `settings` may only REFINE, through `ignore_globs`. |
-> | 1.5 AI generation & validation | verified, one gap | `served_from` reaches `provider`, `l1` and `l2` on real calls. **Gap:** the browser-observable SSE assertion, as the criteria record. |
+> | 1.5 AI generation & validation | verified, with a stated limit | `served_from` reaches `provider`, `l1` and `l2` on real calls, and the browser now observes 149 strictly increasing painted lengths (criterion 13). **The limit, stated rather than implied: only the self-hosted tier has ever served a live call.** `LLM_KEY_*` are placeholders, so the five hosted vendor tiers — OpenAI, Anthropic, xAI, DeepSeek, Google — cannot be exercised at all and remain unconfigured pending keys. Their endpoints are declared in `backend/config/model-tiers.yaml` and validated at load, so a misconfiguration is a startup error rather than a runtime surprise, but no request has reached any of them. The cascade, the circuit breaker's OPEN → HALF-OPEN transition and cross-endpoint failover are therefore proven against DOUBLES rather than across vendors; see the failover note below. |
 > | 1.6 Change approval centre | verified | Journey steps 8–9, and 13 for revert. A blocked revert escalates to approval rather than being refused, which is what makes §3.6's `applied → reverted` edge reachable at all. |
 > | 1.7 Policy engine | verified | 102 tests over OPA and the policy-evaluation surface. |
 > | 1.8 Secret management | verified | Encryption at rest, redaction before LLM context, deploy-time injection; Q-12, Q-24, Q-28. |
@@ -309,22 +309,32 @@
 - [x] End-to-end test: import Node.js project → generate Dockerfile + K8s → approve → apply — the
       journey, over `tests/e2e/fixture-project` (a real Node service; the scanner detects
       `javascript`)
-- [x] Test coverage ≥ 70% — backend 85.52% (2405 passed), enforced by `--cov-fail-under=70` in
-      `backend/pyproject.toml`'s addopts so every pytest run applies it
+- [x] Test coverage ≥ 70% — measured PER COMPONENT, each the way its own CI gate measures it, because
+      that is how the criterion is written and an aggregate would let one component hide behind
+      another. **Backend 85.77%** (2557 passed), enforced by `--cov-fail-under=70` in
+      `backend/pyproject.toml`'s addopts so every pytest run applies it, not only CI. **Agent 76.7%**
+      by `scripts/check-coverage.sh 70`, which merges one profile with `-coverpkg=./internal/...` so a
+      package covered only by another package's tests still counts. **Frontend 95.81%** statements /
+      85.34% branch / 95.47% functions / 95.92% lines from `vitest --coverage` over 20 test files.
+      Note the tracking record was stale in BOTH directions — it said frontend 37.04% and agent 78.8%
+      — and the frontend thresholds have been raised from 70 to 90/90/90/80, because a floor of 70
+      against 95.81% permits 25 points of silent decay rather than gating anything
 - [x] HNSW indexes created on pgvector embedding columns for production performance — both confirmed
       from `pg_indexes`: `ix_embeddings_embedding_hnsw` and `ix_embeddings_local_embedding_hnsw`, each
       `USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')`
-- [ ] SSE streaming verified: LLM tokens stream to frontend without WebSocket overhead — **PARTIAL,
-      and left open deliberately.** The six §7.4 event types and their order are asserted on the real
-      stream (journey step 7, property Q-26), and a defect was found and fixed that had made this
-      untrue of the frontend: `token` events carry no `path` — they cannot, since the file is unknown
-      until `parse_artifacts` runs — and `GeneratorWizard` buffered only pathed tokens, so it dropped
-      every one and rendered nothing. Un-pathed tokens now paint into `stream-output`, covered by
-      `frontend/__tests__/generator-wizard-tokens.test.tsx`. What is NOT yet landed is a
-      browser-observable assertion that the painted text grows across deltas; a draft observed real
-      growth (984 → 1102 characters) but could not capture three increments on a ~1100-character
-      artifact. Until that assertion exists, "streams to the frontend" is proven at the transport and
-      at the component, not end to end in a browser
+- [x] SSE streaming verified: LLM tokens stream to frontend without WebSocket overhead — proven at
+      three levels now. The six §7.4 event types and their order are asserted on the real stream
+      (journey step 7, property Q-26). A defect that had made this untrue of the FRONTEND was found
+      and fixed: `token` events carry no `path` — they cannot, since the file is unknown until
+      `parse_artifacts` runs — and `GeneratorWizard` buffered only pathed tokens, so it dropped every
+      one and rendered nothing, while every server-side test passed. And the browser half is now
+      landed: `frontend/e2e/sse-paint.spec.ts` installs a `MutationObserver` before the run starts and
+      recorded **149 strictly increasing text lengths** in `#stream-output` on a real generation —
+      24, 48, 49, 51 … 493, 497 — with `status` first, sixty-odd `token` events, `progress` present,
+      no `error`, and `complete` terminal. A `MutationObserver` rather than a timer because the
+      earlier 500 ms sampler raced the stream: sampler and stream are independent clocks, so a
+      shorter interval narrows the window without closing it. Watching the SSE frames instead would
+      have proven only that bytes arrived, which was TRUE while the paint bug was live
 - [x] Redis semantic caching operational: repeated LLM prompts return cached responses —
       `generation_runs` rows recording `served_from='l1'` for an identical prompt and `'l2'` for a
       near-duplicate above the 0.95 cosine threshold, both with `iterations_used = 0`. Also visible
