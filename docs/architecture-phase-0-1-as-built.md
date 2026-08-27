@@ -1,7 +1,7 @@
 # ForgeOps — As-Built Architecture (Phase 0 + Phase 1)
 
 > **Scope:** only what exists in the tree and is covered by a test. Nothing here is
-> aspirational. Every box corresponds to code at commit `638aad5`; every number in the
+> aspirational. Every box corresponds to code at commit `2f2d08e`; every number in the
 > tables below was read from the repository, not from a design document.
 >
 > **State:** Phase 0 `completed` — **18 / 18** criteria. Phase 1 `in-progress` —
@@ -15,8 +15,10 @@
 >
 > **One limit is worth stating here rather than leaving to be discovered.** Only the self-hosted
 > tier has ever served a live model call. `LLM_KEY_*` are placeholders, so the five hosted vendor
-> tiers cannot be exercised and remain unconfigured pending keys; the cascade and the circuit
-> breaker are proven against doubles rather than across vendors.
+> tiers cannot be exercised and remain unconfigured pending keys. The cascade and the circuit breaker
+> ARE now proven across two genuinely separate live endpoints — a second model server registered as
+> the `self_hosted` tier's secondary gave the full CLOSED → OPEN → HALF-OPEN → CLOSED lifecycle when
+> the primary was stopped — so they are proven across real endpoints rather than across vendors.
 >
 > **Phase 2 is deliberately absent.** It has not been started. See
 > [Scope boundary](#diagram-4--scope-boundary--what-is-deliberately-absent).

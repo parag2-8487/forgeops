@@ -256,6 +256,51 @@ services:
       retries: 60
       start_period: 30s
 
+  # A SECOND, GENUINELY SEPARATE MODEL SERVER, so cross-endpoint failover can be exercised
+  # against something real instead of a test double.
+  #
+  # WHY THIS EXISTS. Five of the six tiers name hosted vendors and `LLM_KEY_*` are placeholders,
+  # so those endpoints cannot be reached at all — which left the cascade, the circuit breaker and
+  # the failover path proven only against fakes. The `self_hosted` tier's declared secondary
+  # (`glm-5.2`) pointed at the SAME `SELF_HOSTED_BASE_URL` as its primary, so it could not
+  # demonstrate failover either: one server going down took both entries with it.
+  #
+  # SEPARATE PROCESS, SEPARATE CONTAINER, SEPARATE PORT — which is what makes `docker compose stop`
+  # on the primary a real endpoint outage rather than a simulated one. It SHARES the weights
+  # volume, so standing it up costs no second download; the volume is read by both and written by
+  # neither after first pull, and the model is already present so the pull is a no-op.
+  #
+  # It is in the default profile alongside `ollama` because a cascade whose secondary is optional
+  # is not a cascade — the tier config names this endpoint, and `load_tier_config` validates that
+  # every named endpoint resolves at startup.
+  ollama-secondary:
+    image: ollama/ollama:0.12.6@sha256:a61a8fd395dbb931cc8cb1b5da7a2510746575c87113fdc45b647ee59ef7f808
+    env_file: *service-env
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        /bin/ollama serve &
+        until /bin/ollama list >/dev/null 2>&1; do sleep 1; done
+        /bin/ollama pull "$${SELF_HOSTED_MODEL_ID}"
+        wait
+    ports:
+      - "127.0.0.1:${OLLAMA_SECONDARY_PORT:-11435}:11434"
+    volumes:
+      - ollamamodels:/root/.ollama
+    healthcheck:
+      # Only the completion model, not the embedding one: this endpoint exists to answer
+      # completions when the primary cannot, and embeddings are not part of the cascade.
+      test:
+        [
+          "CMD-SHELL",
+          "/bin/ollama list 2>/dev/null | grep -Fq \"$${SELF_HOSTED_MODEL_ID}\"",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
   frontend:
     build:
       context: ./frontend

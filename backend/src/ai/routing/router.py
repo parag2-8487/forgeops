@@ -9,7 +9,7 @@ EXHAUSTED if all endpoints fail.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 import httpx
@@ -200,6 +200,26 @@ class ModelRouter:
                 if secret is not None:
                     credential = secret.get_secret_value()
 
+            # EACH ENDPOINT IS ASKED FOR ITS OWN MODEL, which is what makes a cascade possible.
+            #
+            # `_payload` sends `request.model` verbatim, and the caller has no way to know which
+            # endpoint will end up answering — that is the router's decision, made here. So a request
+            # built once and forwarded unchanged asked EVERY endpoint in the chain for the FIRST
+            # one's model. Across vendors that can never work: no OpenAI deployment serves
+            # `claude-fable-5`. Even within the self-hosted tier it meant the fallback server was
+            # asked for whatever the caller happened to name.
+            #
+            # FOUND BY TRYING TO PROVE FAILOVER. Driving the `self_hosted` chain the way
+            # `ai/routes.py` drives it — `model=body.tier`, so the literal string "self_hosted" —
+            # returned `404 Not Found` from BOTH servers, because neither has a model by that name.
+            # The tier file has always declared a `model:` per endpoint, and nothing read it on this
+            # path; the comment beside `qwen3-coder-next` even explains that the entry names a slot
+            # in the cascade while the weights are a property of the deployment.
+            #
+            # `replace` rather than mutation because `CompletionRequest` is frozen, and per-attempt
+            # rather than once before the loop because each endpoint has a different answer.
+            attempt_request = replace(request, model=descriptor.model) if descriptor and descriptor.model else request
+
             # Invoke endpoint
             start = time.perf_counter()
             try:
@@ -207,10 +227,10 @@ class ModelRouter:
                 if streaming:
                     assert on_token is not None  # narrowed by `streaming`
                     response: CompletionResponse = await endpoint.complete_streaming(
-                        request, credential=credential, on_token=on_token
+                        attempt_request, credential=credential, on_token=on_token
                     )
                 else:
-                    response = await endpoint.complete(request, credential=credential)
+                    response = await endpoint.complete(attempt_request, credential=credential)
                 latency_ms = (time.perf_counter() - start) * 1000
 
                 # Record success on breaker

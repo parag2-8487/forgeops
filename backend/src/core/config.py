@@ -87,6 +87,10 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "ANTHROPIC_BASE_URL",
         "GOOGLE_BASE_URL",
         "SELF_HOSTED_BASE_URL",
+        # The SECOND self-hosted server, which is what makes cross-endpoint failover provable. The
+        # `self_hosted` tier's secondary used to name the same base URL as its primary, so stopping
+        # one server took both chain entries with it and the cascade had nowhere to fall through to.
+        "SELF_HOSTED_SECONDARY_BASE_URL",
         # The self-hosted model server's identity. `SELF_HOSTED_BASE_URL` said where it is and
         # nothing said WHAT it serves, so `config/model-tiers.yaml` carried a literal model tag
         # that no real server had — every request to the only reachable endpoint answered 404.
@@ -95,6 +99,8 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         # Compose-only, like CERBOS_HTTP_PORT: the published port of the `ollama` service. The
         # application reaches the server through SELF_HOSTED_BASE_URL and never reads this.
         "OLLAMA_PORT",
+        # Compose-only, as OLLAMA_PORT is: the published port of the `ollama-secondary` service.
+        "OLLAMA_SECONDARY_PORT",
         "INFISICAL_URL",
         "INFISICAL_CLIENT_ID",
         "INFISICAL_CLIENT_SECRET",
@@ -277,6 +283,12 @@ class Settings(BaseSettings):
     #: reading it out of the process environment there would bypass the one validated view of
     #: configuration the rest of the composition root uses.
     self_hosted_base_url: str = Field(default="")
+
+    #: The second self-hosted endpoint, expanded into `model-tiers.yaml` as the `self_hosted` tier's
+    #: secondary. Declared here for the same reason `self_hosted_base_url` is: `load_tier_config`
+    #: reads `os.environ` directly, so a key absent from `Settings` would be invisible to every
+    #: config test while still being required by the tier file at startup.
+    self_hosted_secondary_base_url: str = Field(default="")
     #: What the self-hosted model server actually serves.
     #:
     #: `SELF_HOSTED_BASE_URL` said WHERE the server is and nothing said WHAT it serves, so

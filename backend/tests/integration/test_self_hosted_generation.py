@@ -163,11 +163,20 @@ def _router(base_url: str, model: str, *, redis: _Redis, embed=None) -> ModelRou
 
 
 def _tier_config(base_url: str, model: str) -> TierConfig:
-    """Parse the committed YAML with the two self-hosted variables supplied."""
+    """Parse the committed YAML with the self-hosted variables supplied."""
     tier_yaml = Path(__file__).resolve().parents[2] / "config" / "model-tiers.yaml"
     env = dict(os.environ)
     env["SELF_HOSTED_BASE_URL"] = base_url
     env["SELF_HOSTED_MODEL_ID"] = model
+    # The `self_hosted` chain's SECONDARY, pointed at the same server as the primary here.
+    #
+    # These tests assert that the committed configuration reaches a real model, which is a property
+    # of the PRIMARY; the secondary exists so the cascade has somewhere to fall through to, and
+    # nothing here makes it fall through. Pointing it at the same server keeps the load honest —
+    # `load_tier_config` refuses an unexpanded variable, and that refusal is what caught this — while
+    # standing up a second server for a test that never uses it would be cost with no assertion
+    # behind it. Real failover is proven separately, against two genuinely separate servers.
+    env.setdefault("SELF_HOSTED_SECONDARY_BASE_URL", base_url)
     # The hosted endpoints' base URLs must expand or the load fails; they are never called here.
     for name, value in (
         ("OPENAI_BASE_URL", "https://api.openai.com/v1"),
@@ -238,6 +247,9 @@ class TestTheCommittedConfigurationReachesARealModel:
         env = dict(os.environ)
         env["SELF_HOSTED_BASE_URL"] = _base_url()
         env["SELF_HOSTED_MODEL_ID"] = model
+        # The chain's secondary, for the same reason as in `_tier_config`: the load refuses an
+        # unexpanded variable, and this test is about the PRIMARY's model coming from the YAML.
+        env.setdefault("SELF_HOSTED_SECONDARY_BASE_URL", _base_url())
         for name, value in (
             ("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             ("XAI_BASE_URL", "https://api.x.ai/v1"),

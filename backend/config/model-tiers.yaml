@@ -27,7 +27,12 @@ tiers:
     self_hosted: [deepseek-v4-flash]
   self_hosted:
     primary: qwen3-coder-next
-    secondary: glm-5.2
+    # A DIFFERENT SERVER, not merely a different model name. This used to be glm-5.2, which
+    # pointed at the same SELF_HOSTED_BASE_URL as the primary -- so the one endpoint a fresh clone
+    # can reach was both the primary AND the fallback, and stopping it left the cascade nowhere to
+    # go. qwen3-coder-standby is a separate process in a separate container, which is what makes
+    # failover observable rather than notional.
+    secondary: qwen3-coder-standby
     cross_vendor: []
     self_hosted: []
 
@@ -66,6 +71,18 @@ endpoints:
     model: ${SELF_HOSTED_MODEL_ID}
     protocol: openai_compatible
     base_url: ${SELF_HOSTED_BASE_URL}
+    key_ref: null
+    timeout_seconds: 60
+    rank_source: unranked
+  qwen3-coder-standby:
+    provider: self_hosted
+    # The same weights as the primary, reached through a SECOND server. Deliberately the same
+    # model: failover is about which endpoint answers, and changing the model at the same time
+    # would mean a failover test could pass because the request went somewhere else OR because it
+    # asked for something else, with no way to tell which.
+    model: ${SELF_HOSTED_MODEL_ID}
+    protocol: openai_compatible
+    base_url: ${SELF_HOSTED_SECONDARY_BASE_URL}
     key_ref: null
     timeout_seconds: 60
     rank_source: unranked

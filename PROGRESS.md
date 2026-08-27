@@ -66,9 +66,25 @@ in the closure of depdemo/lib.js`. Running it found two defects: `DebouncedWatch
   `debounceMs` it never read, and a deletion produced an empty report the backend refused with 422.
   A third, in the backend and pre-existing, is also fixed: after a prune, edges pointing at the
   removed file still read `resolved = true` with `to_file_id = NULL`.
-- **What remains unproven, stated plainly:** only the self-hosted tier has ever served a live model
-  call. `LLM_KEY_*` are placeholders, so the five hosted vendor tiers remain unconfigured pending
-  keys, and the cascade and circuit breaker are proven against doubles rather than across vendors.
+- **Cross-endpoint failover now proven against two real servers.** A second model server
+  (`ollama-secondary`, its own container and port, sharing the weights volume so it costs no second
+  download) is registered as the `self_hosted` tier's secondary. Stopping the primary produced the
+  whole documented lifecycle: four attempts falling through `qwen3-coder-next:error →
+qwen3-coder-standby:success` with the breaker closed, the **5th failure inside 30 s** opening it,
+  later attempts recording `skipped(circuit_breaker_open)` with latency dropping 4.6 s → 0.7 s
+  because no connection is attempted, **`half_open` after the 60 s cooldown**, and a successful probe
+  closing it and returning traffic to the primary.
+  - **A third defect, found by trying to prove failover.** `ModelRouter` forwarded the CALLER's
+    `request.model` to every endpoint in the cascade and never read the `model:` each endpoint
+    declares in `config/model-tiers.yaml`. Driving the chain the way `ai/routes.py` does — with
+    `model=body.tier`, so the literal `"self_hosted"` — returned `404 Not Found` from both live
+    servers. Across vendors the consequence is total: no OpenAI deployment serves `claude-fable-5`,
+    so any fallback would have been refused. The router now substitutes each endpoint's declared
+    model per attempt, while the CACHE key stays the caller's model so a hit does not depend on
+    which server happened to be up.
+- **What remains unproven, stated plainly:** only SELF-HOSTED endpoints have ever served a live call.
+  `LLM_KEY_*` are placeholders, so the five hosted vendor tiers remain unconfigured pending keys. The
+  cascade is proven across real ENDPOINTS, not across vendors.
 
 **Reconciled again 2026-08-26 — the two remaining hardcoded-data paths, and criterion 10.**
 
