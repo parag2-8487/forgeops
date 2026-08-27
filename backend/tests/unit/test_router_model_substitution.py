@@ -122,7 +122,7 @@ class TestEachEndpointIsAskedForItsOwnModel:
         # NOT "self_hosted", which is what the caller said and what no provider serves.
         assert seen == ["vendor-a-large"]
 
-    async def test_the_fallback_receives_ITS_model_rather_than_the_primary_s(self) -> None:
+    async def test_the_fallback_receives_its_own_model_not_the_primary_s(self) -> None:
         """The bug in one assertion: a cascade must not ask vendor B for vendor A's model."""
         seen: list[tuple[str, str]] = []
 
