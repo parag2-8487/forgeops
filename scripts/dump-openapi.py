@@ -33,7 +33,9 @@ import argparse
 import json
 import os
 import pathlib
+import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -49,21 +51,65 @@ END_MARKER = "<!-- END GENERATED ENDPOINTS -->"
 METHOD_ORDER = ["get", "post", "put", "patch", "delete", "head", "options"]
 
 
+#: The only environment the app is constructed under. Anything else is stripped.
+#:
+#: `setdefault` was not enough and the difference is the whole point of this gate. The `backend` CI
+#: job sets DATABASE_URL, GENERATION_TIER, SELF_HOSTED_MODEL_ID and a dozen more at job level, so
+#: `setdefault` left them in place and the schema rendered under CI's environment while a developer's
+#: rendered under theirs. `--check` then reported `docs/openapi.json` stale in CI and current locally,
+#: which is the same "fails there, passes here" shape that made the embedding-model constant a
+#: standing environment note instead of a bug. A drift gate whose output depends on who runs it
+#: cannot tell drift from difference, so the environment is now pinned rather than defaulted.
+BASELINE_ENV = {
+    "APP_ENV": "test",
+    # Deliberately unreachable: rendering a schema must not be able to touch a database by accident.
+    "DATABASE_URL": "postgresql+asyncpg://unused@127.0.0.1:1/unused",
+    "REDIS_URL": "redis://127.0.0.1:1/0",
+    # `Settings` refuses an empty ENVELOPE_PEPPER in every environment, because an empty one is not a
+    # missing credential but a broken one. Without this the script could not construct the app at all
+    # and `--check` raised a validation error instead of comparing anything -- and nothing noticed,
+    # because until this pass `--check` ran nowhere despite this module's docstring saying it is what
+    # CI runs. A fixed non-secret: this process renders a schema and signs nothing.
+    "ENVELOPE_PEPPER": "openapi-dump-only-not-a-real-value",
+}
+
+#: Set in the isolated child so it does not re-exec itself forever.
+_ISOLATION_SENTINEL = "FORGEOPS_OPENAPI_ISOLATED"
+
+#: Kept from the ambient environment because the interpreter needs them to start at all.
+_OS_PASSTHROUGH = (
+    "PATH",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "HOME",
+    "USERPROFILE",
+    "LANG",
+    "LC_ALL",
+    "PYTHONIOENCODING",
+    "COMSPEC",
+    "PATHEXT",
+)
+
+
+def reexec_isolated() -> int:
+    """Re-run this script with only `BASELINE_ENV` plus what the OS needs, and return its status."""
+    env = {name: os.environ[name] for name in _OS_PASSTHROUGH if name in os.environ}
+    env.update(BASELINE_ENV)
+    env[_ISOLATION_SENTINEL] = "1"
+    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+        env=env,
+        check=False,
+    )
+    return completed.returncode
+
+
 def build_app() -> Any:
     """Construct the real application, with unreachable infrastructure on purpose."""
     sys.path.insert(0, str(BACKEND))
-
-    # A committed baseline, so the schema does not depend on whatever is in a developer's `.env`.
-    # The DSNs point nowhere reachable: this must not be able to touch a database even by accident.
-    os.environ.setdefault("APP_ENV", "test")
-    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://unused@127.0.0.1:1/unused")
-    os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:1/0")
-    # `Settings` refuses an empty ENVELOPE_PEPPER in every environment, so without this the script
-    # could not construct the app at all and `--check` raised a validation error rather than
-    # comparing anything. Nothing noticed, because until this pass `--check` ran nowhere despite
-    # this module's own docstring saying it is what CI runs. The value is a fixed non-secret: this
-    # process only renders a schema, and it never reaches a database or signs anything.
-    os.environ.setdefault("ENVELOPE_PEPPER", "openapi-dump-only-not-a-real-secret")
+    os.environ.update(BASELINE_ENV)
 
     from src.main import create_app  # noqa: PLC0415 — after sys.path is arranged
 
@@ -140,6 +186,10 @@ def main() -> int:
         help="do not write; exit 1 if either file would change",
     )
     args = parser.parse_args()
+
+    # Re-exec once under a pinned environment, so the rendered schema is a function of the code alone.
+    if not os.environ.get(_ISOLATION_SENTINEL):
+        return reexec_isolated()
 
     app = build_app()
     schema = app.openapi()

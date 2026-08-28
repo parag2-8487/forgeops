@@ -53,6 +53,12 @@ jobs:
       POSTGRES_PASSWORD: forgeops
       REDIS_URL: redis://localhost:6379/0
       FORGEOPS_TEST_REDIS_URL: redis://localhost:6379/1
+      # Cerbos is a container this job starts rather than a service, matching the `backend` job's
+      # shape -- `scripts/ci/start-cerbos.sh` starts it below. Q-20's control then starts a SECOND,
+      # digest-pinned Cerbos over a mutated copy of the policy set outside the repository and
+      # repoints this variable for the duration of its run, which is what §0.4.5's
+      # outside-the-tree requirement makes possible.
+      FORGEOPS_TEST_CERBOS_URL: http://127.0.0.1:3592
       # A property that skips is not a control. In CI a missing capability must fail rather than
       # quietly pass, which is the whole argument of `tests/integration/capability.py`.
       FORGEOPS_REQUIRE_INTEGRATION: "1"
@@ -96,6 +102,26 @@ jobs:
       - name: Install the backend so the property rows can actually be exercised
         working-directory: backend
         run: pip install --require-hashes -r requirements-dev.lock
+
+      # Q-20 asks the real sidecar rather than a Python reimplementation of it, so a policy edit is
+      # what the property reads. Without Cerbos its property fails whether or not the mutation is
+      # applied, and the control reports `neutralised -> OK` -- which is the check correctly saying
+      # "this row does not prove the mutation is what the property objected to".
+      - name: Start Cerbos over the real policy set
+        run: bash scripts/ci/start-cerbos.sh
+
+      # Q-19 drives the real router, whose stage-1 policy evaluation needs an OPA binary. Copied out
+      # of the digest-pinned image rather than curled from a release page: no second supply-chain
+      # surface, and the same version the Rego suite runs against.
+      - name: Install the OPA binary from the digest-pinned image
+        run: |
+          docker create --name forgeops-mutation-opa-bin \
+            openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5
+          docker cp forgeops-mutation-opa-bin:/opa ./opa-bin
+          docker rm forgeops-mutation-opa-bin
+          sudo install -m 0755 ./opa-bin /usr/local/bin/opa
+          rm -f ./opa-bin
+          opa version
 
       - name: Assemble the database URL from its fragments
         run: |

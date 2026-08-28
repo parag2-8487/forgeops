@@ -3885,7 +3885,7 @@
     "/api/v1/auth/callback": {
       "get": {
         "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
-        "operationId": "callback_api_v1_auth_callback_post",
+        "operationId": "callback_api_v1_auth_callback_get",
         "responses": {
           "200": {
             "content": {
@@ -3903,7 +3903,7 @@
       },
       "post": {
         "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
-        "operationId": "callback_api_v1_auth_callback_post",
+        "operationId": "callback_api_v1_auth_callback_get",
         "responses": {
           "200": {
             "content": {
@@ -3923,7 +3923,7 @@
     "/api/v1/auth/login": {
       "get": {
         "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
-        "operationId": "login_api_v1_auth_login_post",
+        "operationId": "login_api_v1_auth_login_get",
         "responses": {
           "200": {
             "content": {
@@ -3941,7 +3941,7 @@
       },
       "post": {
         "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
-        "operationId": "login_api_v1_auth_login_post",
+        "operationId": "login_api_v1_auth_login_get",
         "responses": {
           "200": {
             "content": {
@@ -3961,7 +3961,7 @@
     "/api/v1/auth/logout": {
       "get": {
         "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
-        "operationId": "logout_api_v1_auth_logout_post",
+        "operationId": "logout_api_v1_auth_logout_get",
         "responses": {
           "200": {
             "content": {
@@ -3979,7 +3979,7 @@
       },
       "post": {
         "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
-        "operationId": "logout_api_v1_auth_logout_post",
+        "operationId": "logout_api_v1_auth_logout_get",
         "responses": {
           "200": {
             "content": {
