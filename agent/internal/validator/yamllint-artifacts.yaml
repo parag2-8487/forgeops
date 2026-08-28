@@ -1,0 +1,39 @@
+# yamllint configuration for artifacts the platform validates (FR-24, FR-27).
+#
+# Committed rather than generated, and passed with `-c` explicitly, for the reason every other tool
+# here is pinned: a validator whose rules depend on whatever config happens to be discoverable from
+# the working directory gives different verdicts for the same file on different machines.
+#
+# WHY `truthy: check-keys: false` IS NOT A WEAKENING.
+# A GitHub Actions workflow's trigger key is `on:`, and YAML 1.1 treats a bare `on` as the boolean
+# true. yamllint's `truthy` rule therefore reports `[warning] truthy value should be one of [false,
+# true]` on the key of every valid workflow in existence. Under `--strict` that warning is an error,
+# so the linter rejected exactly the artifacts FR-24 requires generating — a rule that cannot be
+# satisfied by a correct file is not checking anything, it is just blocking work.
+#
+# `check-keys: false` turns the rule off for KEYS and leaves it fully on for VALUES, which is where it
+# earns its place: `enabled: yes` and `enabled: on` are the real defects it catches, and both are
+# still errors. The narrower fix — an inline `# yamllint disable-line` in every generated workflow —
+# would put linter noise in the artifact the user reads.
+extends: default
+
+rules:
+  truthy:
+    check-keys: false
+    level: error
+  # Generated manifests and charts routinely exceed 80 columns in an image reference or a long
+  # annotation, and wrapping those makes them harder to read rather than easier. 160 is the point at
+  # which a line is genuinely doing too much.
+  line-length:
+    max: 160
+    level: error
+  # A generated file ends with a newline; that is asserted rather than warned about.
+  new-line-at-end-of-file: enable
+  # Comments are not always indented to the block they precede in generated output, and the position
+  # of a comment carries no meaning to any consumer of these files.
+  comments-indentation: disable
+  # `---` is required on documents this platform generates, because a multi-document manifest without
+  # it is one document with surprising contents.
+  document-start:
+    present: true
+    level: error

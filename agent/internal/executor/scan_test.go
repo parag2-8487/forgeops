@@ -78,14 +78,22 @@ func TestScan_CapabilityAdvertisementFollowsTheWiringNotTheTable(t *testing.T) {
 		}
 	}
 
-	// The computed answer must not leak into unrelated rows: `changeset.apply` is implemented
-	// regardless of the indexer, and `validate.compose` is not implemented regardless of it.
+	// The computed answer must not leak into unrelated rows, in both directions: `changeset.apply` is
+	// implemented regardless of the indexer, and `project.register` is not implemented regardless of
+	// it. `validate.compose` used to be the negative example and became implemented when the six
+	// validators were built, which is the same drift `TestTheUnimplementedExampleIsStillUnimplemented`
+	// now guards in the dispatcher tests.
 	for _, d := range []Dispatcher{without, with} {
 		if !implemented(d, OpChangeSetApply) {
 			t.Error("changeset.apply stopped being implemented")
 		}
-		if implemented(d, OpValidateCompose) {
-			t.Error("validate.compose became implemented")
+		if implemented(d, OpProjectRegister) {
+			t.Error("project.register became implemented")
+		}
+		// And the validators are implemented irrespective of the indexer, which is the other half of
+		// "the computed answer applies only to the scan pair".
+		if !implemented(d, OpValidateCompose) {
+			t.Error("validate.compose is not implemented despite having a body")
 		}
 	}
 }

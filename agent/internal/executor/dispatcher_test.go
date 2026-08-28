@@ -442,18 +442,39 @@ func TestExecute_AnUnknownOperationIsDistinctFromAnUnimplementedOne(t *testing.T
 		t.Errorf("an off-catalogue operation gave %v (code %q)", unknown, Code(unknown))
 	}
 
-	// `validate.compose`, not `scan.full`: the scan operations became implemented when the
-	// codebase indexer landed, and an example that quietly stops being an example of the thing it
-	// illustrates is how this assertion would go vacuous. Group 14's validators are still absent,
-	// so this row is a real one.
+	// `project.register`, not `validate.compose` and not `scan.full`. This assertion needs a row that
+	// is genuinely catalogued-but-absent, and the example has had to move twice for exactly the
+	// reason the original comment gave: the scan operations became implemented when the indexer
+	// landed, and the six validators became implemented when they were built against real tools.
+	// An example that quietly stops being an example of the thing it illustrates is how this
+	// assertion would go vacuous, so `TestTheUnimplementedExampleIsStillUnimplemented` below pins
+	// the choice rather than leaving it to be noticed.
 	_, unimplemented := d.Execute(context.Background(),
-		verified(t, OpValidateCompose, "", map[string]any{}, 4), nil)
+		verified(t, OpProjectRegister, "", map[string]any{}, 4), nil)
 	if !isErr(unimplemented, ErrUnimplemented) || Code(unimplemented) != "operation-unimplemented" {
 		t.Errorf("a catalogued-but-unimplemented operation gave %v (code %q)",
 			unimplemented, Code(unimplemented))
 	}
 	if Code(unknown) == Code(unimplemented) {
 		t.Error("the two report the same code, so the distinction is unobservable")
+	}
+}
+
+// TestTheUnimplementedExampleIsStillUnimplemented keeps the assertion above from going vacuous.
+//
+// The test it guards needs one catalogued operation with no body. When the last such row gains one,
+// that test can no longer demonstrate anything and must be deleted rather than pointed at an
+// implemented operation — which would make it assert the opposite of its name while still passing.
+// This states the dependency so the failure names the reason.
+func TestTheUnimplementedExampleIsStillUnimplemented(t *testing.T) {
+	row, ok := handlerTable[OpProjectRegister]
+	if !ok {
+		t.Fatal("project.register left the catalogue")
+	}
+	if row.implemented {
+		t.Fatal("project.register is now implemented, so " +
+			"TestExecute_AnUnknownOperationIsDistinctFromAnUnimplementedOne needs a different " +
+			"example or, if none remains, deletion")
 	}
 }
 
@@ -566,11 +587,29 @@ func TestOperations_IsDerivedFromTheTable(t *testing.T) {
 			implemented++
 		}
 	}
-	// Pinned, so growth is deliberate and visible in a diff rather than drifting. Today the two
-	// change-set operations have bodies; every other row names the group that brings its own.
-	if implemented != 2 {
-		t.Errorf("%d operations report Implemented; this build implements changeset.apply and "+
-			"changeset.revert. Update this number in the same commit as the new handler.", implemented)
+	// Pinned, so growth is deliberate and visible in a diff rather than drifting.
+	//
+	// Ten rows have bodies in this build: the two change-set operations, the six `validate.*`
+	// validators built against real tools, `readiness.inventory` and `secretscan.run`. The scan pair
+	// is deliberately absent from this count — their `implemented` is computed from whether an
+	// indexer is wired, not from the table, and this dispatcher is constructed without one.
+	//
+	// Named individually rather than counted alone, because a count that matches for the wrong reason
+	// is the failure this pin exists to catch.
+	const expectedImplemented = 10
+	if implemented != expectedImplemented {
+		t.Errorf("%d operations report Implemented, expected %d: changeset.apply, changeset.revert, "+
+			"the six validate.* operations, readiness.inventory and secretscan.run. "+
+			"Update this number in the same commit as the new handler.", implemented, expectedImplemented)
+	}
+	for _, op := range []Operation{
+		OpChangeSetApply, OpChangeSetRevert,
+		OpValidateCompose, OpValidateK8s, OpValidateTofu, OpValidateHelm, OpValidateYAML, OpValidateTrivy,
+		OpReadinessInventory, OpSecretScanRun,
+	} {
+		if !handlerTable[op].implemented {
+			t.Errorf("%q is expected to be implemented and the table says otherwise", op)
+		}
 	}
 }
 

@@ -91,6 +91,15 @@ func (s *FilteredScanner) walkFiles(targetDir string, visit func(scannedFile) er
 			return nil
 		}
 
+		// FR-09. The blocklist is consulted BEFORE the file is opened, not after it is read and
+		// redacted. `.env`, `*.pem`, and anything under `~/.ssh` or `~/.aws` are never read into
+		// memory at all. This walk previously called os.ReadFile unconditionally and relied on the
+		// downstream redactor to remove whatever it recognised, which is a mitigation rather than a
+		// control: a redactor is a pattern matcher, and the value had already been copied.
+		if blockedForRead(path) {
+			return nil
+		}
+
 		// Read head bytes for binary check and detection
 		content, err := os.ReadFile(path)
 		if err != nil {

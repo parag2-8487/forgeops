@@ -11,6 +11,8 @@ require (
 	github.com/mark3labs/mcp-go v0.15.0
 	github.com/minio/selfupdate v0.6.0
 	github.com/open-policy-agent/opa v1.4.2
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
 	github.com/spf13/cobra v1.9.1
 	github.com/tetratelabs/wazero v1.9.0

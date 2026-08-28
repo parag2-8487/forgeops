@@ -101,15 +101,28 @@ var handlerTable = map[Operation]entry{
 	OpScanFull:        {timeout: timeoutScan, run: scanFull},
 	OpScanIncremental: {timeout: timeoutScan, run: scanIncremental},
 
-	OpValidateCompose: {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
-	OpValidateK8s:     {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
-	OpValidateTofu:    {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
-	OpValidateHelm:    {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
-	OpValidateYAML:    {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
-	OpValidateTrivy:   {timeout: timeoutValidate, run: unimplemented("group 14's validators")},
+	// The six validators (FR-27). Read-only, so none is `mutating` and none requires an approval:
+	// an approval gate on a read would mean a user has to approve finding out whether the artifact
+	// they were offered is broken.
+	//
+	// Every one of these was `unimplemented("group 14's validators")` while Phase 1's criterion
+	// "Generated files pass validation pipeline" was ticked — and separately, the `validator` package
+	// they would have called was substring matching that returned nil for anything containing
+	// `apiVersion:`. So the criterion was green in two incompatible ways at once: the dispatcher said
+	// "not built" and the validator said "fine". Each now shells out to the real pinned tool and
+	// reports its exit status, its findings and its version.
+	OpValidateCompose: {timeout: timeoutValidate, implemented: true, run: validateCompose},
+	OpValidateK8s:     {timeout: timeoutValidate, implemented: true, run: validateK8s},
+	OpValidateTofu:    {timeout: timeoutValidate, implemented: true, run: validateTofu},
+	OpValidateHelm:    {timeout: timeoutValidate, implemented: true, run: validateHelm},
+	OpValidateYAML:    {timeout: timeoutValidate, implemented: true, run: validateYAML},
+	OpValidateTrivy:   {timeout: timeoutValidate, implemented: true, run: validateTrivy},
 
-	OpReadinessInventory: {timeout: timeoutScan, run: unimplemented("group 12's readiness scoring")},
-	OpSecretScanRun:      {timeout: timeoutScan, run: unimplemented("group 10's secret scanner")},
+	// Also read-only. `readiness.inventory` answers what a readiness score is computed from without
+	// paying for a full index rebuild; `secretscan.run` is FR-42, and reports findings by kind, path,
+	// line and fingerprint while deliberately never carrying the matched value.
+	OpReadinessInventory: {timeout: timeoutScan, implemented: true, run: readinessInventory},
+	OpSecretScanRun:      {timeout: timeoutScan, implemented: true, run: secretScanRun},
 
 	OpChangeSetApply: {
 		mutating: true, requiresApproval: true, timeout: timeoutWrite, implemented: true,
