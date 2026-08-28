@@ -124,6 +124,94 @@ ROLLBACK_HANDLE_TTL: Final[timedelta] = timedelta(days=30)
 FILE_RESOURCE_TYPE: Final[str] = "forgeops_file"
 
 
+def merge_policy_parameters(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Combine the parameter sets of a project's enabled policies into one `input.project`.
+
+    HERE RATHER THAN IN `policies/opa.py`, and that placement is forced rather than chosen: §2.2.1's
+    banned-api table makes `src.policies` a cross-domain module `governance/` may not import, and
+    `check-chokepoint.sh --python` enforces it. `PROJECT_PARAMETER_KEYS` is deliberately NOT duplicated
+    on this side, because duplicating it is the drift the ban exists to prevent: this function merges,
+    and `policies.opa._project_parameters` still applies the authoritative closed key list when the
+    payload becomes an input document. Anything merged here that the bundle does not read is dropped
+    there, in one place.
+
+    A project may hold several policies and the bundle is asked once per mutation, so how they combine
+    is itself a policy decision, made here rather than in each rule:
+
+    * **List-valued keys UNION.** Two policies each blocking a weekday must block both. Last-write-wins
+      would let ADDING a policy silently REMOVE a restriction, which is the opposite of what adding a
+      policy means.
+    * **Scalar keys take the first non-empty value in id order.** `timezone` is the only one. Two
+      policies disagreeing about a project's timezone is a contradiction no arithmetic resolves; taking
+      the first deterministically is honest, and averaging would invent an answer.
+    * **`blocked_window` merges key-wise**, so a policy setting only `start_hour` does not erase
+      another's `end_hour`.
+
+    List order is sorted, so two evaluations over unchanged rows produce an identical document and a
+    difference between them means something actually changed.
+    """
+    merged: dict[str, Any] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        for key, value in row.items():
+            if isinstance(value, list):
+                existing = merged.get(key)
+                if not isinstance(existing, list):
+                    # A list under one policy and a scalar under another is a contradiction. The list
+                    # wins, because every list-valued key here is a set of restrictions and losing a
+                    # restriction is the unsafe direction.
+                    existing = []
+                    merged[key] = existing
+                for item in value:
+                    if item not in existing:
+                        existing.append(item)
+            elif isinstance(value, Mapping):
+                existing_map = merged.get(key)
+                if not isinstance(existing_map, dict):
+                    existing_map = {}
+                    merged[key] = existing_map
+                for inner_key, inner_value in value.items():
+                    existing_map.setdefault(inner_key, inner_value)
+            elif key not in merged or merged[key] in ("", None):
+                merged[key] = value
+    for key, value in merged.items():
+        if isinstance(value, list):
+            merged[key] = sorted(value, key=str)
+    return merged
+
+
+async def load_policy_parameters(session: AsyncSession, project_id: uuid.UUID) -> dict[str, Any]:
+    """Load the enabled policies of one project and merge their parameters (FR-32, FR-33).
+
+    Raw SQL rather than `select(Policy.parameters)`, for the same reason `_active_bundle_digest` uses
+    it: §2.2.1's banned-api table forbids `governance/` importing another domain's models, and
+    `check-chokepoint.sh --python` enforces that. The requirement does not need the violation — the
+    shape that fits is the one already established here, a query plus a pure merge.
+
+    Scoped to the project AND to global policies (`project_id IS NULL`), which is what a nullable
+    `policies.project_id` means: a global policy applies everywhere, and omitting those would make a
+    tenant-wide restriction silently local.
+
+    `enabled` is filtered in SQL, so `0014`'s partial index is the one used and a disabled policy
+    cannot reach the merge at all. `ORDER BY id` is what makes "the first value" mean something stable
+    when two policies disagree on a scalar.
+
+    Module-level rather than a method because it reads no instance state. That also means a test can
+    exercise it with a session alone, instead of standing up a chokepoint with a Redis sequencer and a
+    command sink to check a SELECT.
+    """
+    result = await session.execute(
+        text(
+            "SELECT parameters FROM policies "
+            "WHERE enabled AND (project_id = :project OR project_id IS NULL) "
+            "ORDER BY id"
+        ),
+        {"project": project_id},
+    )
+    return merge_policy_parameters([row[0] for row in result.all() if isinstance(row[0], Mapping)])
+
+
 class GovernanceAction(StrEnum):
     """The closed set of `audit_events.action` values a transit can write.
 
@@ -998,6 +1086,10 @@ class GovernanceChokepoint:
             bundle_digest=str(device_digest),
         )
 
+    async def _policy_parameters(self, session: AsyncSession, project_id: uuid.UUID) -> dict[str, Any]:
+        """The project's merged policy parameters. Delegates to the module-level loader."""
+        return await load_policy_parameters(session, project_id)
+
     async def _active_bundle_digest(self, session: AsyncSession, project_id: uuid.UUID) -> str | None:
         """The project's active bundle digest, or the global one when the project has none.
 
@@ -1051,12 +1143,18 @@ class GovernanceChokepoint:
             "bundle_digest": admitted.bundle_digest,
             "change_set_id": None if change_set_id is None else str(change_set_id),
             "environment": environment,
-            # The scheduling window and the protected globs are per-project data. Leaf 9.5
-            # owns the policy rows they come from, so this is empty today and the bundle's
-            # totality is what makes an empty parameter set a defined answer rather than an
-            # undefined document: no blocked weekday blocks nothing, no glob protects
-            # nothing. Named here rather than omitted so the seam is visible.
-            "policy_parameters": {},
+            # FR-32 and FR-33. This was a literal `{}` with a comment stating the consequence:
+            # "no blocked weekday blocks nothing, no glob protects nothing". The bundle's
+            # `schedule.rego` and `paths.rego` were correct and reading an empty object, so a user
+            # could write a policy, see it listed as enabled, and have it constrain nothing — while
+            # the criterion "Policies are enforced (block Friday deploys, require approvals)" was
+            # ticked. The comment named leaf 9.5 as the owner of the rows; this is that.
+            #
+            # Loaded per evaluation rather than cached, deliberately. A policy is a control, and a
+            # control that takes effect at some unspecified later time is not one an operator can
+            # rely on: disabling a policy has to stop the next mutation, not the one after the cache
+            # expires. It is one indexed read of one project's enabled rows.
+            "policy_parameters": await self._policy_parameters(session, admitted.project_id),
             "principal": {
                 "kind": principal.kind,
                 "role": str(principal.role),

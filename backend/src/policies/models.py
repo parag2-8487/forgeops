@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -29,6 +30,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 POLICY_ENGINES: tuple[str, ...] = ("rego",)
@@ -49,6 +51,9 @@ class Policy(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint(in_list("engine", POLICY_ENGINES), name="ck_policies_engine_allowed"),
         UniqueConstraint("project_id", "name", name="uq_policies_project_id_name"),
+        # Declared on the model as well as in `0014`, because `test_alembic_autogenerate_clean.py`
+        # compares the two and a partial index present in only one of them is a diff.
+        Index("ix_policies_enabled_by_project", "project_id", postgresql_where=text("enabled")),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -59,6 +64,15 @@ class Policy(SQLModel, table=True):
     rego_rules: str = Field(sa_column=Column("rego_rules", Text, nullable=False))
     enabled: bool = Field(default=True)
     template_id: str | None = Field(default=None, max_length=64)
+    #: The values this policy's rules read, projected into `input.project` at stage 1 (FR-32, FR-33).
+    #:
+    #: Only the keys in `policies.opa.PROJECT_PARAMETER_KEYS` reach the bundle. That projection is a
+    #: closed list rather than a passthrough for a specific reason: an unknown key would arrive at OPA,
+    #: be ignored by every rule, and look to a reader like a parameter that had been applied.
+    parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("parameters", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    )
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))
     updated_at: datetime = Field(
         sa_column=Column(
