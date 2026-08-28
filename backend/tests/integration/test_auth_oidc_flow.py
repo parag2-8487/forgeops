@@ -567,6 +567,65 @@ class TestRefreshRotation:
         await client.post("/api/v1/auth/refresh")
         assert fixture_issuer.script.last_form["grant_type"] == ["refresh_token"]
 
+    async def test_refresh_reports_the_role_so_the_ui_can_model_authority(
+        self, client: httpx.AsyncClient, fixture_issuer: FixtureIssuer
+    ) -> None:
+        """`/callback` returned `role` and `/refresh` did not, so in practice the client never saw one.
+
+        A browser reaches the callback ONCE and then mints every subsequent access token here,
+        including on every reload — so the role was absent from the response the app actually depends
+        on, the frontend modelled no roles at all, and the first feedback on an admin-only button was
+        a 403 from `DELETE /agents/{id}`, `GET /audit/verify` or `POST /agents/pairing-codes`.
+
+        Asserted against the CALLBACK's own value rather than a literal, so the two endpoints cannot
+        drift into disagreeing about the same person's authority.
+        """
+        state, nonce = await _begin_login(client)
+        fixture_issuer.script.subject = _new_subject(fixture_issuer)
+        fixture_issuer.script.nonce = nonce
+        fixture_issuer.script.groups = ["forgeops-admins"]
+        opened = (await client.get("/api/v1/auth/callback", params={"code": "c", "state": state})).json()
+        assert opened["role"] == "admin"
+
+        rotated = (await client.post("/api/v1/auth/refresh")).json()
+        assert rotated["role"] == opened["role"]
+        # And the identity fields the client needs beside it, for the same "no extra round trip"
+        # reason: the app must not be authenticated-but-unaware of what it may do, even briefly.
+        assert rotated["user_id"] == opened["user_id"]
+        assert rotated["email"] == opened["email"]
+
+    async def test_a_role_change_at_the_idp_reaches_the_client_on_the_next_login(
+        self, client: httpx.AsyncClient, fixture_issuer: FixtureIssuer
+    ) -> None:
+        """The role travels from `users.role`, which every login rewrites from the IdP's groups.
+
+        That is why `load_user` reads the column rather than decoding the access token: the column is
+        the same source Authentik's `forgeops_role` claim is mapped from, so the value the UI hides
+        buttons on and the value `require_role` enforces agree by construction. A group removed at the
+        IdP must take effect, and this is the case that proves the refresh body follows it rather than
+        caching the authority the session opened with.
+        """
+        subject = _new_subject(fixture_issuer)
+
+        state, nonce = await _begin_login(client)
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+        fixture_issuer.script.groups = ["forgeops-admins"]
+        assert (await client.get("/api/v1/auth/callback", params={"code": "c", "state": state})).json()[
+            "role"
+        ] == "admin"
+        assert (await client.post("/api/v1/auth/refresh")).json()["role"] == "admin"
+
+        # The same human, demoted at the IdP.
+        state, nonce = await _begin_login(client)
+        fixture_issuer.script.subject = subject
+        fixture_issuer.script.nonce = nonce
+        fixture_issuer.script.groups = ["forgeops-developers"]
+        assert (await client.get("/api/v1/auth/callback", params={"code": "c", "state": state})).json()[
+            "role"
+        ] == "developer"
+        assert (await client.post("/api/v1/auth/refresh")).json()["role"] == "developer"
+
 
 class TestLogout:
     async def test_logout_revokes_the_session_and_clears_the_cookie(

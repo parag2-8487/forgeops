@@ -253,6 +253,20 @@ async def refresh(
 
     claims = await _verified_id_claims(request, tokens, nonce=None)
     body = _token_body(tokens, claims, session_id=rotated.id)
+    # THE ROLE, which this endpoint used not to return.
+    #
+    # `/callback` returned `role`; `/refresh` did not. A browser reaches the app through the callback
+    # ONCE and then mints every subsequent access token here — including on every reload — so in
+    # practice the client never saw a role at all, and the UI modelled none. Three routes require
+    # ADMIN or DEVELOPER (`DELETE /agents/{id}`, `GET /audit/verify`,
+    # `POST /agents/pairing-codes`), and without this the first feedback on those buttons was a 403.
+    #
+    # Extending the existing body rather than adding a `GET /auth/me`: the client already calls this
+    # on load to obtain a bearer token, so the role arrives with no extra round trip and there is no
+    # window in which the app is authenticated but does not know what it may do.
+    resolved = await service.load_user(session, user_id=rotated.user_id)
+    if resolved is not None:
+        body.update({"user_id": str(resolved.id), "email": resolved.email, "role": resolved.role.value})
     response = JSONResponse(body)
     _set_session_cookie(request, response, new_refresh)
     return response

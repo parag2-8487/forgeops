@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, UniqueConstraint, func, text
+from sqlalchemy import Column, DateTime, Index, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -23,6 +23,17 @@ class Project(SQLModel, table=True):
     """
 
     __tablename__ = "projects"
+    #: Declared here as well as in revision `0013` because `alembic check` compares the model's
+    #: metadata against the database, and an index that exists in one and not the other fails that
+    #: gate — which is the gate working, not a nuisance.
+    __table_args__ = (
+        Index(
+            "ix_projects_active_created_at",
+            "created_at",
+            "id",
+            postgresql_where=text("archived_at IS NULL"),
+        ),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     # Seam for Phase 1 PostgreSQL RLS. Nullable now; NOT NULL + policies arrive
@@ -43,6 +54,14 @@ class Project(SQLModel, table=True):
             server_default=func.now(),
             onupdate=func.now(),
         )
+    )
+    #: When the project was archived, or NULL while it is active (revision `0013`, PRD FR-05).
+    #:
+    #: A nullable timestamp rather than a status enum. An enum would invite a third value later and
+    #: force every query to enumerate which values mean "visible"; `archived_at IS NULL` has exactly
+    #: one reading and the timestamp answers "when" for free.
+    archived_at: datetime | None = Field(
+        default=None, sa_column=Column("archived_at", DateTime(timezone=True), nullable=True)
     )
 
 
@@ -138,4 +157,23 @@ class ProjectTag(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="projects.id", index=True, ondelete="CASCADE")
     tag: str = Field(max_length=64)
+    created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))
+
+
+class ProjectFavourite(SQLModel, table=True):
+    """PRD FR-03's favourite, keyed on the PERSON as well as the project (revision `0013`).
+
+    `projects.settings.favourite` has existed since revision `0009` and is per project, so in any
+    tenant with two people one person starring a project would reorder the other's list. A favourite
+    is a shortcut belonging to whoever made it, so the user id is half of its identity.
+
+    No surrogate primary key. The pair IS the identity: a second row for the same user and project
+    would mean nothing, and a composite key makes that unrepresentable rather than merely refused by
+    a constraint somebody could forget to add.
+    """
+
+    __tablename__ = "project_favourites"
+
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True, ondelete="CASCADE")
+    project_id: uuid.UUID = Field(foreign_key="projects.id", primary_key=True, index=True, ondelete="CASCADE")
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))

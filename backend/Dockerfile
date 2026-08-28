@@ -30,6 +30,21 @@ RUN pip install --no-deps -e .
 # ---------- Stage 2: runtime ----------
 FROM python:3.13-slim AS runtime
 
+# The OPA binary, for `POST /api/v1/policies/{id}/test` and `policies/validation.py::validate_rego`.
+#
+# WHY IT IS HERE AT ALL. The dry-run route used to answer with a SYNTHESISED allow/deny when
+# `shutil.which("opa")` found nothing — a verdict on a security surface that no policy engine had
+# computed. It now raises `503 dryrun-unavailable` instead, which is honest but useless if the
+# binary is never present, so the image that serves the route has to carry it.
+#
+# COPIED from the same digest-pinned image `docker-compose.yml` already runs, rather than curled
+# from a release page. A download would add a second supply-chain surface needing its own checksum;
+# this reference is already committed, already reviewed, and already the version `scripts/policy-test.sh`
+# greps out of Compose to run the Rego test suite — so the evaluator inside the API and the evaluator
+# the policy tests run against cannot drift apart.
+COPY --from=openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5 \
+	/opa /usr/local/bin/opa
+
 # Security: run as non-root
 RUN groupadd -r forgeops && useradd --no-log-init -r -g forgeops forgeops
 

@@ -258,6 +258,39 @@ class SessionService:
             tenant_id=row[4],
         )
 
+    async def load_user(self, session: AsyncSession, *, user_id: uuid.UUID) -> ResolvedUser | None:
+        """The stored user row, or None when it has been deleted under a live session.
+
+        Added so `POST /auth/refresh` can report the caller's ROLE, which it previously did not —
+        `/callback` returned `role` and `/refresh` did not, so a browser that restored its session
+        from the cookie (which is every reload) had no idea whether it was talking to an admin. The
+        frontend therefore modelled no roles at all, and `DELETE /agents/{id}`, `GET /audit/verify`
+        and `POST /agents/pairing-codes` would have answered 403 as a button's first feedback.
+
+        Reads `users.role` rather than decoding the access token. The column is REWRITTEN from the
+        IdP's groups on every login by `upsert_user`, and Authentik maps the same groups onto the
+        `forgeops_role` claim that `AppTokenVerifier` enforces — so the two agree by construction,
+        and this needs no second parse of a credential.
+
+        `None` rather than raising: a user deleted at the IdP while a session is live is a real
+        state, and the caller decides what to do with it. `/refresh` treats it as no role, which
+        makes the UI offer nothing rather than everything.
+        """
+        result = await session.execute(
+            text("SELECT id, email, name, role, tenant_id FROM users WHERE id = :id AND is_active"),
+            {"id": user_id},
+        )
+        row = result.first()
+        if row is None:
+            return None
+        return ResolvedUser(
+            id=row[0],
+            email=str(row[1]),
+            name=str(row[2]),
+            role=UserRole(str(row[3])),
+            tenant_id=row[4],
+        )
+
     async def create_session(
         self,
         session: AsyncSession,

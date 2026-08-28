@@ -363,6 +363,35 @@ jobs:
         run: python scripts/check-test-credentials.py backend/tests
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
+      # The OPA BINARY, which is a different capability from the OPA SERVER the note above
+      # explains this job does not run as a service.
+      #
+      # `POST /api/v1/policies/{id}/test` and `policies/validation.py::validate_rego` shell out to
+      # `opa` rather than calling a server, because both evaluate a policy that has not been
+      # published to any bundle yet — there is nothing for a server to have loaded. The dry-run
+      # route used to answer with a SYNTHESISED allow/deny when the binary was absent, and the test
+      # that covered it asserted exactly the synthesised values, so it passed with or without OPA
+      # installed and proved nothing either way. The route now raises `503 dryrun-unavailable`
+      # instead, so the test needs a real binary to assert a real decision — and
+      # `require_capability("opa")` FAILS rather than skips here, which is what stops this reverting
+      # to a green tick over an evaluation nobody ran.
+      #
+      # Extracted from the same digest-pinned image `docker-compose.yml` runs and
+      # `scripts/policy-test.sh` greps out of it, rather than curled from a release page: no second
+      # supply-chain surface, and the evaluator inside the API is the same version as the one the
+      # Rego test suite runs against. `backend/Dockerfile` does the identical COPY for the image.
+      - name: Install the OPA binary from the digest-pinned image
+        working-directory: .
+        run: |
+          docker create --name forgeops-ci-opa-bin \
+            openpolicyagent/opa:1.4.2@sha256:35a093d9ae828373cf88f68ecaa8189ab26287468074a3b78f0601d9c8b7a4f5
+          docker cp forgeops-ci-opa-bin:/opa ./opa-bin
+          docker rm forgeops-ci-opa-bin
+          sudo install -m 0755 ./opa-bin /usr/local/bin/opa
+          rm -f ./opa-bin
+          # Asserted rather than assumed. A binary that copied but will not execute would
+          # otherwise surface as a 503 inside a fixture, which names the symptom and not the cause.
+          opa version
       # The local OpenAI-compatible model server, so §11.7's `self_hosted` tier is REACHABLE in
       # CI rather than merely configured.
       #
