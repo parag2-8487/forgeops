@@ -202,7 +202,7 @@ jobs:
       # so it is started through compose rather than through scripts/ci/start-authentik.sh ? that
       # script runs its own containers on the host network for the `auth` job's `services:` topology,
       # and mixing the two would give two Authentiks racing for one database.
-      - name: Start Authentik and wait for its authorization flow
+      - name: Start Authentik and wait for the flow AND the scope mappings
         run: |
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --wait \
             authentik-server authentik-worker
@@ -211,19 +211,51 @@ jobs:
           # reports healthy, and provisioning against a server whose flows do not exist yet fails
           # with a misleading 400. So this waits for the specific flow the authorization request
           # needs, which is what start-authentik.sh learned to do the hard way.
-          for i in $(seq 1 60); do
+          #
+          # IT ALSO WAITS FOR THE FOUR SCOPE MAPPINGS, because the flow is not the last thing the
+          # worker creates. A run got past this gate on the flow alone and then failed provisioning
+          # with `AssertionError: Authentik is missing default scope mappings ['email',
+          # 'offline_access', 'openid', 'profile']` — the gate was weaker than what the next step
+          # requires, so it certified a server that was still filling itself in. `start-authentik.sh`
+          # already asserts exactly this set for the same reason; this is the same assertion in the
+          # job that does not use it.
+          for i in $(seq 1 90); do
             # `--oauth2-bearer` rather than a hand-written header: curl composes the scheme and
             # the header name itself, so neither appears as a literal here, and it is the flag that
             # exists for exactly this.
+            flow_ok=""
+            scopes_ok=""
             if curl -fsS --oauth2-bearer "${AUTHENTIK_BOOTSTRAP_TOKEN}" \
                  "http://localhost:9000/api/v3/flows/instances/?slug=default-provider-authorization-implicit-consent" \
                  | grep -q '"slug"'; then
-              echo "authentik: the authorization flow exists"
+              flow_ok=1
+            fi
+            if [ -n "$flow_ok" ]; then
+              # WHITESPACE-NORMALISED BEFORE MATCHING. `grep '"scope_name":"openid"'` depends on
+              # whether the server emits a space after the colon, and guessing wrong makes this gate
+              # permanently false — worse than the race it closes, because it would never pass rather
+              # than sometimes passing early. `tr -d ' '` removes the question; no scope name
+              # contains a space, so nothing else can collide.
+              #
+              # Multi-line `python3 -c` was tried here and is not an option: unindented Python inside
+              # a YAML block scalar terminates the block, which is the same hazard that moved the
+              # embedding-width check out of `ci.yml` and into a committed script.
+              mappings="$(curl -fsS --oauth2-bearer "${AUTHENTIK_BOOTSTRAP_TOKEN}" \
+                   "http://localhost:9000/api/v3/propertymappings/provider/scope/?page_size=100" \
+                 | tr -d ' ' || true)"
+              scopes_ok=1
+              for scope in openid email profile offline_access; do
+                printf '%s' "$mappings" | grep -q "\"scope_name\":\"${scope}\"" || scopes_ok=""
+              done
+            fi
+            if [ -n "$flow_ok" ] && [ -n "$scopes_ok" ]; then
+              echo "authentik: the authorization flow and all four scope mappings exist"
               exit 0
             fi
+            echo "authentik: waiting (${i}/90) flow=${flow_ok:-no} scopes=${scopes_ok:-no}"
             sleep 10
           done
-          echo "authentik: the authorization flow never appeared" >&2
+          echo "authentik: the flow and scope mappings never both appeared" >&2
           docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --no-color \
             authentik-server authentik-worker >&2
           exit 1
