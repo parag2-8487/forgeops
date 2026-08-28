@@ -213,6 +213,43 @@ func TestWatchCoalesced_TheChannelClosesWhenTheSourceDoes(t *testing.T) {
 	}
 }
 
+func TestWatchCoalesced_CancellationEndsTheWatchWithoutHangingOrLeaking(t *testing.T) {
+	// THE OTHER SHUTDOWN PATH. The source closing and the context being cancelled are different
+	// branches, and only the first was covered. `ctx` is the documented lifecycle control — the
+	// comment on `WatchDebounced` says a consumer that wants to stop early cancels it rather than
+	// abandoning the channel — so cancelling has to terminate the goroutine and close the channel
+	// rather than leaving a sender parked on an unread buffer.
+	//
+	// The pending event is deliberately NOT asserted to arrive. On cancellation the flush cannot
+	// block, because `ctx` is already done and the send races the same `ctx.Done()` it is guarded
+	// by; asserting either outcome would be asserting which branch of a select won. What IS
+	// guaranteed, and is what this checks, is that the channel closes and the read does not hang.
+	src := newScriptedWatcher()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	batches, err := NewDebouncedWatcher(src, 10_000, 1).WatchCoalesced(ctx, []string{"ignored"})
+	if err != nil {
+		t.Fatalf("watch coalesced: %v", err)
+	}
+
+	src.send("/w/pending.ts", Modify)
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	// Drain until closed. Under `-race` this also catches a send on a closed channel.
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case _, ok := <-batches:
+			if !ok {
+				return // closed, which is the property
+			}
+		case <-deadline:
+			t.Fatal("the batch channel never closed after cancellation")
+		}
+	}
+}
+
 func TestWatchableDirectories_SkipsExactlyWhatTheScannerSkips(t *testing.T) {
 	// Registering a wider set than the scanner will read would produce re-index requests for paths it
 	// then declines, and `node_modules` on a real project exhausts the inotify watch limit -- at which
