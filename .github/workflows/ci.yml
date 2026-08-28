@@ -174,6 +174,46 @@ jobs:
           tofu_version: ${{ env.TOFU_VERSION }}
       - name: Assert tofu is on PATH so the iac integration tests cannot skip
         run: tofu version
+
+      # The validator toolchain (FR-27). `internal/validator` and the six `validate.*` handlers shell
+      # out to these, and every one of their tests calls `t.Skip` when its binary is absent — so
+      # without these four steps the whole of FR-27 would be advertised as tested while running
+      # nothing at all. That is the same defect the tofu step above exists to prevent, and
+      # `scripts/check-no-skips.py --go` below turns any remaining skip in this job into a failure.
+      #
+      # Pinned versions, matching what the work was verified against locally. `docker` and
+      # `docker compose` are already present on ubuntu-latest, so `validate.compose` needs no install
+      # — asserted below rather than assumed.
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
+        with:
+          version: v1.31.1
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.1
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.56.2
+      - name: Install yamllint at a pinned version
+        working-directory: .
+        run: pip install "yamllint==1.37.1"
+
+      - name: Assert every validator tool is on PATH so no validate test can skip
+        working-directory: .
+        run: |
+          set -euo pipefail
+          # Named individually so a missing one says WHICH, rather than failing inside a test that
+          # would then report a skip nobody reads.
+          for tool in kubectl helm tofu trivy yamllint docker; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "FAIL: $tool is not on PATH; the validate.* tests would skip and FR-27 would be untested" >&2
+              exit 1
+            fi
+          done
+          kubectl version --client=true -o yaml | head -n 3
+          helm version --short
+          trivy --quiet version
+          yamllint --version
+          docker compose version --short
       # Debt D4 (design §0.5). `go install ...@v1.62.2` resolved a MUTABLE tag against
       # nothing; agent/tools/go.mod pins the same version and its committed go.sum
       # verifies the bytes. scripts/go-tool.sh builds it and runs it from the agent
