@@ -13,13 +13,20 @@
 # Environment:
 #   FORGEOPS_CERT_IDENTITY_REGEXP  expected workflow identity (default: this repo)
 #   FORGEOPS_CERT_OIDC_ISSUER      expected OIDC issuer (default: GitHub Actions)
+#
+# The default identity named `parag8487/ForgeOps` until this pass. That repository is not where
+# releases are built, so the default could not verify any artifact this workflow has ever produced --
+# it would have failed with an identity mismatch, which reads exactly like a forged signature. It
+# went unnoticed because `release.yml` had never run in the canonical repository, so there was no
+# artifact to point the script at. Verified against the real `v0.0.1-rc4` output: `cosign
+# verify-blob` reports `Verified OK`, exit 0, with this default.
 set -eu
 
 ARTIFACT="${1:-}"
 SIG="${2:-${ARTIFACT}.sig}"
 CERT="${3:-${ARTIFACT}.pem}"
 
-IDENTITY="${FORGEOPS_CERT_IDENTITY_REGEXP:-^https://github.com/parag8487/ForgeOps/.github/workflows/release.yml@refs/tags/v.*$}"
+IDENTITY="${FORGEOPS_CERT_IDENTITY_REGEXP:-^https://github.com/parag2-8487/forgeops/.github/workflows/release.yml@refs/tags/v.*$}"
 ISSUER="${FORGEOPS_CERT_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 if [ -z "$ARTIFACT" ]; then

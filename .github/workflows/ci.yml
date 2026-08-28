@@ -111,8 +111,15 @@ jobs:
       - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
+      # `pip` is pinned alongside `pip-tools`, and the pair matters more than either alone. pip 25.2
+      # removed `stdlib_pkgs` from `pip._internal.utils.compat`, which `pip-tools 7.6.0` imports, so
+      # on the runner's current pip the lock check died with an ImportError before resolving anything.
+      # That had been invisible because the step ran with `|| true`. 25.0.1 is the pip the committed
+      # lock was generated with, so pinning it makes the check compare like with like rather than
+      # merely making the import work. D-21 already records pip-tools being held at 7.6.0 for the
+      # mirror-image reason: 7.4.1 was incompatible with the pip of its day.
       - name: Install the pinned lock generator
-        run: pip install "pip-tools==${PIP_TOOLS_VERSION}"
+        run: pip install "pip==25.0.1" "pip-tools==${PIP_TOOLS_VERSION}"
       # Regenerate both locks and fail on ANY diff.
       #
       # This ran as `... || true` under a step named "no diff allowed", so for as long as it has
@@ -903,6 +910,13 @@ jobs:
       # so both structural gates now assert the live shape rather than the Phase 0 one.
       - name: The Go module contract must hold (SPDX headers, module path, readonly)
         run: bash scripts/check-go-module.sh
+      # `check-compose.sh` parses the compose file with PyYAML, which this job did not have -- the
+      # step failed with "FAIL: PyYAML is required" the first time it ran anywhere. Installed from the
+      # hash-pinned tooling lock rather than as a bare `pip install pyyaml`, for the reason D4 gives:
+      # the linter that gates every commit must not itself float.
+      - name: Install the pinned repository tooling
+        run: pip install --require-hashes -r scripts/requirements-tools.lock
+
       # Runs `check-compose-validate.py` over the real compose file plus the driver's own extra
       # assertions. Only the callee was ever exercised, and only by a unit test.
       - name: The compose contract must hold
