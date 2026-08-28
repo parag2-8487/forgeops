@@ -931,7 +931,13 @@ describe("Readiness category breakdown", () => {
   const CHECKS = [
     {
       id: "dockerfile_exists",
-      category: "containerization_score",
+      // NO `_score` SUFFIX, because that is what the engine actually emits: the breakdown's keys are
+      // model FIELD names (`containerization_score`) and a check's category is the category itself
+      // (`containerization`). Grouping on the raw strings rendered every category twice — once with a
+      // score and "no checks recorded", once with the checks and no score — and the fixture that used
+      // to be here carried the suffix, so the unit tests agreed with the misconception. The live
+      // onboarding walk is what caught it.
+      category: "containerization",
       passed: true,
       points: 20,
       max_points: 20,
@@ -940,7 +946,7 @@ describe("Readiness category breakdown", () => {
     },
     {
       id: "dockerfile_non_root",
-      category: "containerization_score",
+      category: "containerization",
       passed: false,
       points: 0,
       max_points: 10,
@@ -1015,6 +1021,41 @@ describe("Readiness category breakdown", () => {
    * the scorer. So the assertion is that the checks are HIDDEN until asked for and then carry the
    * indexed path and the reason — not merely that a panel exists.
    */
+  it("renders each category ONCE, reconciling the two key spellings", async () => {
+    /**
+     * THE REGRESSION THIS PINS. The breakdown's keys are model field names — `containerization_score`
+     * — and a check's `category` is the category itself, `containerization`. Grouping on the raw
+     * strings produced twelve rows for six categories: each appeared once with a score and "no checks
+     * recorded", and again with its checks and a score of "—". Expanding the first one showed a
+     * message about a gap in the report, for a report with no gap.
+     *
+     * Asserted by COUNT rather than by inspecting the keys, because the count is what a user sees.
+     */
+    serve({
+      project_id: "x",
+      score: 70,
+      level: "Adequate",
+      summary_report: "s",
+      recommendations: [],
+      categories,
+      indexed: true,
+      evaluated_paths: 12,
+      checks: CHECKS,
+    });
+    renderPage(<ReadinessPage />);
+
+    await screen.findByTestId("category-toggle-containerization");
+    const toggles = screen
+      .getByTestId("readiness-breakdown")
+      .querySelectorAll("[data-testid^='category-toggle-']");
+    expect(toggles).toHaveLength(Object.keys(categories).length);
+    // And the score reached the row the checks are on, rather than being stranded on a twin.
+    expect(screen.getByTestId("category-score-containerization")).toHaveTextContent("85/100");
+    expect(screen.getByTestId("category-toggle-containerization")).toHaveTextContent(
+      "1 of 2 checks passing",
+    );
+  });
+
   it("keeps the checks collapsed until the category is expanded", async () => {
     serve({
       project_id: "x",
@@ -1029,7 +1070,7 @@ describe("Readiness category breakdown", () => {
     });
     renderPage(<ReadinessPage />);
 
-    const toggle = await screen.findByTestId("category-toggle-containerization_score");
+    const toggle = await screen.findByTestId("category-toggle-containerization");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("check-dockerfile_exists")).not.toBeInTheDocument();
 
@@ -1037,7 +1078,7 @@ describe("Readiness category breakdown", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     // `aria-controls` names the region the trigger reveals, so the relationship is announced rather
     // than only visible.
-    expect(toggle).toHaveAttribute("aria-controls", "readiness-checks-containerization_score");
+    expect(toggle).toHaveAttribute("aria-controls", "readiness-checks-containerization");
   });
 
   it("shows the indexed evidence and why the check matters, not only a pass or fail", async () => {
@@ -1053,7 +1094,7 @@ describe("Readiness category breakdown", () => {
       checks: CHECKS,
     });
     renderPage(<ReadinessPage />);
-    await userEvent.click(await screen.findByTestId("category-toggle-containerization_score"));
+    await userEvent.click(await screen.findByTestId("category-toggle-containerization"));
 
     const failing = screen.getByTestId("check-dockerfile_non_root");
     // The word, not the colour: a red dot is unavailable to a colour-blind reader and to a screen
@@ -1081,7 +1122,7 @@ describe("Readiness category breakdown", () => {
     // says so rather than showing a zero that reads as a measurement.
     expect(await screen.findByTestId("readiness-provenance")).toHaveTextContent(/never scanned/i);
     expect(screen.getByText(/no check has been evaluated/i)).toBeInTheDocument();
-    expect(screen.queryByTestId("category-toggle-containerization_score")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("category-toggle-containerization")).not.toBeInTheDocument();
   });
 });
 

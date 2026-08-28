@@ -30,6 +30,25 @@ export function ReadinessBreakdown({ report }: { report: ReadinessReport }) {
   // that impossible.
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
 
+  /*
+   * THE TWO SIDES NAME THE SAME CATEGORY DIFFERENTLY, and this is where they are reconciled.
+   *
+   * `ReadinessBreakdown` on the backend is a model whose FIELDS are the scores, so its keys arrive as
+   * `containerization_score`. `ReadinessCheck.category` is the category itself, so it arrives as
+   * `containerization`. Grouping on the raw strings therefore produced TWO entries for every
+   * category — one carrying a score and "no checks recorded", one carrying the checks and no score —
+   * and expanding the first showed the "gap in the report" message for a report that had no gap.
+   *
+   * Found by running it: `e2e/onboarding.spec.ts` opened the panel against a real scored project and
+   * the breakdown had twelve rows for six categories. A unit test with a fixture cannot catch this,
+   * because the fixture is written by whoever holds the misconception.
+   *
+   * Normalising by stripping a trailing `_score` is the fix rather than renaming either side: the
+   * suffix is an artefact of the score living in a field name, and `categoryLabel` already strips it
+   * for display, so the normalised form is the one the UI has always shown.
+   */
+  const normalise = (key: string) => key.replace(/_score$/, "");
+
   const byCategory = new Map<string, ReadinessCheck[]>();
   // `?? []` rather than trusting the field to be present. It is non-optional in the response model,
   // but a render-time `for...of` over `undefined` throws inside React's commit phase, and there is no
@@ -37,16 +56,21 @@ export function ReadinessBreakdown({ report }: { report: ReadinessReport }) {
   // wire, would blank the whole readiness screen rather than degrade this panel. An empty breakdown
   // is a recoverable disappointment; a white page is not.
   for (const check of report.checks ?? []) {
-    const existing = byCategory.get(check.category);
+    const key = normalise(check.category);
+    const existing = byCategory.get(key);
     if (existing) existing.push(check);
-    else byCategory.set(check.category, [check]);
+    else byCategory.set(key, [check]);
   }
+
+  const scoreByCategory = new Map<string, number>(
+    Object.entries(report.categories).map(([key, score]) => [normalise(key), score]),
+  );
 
   // Ordered by the engine's own category keys so the list matches the radar chart's order, with any
   // category that has checks but no score appended rather than dropped.
   const categories = [
-    ...Object.keys(report.categories),
-    ...[...byCategory.keys()].filter((c) => !(c in report.categories)),
+    ...scoreByCategory.keys(),
+    ...[...byCategory.keys()].filter((key) => !scoreByCategory.has(key)),
   ];
 
   if (!report.indexed) {
@@ -66,7 +90,7 @@ export function ReadinessBreakdown({ report }: { report: ReadinessReport }) {
     <div className="space-y-2" data-testid="readiness-breakdown">
       {categories.map((key) => {
         const checks = byCategory.get(key) ?? [];
-        const score = report.categories[key];
+        const score = scoreByCategory.get(key);
         const isOpen = open.has(key);
         const passed = checks.filter((c) => c.passed).length;
         const panelId = `readiness-checks-${key}`;

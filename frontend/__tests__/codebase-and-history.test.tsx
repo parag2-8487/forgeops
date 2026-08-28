@@ -162,16 +162,32 @@ describe("the scan trigger", () => {
     // No trigger. §2.2.1 confines command dispatch to the chokepoint, and a scan is not a mutation of
     // the user's tree — so putting it through an approval gate would add ceremony without a control.
     expect(screen.queryByRole("button", { name: /scan now/i })).not.toBeInTheDocument();
+    // The agent's REAL flags: `--project` and nothing else. The first version of this panel rendered a
+    // `--path` argument that the CLI does not have, and `e2e/onboarding.spec.ts` caught it by running
+    // the displayed string verbatim. This assertion pins the exact text so a plausible-looking flag
+    // cannot creep back in.
     expect(await screen.findByTestId("scan-command")).toHaveTextContent(
-      "forgeops-agent scan --project p-1 --path /srv/checkout",
+      "forgeops-agent scan --project p-1",
     );
+    expect(screen.getByTestId("scan-command").textContent).not.toContain("--path");
     expect(screen.getByText(/the backend cannot tell an agent to scan/i)).toBeInTheDocument();
+  });
+
+  it("explains that the directory belongs to the agent, not to the command", async () => {
+    mockGet.mockResolvedValue(status());
+    renderIt(<CodebaseIndexPanel projectId="p-1" projectPath="/srv/checkout" />);
+    // A missing argument with no explanation reads as a bug. And the consequence is worth naming: an
+    // agent whose workspace differs from the project's recorded path scans SUCCESSFULLY and indexes
+    // the wrong tree, which the file count is the only way to notice.
+    expect(await screen.findByText(/there is no path argument/i)).toBeInTheDocument();
+    expect(screen.getByText(/index the wrong tree/i)).toBeInTheDocument();
+    expect(screen.getByText("/srv/checkout")).toBeInTheDocument();
   });
 
   it("mentions watch mode, because it makes scanning continuous", async () => {
     mockGet.mockResolvedValue(status());
     renderIt(<CodebaseIndexPanel projectId="p-1" projectPath="/srv/x" />);
-    expect(await screen.findByText(/forgeops-agent watch --project p-1/)).toBeInTheDocument();
+    expect(await screen.findByText("forgeops-agent watch --project p-1")).toBeInTheDocument();
     expect(
       screen.getByText(/re-indexes a changed file together with the files that import it/i),
     ).toBeInTheDocument();

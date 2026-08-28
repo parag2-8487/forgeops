@@ -71,6 +71,22 @@ export default defineConfig({
           use: { ...devices["Desktop Chrome"] },
           timeout: 2_460_000,
         },
+        {
+          // Part E's browser walk: nothing to an applied change set, by CLICKING.
+          //
+          // Its own project for the same two reasons `paint` is one. It is stateful — it pairs a device
+          // and applies a change set — so folding it into `journey` would change what "13/13" counts,
+          // and it makes a real generation call, so it needs the same generous per-test bound rather
+          // than the journey's 180s.
+          //
+          // Distinct from the journey in KIND, not only in position: the journey drives most of its
+          // steps through `page.request`, which is why it stayed green while the browser could not
+          // reach most of the engine. This one asserts the half that was missing.
+          name: "onboarding",
+          testMatch: /onboarding\.spec\.ts/,
+          use: { ...devices["Desktop Chrome"] },
+          timeout: 2_460_000,
+        },
       ]
     : [
         {

@@ -144,8 +144,18 @@ function Fact({ label, value }: { label: string; value: string }) {
  */
 function ScanInstructions({ projectId, projectPath }: { projectId: string; projectPath: string }) {
   const [copied, setCopied] = useState(false);
-  const command = `forgeops-agent scan --project ${projectId} --path ${projectPath}`;
-  const watchCommand = `forgeops-agent watch --project ${projectId} --path ${projectPath}`;
+  /*
+   * The agent's REAL flags. `scan` takes `--project` and nothing else.
+   *
+   * Worth a note because the first version of this panel rendered
+   * `scan --project <id> --path <path>`, which reads perfectly reasonably and is not a command that
+   * exists: `fatal: unknown flag: --path`. It was caught by `e2e/onboarding.spec.ts` executing the
+   * string THIS COMPONENT DISPLAYS, verbatim, rather than an invocation the test knew independently.
+   * A UI that hands somebody a command which does not parse is worse than one that hands them
+   * nothing, and the only way to keep such a string honest is for something to actually run it.
+   */
+  const command = `forgeops-agent scan --project ${projectId}`;
+  const watchCommand = `forgeops-agent watch --project ${projectId}`;
 
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
@@ -158,11 +168,19 @@ function ScanInstructions({ projectId, projectPath }: { projectId: string; proje
         workspace and triggers its own re-indexing.
       </p>
       <p className="mt-3 text-xs font-medium">
-        Run this on the machine that holds the working tree:
+        Run this on the machine whose agent is paired to this project:
       </p>
       <pre className="mt-1 overflow-x-auto rounded bg-background p-2 text-xs">
         <code data-testid="scan-command">{command}</code>
       </pre>
+      <p className="mt-2 text-xs text-muted-foreground">
+        There is no path argument, and that is not an omission. The agent indexes{" "}
+        <strong>the workspace it was configured with</strong> — it is the only party that can read
+        those files — so the directory is a property of the agent rather than of this command. This
+        project records <code className="break-all">{projectPath}</code>; if the agent&apos;s
+        workspace is somewhere else the scan will succeed and index the wrong tree, and the file count
+        above is how you would notice.
+      </p>
       <p className="mt-2 text-xs text-muted-foreground">
         Or leave <code>{watchCommand}</code> running: it watches with fsnotify, debounces, and
         re-indexes a changed file together with the files that import it, so the index stays current
