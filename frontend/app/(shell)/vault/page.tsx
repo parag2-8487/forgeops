@@ -9,16 +9,18 @@ import { ProjectPicker } from "@/components/ui/project-picker";
 import { SecretVault, type SecretRefUI } from "@/features/vault/SecretVault";
 
 /**
- * Secret references for one project.
+ * Secret references for one project, now writable.
  *
- * THIS SCREEN HAD NEVER WORKED. It called `GET /api/v1/secrets` with no query string, and that
- * endpoint takes `project_id` as a REQUIRED parameter -- so every visit produced
- * `422 Request validation failed`, and the panel dutifully reported it as an error loading secret
- * references. The request was malformed, not the response.
+ * THIS SCREEN HAD NEVER WORKED, and then only listed. It first called `GET /api/v1/secrets` with no
+ * query string, and that endpoint takes `project_id` as a REQUIRED parameter -- so every visit
+ * produced `422 Request validation failed`, and the panel dutifully reported it as an error loading
+ * secret references. Once that was fixed it could list and nothing else: `POST`, `PATCH` and `DELETE`
+ * were all served and all uncalled.
  *
- * Worth recording why it went unnoticed: the page's own test supplied a list of references directly to
- * `SecretVault`, so the component was covered and the REQUEST was not. A test that hands a component
- * its data proves the component renders; it proves nothing about whether anything can fetch that data.
+ * Worth recording why the original went unnoticed: the page's own test supplied a list of references
+ * directly to `SecretVault`, so the component was covered and the REQUEST was not. A test that hands a
+ * component its data proves the component renders; it proves nothing about whether anything can fetch
+ * that data. The tests for the write path assert on the request, for that reason.
  */
 export default function VaultPage() {
   const [projectId, setProjectId] = useState("");
@@ -36,8 +38,9 @@ export default function VaultPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Vault</h1>
         <p className="mt-1 text-muted-foreground">
-          Secret references for one project, read from <code>GET /api/v1/secrets</code>. References
-          only — the response never carries secret material.
+          Secret references for one project. Values can be written and rotated; the API exposes
+          metadata only, so no value on this screen can be read back — including one you just
+          stored.
         </p>
       </div>
 
@@ -49,22 +52,26 @@ export default function VaultPage() {
           request is not made without one rather than made and refused.
         </p>
       ) : (
-        <AsyncState
-          isPending={secrets.isPending}
-          error={secrets.error}
-          isEmpty={secrets.data?.length === 0}
-          emptyMessage="No secret references are registered for this project."
-          label="secret references"
-        >
-          <SecretVault secrets={secrets.data ?? []} />
+        <AsyncState isPending={secrets.isPending} error={secrets.error} label="secret references">
+          <SecretVault secrets={secrets.data ?? []} projectId={projectId} />
         </AsyncState>
       )}
 
       <aside className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
-        <p>
-          The response carries the key, the environment and the storage path and never the secret
-          material, so there is no value on this screen to leak. Creating and rotating references is
-          served by the API but not surfaced here.
+        <p className="font-medium text-foreground">
+          How write-only is enforced, not merely intended.
+        </p>
+        <p className="mt-2">
+          The value inputs are <strong>uncontrolled</strong>: there is no React state holding a
+          secret, so one cannot appear in a state snapshot, a DevTools inspection or an error
+          boundary. The DOM node is cleared before the request is awaited, so the material is gone
+          from the page while the write is still in flight. And the response shape carries no value
+          field, so the query cache has nothing to store even if it wanted to.
+        </p>
+        <p className="mt-2">
+          Deleting a reference removes the metadata record. For an Infisical-backed secret the
+          material in Infisical is not removed: this platform does not own that store, and reaching
+          into it would be acting outside what it manages.
         </p>
       </aside>
     </div>

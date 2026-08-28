@@ -175,7 +175,7 @@ describe("the auth boundary", () => {
   });
 
   it("renders immediately when a session is already in memory", async () => {
-    setSession("existing", { subject: "auth0|u1", sessionId: "s-1" });
+    setSession("existing", { subject: "auth0|u1", sessionId: "s-1", role: null });
 
     render(
       <AuthBoundary>
@@ -190,7 +190,7 @@ describe("the auth boundary", () => {
 
 describe("the API client's credential handling", () => {
   it("sends the bearer token and includes cookies", async () => {
-    setSession("at-9", { subject: "s", sessionId: null });
+    setSession("at-9", { subject: "s", sessionId: null, role: null });
     fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
 
     await api.get("/projects");
@@ -207,7 +207,7 @@ describe("the API client's credential handling", () => {
   });
 
   it("refreshes once and retries after a 401, then succeeds", async () => {
-    setSession("stale", { subject: "s", sessionId: null });
+    setSession("stale", { subject: "s", sessionId: null, role: null });
     fetchMock
       .mockResolvedValueOnce(problemResponse(401))
       .mockResolvedValueOnce(jsonResponse({ access_token: "fresh", subject: "s" }))
@@ -224,7 +224,7 @@ describe("the API client's credential handling", () => {
   });
 
   it("does not retry more than once, so a dead session cannot loop", async () => {
-    setSession("stale", { subject: "s", sessionId: null });
+    setSession("stale", { subject: "s", sessionId: null, role: null });
     fetchMock
       .mockResolvedValueOnce(problemResponse(401))
       .mockResolvedValueOnce(problemResponse(401)) // the refresh itself fails
@@ -237,7 +237,7 @@ describe("the API client's credential handling", () => {
   });
 
   it("clears the session when the refresh is refused", async () => {
-    setSession("stale", { subject: "s", sessionId: null });
+    setSession("stale", { subject: "s", sessionId: null, role: null });
     fetchMock.mockResolvedValue(problemResponse(401));
 
     await refreshAccessToken();

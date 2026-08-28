@@ -37,19 +37,26 @@ vi.mock("next/link", () => ({
 }));
 
 describe("AppSidebar", () => {
-  // Home plus the eight feature modules. These two tests asserted exactly one link, which was
-  // accurate and was the problem: eight feature modules existed and the sidebar reached none of
-  // them. The counts stay exact so a nav entry added without a page behind it fails here.
+  // Home, the onboarding path, and every feature route. These two tests asserted exactly one link,
+  // which was accurate and was the problem: eight feature modules existed and the sidebar reached
+  // none of them. The counts stay exact so a nav entry added without a page behind it fails here.
+  //
+  // The ORDER is asserted, and it is the onboarding order rather than alphabetical or historical:
+  // getting started, then the project you are setting up, then what you do to it, then the surfaces
+  // that observe the result. A user who works down the sidebar works through the path.
   const EXPECTED_LINKS = [
     ["/", "Home"],
+    ["/onboarding", "Getting started"],
     ["/projects", "Projects"],
     ["/readiness", "Readiness"],
-    ["/audit", "Audit"],
+    ["/generation", "Generation"],
+    ["/approvals", "Approvals"],
     ["/policies", "Policies"],
     ["/vault", "Vault"],
-    ["/approvals", "Approvals"],
-    ["/generation", "Generation"],
     ["/pairing", "Pairing"],
+    ["/analysis", "Plan analysis"],
+    ["/models", "Model tiers"],
+    ["/audit", "Audit"],
   ] as const;
 
   it("renders one navigation link per route, in order", () => {

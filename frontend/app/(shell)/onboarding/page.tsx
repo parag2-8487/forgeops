@@ -1,0 +1,301 @@
+// SPDX-License-Identifier: FSL-1.1-ALv2
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { api, queryKeys } from "@/lib/api";
+import { ProjectPicker } from "@/components/ui/project-picker";
+import type { CodebaseStatus, ProjectPage } from "@/features/projects/types";
+
+/**
+ * Nothing to an applied change set, in order, with the current state of each step observed.
+ *
+ * WHY THIS SCREEN EXISTS AT ALL
+ * Every capability on the path was reachable and none of them said what had to come first, so a new
+ * user could not get from an empty database to a generated artifact through the browser. The SSE paint
+ * test found out why the hard way: a freshly created project has no published policy bundle and no
+ * paired device, so the governance chokepoint refuses its change-set submission even though generation
+ * and validation both succeeded. From the user's side that is a `policy-bundle-stale` error at the end
+ * of a long run, four layers from its cause, on a screen that never mentioned bundles.
+ *
+ * The ordering is not a suggestion. Each step is a precondition of the next:
+ *
+ *   1. create a project      — everything else is scoped to one
+ *   2. mint a pairing code   — scoped to a project, so (1) first
+ *   3. pair the agent        — consumes the code, single use, five minutes
+ *   4. scan                  — the agent needs its credential from (3) to submit an index
+ *   5. publish the bundle    — the chokepoint refuses submissions from an unpinned device
+ *   6. generate              — needs the index from (4) for context
+ *   7. approve               — the gate holds what (6) submitted
+ *   8. apply                 — the agent from (3) writes the files
+ *
+ * WHAT IS OBSERVED AND WHAT IS NOT, STATED RATHER THAN IMPLIED
+ * Steps 1, 2/3 and 4 are checked against real endpoints: the project list, the device list, and the
+ * codebase index status. Step 5 is NOT: there is no read route for "is a bundle published for this
+ * tenant", so this screen does not claim to know. It says so, and gives the control, rather than
+ * showing a tick it cannot justify — which is the whole failure mode this pass exists to remove.
+ * Steps 6 to 8 are actions rather than states and are linked, not asserted.
+ */
+
+interface DevicePage {
+  devices: {
+    id: string;
+    project_id: string;
+    status: string;
+    heartbeat_fresh: boolean | null;
+  }[];
+}
+
+/** Whether a step's precondition is satisfied, or unknown because nothing can report it. */
+type StepState = "done" | "todo" | "unknown";
+
+export default function OnboardingPage() {
+  const [projectId, setProjectId] = useState("");
+
+  const projects = useQuery({
+    queryKey: queryKeys.projects.list(100),
+    queryFn: () => api.get<ProjectPage>("/projects?limit=100"),
+    retry: false,
+  });
+
+  const devices = useQuery({
+    queryKey: queryKeys.devices.list(),
+    queryFn: () => api.get<DevicePage>("/agents/devices?limit=100"),
+    retry: false,
+  });
+
+  const index = useQuery({
+    queryKey: queryKeys.codebase.status(projectId),
+    queryFn: () => api.get<CodebaseStatus>(`/analysis/codebase/${projectId}/status`),
+    enabled: projectId !== "",
+    retry: false,
+  });
+
+  const hasProject = (projects.data?.projects.length ?? 0) > 0;
+  const devicesForProject =
+    projectId === "" ? [] : (devices.data?.devices ?? []).filter((d) => d.project_id === projectId);
+  const pendingDevice = devicesForProject.some((d) => d.status === "pending");
+  const activeDevice = devicesForProject.some((d) => d.status === "active");
+  const indexed = index.data ? index.data.indexed_files > 0 : false;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Getting started</h1>
+        <p className="mt-1 text-muted-foreground">
+          Eight steps from an empty installation to an applied change. Each one is a precondition of
+          the next, and skipping one shows up several steps later as an error that does not name it
+          — which is why they are in order rather than being a list of features.
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-border bg-background p-4">
+        <p className="text-sm font-medium">Which project are you setting up?</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Steps 2 to 8 are all scoped to one project, so the state below is for the one chosen here.
+        </p>
+        <div className="mt-3">
+          {hasProject ? (
+            <ProjectPicker value={projectId} onChange={setProjectId} id="onboarding-project" />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              None exists yet — step 1 is what creates one.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <ol className="space-y-4" data-testid="onboarding-steps">
+        <Step
+          n={1}
+          title="Create a project"
+          state={hasProject ? "done" : "todo"}
+          observedBy="GET /api/v1/projects"
+          done="At least one project exists in this tenant."
+          todo="Nothing else can be scoped without one. A project records the name, the repository and the working-tree path an agent will later scan."
+          href="/projects"
+          hrefLabel="Create a project"
+        />
+
+        <Step
+          n={2}
+          title="Mint a pairing code"
+          state={projectId === "" ? "todo" : pendingDevice || activeDevice ? "done" : "todo"}
+          observedBy="GET /api/v1/agents/devices"
+          done={
+            activeDevice
+              ? "A device is already paired to this project, so a new code is only needed for an additional machine."
+              : "A code has been minted and its device row is pending exchange."
+          }
+          todo="A code pairs one machine to this project and expires in five minutes. It is shown once and stored nowhere, so mint it when you are at the machine that will use it."
+          href="/pairing"
+          hrefLabel="Mint a code"
+        />
+
+        <Step
+          n={3}
+          title="Pair the agent"
+          state={projectId === "" ? "todo" : activeDevice ? "done" : "todo"}
+          observedBy="GET /api/v1/agents/devices"
+          done="A device is active for this project, with a certificate issued by the internal CA."
+          todo="Run `forgeops-agent pair --code <code>` on the machine holding the working tree. The exchange submits a certificate request and receives a client certificate, a device token and the project's current policy bundle."
+          href="/pairing"
+          hrefLabel="See device state"
+        />
+
+        <Step
+          n={4}
+          title="Scan the codebase"
+          state={
+            projectId === "" ? "todo" : index.isPending ? "unknown" : indexed ? "done" : "todo"
+          }
+          observedBy="GET /api/v1/analysis/codebase/{id}/status"
+          done={
+            index.data
+              ? `${index.data.indexed_files} file(s) and ${index.data.total_chunks} chunk(s) are indexed.`
+              : "The index is populated."
+          }
+          todo="Until this runs, readiness cannot be scored, retrieval has nothing to search, and generation runs without context from your code. There is no button: the backend cannot tell an agent to scan (§2.2.1 confines command dispatch to the governance chokepoint), so the exact command is on the project's own page."
+          href={projectId === "" ? "/projects" : `/projects/${projectId}`}
+          hrefLabel="Get the scan command"
+        />
+
+        <Step
+          n={5}
+          title="Publish the policy bundle"
+          // Deliberately `unknown`, always. There is no read route for "does this tenant have an
+          // active bundle", so a tick here would be a claim nothing checked — which is precisely the
+          // kind of thing this whole pass removed from other screens.
+          state="unknown"
+          observedBy={null}
+          done=""
+          todo="THE STEP THAT IS EASIEST TO SKIP AND HARDEST TO DIAGNOSE. The chokepoint refuses a change-set submission from any agent not pinned to the tenant's current bundle digest, so an unpublished tenant fails at step 7 with a stale-bundle error that says nothing about bundles. Publish once now, and again after every policy change you want enforced."
+          href="/policies"
+          hrefLabel="Publish the bundle"
+          unknownNote="This screen cannot tell you whether a bundle is published: there is no read route that reports it, and no tick is shown for something nothing checked. The publish control reports the digest it activated."
+        />
+
+        <Step
+          n={6}
+          title="Generate an artifact"
+          state="unknown"
+          observedBy={null}
+          done=""
+          todo="Streams a real run over the six §7.4 event types. Artifacts that pass the deterministic validation gate are submitted to the chokepoint as a change set rather than written anywhere directly — so a successful generation ends with something to review, not with files on disk."
+          href="/generation"
+          hrefLabel="Open the generator"
+          unknownNote="An action rather than a state. Generation runs are not counted here; the project's change history shows what a run produced."
+        />
+
+        <Step
+          n={7}
+          title="Approve the change set"
+          state="unknown"
+          observedBy={null}
+          done=""
+          todo="The gate holds what step 6 submitted. Approving mints authority and hands the agent a signed command; rejecting writes the refusal to the audit chain. Either way the decision is attributed to your authenticated identity — there is no field for the approver."
+          href="/approvals"
+          hrefLabel="Open the approval centre"
+          unknownNote="An action rather than a state. The Awaiting decision queue is empty until step 6 produces something."
+        />
+
+        <Step
+          n={8}
+          title="The agent applies it"
+          state="unknown"
+          observedBy={null}
+          done=""
+          todo="Nothing to do here — the agent paired in step 3 receives the signed command and writes the files, taking a timestamped backup first. If the write fails partway it restores from that backup and reports `rolled_back`, which is a different state from a deliberate `reverted`."
+          href={projectId === "" ? "/approvals" : `/projects/${projectId}`}
+          hrefLabel="Watch the change history"
+          unknownNote="Observed through the project's change history rather than here: the status moves applying → applied, or apply_failed → rolled_back."
+        />
+      </ol>
+
+      <aside className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">Why a missing step is reported as a step.</p>
+        <p className="mt-2">
+          Four of the eight steps above have a real read route behind them, and this screen checks
+          those and only those. The other four say so. That matters more than it looks: the failure
+          this page exists to prevent is a user reaching step 7, being told{" "}
+          <code>policy-bundle-stale</code>, and having no way to learn that the missing thing was
+          step 5. Every governance refusal in the app now carries the same treatment — what the rule
+          is for, and which step to go and do — rather than the registry&apos;s own wording alone.
+        </p>
+      </aside>
+    </div>
+  );
+}
+
+function Step({
+  n,
+  title,
+  state,
+  observedBy,
+  done,
+  todo,
+  href,
+  hrefLabel,
+  unknownNote,
+}: {
+  n: number;
+  title: string;
+  state: StepState;
+  /** The endpoint whose answer decided `state`, or `null` when nothing can report it. */
+  observedBy: string | null;
+  done: string;
+  todo: string;
+  href: string;
+  hrefLabel: string;
+  unknownNote?: string;
+}) {
+  const badge = state === "done" ? "Done" : state === "todo" ? "Not yet" : "Not checked";
+
+  return (
+    <li
+      className="rounded-lg border border-border bg-background p-4"
+      data-testid={`onboarding-step-${n}`}
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">
+          {n}. {title}
+        </h2>
+        {/* The word, not a colour or an icon. A tick that a screen reader cannot read is not a status. */}
+        <span
+          data-testid={`step-${n}-state`}
+          className={
+            state === "done"
+              ? "text-xs font-medium text-emerald-600"
+              : state === "todo"
+                ? "text-xs font-medium text-amber-600"
+                : "text-xs font-medium text-muted-foreground"
+          }
+        >
+          {badge}
+        </span>
+      </div>
+
+      <p className="mt-2 text-sm text-muted-foreground">{state === "done" ? done : todo}</p>
+
+      {state === "unknown" && unknownNote ? (
+        <p className="mt-1 text-xs text-muted-foreground">{unknownNote}</p>
+      ) : null}
+
+      {observedBy ? (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Checked against <code>{observedBy}</code>.
+        </p>
+      ) : null}
+
+      <p className="mt-2">
+        <Link
+          href={href}
+          className="text-xs underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {hrefLabel} →
+        </Link>
+      </p>
+    </li>
+  );
+}

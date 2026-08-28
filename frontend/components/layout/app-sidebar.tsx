@@ -12,35 +12,42 @@ import {
   GitPullRequestArrow,
   Wand2,
   Radio,
+  Rocket,
+  Cpu,
+  FileSearch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
  * Every route in the app, in one list.
  *
- * `live` records whether the route reads from a real backend endpoint. It is not decoration: keeping
- * the flag here means the nav and the pages cannot disagree about which is which.
+ * `live` recorded whether the route reads from a real backend endpoint. IT IS GONE, and its removal is
+ * the point of this comment. The flag existed because three screens rendered explicit
+ * not-implemented panels while their backend surface did not exist, and it outlived that: it said all
+ * nine were `true` and then stopped being consulted for anything, because every route reads real data
+ * and the pages themselves state what they can and cannot observe. A boolean that is `true` for every
+ * row carries no information and is one edit away from being wrong again, which is exactly the failure
+ * mode the comment it replaced was written to warn about. Where a screen genuinely cannot know
+ * something — whether a policy bundle is published, for one — it says so on its own face, which is a
+ * claim that cannot drift out of step with a list in the navigation.
  *
- * All nine are now `true`. Approvals, Generation and Pairing were `false` while their backend
- * surface did not exist, and each rendered an explicit not-implemented panel rather than sample
- * data. They are served now -- approvals reads `GET /api/v1/approvals`, generation streams the six
- * §7.4 event types from `POST /api/v1/generation/runs`, and pairing queries the device list -- and
- * `NotImplemented` is no longer imported anywhere under `app/`. The flag said otherwise for longer
- * than it was true, which is the failure mode a comment like this one is supposed to prevent.
- *
- * The eight feature modules under `features/` were built and then mounted on nothing — the app
- * had exactly one page, rendering a hardcoded array. This list is what mounts them.
+ * Three routes are new. `Getting started` is the ordered path from an empty database to an applied
+ * change, which nothing previously described; `Plan analysis` and `Model tiers` surface two endpoints
+ * that were served, tested and called by nothing.
  */
 const NAV_ITEMS = [
-  { href: "/", label: "Home", icon: Home, live: true },
-  { href: "/projects", label: "Projects", icon: FolderGit2, live: true },
-  { href: "/readiness", label: "Readiness", icon: GaugeCircle, live: true },
-  { href: "/audit", label: "Audit", icon: ScrollText, live: true },
-  { href: "/policies", label: "Policies", icon: ShieldCheck, live: true },
-  { href: "/vault", label: "Vault", icon: KeyRound, live: true },
-  { href: "/approvals", label: "Approvals", icon: GitPullRequestArrow, live: true },
-  { href: "/generation", label: "Generation", icon: Wand2, live: true },
-  { href: "/pairing", label: "Pairing", icon: Radio, live: true },
+  { href: "/", label: "Home", icon: Home },
+  { href: "/onboarding", label: "Getting started", icon: Rocket },
+  { href: "/projects", label: "Projects", icon: FolderGit2 },
+  { href: "/readiness", label: "Readiness", icon: GaugeCircle },
+  { href: "/generation", label: "Generation", icon: Wand2 },
+  { href: "/approvals", label: "Approvals", icon: GitPullRequestArrow },
+  { href: "/policies", label: "Policies", icon: ShieldCheck },
+  { href: "/vault", label: "Vault", icon: KeyRound },
+  { href: "/pairing", label: "Pairing", icon: Radio },
+  { href: "/analysis", label: "Plan analysis", icon: FileSearch },
+  { href: "/models", label: "Model tiers", icon: Cpu },
+  { href: "/audit", label: "Audit", icon: ScrollText },
 ] as const;
 
 export function AppSidebar() {

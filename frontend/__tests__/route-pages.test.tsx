@@ -27,7 +27,14 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Hoisted so the module factory below can close over it.
-const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
+const { mockGet, mockPost, mockPatch, mockPut, mockDelete, mockDeleteWith } = vi.hoisted(() => ({
+  mockGet: vi.fn(),
+  mockPost: vi.fn(),
+  mockPatch: vi.fn(),
+  mockPut: vi.fn(),
+  mockDelete: vi.fn(),
+  mockDeleteWith: vi.fn(),
+}));
 
 // Partial mock: `api.get` is replaced, but `ApiProblemError`, `queryKeys` and the problem helpers
 // stay REAL. The error branch under test reads `error instanceof ApiProblemError`, so a fake error
@@ -36,7 +43,18 @@ vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
     ...actual,
-    api: { get: mockGet, post: mockPost, put: vi.fn(), delete: vi.fn(), stream: vi.fn() },
+    api: {
+      get: mockGet,
+      post: mockPost,
+      // `patch` and `deleteWith` are new verbs, added for secret rotation, policy update and the two
+      // destructive routes that require a reason in the body. Mocked here so a page that calls one
+      // fails on an assertion rather than on `api.patch is not a function`.
+      patch: mockPatch,
+      put: mockPut,
+      delete: mockDelete,
+      deleteWith: mockDeleteWith,
+      stream: vi.fn(),
+    },
   };
 });
 
@@ -96,6 +114,10 @@ function pending() {
 beforeEach(() => {
   mockGet.mockReset();
   mockPost.mockReset();
+  mockPatch.mockReset();
+  mockPut.mockReset();
+  mockDelete.mockReset();
+  mockDeleteWith.mockReset();
   mockPathname = "/";
 });
 afterEach(() => cleanup());
@@ -130,18 +152,11 @@ const LIVE_PAGES = [
     Page: ProjectsPage,
     heading: "Projects",
     label: "projects",
-    // `GET /projects` now returns a page. The activity feed is only requested once a project is
-    // selected, so the list response is what this page's states are driven by.
+    // `GET /projects` returns a page, and the screen also reads the tenant's tag vocabulary so the
+    // tag filter can be a set of chips rather than a free-text box that silently matches nothing.
     respond: (path: string) =>
-      path.includes("/activity")
-        ? [
-            {
-              id: "act-9",
-              action: "change_set_approved",
-              timestamp: "2026-08-21T00:00:00Z",
-              details: "allowed: policy matched",
-            },
-          ]
+      path.startsWith("/projects/tags")
+        ? ["eu", "prod"]
         : {
             projects: [
               {
@@ -152,6 +167,10 @@ const LIVE_PAGES = [
                 settings: {},
                 created_at: "2026-08-20T00:00:00Z",
                 updated_at: "2026-08-20T00:00:00Z",
+                archived_at: null,
+                tags: ["prod"],
+                favourite: false,
+                indexed_file_count: 141,
               },
             ],
             next_cursor: null,
@@ -173,14 +192,30 @@ const LIVE_PAGES = [
       level: "Adequate",
       summary_report: "Scored seventy-three of one hundred.",
       recommendations: ["Add a health check"],
-      // The five fields of `ReadinessBreakdown`, which the response model used to drop.
+      // §1.4's SIX weighted categories. It was five — documentation, test coverage, CI config,
+      // security policy, containerisation — which omitted three of §1.4's and scored two it does not
+      // name. Test evidence is now a check inside CI/CD rather than a category of its own.
       categories: {
-        documentation_score: 80,
-        test_coverage_score: 60,
-        ci_config_score: 90,
-        security_policy_score: 50,
         containerization_score: 85,
+        ci_config_score: 90,
+        orchestration_score: 40,
+        env_config_score: 70,
+        security_policy_score: 50,
+        iac_score: 30,
       },
+      indexed: true,
+      evaluated_paths: 141,
+      checks: [
+        {
+          id: "dockerfile_exists",
+          category: "containerization_score",
+          passed: true,
+          points: 20,
+          max_points: 20,
+          evidence: "Dockerfile",
+          why_it_matters: "Without a Dockerfile there is no reproducible build.",
+        },
+      ],
     }),
     shows: ["Adequate", "Add a health check"],
     empty: null,
@@ -216,19 +251,40 @@ const LIVE_PAGES = [
     usesPicker: false,
     Page: PoliciesPage,
     heading: "Policies",
-    label: "policy templates",
-    respond: () => [
-      {
-        id: "tpl-1",
-        name: "Require staging first",
-        description: "Blocks a production apply with no staging predecessor.",
-        rego_rules: "package forgeops\ndefault allow = false",
-        parameters: {},
-      },
-    ],
-    shows: ["Require staging first", "tpl-1"],
-    empty: [],
-    emptyText: /no policy templates are registered/i,
+    // The primary collection is now STORED POLICIES rather than templates. `GET /api/v1/policies`
+    // did not exist, which is why this screen was a read-only wall of templates.
+    label: "policies",
+    respond: (path: string) =>
+      path.startsWith("/policies/templates")
+        ? [
+            {
+              id: "tpl-1",
+              name: "Require staging first",
+              description: "Blocks a production apply with no staging predecessor.",
+              rego_rules: "package forgeops\ndefault allow = false",
+              parameters: {},
+            },
+          ]
+        : {
+            policies: [
+              {
+                id: "pol-1",
+                project_id: null,
+                tenant_id: null,
+                name: "No Friday deploys",
+                engine: "rego",
+                rego_rules: 'package forgeops.governance\ndefault decision = "deny"',
+                enabled: true,
+                template_id: "scheduling",
+                created_at: "2026-08-20T00:00:00Z",
+                updated_at: "2026-08-21T00:00:00Z",
+              },
+            ],
+            next_cursor: null,
+          },
+    shows: ["No Friday deploys", "Require staging first"],
+    empty: { policies: [], next_cursor: null },
+    emptyText: /the chokepoint has nothing to evaluate/i,
   },
   {
     name: "Vault",
@@ -247,12 +303,16 @@ const LIVE_PAGES = [
       },
     ],
     shows: ["DATABASE_URL", "production"],
+    // The empty case is inside `SecretVault` rather than in the page's `AsyncState`, because the add
+    // form has to render even when there is nothing to list — a screen whose empty state replaces the
+    // control that fills it is a dead end.
     empty: [],
-    emptyText: /no secret references are registered/i,
+    emptyText: /none registered/i,
   },
   {
     name: "Pairing",
-    usesPicker: false,
+    // Mints codes, and a code is scoped to a project — so this screen picks one too.
+    usesPicker: true,
     Page: PairingPage,
     heading: "Agent pairing",
     label: "agent devices",
@@ -403,7 +463,13 @@ describe.each(LIVE_PAGES)(
 
     if (empty !== null) {
       it("renders a specific empty message rather than an error when the collection is empty", async () => {
-        mockGet.mockImplementation(serving(() => Promise.resolve(empty), usesPicker));
+        // Path-aware, because a page that reads two collections has two shapes to empty. The Policies
+        // screen reads the stored policies AND the templates, and answering both with `{policies: []}`
+        // handed the template list an object to `.map` over — a crash in the test harness that looked
+        // like a defect in the page.
+        mockGet.mockImplementation(
+          serving((path: string) => Promise.resolve(emptyFor(name, path, empty)), usesPicker),
+        );
         renderPage(<Page />);
         expect(await screen.findByText(emptyText!)).toBeInTheDocument();
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -437,6 +503,19 @@ const ROUTE_HREFS: Record<string, string> = {
 
 function escapeRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The empty response for one request of a page that makes several.
+ *
+ * Only the Policies screen needs the distinction today: its subject is the stored-policy list, and it
+ * also reads the immutable template list, which is an ARRAY. Emptying both with the page shape gave
+ * the template list an object, and `.map` on an object throws during render — so the harness crashed
+ * the page it was testing and the failure read as a defect in the page.
+ */
+function emptyFor(name: string, path: string, empty: unknown): unknown {
+  if (name === "Policies" && path.startsWith("/policies/templates")) return [];
+  return empty;
 }
 
 /**
@@ -491,10 +570,22 @@ describe("Approvals renders a real diff and submits a real decision", () => {
     approvals: [],
   };
 
-  function serve(overrides: Record<string, unknown> = {}) {
+  /**
+   * Serve the list and the detail.
+   *
+   * `queue` is the status the list answers FOR, because the screen now has four queues and asks for
+   * one by name. A mock that answered every status with the same row would let a test pass while the
+   * filter was ignored — and the filter being ignored is precisely how an applied change set would
+   * appear in the pending queue.
+   */
+  function serve(overrides: Record<string, unknown> = {}, queue = "pending_approval") {
     mockGet.mockImplementation((path: string) => {
       if (path.startsWith("/approvals?")) {
-        return Promise.resolve({ change_sets: [CHANGE_SET], next_cursor: null });
+        return Promise.resolve(
+          path.includes(`status=${queue}`)
+            ? { change_sets: [{ ...CHANGE_SET, ...overrides }], next_cursor: null }
+            : { change_sets: [], next_cursor: null },
+        );
       }
       if (path === "/approvals/cs-1") return Promise.resolve({ ...DETAIL, ...overrides });
       return Promise.reject(new Error(`unexpected GET ${path}`));
@@ -613,15 +704,82 @@ describe("Approvals renders a real diff and submits a real decision", () => {
   });
 
   it("offers no decision controls from a state §3.6 forbids deciding from", async () => {
-    serve({ status: "applied" });
+    serve({ status: "rejected" }, "rejected");
     renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByTestId("queue-rejected"));
     await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
     await screen.findByRole("region", { name: /diff for/i });
 
     // Not offered and refused by the server: not offered at all.
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
-    expect(screen.getByText(/only permits a decision from/i)).toBeInTheDocument();
+    // And no revert either: §3.6's `applied → reverted` edge starts from `applied`, not from
+    // `rejected`, so a revert control here would be a button whose only outcome is a refusal.
+    expect(screen.queryByTestId("revert-change-set")).not.toBeInTheDocument();
+    expect(screen.getByText(/permits a decision only from/i)).toBeInTheDocument();
+  });
+
+  /**
+   * REVERT WAS UNREACHABLE FOR TWO REASONS, and both are asserted here.
+   *
+   * The mutation's type was narrowed to `"approve" | "reject"`, so the endpoint could not be named.
+   * And the list was filtered to `pending_approval` only, so an APPLIED change set never appeared on
+   * the screen at all — fixing the type alone would have produced a control with no row to attach it
+   * to.
+   */
+  it("offers revert only from the applied queue, and posts to the revert endpoint", async () => {
+    serve({ status: "applied", applied_at: "2026-08-21T05:00:00Z" }, "applied");
+    mockPost.mockResolvedValue({
+      change_set_id: "cs-1",
+      status: "reverted",
+      outcome: "allowed",
+      audit_seq: 91,
+      approval_id: null,
+      blast_radius_score: 4,
+      blast_radius_verdict: "low",
+      reverse_change_set_id: "cs-2",
+      command_delivered: true,
+    });
+    renderPage(<ApprovalsPage />);
+
+    await userEvent.click(await screen.findByTestId("queue-applied"));
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+
+    await userEvent.click(await screen.findByTestId("revert-change-set"));
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/revert", undefined));
+
+    const outcome = await screen.findByTestId("revert-outcome");
+    expect(outcome).toHaveTextContent("cs-2");
+    // Whether a signed command was delivered, not the envelope: it carries an authority token and a
+    // nonce, which a reviewer must not be handed.
+    expect(outcome).toHaveTextContent(/command delivered to an agent/i);
+    expect(outcome).toHaveTextContent("yes");
+  });
+
+  it("presents an escalated revert as an outcome rather than as an error", async () => {
+    serve({ status: "applied", applied_at: "2026-08-21T05:00:00Z" }, "applied");
+    // `approval-required` is registered at status 202, which is inside the 2xx range — so `fetch`
+    // reports `res.ok` and the client returns the PROBLEM DOCUMENT as a success body. Treating that as
+    // a failure would report the design working as the design broken: §3.6's `applied → reverted` edge
+    // is only reachable because a blocked revert escalates.
+    mockPost.mockResolvedValue({
+      type: "https://errors.forgeops.dev/approval-required",
+      title: "Approval required",
+      status: 202,
+      detail: "The reverse change set is held for review.",
+    });
+    renderPage(<ApprovalsPage />);
+
+    await userEvent.click(await screen.findByTestId("queue-applied"));
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await userEvent.click(await screen.findByTestId("revert-change-set"));
+
+    const escalated = await screen.findByTestId("revert-escalated");
+    expect(escalated).toHaveTextContent(/escalated to approval/i);
+    expect(escalated).toHaveTextContent(/not refused/i);
+    expect(escalated).toHaveTextContent("The reverse change set is held for review.");
+    // Announced as a status, not an alert: nothing went wrong.
+    expect(escalated).toHaveAttribute("role", "status");
   });
 });
 
@@ -708,7 +866,10 @@ describe("the project picker drives the readiness request", () => {
         level: "Low",
         summary_report: "s",
         recommendations: [],
-        categories: { documentation_score: 1 },
+        categories: { containerization_score: 1 },
+        indexed: true,
+        evaluated_paths: 1,
+        checks: [],
       });
     });
   }
@@ -757,40 +918,71 @@ describe("the project picker drives the readiness request", () => {
 });
 
 describe("Readiness category breakdown", () => {
+  /** §1.4's six weighted categories, which is what the engine now computes. */
   const categories = {
-    documentation_score: 80,
-    test_coverage_score: 60,
-    ci_config_score: 90,
-    security_policy_score: 50,
     containerization_score: 85,
+    ci_config_score: 90,
+    orchestration_score: 40,
+    env_config_score: 70,
+    security_policy_score: 50,
+    iac_score: 30,
   };
 
-  it("renders one bar per category the engine computed, labelled readably", async () => {
-    // The project list first: this screen picks a real project before scoring one.
+  const CHECKS = [
+    {
+      id: "dockerfile_exists",
+      category: "containerization_score",
+      passed: true,
+      points: 20,
+      max_points: 20,
+      evidence: "Dockerfile",
+      why_it_matters: "Without a Dockerfile there is no reproducible build of this service.",
+    },
+    {
+      id: "dockerfile_non_root",
+      category: "containerization_score",
+      passed: false,
+      points: 0,
+      max_points: 10,
+      evidence: "no USER directive found in Dockerfile",
+      why_it_matters: "A container running as root turns a process compromise into a host one.",
+    },
+  ];
+
+  function serve(report: Record<string, unknown>) {
     mockGet.mockImplementation((path: string) =>
       path.startsWith("/projects?limit=")
         ? Promise.resolve({
             projects: [{ id: "11111111-1111-1111-1111-111111111111", name: "picker-fixture" }],
             next_cursor: null,
           })
-        : Promise.resolve({
-            project_id: "x",
-            score: 70,
-            level: "Adequate",
-            summary_report: "s",
-            recommendations: [],
-            categories,
-          }),
+        : Promise.resolve(report),
     );
+  }
+
+  it("renders one bar per category the engine computed, labelled readably", async () => {
+    serve({
+      project_id: "x",
+      score: 70,
+      level: "Adequate",
+      summary_report: "s",
+      recommendations: [],
+      categories,
+      indexed: true,
+      evaluated_paths: 12,
+      checks: [],
+    });
     renderPage(<ReadinessPage />);
-    // `documentation_score` becomes `Documentation`. The chart used to render a single bar called
-    // "Overall", because the breakdown was computed server-side and dropped by the response model.
+    // `containerization_score` becomes `Containerization`. The chart used to render a single bar
+    // called "Overall", because the breakdown was computed server-side and dropped by the response
+    // model.
     for (const label of [
-      "Documentation",
-      "Test Coverage",
-      "Ci Config",
-      "Security Policy",
       "Containerization",
+      "Ci Config",
+      "Orchestration",
+      "Env Config",
+      "Security Policy",
+      "Iac",
     ]) {
       expect((await screen.findAllByText(new RegExp(label, "i"))).length).toBeGreaterThan(0);
     }
@@ -798,96 +990,127 @@ describe("Readiness category breakdown", () => {
   });
 
   it("renders no category bars when the engine reported none, rather than inventing five", async () => {
-    // The project list first: this screen picks a real project before scoring one.
-    mockGet.mockImplementation((path: string) =>
-      path.startsWith("/projects?limit=")
-        ? Promise.resolve({
-            projects: [{ id: "11111111-1111-1111-1111-111111111111", name: "picker-fixture" }],
-            next_cursor: null,
-          })
-        : Promise.resolve({
-            project_id: "x",
-            score: 0,
-            level: "Blocked",
-            summary_report: "s",
-            recommendations: [],
-            categories: {},
-          }),
-    );
+    serve({
+      project_id: "x",
+      score: 0,
+      level: "blocked",
+      summary_report: "s",
+      recommendations: [],
+      categories: {},
+      indexed: true,
+      evaluated_paths: 3,
+      checks: [],
+    });
     renderPage(<ReadinessPage />);
-    expect((await screen.findAllByText(/Blocked/i)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/blocked/i)).length).toBeGreaterThan(0);
     expect(screen.queryByText("Documentation")).not.toBeInTheDocument();
   });
-});
 
-describe("Projects activity feed", () => {
-  const page = {
-    projects: [
-      {
-        id: "p-1",
-        name: "Checkout Service",
-        path: "/srv/checkout",
-        repo_url: null,
-        settings: {},
-        created_at: "2026-08-20T00:00:00Z",
-        updated_at: "2026-08-20T00:00:00Z",
-      },
-    ],
-    next_cursor: null,
-  };
+  /**
+   * §1.4 "Frontend: Detailed category breakdown with expandable items", and PRD FR-19's
+   * "why it matters".
+   *
+   * The six numbers on the radar chart cannot be acted on: "Security 40" says there is a problem and
+   * not what it is, and a category at 40 with no visible evidence is indistinguishable from a bug in
+   * the scorer. So the assertion is that the checks are HIDDEN until asked for and then carry the
+   * indexed path and the reason — not merely that a panel exists.
+   */
+  it("keeps the checks collapsed until the category is expanded", async () => {
+    serve({
+      project_id: "x",
+      score: 70,
+      level: "Adequate",
+      summary_report: "s",
+      recommendations: [],
+      categories,
+      indexed: true,
+      evaluated_paths: 12,
+      checks: CHECKS,
+    });
+    renderPage(<ReadinessPage />);
 
-  it("requests no activity until a project is selected", async () => {
-    mockGet.mockImplementation(() => Promise.resolve(page));
-    renderPage(<ProjectsPage />);
-    // The name appears twice once loaded — in the list and as an <option> — so wait on the control
-    // that only exists after the list resolves.
-    await screen.findByLabelText("Project");
-    // The feed is `enabled` only once a selection exists, so one project's history is never shown
-    // under another project's heading during a refetch.
-    expect(mockGet.mock.calls.every((c) => !String(c[0]).includes("/activity"))).toBe(true);
-    expect(screen.getByText(/select a project to read its activity/i)).toBeInTheDocument();
+    const toggle = await screen.findByTestId("category-toggle-containerization_score");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("check-dockerfile_exists")).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    // `aria-controls` names the region the trigger reveals, so the relationship is announced rather
+    // than only visible.
+    expect(toggle).toHaveAttribute("aria-controls", "readiness-checks-containerization_score");
   });
 
-  it("requests and renders the selected project's audit-backed activity", async () => {
-    mockGet.mockImplementation((path: string) =>
-      Promise.resolve(
-        path.includes("/activity")
-          ? [
-              {
-                id: "e-1",
-                action: "change_set_approved",
-                timestamp: "2026-08-21T00:00:00Z",
-                details: "allowed: policy matched",
-              },
-            ]
-          : page,
-      ),
-    );
-    renderPage(<ProjectsPage />);
-    await screen.findByLabelText("Project");
+  it("shows the indexed evidence and why the check matters, not only a pass or fail", async () => {
+    serve({
+      project_id: "x",
+      score: 70,
+      level: "Adequate",
+      summary_report: "s",
+      recommendations: [],
+      categories,
+      indexed: true,
+      evaluated_paths: 12,
+      checks: CHECKS,
+    });
+    renderPage(<ReadinessPage />);
+    await userEvent.click(await screen.findByTestId("category-toggle-containerization_score"));
 
-    const user = userEvent.setup();
-    await user.selectOptions(screen.getByLabelText("Project"), "p-1");
+    const failing = screen.getByTestId("check-dockerfile_non_root");
+    // The word, not the colour: a red dot is unavailable to a colour-blind reader and to a screen
+    // reader alike.
+    expect(failing).toHaveTextContent("Fail");
+    expect(failing).toHaveTextContent("no USER directive found in Dockerfile");
+    expect(failing).toHaveTextContent(/turns a process compromise into a host one/i);
+    expect(failing).toHaveTextContent("0 of 10 points");
+  });
 
-    expect(await screen.findByText("change_set_approved")).toBeInTheDocument();
-    // The outcome travels with the reason, so an allowed and a denied transit are distinguishable.
-    expect(screen.getByText(/allowed: policy matched/)).toBeInTheDocument();
+  it("says there is nothing to break down for a project that was never scanned", async () => {
+    serve({
+      project_id: "x",
+      score: 0,
+      level: "blocked",
+      summary_report: "no indexed files",
+      recommendations: ["Run an agent scan"],
+      categories,
+      indexed: false,
+      evaluated_paths: 0,
+      checks: [],
+    });
+    renderPage(<ReadinessPage />);
+    // Zero because nothing was measured, not because everything failed — and the provenance panel
+    // says so rather than showing a zero that reads as a measurement.
+    expect(await screen.findByTestId("readiness-provenance")).toHaveTextContent(/never scanned/i);
+    expect(screen.getByText(/no check has been evaluated/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("category-toggle-containerization_score")).not.toBeInTheDocument();
   });
 });
 
 /**
- * The home page's scope list is the one place in the app that states which routes are live and
- * which are not. It is worth asserting because it is a claim about the system: if a route gains an
- * endpoint and this list is not updated, the dashboard is lying about its own completeness.
+ * The home page no longer enumerates which routes are "live".
+ *
+ * IT USED TO, AND IT WAS WRONG. The list said approvals and generation had "mounted, authenticated
+ * backend surfaces ... but their reviewer and wizard screens are not built", long after both were
+ * built. A list whose every entry says the same thing carries no information and is one edit from
+ * being wrong again, so what the page states instead is the part a reader cannot check from the
+ * navigation: which facts the app can observe and which it cannot.
  */
-describe("Home route scope list", () => {
-  it("marks live and unimplemented routes distinguishably to a screen reader", async () => {
+describe("Home states what the app cannot observe", () => {
+  it("names the facts no endpoint reports, rather than claiming completeness", async () => {
     mockGet.mockResolvedValue({ status: "ok", version: "1", commit: "c" });
     renderPage(<HomePage />);
-    expect(await screen.findByText(/what is wired, and what is not/i)).toBeInTheDocument();
-    // The visual cue is a coloured dot marked aria-hidden, so the accessible signal must be text.
-    expect(screen.getAllByText(/\(reads live data\)/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/\(not implemented\)/).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/what this app can and cannot observe/i)).toBeInTheDocument();
+    // The four honest gaps, each of which a screen elsewhere declines to fill in.
+    expect(screen.getByText(/whether a policy bundle is published/i)).toBeInTheDocument();
+    expect(screen.getByText(/whether an agent is attested/i)).toBeInTheDocument();
+    expect(screen.getByText(/a readiness score on the project list/i)).toBeInTheDocument();
+    expect(screen.getByText(/whether a model endpoint is up right now/i)).toBeInTheDocument();
+  });
+
+  it("points a new installation at the ordered path rather than at a feature list", async () => {
+    mockGet.mockResolvedValue({ status: "ok", version: "1", commit: "c" });
+    renderPage(<HomePage />);
+    const link = await screen.findByRole("link", { name: /eight-step path/i });
+    expect(link).toHaveAttribute("href", "/onboarding");
   });
 
   it("falls back to a visible placeholder when the commit is not stamped", async () => {

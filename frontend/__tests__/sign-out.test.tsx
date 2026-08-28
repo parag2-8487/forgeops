@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import { AppHeader } from "@/components/layout/app-header";
 
-const USER = { subject: "auth0|abc123", sessionId: "s-1" };
+const USER = { subject: "auth0|abc123", sessionId: "s-1", role: null };
 
 beforeEach(() => {
   clearSession();

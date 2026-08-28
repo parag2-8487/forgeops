@@ -32,6 +32,29 @@ export default function HomePage() {
         </p>
       </div>
 
+      <section
+        aria-labelledby="start-heading"
+        className="rounded-lg border border-primary/40 bg-primary/5 p-4"
+      >
+        <h2 id="start-heading" className="text-sm font-semibold">
+          New installation?
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          There is an order to this, and skipping a step shows up several steps later as an error
+          that does not name it. The most common one is publishing a policy bundle: without one the
+          governance chokepoint refuses every change-set submission, which surfaces at the end of a
+          generation run as a stale-bundle error four layers from its cause.
+        </p>
+        <p className="mt-2">
+          <Link
+            href="/onboarding"
+            className="text-sm font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Follow the eight-step path →
+          </Link>
+        </p>
+      </section>
+
       <section aria-labelledby="platform-heading" className="space-y-3">
         <h2 id="platform-heading" className="text-lg font-semibold">
           Platform
@@ -53,47 +76,58 @@ export default function HomePage() {
         </p>
       </section>
 
-      <section aria-labelledby="scope-heading" className="space-y-3">
-        <h2 id="scope-heading" className="text-lg font-semibold">
-          What is wired, and what is not
+      {/*
+        THIS SECTION USED TO BE WRONG, and it is worth recording what it said. It read: "Seven of the
+        nine routes read from real endpoints. Approvals and generation now have mounted, authenticated
+        backend surfaces ... but their reviewer and wizard screens are not built, so those two say so
+        rather than showing sample data." Both screens had been built for some time. The behaviour
+        changed and the copy did not, which is the same defect as the readiness panel's stale
+        five-category note, and it is worse than never having written the copy: a reader who trusts it
+        stops looking for features that are there.
+
+        So this no longer enumerates which routes are "live" — every one of them reads real data, and a
+        list that says so for all twelve carries no information and is one edit away from being wrong
+        again. What is worth stating is the one thing a reader cannot check from the navigation: which
+        facts the app can observe and which it cannot.
+      */}
+      <section aria-labelledby="honesty-heading" className="space-y-3">
+        <h2 id="honesty-heading" className="text-lg font-semibold">
+          What this app can and cannot observe
         </h2>
         <p className="text-sm text-muted-foreground">
-          Seven of the nine routes read from real endpoints. Approvals and generation now have
-          mounted, authenticated backend surfaces — approvals was an unmounted router requiring no
-          authentication, and generation had no HTTP surface at all — but their reviewer and wizard
-          screens are not built, so those two say so rather than showing sample data. Pairing became
-          readable this pass: it had no GET, so a paired agent could not be observed.
+          Every screen reads a real endpoint; none renders sample data. Where a fact is not knowable
+          from the API, the screen says so rather than showing a plausible value:
         </p>
-        <p className="text-sm text-muted-foreground">
-          This dashboard used to render a single hardcoded project whose readiness score no backend
-          had ever computed. The honest gap is the point: a visible one can be planned around.
-        </p>
-        <ul className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-          <ScopeItem href="/projects" live>
-            Projects — <code>GET /projects/{"{id}"}</code> and its activity feed
-          </ScopeItem>
-          <ScopeItem href="/readiness" live>
-            Readiness — a real <code>ReadinessEngine</code> evaluation
-          </ScopeItem>
-          <ScopeItem href="/audit" live>
-            Audit — the hash-chained event log
-          </ScopeItem>
-          <ScopeItem href="/policies" live>
-            Policies — the governance templates
-          </ScopeItem>
-          <ScopeItem href="/vault" live>
-            Vault — secret references, never values
-          </ScopeItem>
-          <ScopeItem href="/approvals">
-            Approvals — endpoint mounted, reviewer UI not built
-          </ScopeItem>
-          <ScopeItem href="/generation">
-            Generation — SSE endpoint mounted, wizard not wired
-          </ScopeItem>
-          <ScopeItem href="/pairing" live>
-            Pairing — observed device state, heartbeat included
-          </ScopeItem>
+        <ul className="space-y-2 text-sm">
+          <Unknowable>
+            <strong>Whether a policy bundle is published.</strong> There is no read route reporting
+            a tenant&apos;s active bundle, so the onboarding path leaves step 5 unchecked rather
+            than ticking it. The publish control reports the digest it activated.
+          </Unknowable>
+          <Unknowable>
+            <strong>Whether an agent is attested.</strong> Pairing shows the certificate and the
+            heartbeat, and distinguishes &ldquo;never reported&rdquo; from &ldquo;stale&rdquo;. It
+            does not claim attestation, because Phase 1 ships no hardware-rooted attestation to
+            read.
+          </Unknowable>
+          <Unknowable>
+            <strong>A readiness score on the project list.</strong> A real score is an engine walk
+            of the whole index, so the list reports whether anything is indexed and the detail page
+            computes the score. A project that has never been scanned reads &ldquo;not
+            scanned&rdquo; rather than zero.
+          </Unknowable>
+          <Unknowable>
+            <strong>Whether a model endpoint is up right now.</strong> The tier panel reports the
+            registry&apos;s last observation and the circuit-breaker state; loading it does not
+            probe any vendor.
+          </Unknowable>
         </ul>
+        <p className="text-sm text-muted-foreground">
+          Where an action would be refused by role, the control is not offered rather than offered
+          and 403&apos;d — and where the server refuses a mutation, the refusal is rendered with
+          what the rule is for and which step to go and do, not only the registry&apos;s own
+          wording.
+        </p>
       </section>
     </div>
   );
@@ -110,29 +144,10 @@ function Stat({ label, value, mono }: { label: string; value: string; mono?: boo
   );
 }
 
-function ScopeItem({
-  href,
-  live,
-  children,
-}: {
-  href: string;
-  live?: boolean;
-  children: React.ReactNode;
-}) {
+function Unknowable({ children }: { children: React.ReactNode }) {
   return (
-    <li className="flex items-start gap-2 rounded-md border border-border bg-background p-3">
-      <span
-        aria-hidden="true"
-        className={
-          live
-            ? "mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500"
-            : "mt-1.5 h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40"
-        }
-      />
-      <Link href={href} className="underline-offset-4 hover:underline">
-        {children}
-      </Link>
-      <span className="sr-only">{live ? " (reads live data)" : " (not implemented)"}</span>
+    <li className="rounded-md border border-border bg-background p-3 text-muted-foreground">
+      {children}
     </li>
   );
 }

@@ -97,11 +97,14 @@ describe("refreshAccessToken", () => {
   });
 
   it("establishes the session on success, so a reload recovers without persisting the token", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(
-        json({ access_token: "minted-value", subject: "user-42", session_id: "sess-9" }),
-      );
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      json({
+        access_token: "minted-value",
+        subject: "user-42",
+        session_id: "sess-9",
+        role: "admin",
+      }),
+    );
 
     const { refreshAccessToken } = await import("@/lib/api/client");
     const token = await refreshAccessToken();
@@ -109,9 +112,25 @@ describe("refreshAccessToken", () => {
     expect(token).toBe("minted-value");
     expect(getAccessToken()).toBe("minted-value");
     expect(getSession()).toEqual({
-      user: { subject: "user-42", sessionId: "sess-9" },
+      // `role` is here because `/auth/refresh` gained it: the browser mints every access token after
+      // the first through this endpoint, so a role absent from THIS body is a role the UI never sees.
+      user: { subject: "user-42", sessionId: "sess-9", role: "admin" },
       isAuthenticated: true,
     });
+  });
+
+  it("narrows an unrecognised role to null rather than trusting the wire", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(json({ access_token: "minted-value", subject: "u", role: "superuser" }));
+
+    const { refreshAccessToken } = await import("@/lib/api/client");
+    await refreshAccessToken();
+
+    // Not `"superuser"`. A role this build does not model must not become one it half-honours: the
+    // capability map would return `undefined` for its allowed set and every check would throw.
+    // `null` means "not known", which `lib/authz.ts` handles deliberately.
+    expect(getSession().user?.role).toBeNull();
   });
 
   it("defaults a missing subject rather than failing, since the token is what authenticates", async () => {
@@ -120,13 +139,15 @@ describe("refreshAccessToken", () => {
     const { refreshAccessToken } = await import("@/lib/api/client");
     await refreshAccessToken();
 
-    expect(getSession().user).toEqual({ subject: "unknown", sessionId: null });
+    // `role: null` because the server said nothing. A backend that predates the field, or a user
+    // deleted at the IdP mid-session, both land here.
+    expect(getSession().user).toEqual({ subject: "unknown", sessionId: null, role: null });
   });
 
   it("returns null on transport failure WITHOUT clearing a live session", async () => {
     // The distinction this asserts: a network blip is not evidence that the session ended. Clearing
     // here would sign a user out because their wifi dropped for one request.
-    setSession("existing-value", { subject: "user-1", sessionId: "sess-1" });
+    setSession("existing-value", { subject: "user-1", sessionId: "sess-1", role: null });
     globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
 
     const { refreshAccessToken } = await import("@/lib/api/client");
@@ -135,7 +156,7 @@ describe("refreshAccessToken", () => {
   });
 
   it("clears the session when the server REFUSES, which is evidence the session ended", async () => {
-    setSession("existing-value", { subject: "user-1", sessionId: "sess-1" });
+    setSession("existing-value", { subject: "user-1", sessionId: "sess-1", role: null });
     globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
 
     const { refreshAccessToken } = await import("@/lib/api/client");
@@ -145,7 +166,7 @@ describe("refreshAccessToken", () => {
   });
 
   it("clears the session on a 200 carrying no token, because that is a broken contract", async () => {
-    setSession("existing-value", { subject: "user-1", sessionId: "sess-1" });
+    setSession("existing-value", { subject: "user-1", sessionId: "sess-1", role: null });
     globalThis.fetch = vi.fn().mockResolvedValue(json({ subject: "user-1" }));
 
     const { refreshAccessToken } = await import("@/lib/api/client");
@@ -154,7 +175,7 @@ describe("refreshAccessToken", () => {
   });
 
   it("clears the session when the body is not JSON at all", async () => {
-    setSession("existing-value", { subject: "user-1", sessionId: "sess-1" });
+    setSession("existing-value", { subject: "user-1", sessionId: "sess-1", role: null });
     globalThis.fetch = vi.fn().mockResolvedValue(new Response("not json", { status: 200 }));
 
     const { refreshAccessToken } = await import("@/lib/api/client");
@@ -175,7 +196,7 @@ describe("the credential a request presents", () => {
   it("sends the access token when there is one", async () => {
     const fetchMock = vi.fn().mockImplementation(() => json({ ok: true }));
     globalThis.fetch = fetchMock;
-    setSession("live-value", { subject: "user-1", sessionId: null });
+    setSession("live-value", { subject: "user-1", sessionId: null, role: null });
 
     const { api } = await import("@/lib/api/client");
     await api.get("/projects");
@@ -197,7 +218,7 @@ describe("the credential a request presents", () => {
   it("lets an explicit header override the ambient one, because init spreads last", async () => {
     const fetchMock = vi.fn().mockImplementation(() => json({ ok: true }));
     globalThis.fetch = fetchMock;
-    setSession("ambient-value", { subject: "user-1", sessionId: null });
+    setSession("ambient-value", { subject: "user-1", sessionId: null, role: null });
 
     const { api, AUTH_HEADER } = await import("@/lib/api/client");
     await api.get("/projects", { headers: { [AUTH_HEADER]: "Custom scheme-value" } });
@@ -237,7 +258,7 @@ describe("the once-only 401 retry", () => {
       // 3. the replay
       .mockResolvedValueOnce(json({ ok: true }));
     globalThis.fetch = fetchMock;
-    setSession("stale-value", { subject: "user-1", sessionId: null });
+    setSession("stale-value", { subject: "user-1", sessionId: null, role: null });
 
     const { api } = await import("@/lib/api/client");
     expect(await api.get("/projects")).toEqual({ ok: true });
@@ -259,7 +280,7 @@ describe("the once-only 401 retry", () => {
           : Promise.resolve(new Response(null, { status: 401 })),
       );
     globalThis.fetch = fetchMock;
-    setSession("stale-value", { subject: "user-1", sessionId: null });
+    setSession("stale-value", { subject: "user-1", sessionId: null, role: null });
 
     const { api } = await import("@/lib/api/client");
     await expect(api.get("/projects")).rejects.toBeInstanceOf(ApiProblemError);
@@ -275,7 +296,7 @@ describe("the once-only 401 retry", () => {
           : Promise.resolve(new Response(null, { status: 401 })),
       );
     globalThis.fetch = fetchMock;
-    setSession("stale-value", { subject: "user-1", sessionId: null });
+    setSession("stale-value", { subject: "user-1", sessionId: null, role: null });
 
     const { api } = await import("@/lib/api/client");
     await expect(api.get("/projects")).rejects.toBeInstanceOf(ApiProblemError);
@@ -304,7 +325,7 @@ describe("the once-only 401 retry", () => {
       return Promise.resolve(json({ path: url }));
     });
     globalThis.fetch = fetchMock;
-    setSession("stale-value", { subject: "user-1", sessionId: null });
+    setSession("stale-value", { subject: "user-1", sessionId: null, role: null });
 
     const { api } = await import("@/lib/api/client");
     const results = await Promise.all([
@@ -508,7 +529,7 @@ describe("requestStream", () => {
         }),
       );
     globalThis.fetch = fetchMock;
-    setSession("stale-value", { subject: "user-1", sessionId: null });
+    setSession("stale-value", { subject: "user-1", sessionId: null, role: null });
 
     const { api } = await import("@/lib/api/client");
     const res = await api.stream("/generation/runs/1/events");

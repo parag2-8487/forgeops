@@ -7,30 +7,8 @@ import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
 import { ProjectPicker } from "@/components/ui/project-picker";
 import { ReadinessRadarChart } from "@/features/readiness/RadarChart";
-
-/** Mirrors `ReadinessReportResponse` in `backend/src/projects/routes.py`. */
-interface ReadinessReport {
-  project_id: string;
-  score: number;
-  level: string;
-  summary_report: string;
-  recommendations: string[];
-  /**
-   * The five fields of `ReadinessBreakdown`, which the engine has always computed and the response
-   * model used to drop. That omission is why this screen previously rendered a one-bar chart
-   * labelled "Overall": the per-category data the radar chart was built for was not on the wire.
-   */
-  categories: Record<string, number>;
-}
-
-/** Turn `documentation_score` into `Documentation` for display, without inventing categories. */
-function categoryLabel(key: string): string {
-  return key
-    .replace(/_score$/, "")
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
+import { ReadinessBreakdown } from "@/features/readiness/ReadinessBreakdown";
+import { categoryLabel, type ReadinessReport } from "@/features/projects/types";
 
 export default function ReadinessPage() {
   const [projectId, setProjectId] = useState("");
@@ -50,8 +28,8 @@ export default function ReadinessPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Deployment readiness</h1>
         <p className="mt-1 text-muted-foreground">
-          Scored by the backend&apos;s <code>ReadinessEngine</code>, read from{" "}
-          <code>GET /api/v1/projects/{"{id}"}/readiness</code>.
+          Scored by the backend&apos;s <code>ReadinessEngine</code> from the project&apos;s codebase
+          index, read from <code>GET /api/v1/projects/{"{id}"}/readiness</code>.
         </p>
       </div>
 
@@ -65,7 +43,7 @@ export default function ReadinessPage() {
       >
         {readiness.data ? (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="rounded-lg border border-border bg-background p-4">
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Score</p>
                 <p className="mt-1 text-3xl font-bold" data-testid="readiness-score">
@@ -77,23 +55,43 @@ export default function ReadinessPage() {
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Level</p>
                 <p className="mt-1 text-lg font-semibold">{readiness.data.level}</p>
               </div>
+              {/*
+                Scanned-or-not, on the face of the panel rather than only in the summary sentence.
+                A score of zero from a real evaluation and a score of zero because nothing was
+                measured are completely different facts, and the number alone cannot carry the
+                difference.
+              */}
+              <div className="rounded-lg border border-border bg-background p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Measured from
+                </p>
+                <p className="mt-1 text-sm font-semibold" data-testid="readiness-provenance">
+                  {readiness.data.indexed
+                    ? `${readiness.data.evaluated_paths} indexed path${
+                        readiness.data.evaluated_paths === 1 ? "" : "s"
+                      }`
+                    : "Nothing — never scanned"}
+                </p>
+              </div>
             </div>
 
-            {/*
-              The radar chart, finally holding the data it was built for.
-
-              `ReadinessEngine` computes a five-category breakdown — documentation, test coverage,
-              CI config, security policy, containerisation — and `ReadinessReportResponse` used to
-              expose only the total, so this rendered a single bar labelled "Overall". The
-              categories are now on the wire, mapped straight from the engine's own field names, so
-              there is no risk of rendering a category the engine does not compute.
-            */}
             <ReadinessRadarChart
               scores={Object.entries(readiness.data.categories).map(([key, score]) => ({
                 category: categoryLabel(key),
                 score,
               }))}
             />
+
+            <section aria-labelledby="breakdown-heading" className="space-y-3">
+              <h2 id="breakdown-heading" className="text-lg font-semibold">
+                Category breakdown
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Each category expands into the individual checks behind its score, with the indexed
+                path that satisfied it and why the check exists.
+              </p>
+              <ReadinessBreakdown report={readiness.data} />
+            </section>
 
             <div className="rounded-lg border border-border bg-background p-4">
               <h2 className="text-sm font-semibold">Summary</h2>
@@ -114,21 +112,40 @@ export default function ReadinessPage() {
         ) : null}
       </AsyncState>
 
+      {/*
+        THIS PANEL WAS STALE, AND THAT IS WHY IT IS WORTH A NOTE RATHER THAN A QUIET EDIT.
+
+        It read: "What the engine scores is derived from the project's STORED SETTINGS and repository
+        reference, not from a walk of its working tree... it is not yet an analysis of your source",
+        and it described a FIVE-category breakdown. Both statements had been false since the engine
+        moved to index-derived scoring: there are six categories, they are phases.md §1.4's, and they
+        are computed from `file_tree` and `file_contents` — the rows an agent scan persists. The
+        behaviour changed and the copy did not, which is a worse failure than the copy never having
+        existed: a reader who trusts it concludes the score is meaningless and stops looking at it.
+      */}
       <aside className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
-        <p className="font-medium text-foreground">What is real here, and what is not.</p>
+        <p className="font-medium text-foreground">What this score is measured from.</p>
         <p className="mt-2">
-          The score, level, summary, recommendations and the five-category breakdown are all
-          computed by <code>ReadinessEngine</code> — real arithmetic, not stored numbers. The
-          project must exist: this endpoint used to score any id at all, so it would return a
-          readiness figure for a project that had never been created.
+          The six categories above are phases.md §1.4&apos;s — Containerization, CI/CD,
+          Orchestration, Env Config, Security and IaC — and every one is computed from this
+          project&apos;s <strong>codebase index</strong>: the file tree and redacted file contents
+          an agent scan persisted through <code>POST /api/v1/analysis/codebase/{"{id}"}/index</code>
+          . Each check names the indexed path that satisfied it, so a score is traceable to the
+          evidence behind it rather than being a number you have to take on trust.
         </p>
         <p className="mt-2">
-          <strong>The remaining limit, stated plainly.</strong> What the engine scores is derived
-          from the project&apos;s <em>stored</em> settings and repository reference, not from a walk
-          of its working tree. So the figure is a real evaluation of real stored data, and it is not
-          yet an analysis of your source. Wiring repository contents into the engine is analysis
-          work, and the summary text says which of the two it is rather than leaving it to be
-          assumed.
+          <code>projects.settings</code> participates only as a <em>refinement</em>:{" "}
+          <code>ignore_globs</code> removes paths from the evidence, because a path you have
+          declared out of scope is not evidence about your deployment. It cannot add points. An
+          earlier version of the engine scored the settings themselves — <code>config_files</code>{" "}
+          was literally the list of settings keys — so a project earned documentation points for
+          having been configured. That is gone.
+        </p>
+        <p className="mt-2">
+          <strong>A project with no indexed files scores zero and says so.</strong> The panel above
+          reports what the score was measured from, and an unscanned project reads &ldquo;never
+          scanned&rdquo; rather than showing a zero that looks like a measurement. Run a scan — the
+          exact command is on the project&apos;s own page.
         </p>
       </aside>
     </div>

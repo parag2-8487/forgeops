@@ -1,5 +1,5 @@
 import { env } from "@/lib/env";
-import { clearSession, getAccessToken, setSession } from "@/lib/session";
+import { asRole, clearSession, getAccessToken, setSession } from "@/lib/session";
 import { ApiProblemError, ApiTransportError } from "./errors";
 import { isProblemDetails, PROBLEM_CONTENT_TYPE } from "./problem";
 
@@ -54,6 +54,7 @@ export async function refreshAccessToken(): Promise<string | null> {
     access_token?: string;
     subject?: string;
     session_id?: string | null;
+    role?: string;
   } | null;
 
   if (!body?.access_token) {
@@ -64,6 +65,10 @@ export async function refreshAccessToken(): Promise<string | null> {
   setSession(body.access_token, {
     subject: body.subject ?? "unknown",
     sessionId: body.session_id ?? null,
+    // Narrowed rather than cast. `POST /auth/refresh` gained this field so the UI can model
+    // authority at all; an unrecognised value becomes `null`, which `lib/authz.ts` treats as "not
+    // known" rather than as any particular role.
+    role: asRole(body.role),
   });
   return body.access_token;
 }
@@ -217,6 +222,29 @@ export const api = {
       method: "PUT",
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
+  /**
+   * PATCH, added for `PATCH /api/v1/secrets/{id}` (rotation) and `PATCH /api/v1/policies/{id}`.
+   *
+   * Absent until now, which is why nothing in the app could edit anything: the vault and policy
+   * screens were read-only partly by decision and partly because the client had no verb for it.
+   */
+  patch: <T>(p: string, body?: unknown, i?: RequestInit & { timeoutMs?: number }) =>
+    request<T>(p, {
+      ...i,
+      method: "PATCH",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  /**
+   * DELETE with a body.
+   *
+   * `DELETE /api/v1/projects/{id}` requires a reason and the project's name typed back, and
+   * `DELETE /api/v1/agents/{device_id}` requires a reason — both because NFR-14 makes "why" a
+   * non-optional field on a destructive action. RFC 9110 permits a body on DELETE, and the
+   * alternative shapes are worse: a reason in the query string lands in access logs and browser
+   * history, and a `POST /delete` invents a verb to avoid a body that is allowed.
+   */
+  deleteWith: <T>(p: string, body: unknown, i?: RequestInit & { timeoutMs?: number }) =>
+    request<T>(p, { ...i, method: "DELETE", body: JSON.stringify(body) }),
   delete: <T>(p: string, i?: RequestInit & { timeoutMs?: number }) =>
     request<T>(p, { ...i, method: "DELETE" }),
   stream: requestStream,

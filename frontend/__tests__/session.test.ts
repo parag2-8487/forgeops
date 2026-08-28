@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearSession, getAccessToken, getSession, setSession, subscribe } from "../lib/session";
 
-const USER = { subject: "auth0|abc", sessionId: "s-1" };
+const USER = { subject: "auth0|abc", sessionId: "s-1", role: null };
 
 beforeEach(() => {
   clearSession();
@@ -28,7 +28,7 @@ describe("setSession", () => {
 
   it("replaces the previous token rather than accumulating", () => {
     setSession("first", USER);
-    setSession("second", { subject: "auth0|xyz", sessionId: "s-2" });
+    setSession("second", { subject: "auth0|xyz", sessionId: "s-2", role: null });
     expect(getAccessToken()).toBe("second");
     expect(getSession().user?.subject).toBe("auth0|xyz");
   });

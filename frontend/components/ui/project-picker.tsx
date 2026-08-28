@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 
@@ -86,9 +87,9 @@ export function ProjectPicker({
     return (
       <p role="status" className="text-sm text-muted-foreground">
         This tenant has no projects yet. Create one on the{" "}
-        <a className="underline" href="/projects">
+        <Link className="underline" href="/projects">
           Projects
-        </a>{" "}
+        </Link>{" "}
         screen — there is deliberately no id box here, because typing an id that does not exist
         produces a <code>403</code> that looks like a permissions fault.
       </p>

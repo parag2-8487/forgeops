@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiProblemError, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
+import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -68,6 +69,60 @@ type ViewMode = "unified" | "split";
 
 /** A decision is only offered in the one state §3.6 permits it from. */
 const DECIDABLE = "pending_approval";
+
+/** Revert is only offered from the one state §3.6's `applied → reverted` edge leaves. */
+const REVERTABLE = "applied";
+
+/**
+ * The statuses this screen can list, and what each queue is for.
+ *
+ * THE FILTER IS WHY REVERT WAS UNREACHABLE, not only the mutation's type narrowing. The screen listed
+ * `pending_approval` and nothing else, so an APPLIED change set never appeared on it — and revert is
+ * an operation on an applied change set. Fixing the union type alone would have produced a control
+ * with no row to attach it to.
+ */
+const QUEUES = [
+  { status: DECIDABLE, label: "Awaiting decision" },
+  { status: REVERTABLE, label: "Applied" },
+  { status: "rejected", label: "Rejected" },
+  { status: "reverted", label: "Reverted" },
+] as const;
+
+/**
+ * What the backend answers when a revert is ESCALATED rather than performed.
+ *
+ * A blocked revert is not an error. `approval-required` is registered at status **202**, which is
+ * inside the 2xx range, so `fetch` reports `res.ok` and the API client returns the body as a success
+ * payload rather than throwing. That is correct — it IS a success, the operation was admitted and is
+ * being held — but it means the response can be either a decision or a problem document, and code
+ * that assumed the former would render an escalation as a malformed decision.
+ *
+ * So both shapes are narrowed explicitly. Treating the escalation as a failure would be the specific
+ * mistake §3.6 warns against: `applied → reverted` is only reachable BECAUSE a blocked revert
+ * escalates, so reporting it as an error would make the edge look broken at the exact moment it was
+ * working.
+ */
+interface DecisionResponse {
+  change_set_id: string | null;
+  status: string;
+  outcome: string;
+  audit_seq: number | null;
+  approval_id: string | null;
+  blast_radius_score: number | null;
+  blast_radius_verdict: string | null;
+  reverse_change_set_id: string | null;
+  command_delivered: boolean;
+}
+
+/** True when the body is an RFC 9457 problem rather than a decision. */
+function isProblemShaped(body: unknown): body is { type: string; title: string; detail?: string } {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    typeof (body as { type?: unknown }).type === "string" &&
+    typeof (body as { title?: unknown }).title === "string"
+  );
+}
 
 // ── diffing ─────────────────────────────────────────────────────────────────
 
@@ -238,14 +293,17 @@ function ItemDiff({ item, mode }: { item: ChangeItemRead; mode: ViewMode }) {
 
 export function ApprovalCenter() {
   const queryClient = useQueryClient();
+  const [queue, setQueue] = useState<string>(DECIDABLE);
   const [selected, setSelected] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("unified");
   const [comment, setComment] = useState("");
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [revertOutcome, setRevertOutcome] = useState<DecisionResponse | null>(null);
+  const [revertEscalation, setRevertEscalation] = useState<string | null>(null);
 
   const list = useQuery({
-    queryKey: queryKeys.approvals.list(DECIDABLE),
-    queryFn: () => api.get<ChangeSetPage>(`/approvals?status=${DECIDABLE}&limit=50`),
+    queryKey: queryKeys.approvals.list(queue),
+    queryFn: () => api.get<ChangeSetPage>(`/approvals?status=${queue}&limit=50`),
     retry: false,
   });
 
@@ -291,19 +349,73 @@ export function ApprovalCenter() {
     },
   });
 
+  /**
+   * Revert an applied change set — `POST /api/v1/approvals/{id}/revert`.
+   *
+   * The endpoint existed and this component's mutation type was narrowed to
+   * `"approve" | "reject"`, so it was unreachable from the UI. A revert goes through all six
+   * governance stages with its own fresh authority rather than reusing the original's, because
+   * reusing it would make rollback a privileged back door.
+   */
+  const revert = useMutation({
+    mutationFn: (id: string) => api.post<unknown>(`/approvals/${id}/revert`, undefined),
+    onSuccess: async (body) => {
+      setRevertEscalation(null);
+      setRevertOutcome(null);
+      if (isProblemShaped(body)) {
+        // The escalation path. 202 is `res.ok`, so this arrives as a success body rather than an
+        // error, and it IS a success — the reverse change set was compiled and admitted, and the
+        // approval gate is holding it.
+        setRevertEscalation(
+          body.detail ??
+            "The reverse change set was admitted and is waiting for a decision rather than being applied directly.",
+        );
+      } else {
+        setRevertOutcome(body as DecisionResponse);
+      }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
+    },
+  });
+
   const current = detail.data;
 
   return (
     <div className="space-y-6">
+      <div role="group" aria-label="Change set queue" className="flex flex-wrap gap-2">
+        {QUEUES.map((q) => (
+          <Button
+            key={q.status}
+            variant={queue === q.status ? "default" : "outline"}
+            size="sm"
+            aria-pressed={queue === q.status}
+            data-testid={`queue-${q.status}`}
+            onClick={() => {
+              setQueue(q.status);
+              setSelected(null);
+              setRevertOutcome(null);
+              setRevertEscalation(null);
+            }}
+          >
+            {q.label}
+          </Button>
+        ))}
+      </div>
+
       <AsyncState
         isPending={list.isPending}
         error={list.error}
         isEmpty={list.data?.change_sets.length === 0}
-        emptyMessage="No change sets are awaiting a decision. A generation run that passes validation and trips the approval rule will appear here."
-        label="change sets awaiting decision"
+        emptyMessage={
+          queue === DECIDABLE
+            ? "No change sets are awaiting a decision. A generation run that passes validation and trips the approval rule will appear here."
+            : `No change set is currently ${queue}.`
+        }
+        label={`change sets with status ${queue}`}
       >
         <div className="space-y-2">
-          <h2 className="text-lg font-semibold">Awaiting decision</h2>
+          <h2 className="text-lg font-semibold">
+            {QUEUES.find((q) => q.status === queue)?.label ?? queue}
+          </h2>
           <ul className="space-y-2">
             {list.data?.change_sets.map((cs) => (
               <li key={cs.id}>
@@ -439,11 +551,104 @@ export function ApprovalCenter() {
                     </Button>
                   </div>
                 </section>
+              ) : current.status === REVERTABLE ? (
+                <section
+                  aria-label="Revert this change set"
+                  className="space-y-3 rounded-md border border-border p-4"
+                >
+                  <h3 className="text-sm font-semibold">Revert</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Compiles the reverse of this change from the before-state it recorded, and puts
+                    that reverse change through{" "}
+                    <strong>all six governance stages with its own fresh authority</strong> —
+                    policy, approval gate, compilation, blast radius, audit, rollback handle. It
+                    does not reuse this change set&apos;s authority, because that would make undoing
+                    a change a privileged back door around the controls that permitted it.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    So a revert is frequently <em>escalated to approval rather than performed</em>,
+                    and that is the design working: §3.6&apos;s <code>applied → reverted</code> edge
+                    is only reachable because a blocked revert becomes something a human decides. An
+                    escalation is reported below as an outcome, not as an error.
+                  </p>
+                  <Button
+                    disabled={revert.isPending}
+                    data-testid="revert-change-set"
+                    onClick={() => revert.mutate(current.id)}
+                  >
+                    {revert.isPending ? "Submitting the reverse change…" : "Revert this change"}
+                  </Button>
+
+                  {revertEscalation ? (
+                    <div
+                      role="status"
+                      data-testid="revert-escalated"
+                      className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm"
+                    >
+                      <p className="font-semibold">Escalated to approval — not refused.</p>
+                      <p className="mt-1 text-muted-foreground">{revertEscalation}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        The reverse change set exists and is admitted. Switch to the{" "}
+                        <strong>Awaiting decision</strong> queue above to decide it; nothing has
+                        been written to the working tree yet.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {revertOutcome ? (
+                    <div
+                      role="status"
+                      data-testid="revert-outcome"
+                      className="rounded-md border border-border bg-muted/30 p-3 text-sm"
+                    >
+                      <p className="font-semibold">
+                        Reverse change set {revertOutcome.status} ({revertOutcome.outcome})
+                      </p>
+                      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                        {revertOutcome.reverse_change_set_id ? (
+                          <>
+                            <dt className="font-medium">Reverse change set</dt>
+                            <dd>
+                              <code className="break-all">
+                                {revertOutcome.reverse_change_set_id}
+                              </code>
+                            </dd>
+                          </>
+                        ) : null}
+                        <dt className="font-medium">Blast radius</dt>
+                        <dd>
+                          {revertOutcome.blast_radius_score ?? "—"}
+                          {revertOutcome.blast_radius_verdict
+                            ? ` (${revertOutcome.blast_radius_verdict})`
+                            : ""}
+                        </dd>
+                        <dt className="font-medium">Command delivered to an agent</dt>
+                        <dd>{revertOutcome.command_delivered ? "yes" : "no"}</dd>
+                        {revertOutcome.audit_seq !== null ? (
+                          <>
+                            <dt className="font-medium">Audit sequence</dt>
+                            <dd>{revertOutcome.audit_seq}</dd>
+                          </>
+                        ) : null}
+                      </dl>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        The envelope itself is not shown: a signed command carries an authority
+                        token and a nonce, and echoing those to a browser would hand a reviewer
+                        material only the agent should hold. Whether one was delivered is the part a
+                        reviewer needs.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {revert.error ? (
+                    <GovernanceRefusal error={revert.error} action="revert this change set" />
+                  ) : null}
+                </section>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  This change set is <code>{current.status}</code>, and §3.6 only permits a decision
-                  from <code>{DECIDABLE}</code>. No decision controls are offered, rather than
-                  offered and refused by the server.
+                  This change set is <code>{current.status}</code>. §3.6 permits a decision only
+                  from <code>{DECIDABLE}</code> and a revert only from <code>{REVERTABLE}</code>, so
+                  no control is offered here rather than offered and refused by the server.
                 </p>
               )}
             </div>
