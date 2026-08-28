@@ -609,6 +609,40 @@ confirms all 31 declared properties have a control. Every other clause of both d
 already implemented and covered, which is why these two properties were the whole of what was
 outstanding.
 
+**Amended 2026-08-28. Every row above said `done` while five of these eleven deliverables had
+unbuilt FRONTEND clauses**, and that is worth recording rather than quietly correcting, because it
+is a different failure from the one above: not a stale row, but a row that measured the wrong
+thing. The `Discharged by` column cites design sections and properties — the engine — and the
+engine was genuinely complete. `phases.md` §1.2, §1.4, §1.6, §1.7 and §1.8 each also name a
+frontend deliverable, and seven of those boxes had no screen at all. The symptom was measurable:
+the backend served **48 routes and the frontend called 13**.
+
+So `done` here meant "the design sections are discharged", which is true and is not what a reader
+takes it to mean. The rows stay `done` and the gap is named instead, because the alternative —
+reverting five rows to `pending` on evidence that never covered the UI — would make the table
+disagree with the property suite for the opposite reason.
+
+What closed it, per deliverable, with the screen and the test in `phases.md`'s own boxes:
+
+| §    | Frontend clause that was unbuilt                            | Now                                                                         |
+| :--- | :---------------------------------------------------------- | :-------------------------------------------------------------------------- |
+| 1.2  | project list with search/tags/favourites; project detail page | `/projects` with SQL-side filtering, `/projects/{id}` — plus FR-01's create form and FR-05's archive and delete, which had no route on either side |
+| 1.4  | detailed category breakdown with expandable items            | `features/readiness/ReadinessBreakdown.tsx`, each check naming its indexed evidence and FR-19's "why it matters" |
+| 1.6  | change history timeline per project                          | `features/approvals/ChangeHistoryTimeline.tsx`, all thirteen §3.6 states explained; revert reachable for the first time |
+| 1.7  | policy list and editor UI; violation display with explanation | `/policies` over the new `GET /api/v1/policies`; `components/ui/governance-refusal.tsx` |
+| 1.8  | secret vault add/edit/delete                                 | `features/vault/SecretVault.tsx`, write-only enforced structurally |
+
+Ten further capabilities had tested endpoints and no UI at all and are now surfaced — project
+create, scan state and the exact command, mint a pairing code, revoke a device, device detail, the
+codebase explorer, audit chain verification, change-set revert, the plan analyzer and model tier
+health. The full ledger, including the six routes deliberately NOT surfaced and the reason for
+each, is in `docs/architecture-phase-0-1-as-built.md` under "The browser's reach".
+
+Two live fabrications were removed in the same pass, and both had passing tests over them:
+`POST /policies/{id}/test` synthesised an allow/deny when `opa` was absent (its test asserted the
+synthesised values, so it passed with or without a policy engine present), and the projects screen
+mapped every project to `readinessScore: 0`.
+
 ## Property test coverage — Q-01 to Q-31
 
 Design Appendix B declares thirty-one correctness properties and states the rule this table

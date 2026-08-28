@@ -36,6 +36,7 @@
 | 2   | [The four security layers](#diagram-2--the-four-security-layers)                              | Why is this safe to point at a codebase?     |
 | 3   | [End-to-end approval flow + C10 status](#diagram-3--end-to-end-approval-flow-with-c10-status) | How far does the journey actually get?       |
 | 4   | [Scope boundary](#diagram-4--scope-boundary--what-is-deliberately-absent)                     | What is _not_ built, and is that on purpose? |
+| 5   | [The browser's reach](#the-browsers-reach--which-routes-have-a-screen-and-which-deliberately-do-not) | Which routes have a screen, and which do not — with the reason? |
 
 ### How to render these
 
@@ -528,6 +529,99 @@ Fulcio certificates.
 | `e2e-ci`, `k8s-ci`, `mutation-ci`, `templates-validation` | All green at `30f74f4`                                                                                                                          |
 | Secret scanning                                           | gitleaks `v8.30.1` over full history — **no leaks**                                                                                             |
 | Post-Phase-1 re-verification, commit `b97b6e3`            | All 5 workflows green, `ci` 12/12 — run on a private mirror because this account's Actions minutes are exhausted. Same commit, different remote |
+
+---
+
+## The browser's reach — which routes have a screen, and which deliberately do not
+
+**The gap this records.** The backend served 48 routes and the frontend called 13. Every
+capability existed and was tested; the browser was a read-only window onto a fraction of it,
+so a user could not get from an empty installation to a generated artifact without curl. The
+count is now 58 routes and 35 called, and what follows is the ledger — including the routes
+that are deliberately not surfaced, each with a reason, because "not surfaced" and "forgotten"
+look identical from outside.
+
+### Reachable from the UI
+
+| Route                                       | Screen                                        |
+| :------------------------------------------ | :-------------------------------------------- |
+| `GET/POST /projects`                        | `/projects` — list with server-side search, tags, favourites; create form |
+| `GET /projects/{id}`                        | `/projects/{id}` — the detail page, its first caller ever |
+| `GET /projects/{id}/activity`               | `/projects/{id}` — activity, read from `audit_events` |
+| `GET /projects/{id}/readiness`              | `/readiness` and `/projects/{id}` |
+| `GET /projects/tags`                        | `/projects` — the tag filter's vocabulary |
+| `POST /projects/{id}/archive`, `/unarchive` | `/projects` — reversible, reason required |
+| `DELETE /projects/{id}`                     | `/projects` — cascade counted and reported, name typed back |
+| `PUT/DELETE /projects/{id}/tags[/{tag}]`    | `/projects/{id}` — tag editor |
+| `PUT/DELETE /projects/{id}/favourite`       | `/projects` — per-user star |
+| `GET /policies`                             | `/policies` — **new route**; the list a policy screen could not exist without |
+| `POST/GET/PATCH/DELETE /policies[/{id}]`    | `/policies` — full CRUD with the validator's own message |
+| `POST /policies/{id}/test`                  | `/policies` — dry run, reporting the query and the evaluator |
+| `GET /policies/templates`                   | `/policies` — read-only starting points |
+| `POST /policies/publish`                    | `/policies` — step 5 of the onboarding path, not an admin curiosity |
+| `GET/POST/PATCH/DELETE /secrets[/{id}]`     | `/vault` — write-only values, structurally |
+| `GET /approvals`, `GET /approvals/{id}`     | `/approvals` — four queues; `/projects/{id}` — the timeline |
+| `POST /approvals/{id}/approve`, `/reject`   | `/approvals` |
+| `POST /approvals/{id}/revert`               | `/approvals` — from the `applied` queue; an escalation is an outcome, not an error |
+| `POST /generation/runs`                     | `/generation` — the SSE wizard |
+| `GET /agents/devices`, `/devices/{id}`      | `/pairing` — list and single re-read |
+| `POST /agents/pairing-codes`                | `/pairing` — shown once, admin or developer |
+| `DELETE /agents/{device_id}`                | `/pairing` — admin, reason required |
+| `GET /audit/events`                         | `/audit` |
+| `GET /audit/verify`                         | `/audit` — admin; tamper evidence stops being a claim |
+| `GET /analysis/codebase/{id}/status`        | `/projects/{id}` — **the answer to "has this ever been scanned?"** |
+| `GET /analysis/codebase/{id}/symbols`       | `/projects/{id}` — offered only when the index has chunks |
+| `GET /analysis/codebase/{id}/chunks/{id}`   | `/projects/{id}` — one stored, redacted chunk |
+| `POST /analysis/plan`                       | `/analysis` — the same analyzer the chokepoint's blast-radius stage runs |
+| `GET /ai/tiers`                             | `/models` — availability and breaker state |
+| `GET /health`                               | `/` |
+| `POST /auth/refresh`, `/logout`, `/login`, `/callback` | the auth bootstrap |
+
+### Deliberately not surfaced, with the reason
+
+| Route                                      | Why not                                                                                     |
+| :----------------------------------------- | :------------------------------------------------------------------------------------------ |
+| `POST /agents/pair/exchange`               | The one public route. It takes a certificate request from the machine that will hold the credential; a browser has no CSR to offer and no filesystem to store the result in. The UI's job is the code and the command, which `/pairing` does. |
+| `POST /analysis/codebase/{id}/index`       | Device-authenticated (`require_device`), not user-authenticated. The agent submits its own scan report; a browser cannot satisfy the mTLS half of that door and should not be able to. |
+| `WS /ws/agent`                             | The agent hub. Authenticated inside its handshake by client certificate and device token. |
+| `POST /ai/complete`                        | The MCP gateway's token contract, not the product API's (§4.4 keeps them separate on purpose). Generation is how a user reaches a model; a raw completion box would be a second, ungoverned path to one. |
+| `GET/POST /mcp/*`                          | Machine-to-machine gateway ingress under a different audience. A screen would imply a human caller. |
+| `GET /health/ready`, `/health/live`        | Orchestrator probes. `/` shows the versioned echo, which is the part a person can act on. |
+
+### What no endpoint reports, and which screen says so
+
+This is the list the home page renders, and it exists because a plausible value is worse than
+an admission:
+
+- **Whether a policy bundle is published.** No read route reports a tenant's active bundle, so
+  `/onboarding` leaves step 5 permanently **Not checked** rather than ticking it. The publish
+  control reports the digest it activated.
+- **Whether an agent is attested.** `/pairing` shows the certificate and a tri-state heartbeat
+  (`never reported` is not `stale`), and claims no attestation, because Phase 1 ships no
+  hardware-rooted attestation to read.
+- **A readiness score per list row.** A real score is an engine walk of the whole index, so the
+  list reports whether anything is indexed and the detail page computes one score. This is what
+  replaced `readinessScore: 0`.
+- **Whether a model endpoint is up right now.** `/models` reports the registry's last
+  observation; loading the page probes nothing.
+
+### Part E — the onboarding path, and why it needed its own E2E
+
+`journey.spec.ts` was 13/13 throughout the period in which the browser could not reach most of
+the engine, because it drives most of its steps through `page.request` — an HTTP client sharing a
+browser's cookie jar. `onboarding.spec.ts` asserts the other half: ten steps by CLICKING, with
+only pairing and scanning outside the browser, both run through the agent's real CLI using the
+code and the command the UI itself displayed.
+
+Running it found two defects a fixture-based test cannot:
+
+1. the index panel printed `scan --project <id> --path <path>`, and `--path` is not a flag the
+   agent has — the step runs the displayed string verbatim, which is the only way a printed
+   command stays honest;
+2. the readiness breakdown rendered every category twice, because the breakdown's keys are model
+   field names (`containerization_score`) and a check's category is the category itself
+   (`containerization`). The unit fixture carried the suffix, so the tests agreed with the
+   misconception.
 
 ---
 

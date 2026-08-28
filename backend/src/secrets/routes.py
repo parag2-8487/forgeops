@@ -133,7 +133,14 @@ async def delete_secret(
     if not secret:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Secret not found")
 
-    # Note: If we were fully managing Infisical, we might delete it there too.
-    # For now, we just delete the metadata record.
+    # THE METADATA RECORD GOES; THE MATERIAL IN INFISICAL DOES NOT, and that is a decision rather
+    # than an unfinished edge. This platform does not own the Infisical project — it holds a machine
+    # identity scoped to reading and writing paths — so deleting from it would be acting outside what
+    # it manages, and a secret another system also injects would vanish without that system's owner
+    # having agreed. A locally sealed secret has no such second owner, and its `encrypted_value` goes
+    # with this row.
+    #
+    # The consequence is visible rather than implicit: the vault UI states it on the delete
+    # confirmation, so an operator removing a reference knows what is left behind and where.
     await session.delete(secret)
     await session.commit()

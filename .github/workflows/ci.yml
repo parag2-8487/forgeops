@@ -845,6 +845,20 @@ jobs:
       # loosened.
       - name: The progress record must describe Phase 1 (task 20.15)
         run: bash scripts/check-progress.sh
+      # `check-docs.sh` had EXACTLY the problem the paragraph above describes, and it is worth
+      # naming rather than quietly fixing: it ran in no workflow and no hook either, so it had been
+      # failing for a week on two violations nobody could see. A `docs/deployment.md` staleness
+      # notice was inserted ahead of the security warning, and the check requires both clauses of
+      # that warning to be in the FIRST paragraph — so the document that tells an operator never to
+      # expose the topology to a network had its warning demoted, and the gate that exists to prevent
+      # exactly that said nothing.
+      #
+      # In the `audit` job rather than `pre-commit`, beside `check-progress.sh` and
+      # `check-no-latest.sh`, because those three are the same kind of gate: assertions about the
+      # repository as a whole rather than about a changed file, so a path filter would let a
+      # documentation regression through whenever the commit touched no docs.
+      - name: The documentation contract must hold (design §4.2, §4.4, §14.2)
+        run: bash scripts/check-docs.sh
       - name: The mutation manifest must describe Appendix B
         run: python scripts/check-mutation-manifest.py
       - name: go mod verify + govulncheck (pinned v1.1.4 via agent/tools)

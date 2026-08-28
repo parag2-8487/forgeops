@@ -136,16 +136,39 @@
 > stated per subsection here; the Completion Criteria at the end of this phase carry the per-item
 > evidence.
 >
+> **SEVEN BOXES ARE NOW TICKED, and the exception is the rule working rather than an erosion of it.**
+> The seven are the §1.2, §1.4, §1.6, §1.7 and §1.8 FRONTEND deliverables. Each carries, inline, the
+> screen that implements it and the test that proves it — which is exactly the bar the paragraph above
+> sets and could not previously be met, because those seven had no screen at all. They were the
+> visible half of a larger gap: the backend served 48 routes and the frontend called 13, so the engine
+> was built and tested while the browser was a read-only window onto a fraction of it. Closing that is
+> the pass those ticks record.
+>
+> Two things found by building it belong here rather than in a commit message, because both are
+> examples of the failure this document's own preamble exists to prevent — a claim that outlived the
+> behaviour it described:
+>
+> * `frontend/app/(shell)/projects/page.tsx` mapped every project to `readinessScore: 0`, a hardcoded
+>   literal, so every project displayed a zero regardless of its real score. The list now reports
+>   whether anything is indexed, in words; the score is computed once, on the detail screen.
+> * the readiness screen's explanatory panel said the score was derived from stored settings "not from
+>   a walk of its working tree" and described FIVE categories. Both had been false since the engine
+>   moved to index-derived scoring — six categories, computed from `file_tree` and `file_contents`.
+>   The home page's route list and `generation/service.py::_render`'s docstring had drifted the same
+>   way and are corrected too.
+>
+> The remaining 84 boxes stay unticked, unchanged, for the reason given above.
+>
 > | § | State | Evidence, or the gap |
 > |:--|:--|:--|
 > | 1.1 Agent pairing & connection | verified end to end | The journey pairs a real agent over mTLS and runs signed commands. `session.heartbeat` is a notification, so liveness is a WebSocket **ping** rather than the inbound-silence timeout written below — that timeout dropped every healthy session on a 90-second cycle. |
-> | 1.2 Multi-project workspace | verified | Projects created and read through the API in journey steps 2 and 5. |
+> | 1.2 Multi-project workspace | verified, in a browser | Projects created and read through the API in journey steps 2 and 5, and now CREATED BY CLICKING in the onboarding walk's step 1. FR-01 through FR-05 all have a surface: a create form (a browser cannot report a directory's absolute path, so the path is typed and the form says why), server-side search, tags, per-user favourites, and archive plus an honest delete. **Favourites are per USER**, which needed a table: `projects.settings.favourite` has existed since revision `0009` and is per project, so in a tenant with two people one person starring a project would reorder the other's list. Delete counts thirteen cascading tables before it runs and reports them, and the audit rows SURVIVE — revision `0007` gave `audit_events.project_id` no foreign key for exactly that reason, and that intent is now asserted rather than only documented. |
 > | 1.3 Codebase analysis engine | verified | A real scan of `backend/src` persists 141 files, 1857 dependency edges (243 resolved), 977 chunks; the fixture yields 7 files with genuine 1024-d BGE-M3 vectors. **Watch mode now exists and is proven live:** `forgeops-agent watch --project <id>` runs fsnotify → a real debounce → an incremental submit, and one edit of a module two files import gave `submitted 3 file(s) in the closure of depdemo/lib.js`. The fan-out's exact set is pinned deterministically — a change re-indexes the file, both direct importers and the TRANSITIVE one, and not the file that imports nothing. The agent self-triggers rather than waiting to be told, for the same reason `scan` is a verb: §2.2.1 confines `send_command` to `governance/`, so a backend-initiated re-index would be a governance decision per keystroke, and the agent already owns its workspace. Two defects were found by running it: `DebouncedWatcher` accepted a `debounceMs` it never read, and a DELETION produced an empty report the backend refused with 422 (a deleted file is absent from the fresh scan the closure is derived from, so finding its dependants would need the previous graph — deletions now trigger a full re-index). |
-> | 1.4 Deployment readiness | verified | Scored from the index with `projects.settings` empty, over this section's six weighted categories. `settings` may only REFINE, through `ignore_globs`. |
+> | 1.4 Deployment readiness | verified | Scored from the index with `projects.settings` empty, over this section's six weighted categories. `settings` may only REFINE, through `ignore_globs`. The six categories now EXPAND in the browser into the individual checks behind each score, each naming the indexed path that satisfied it and FR-19's "why it matters" — a category at 40 with no visible evidence is indistinguishable from a bug in the scorer. Building it found that the two sides spell a category differently: the breakdown's keys are model field names (`containerization_score`) and a check's `category` is the category itself (`containerization`), so the panel rendered twelve rows for six categories until they were reconciled. Caught by the live onboarding walk, not by a fixture — the fixture carried the misconception. |
 > | 1.5 AI generation & validation | verified, with a stated limit | `served_from` reaches `provider`, `l1` and `l2` on real calls, and the browser now observes 149 strictly increasing painted lengths (criterion 13). **The cascade and the circuit breaker are now proven across two GENUINELY SEPARATE live endpoints**, not against doubles: a second model server (`ollama-secondary`, its own container and port, sharing the weights volume) is registered as the `self_hosted` tier's secondary, and stopping the primary produced the full documented lifecycle — four attempts falling through `qwen3-coder-next:error → qwen3-coder-standby:success` with the breaker closed, the **5th failure inside 30 s opening it**, subsequent attempts recording `skipped(circuit_breaker_open)` with latency dropping 4.6 s → 0.7 s because no connection is attempted, **`half_open` after the 60 s cooldown**, and a successful probe closing it and returning traffic to the primary. `generation_runs.endpoint_id` records which endpoint answered. **The limit, stated rather than implied: only self-hosted endpoints have ever served a live call.** `LLM_KEY_*` are placeholders, so the five hosted vendor tiers remain unconfigured pending keys — the cascade is proven across real ENDPOINTS, not across vendors. |
-> | 1.6 Change approval centre | verified | Journey steps 8–9, and 13 for revert. A blocked revert escalates to approval rather than being refused, which is what makes §3.6's `applied → reverted` edge reachable at all. |
-> | 1.7 Policy engine | verified | 102 tests over OPA and the policy-evaluation surface. |
-> | 1.8 Secret management | verified | Encryption at rest, redaction before LLM context, deploy-time injection; Q-12, Q-24, Q-28. |
+> | 1.6 Change approval centre | verified | Journey steps 8–9, and 13 for revert. A blocked revert escalates to approval rather than being refused, which is what makes §3.6's `applied → reverted` edge reachable at all. REVERT IS NOW REACHABLE FROM THE UI, which it was not for two reasons rather than one: `ApprovalCenter` narrowed its mutation type to `approve|reject`, AND the list was filtered to `pending_approval`, so an applied change set never appeared on the screen at all. An escalated revert is presented as an outcome rather than an error — `approval-required` is registered at 202, inside the 2xx range, so the body arrives as a success and is narrowed explicitly. A per-project change history timeline explains all thirteen states, keeping `rolled_back` (an apply that undid itself) distinct from `reverted` (a deliberate reversal through the chokepoint). |
+> | 1.7 Policy engine | verified, and one fabrication removed | 102 tests over OPA and the policy-evaluation surface, plus a full editor over the new `GET /api/v1/policies` — a list route that did not exist, which is why a policy screen was unbuildable and `/policies` was a read-only wall of templates. **`POST /policies/{id}/test` used to fabricate its verdict**: with no `opa` on PATH it returned `"allow" if input["action"] == "allow_me" else "deny"`, a decision on a security surface that no policy engine computed. It raises the registered `503 dryrun-unavailable` now, reports the query it evaluated and the evaluator's own version, and distinguishes an UNDEFINED rule from a deny. The test that covered it asserted the synthesised values, so it passed with or without OPA installed; the binary is now in the backend image and in the backend CI job, both by COPY from the digest-pinned image Compose already runs. The policy READ path was also not tenant-scoped — any authenticated caller could read, rewrite or delete another tenant's rules by id — and answers the non-disclosing 403 now. |
+> | 1.8 Secret management | verified | Encryption at rest, redaction before LLM context, deploy-time injection; Q-12, Q-24, Q-28. The vault can now add, rotate and delete, and write-only is STRUCTURAL rather than promised: the value inputs are uncontrolled so no secret enters React state, the DOM node is cleared before the request is awaited so a failed write clears it too, and no response shape in that module carries a value in either direction. Deleting a reference does not reach into Infisical, and the confirmation says so — this platform does not own that store. |
 > | 1.9 Audit logging | verified | Unbroken hash chain asserted in journey step 12. **Known limitation:** `GovernanceAction` is a closed vocabulary with no `applied` action, so an audit reader cannot ask "was this applied?" and must consult `change_sets` — Q-04 allows one row per transit. |
 > | 1.10 Governance control plane | verified | Every mutation passes the chokepoint; `check-chokepoint.sh` proves it over both runtimes by parsing the import graph and reports "both halves clean". |
 > | 1.11 Auth integration | verified | Real Authentik OIDC in journey step 1. The agent authenticates as a DEVICE on both factors, which `require_principal` cannot express. |
@@ -165,8 +188,8 @@
 #### 1.2 Multi-Project Workspace
 - [ ] Backend: CRUD API for projects (import from GitHub, local path)
 - [ ] Backend: Project settings (LLM budget, policies basic)
-- [ ] Frontend: Project list view with search, tags, favorites
-- [ ] Frontend: Project detail page
+- [x] Frontend: Project list view with search, tags, favorites — `app/(shell)/projects/page.tsx`; every filter is a query parameter on `GET /projects`, asserted on the query string by `__tests__/project-workspace.test.tsx` because that is the only observable distinguishing server-side filtering from the browser-side version
+- [x] Frontend: Project detail page — `app/(shell)/projects/[projectId]/page.tsx`, the first caller `GET /projects/{id}` has ever had; `__tests__/project-workspace.test.tsx::the project detail page`
 - [ ] Frontend: Recent activity feed per project
 - [ ] Agent: Register project directory, watch for changes
 
@@ -191,7 +214,7 @@
 - [ ] Backend: Checklist checks (Dockerfile exists, multi-stage, non-root, etc.)
 - [ ] Backend: Plain-language report generation with "why it matters"
 - [ ] Frontend: Readiness score display (0-100) with radar chart
-- [ ] Frontend: Detailed category breakdown with expandable items
+- [x] Frontend: Detailed category breakdown with expandable items — `features/readiness/ReadinessBreakdown.tsx`, each category expanding into its checks with the indexed path that satisfied it and FR-19's "why it matters"; `__tests__/route-pages.test.tsx::Readiness category breakdown`
 - [ ] Frontend: Actionable recommendations list
 
 #### 1.5 AI File Generation & Validation Pipeline
@@ -236,7 +259,7 @@
 - [ ] Backend: Atomic all-or-nothing change application
 - [ ] Frontend: Diff preview (side-by-side and unified)
 - [ ] Frontend: Approval/reject buttons with comment field
-- [ ] Frontend: Change history timeline per project
+- [x] Frontend: Change history timeline per project — `features/approvals/ChangeHistoryTimeline.tsx`, with all thirteen §3.6 states explained (a test pins the set against the CHECK constraint revision `0010` added); `__tests__/codebase-and-history.test.tsx`
 - [ ] Agent: Backup-before-mutate implementation
 - [ ] Agent: Atomic file operations (transactional writes)
 
@@ -245,8 +268,8 @@
 - [ ] Backend: Policy CRUD API
 - [ ] Backend: Pre-defined policy templates (scheduling, file restrictions)
 - [ ] Agent: Mirror policy rules locally for zero-trust enforcement
-- [ ] Frontend: Policy list and editor UI
-- [ ] Frontend: Policy violation display with explanation
+- [x] Frontend: Policy list and editor UI — `features/policies/PolicyEditor.tsx` plus `app/(shell)/policies/page.tsx`, full CRUD over the new `GET /api/v1/policies`, with `opa check`'s own message rendered verbatim and a Test action reporting the decision, the query and the evaluator; `__tests__/policy-editor.test.tsx`
+- [x] Frontend: Policy violation display with explanation — `components/ui/governance-refusal.tsx`, keyed on the stable RFC 9457 `type` and asserted an exact mirror of the registry's governance subset; `__tests__/governance-refusal.test.tsx`
 - [ ] Implemented policies: "Never deploy on Fridays", "Never edit package.json", "Require approval for production"
 
 #### 1.8 Secret Management (Basic)
@@ -255,7 +278,7 @@
 - [ ] Agent: Secret scanning during codebase analysis (Gitleaks)
 - [ ] Agent: Secret redaction before LLM context
 - [ ] Agent: Deploy-time secret injection (environment variables)
-- [ ] Frontend: Secret vault UI (add, edit, delete, list)
+- [x] Frontend: Secret vault UI (add, edit, delete, list) — `features/vault/SecretVault.tsx`; write-only is structural (uncontrolled inputs, cleared before the request is awaited, no value field in either direction) and `__tests__/vault-write.test.tsx` asserts the shape rather than the screen
 
 #### 1.9 Audit Logging
 - [ ] Backend: Immutable audit log for all actions

@@ -37,7 +37,13 @@ FIRST_REVISION = "0001"
 #: cAST metadata columns `embeddings` has carried since `0003`; without them the first scan under
 #: the self-hosted embedding backend failed on `column "symbol" does not exist` after computing
 #: every vector, and a project on that backend would have had permanently invisible symbols.
-EXPECTED_HEAD = "0012"
+#:
+#: `0013` adds `projects.archived_at` and `project_favourites`, for PRD FR-05 (archive and delete)
+#: and FR-03 (favourites) — both P0 with no route on either side. Favourites needed a TABLE because
+#: `projects.settings.favourite`, which has existed since `0009`, is per project: in a tenant with
+#: two people one person starring a project would reorder the other's list. Tags needed nothing,
+#: because `project_tags` was created by `0009` and nothing had ever written to it.
+EXPECTED_HEAD = "0013"
 
 
 def _script_directory() -> ScriptDirectory:

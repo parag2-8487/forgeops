@@ -602,12 +602,25 @@ class GenerationService:
 
         The `projects` row: its `name` (so the manifests name the real application) and its
         `settings` (so an operator who has recorded a runtime, a port or a start command gets those).
-        That is the same source `GET /projects/{id}/readiness` scores from, and the same limit
-        applies ? there is no indexed file tree yet, because scanning the repository is group 11's
-        analysis work and `file_tree` is empty until it lands. When `settings` says nothing, the
-        prompt is used as an explicit, LAST-resort hint rather than the primary signal, and
-        `served_from` on the persisted run still records `template` so the row never claims a model
-        produced this.
+        When `settings` says nothing, the prompt is used as an explicit, LAST-resort hint rather than
+        the primary signal, and `served_from` on the persisted run still records `template` so the row
+        never claims a model produced this.
+
+        THE LIMIT, CORRECTED. This docstring used to say the codebase index could not be read
+        "because scanning the repository is group 11's analysis work and `file_tree` is empty until it
+        lands". That has not been true for some time: an agent scan populates `file_tree` and
+        `file_contents`, `GET /projects/{id}/readiness` scores from exactly those rows, and the
+        project detail screen reports their contents. The statement was a description of a constraint
+        that had since been removed, which is worse than no statement — a reader would conclude the
+        limitation was structural.
+
+        So the real limit is a narrower and more honest one: this TEMPLATE path reads the project row
+        and does not consult the index, even though the index is now there. That is a choice about
+        the fallback rather than a missing capability — the model path takes the index into account
+        through retrieval, and the template library exists to produce something defensible when no
+        model could be reached, where a partial index would make the output less predictable rather
+        than more accurate. Widening it to read `file_tree` is a change to the fallback's contract and
+        belongs with a decision about what a template may infer, not with a docstring.
         """
         settings: Mapping[str, Any] = {}
         project_name = ""

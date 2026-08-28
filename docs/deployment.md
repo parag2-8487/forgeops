@@ -1,17 +1,23 @@
 # ForgeOps Deployment — Phase 0
 
-> **Stale as of 2026-08-21.** This describes the **Phase 0** topology. The security warning
-> below still holds and should be read. One concrete fact has since become false: it says Phase 0
-> has "exactly one revision, `0001_initial`" — there are now **ten**, `0001` through `0010`, adding
-> identity and devices, codebase-index extensions, change-sets, policies, secrets, the append-only
-> audit table, generation runs, project tags and the change-set status vocabulary.
-
 **Warning: the Phase 0 `docker-compose.yml` topology is for local development on a trusted
 machine only. It must never be exposed to a network.** Phase 0 adds no general user
 authentication to the API surface, so most non-MCP routes are unauthenticated; the single
 narrow exception is `POST /api/v1/ai/complete`, which verifies
 OIDC solely to key the required per-caller abuse-protection bucket. There is no supported
 non-local deployment of Phase 0, and no production deployment target exists yet.
+
+> **Stale as of 2026-08-21, and the notice moved on 2026-08-28.** This describes the **Phase 0**
+> topology. The warning above still holds and is deliberately the first paragraph: `scripts/check-docs.sh`
+> asserts that both of its clauses appear there, and this notice previously sat in front of it — so the
+> check had been failing, invisibly, because no workflow and no hook invoked it. It runs in the `audit`
+> job now, beside the other gates that had the same problem.
+>
+> One concrete fact in the text below has since become false: it says Phase 0 has "exactly one
+> revision, `0001_initial`". There are now **thirteen**, `0001` through `0013`, adding identity and
+> devices, codebase-index extensions, change-sets, policies, secrets, the append-only audit table,
+> generation runs, project tags, the change-set status vocabulary, `served_from: pending`, the cAST
+> metadata columns on `embeddings_local`, and project archiving with per-user favourites.
 
 ## What the local topology publishes
 
