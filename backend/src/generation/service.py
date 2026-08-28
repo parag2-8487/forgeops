@@ -32,6 +32,15 @@ from pydantic import BaseModel
 from ..core.model_port import ArtifactModelPort
 from ..core.sse import SSEEventType, format_event
 from ..secrets.redaction import create_redacted_prompt
+from .artifact_checks import validate_artifacts
+from .iac_renderers import (
+    github_workflow_yaml,
+    helm_chart_yaml,
+    helm_deployment_template,
+    helm_helpers_template,
+    helm_values_yaml,
+    opentofu_main_tf,
+)
 from .model_prompt import (
     ArtifactParseError,
     build_generation_prompt,
@@ -677,6 +686,21 @@ class GenerationService:
             GeneratedFile(path="k8s/deployment.yaml", content=_deployment_yaml(app_name, port)),
             GeneratedFile(path="k8s/service.yaml", content=_service_yaml(app_name, port)),
             GeneratedFile(path="k8s/ingress.yaml", content=_ingress_yaml(app_name, port)),
+            # FR-24's other two halves. A Dockerfile and manifests with nothing to build the image and
+            # nothing to create the cluster is not a deployable project, and the agent's
+            # `validate.yaml`, `validate.helm` and `validate.tofu` operations had nothing to check.
+            GeneratedFile(path=".github/workflows/build.yml", content=github_workflow_yaml(app_name)),
+            GeneratedFile(path=f"charts/{app_name}/Chart.yaml", content=helm_chart_yaml(app_name)),
+            GeneratedFile(path=f"charts/{app_name}/values.yaml", content=helm_values_yaml(app_name, port)),
+            GeneratedFile(
+                path=f"charts/{app_name}/templates/_helpers.tpl",
+                content=helm_helpers_template(app_name),
+            ),
+            GeneratedFile(
+                path=f"charts/{app_name}/templates/deployment.yaml",
+                content=helm_deployment_template(app_name),
+            ),
+            GeneratedFile(path="infra/main.tf", content=opentofu_main_tf(app_name, port)),
         )
 
     def _chunks(self, content: str, size: int = 120) -> list[str]:
@@ -689,25 +713,29 @@ class GenerationService:
         return [content[i : i + size] for i in range(0, len(content), size)] or [""]
 
     def _validate(self, files: Sequence[GeneratedFile]) -> tuple[bool, tuple[str, ...]]:
-        """?11.5.5's deterministic gate: structural checks that either hold or do not.
+        """§11.5.5's deterministic gate: structural checks that either hold or do not.
 
-        Deliberately not a quality score. Each check below is something a malformed artifact fails
-        outright, so a refusal is explicable rather than a threshold judgement.
+        Deliberately not a quality score. Each check is something a malformed artifact fails outright,
+        so a refusal is explicable rather than a threshold judgement.
+
+        THE CHECKS PARSE THE DOCUMENT NOW. This method used to test for substrings — `"apiVersion:" not
+        in manifest`, `dockerfile.startswith("FROM ")`, `"USER " not in dockerfile`. That accepts a
+        manifest whose `apiVersion` is inside a comment, a Dockerfile whose `USER` appears in an
+        environment value, a document whose indentation is broken so the whole file is one scalar, and
+        anything that is not YAML at all: every one of those contains the right words. It also accepted
+        an object with no `metadata.name`, which no cluster will take. So the gate could only fail an
+        artifact that failed to mention something.
+
+        `artifact_checks` parses each document and checks its shape, and it covers the artifact kinds
+        FR-24 requires generating rather than only the two that existed: Dockerfile, Compose, Kubernetes
+        manifests, GitHub Actions workflows, `Chart.yaml` and OpenTofu configurations.
+
+        This is not the agent's validation and does not replace it. FR-27's tool-based checks —
+        `docker compose config`, `kubectl`, `helm`, `tofu`, `trivy` — run on the user's machine where
+        the workspace and the daemons are, and none of those binaries is in the backend image. Two
+        gates answering two questions: this one is "is the document well formed and the right shape",
+        cheap and offline and actionable by a repair iteration; the agent's is "will the real tools
+        accept it".
         """
-        findings: list[str] = []
-        by_path = {artifact.path: artifact.content for artifact in files}
-
-        dockerfile = by_path.get("Dockerfile", "")
-        if not dockerfile.startswith("FROM "):
-            findings.append("Dockerfile does not begin with a FROM instruction")
-        if "USER " not in dockerfile:
-            # A container that runs as root is the finding the readiness rubric also flags, and it
-            # is deterministic, so it belongs in the blocking gate rather than the advisory score.
-            findings.append("Dockerfile does not drop root with a USER instruction")
-
-        manifest = by_path.get("k8s/deployment.yaml", "")
-        for required in ("apiVersion:", "kind:", "metadata:", "spec:"):
-            if required not in manifest:
-                findings.append(f"Kubernetes manifest is missing {required}")
-
+        findings = validate_artifacts(files)
         return (not findings), tuple(findings)

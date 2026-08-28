@@ -114,23 +114,42 @@ class TestTheStreamShape:
         # would each fail here.
         assert emitted <= allowed, f"emitted names outside §7.4: {emitted - allowed}"
 
-    async def test_it_produces_the_four_artifacts_step_six_asks_for(self) -> None:
-        """§12.6 names a Dockerfile AND Kubernetes manifests, and this asserted two.
+    async def test_it_produces_every_artifact_kind_fr24_requires(self) -> None:
+        """§12.6 names a Dockerfile AND Kubernetes manifests; FR-24 names two more kinds again.
 
-        It was `test_it_produces_the_two_artifacts_step_six_asks_for` and required exactly
-        `['Dockerfile', 'k8s/deployment.yaml']`. A Deployment with no Service is not a deployable
-        manifest set — nothing can reach the pod — so the assertion pinned an incomplete generator
-        rather than a requirement, and journey step 10 failed on the missing `k8s/service.yaml`.
+        This assertion has now been wrong twice in the same way, and the pattern is worth naming. It
+        began as `test_it_produces_the_two_artifacts_step_six_asks_for` requiring exactly
+        `['Dockerfile', 'k8s/deployment.yaml']` — a Deployment with no Service is not a deployable
+        manifest set, nothing can reach the pod, and journey step 10 failed on the missing
+        `k8s/service.yaml`. It then required exactly four.
+
+        Four is still not the requirement. FR-24 is P0 and names containerisation, Kubernetes manifests,
+        **CI/CD pipelines** and **infrastructure as code**. A user given a Dockerfile and manifests has
+        nothing that builds the image and nothing that creates the cluster those manifests need, and the
+        agent's `validate.yaml`, `validate.helm` and `validate.tofu` operations had nothing to check.
+
+        So this asserts the requirement by KIND rather than by a list of paths, plus the exact paths for
+        the four that other tests and the journey depend on by name. A future kind then extends the set
+        without this test having to be rewritten a third time.
         """
         outcome = GenerationOutcome(run_id=uuid.uuid4())
         async for _ in GenerationService().stream_generation(uuid.uuid4(), "a python service", outcome=outcome):
             pass
-        assert [f.path for f in outcome.files] == [
+        paths = [f.path for f in outcome.files]
+
+        # The four that are referenced by name elsewhere, in order.
+        assert paths[:4] == [
             "Dockerfile",
             "k8s/deployment.yaml",
             "k8s/service.yaml",
             "k8s/ingress.yaml",
         ]
+        # And FR-24's other two kinds, by shape rather than by exact path: the chart and module names
+        # are derived from the project so that two projects do not collide.
+        assert any("/.github/workflows/" in f"/{p}" for p in paths), f"no CI/CD pipeline in {paths}"
+        assert any(p.endswith("Chart.yaml") for p in paths), f"no Helm chart in {paths}"
+        assert any(p.endswith(".tf") for p in paths), f"no infrastructure as code in {paths}"
+
         assert outcome.validation_passed is True
         assert outcome.status == "accepted"
         assert outcome.completion_tokens >= 1
@@ -201,7 +220,7 @@ class TestTheValidationGateIsDeterministic:
         assert passed is False
         assert any("FROM" in f for f in findings)
 
-    def test_it_names_every_missing_manifest_key(self) -> None:
+    def test_it_names_every_finding_rather_than_stopping_at_the_first(self) -> None:
         passed, findings = GenerationService()._validate(
             (
                 GeneratedFile(path="Dockerfile", content="FROM x\nUSER 1001\n"),
@@ -209,9 +228,68 @@ class TestTheValidationGateIsDeterministic:
             )
         )
         assert passed is False
-        # Every missing key is reported, not just the first: a gate that stops at one finding makes
-        # fixing artifacts an iterative guessing game.
-        assert sum("missing" in f for f in findings) == 3
+        # Every problem is reported, not just the first: a repair iteration is handed this list, and
+        # telling a model about one problem at a time turns a single repair into three.
+        #
+        # The manifest here declares an apiVersion and nothing else. The gate used to search for the
+        # substrings "kind:", "metadata:" and "spec:" and report three "missing" findings. It now parses
+        # the document, so it reports what is actually wrong with the object: no usable `kind`, and no
+        # `metadata` mapping — which is a shorter list and a truer one. `spec` is deliberately not
+        # required, because a ConfigMap, a Secret and a ServiceAccount are all valid Kubernetes objects
+        # with no `spec` at all, and the old check would have rejected every one of them.
+        assert len(findings) >= 2, findings
+        assert any("kind" in f for f in findings), findings
+        assert any("metadata" in f for f in findings), findings
+
+    def test_it_rejects_a_manifest_that_mentions_the_right_words_and_is_not_a_manifest(self) -> None:
+        """The defect the substring gate could not catch, stated as a test.
+
+        Every token the old gate looked for is present here, inside comments and a scalar. It parses as
+        YAML, contains "apiVersion:", "kind:", "metadata:" and "spec:", and declares no Kubernetes
+        object whatsoever.
+        """
+        passed, findings = GenerationService()._validate(
+            (
+                GeneratedFile(path="Dockerfile", content="FROM x\nUSER 1001\n"),
+                GeneratedFile(
+                    path="k8s/deployment.yaml",
+                    content=(
+                        "# apiVersion: apps/v1\n"
+                        "# kind: Deployment\n"
+                        "notes: |\n"
+                        "  metadata: and spec: appear here inside a string\n"
+                    ),
+                ),
+            )
+        )
+        assert passed is False, "a document that only mentions the right words passed the gate"
+        assert findings
+
+    def test_it_rejects_a_manifest_that_is_not_yaml_at_all(self) -> None:
+        passed, findings = GenerationService()._validate(
+            (
+                GeneratedFile(path="Dockerfile", content="FROM x\nUSER 1001\n"),
+                GeneratedFile(
+                    path="k8s/deployment.yaml",
+                    content="apiVersion: apps/v1\n  kind: Deployment\n\tmetadata: broken\nspec: x\n",
+                ),
+            )
+        )
+        assert passed is False
+        assert any("parsable" in f or "mapping" in f for f in findings), findings
+
+    def test_it_accepts_a_configmap_which_has_no_spec(self) -> None:
+        """A kind with no `spec` is a valid object, and the substring gate rejected all of them."""
+        passed, findings = GenerationService()._validate(
+            (
+                GeneratedFile(path="Dockerfile", content="FROM x\nUSER 1001\n"),
+                GeneratedFile(
+                    path="k8s/configmap.yaml",
+                    content="apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\ndata:\n  k: v\n",
+                ),
+            )
+        )
+        assert passed is True, findings
 
     def test_the_artifacts_it_generates_pass_its_own_gate(self) -> None:
         service = GenerationService()
