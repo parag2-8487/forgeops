@@ -1,0 +1,21 @@
+# Mutation rows whose neutralised verdict cannot be established without some part of the
+# environment, one per line:
+#
+#   Q-NN: requires=ENV_VAR  reason
+#
+# Read by `scripts/control-of-the-control.py`. The `requires=` clause is mandatory and is what keeps
+# this file from becoming the trap it would otherwise be. A flat exemption list would make the check
+# pass where the environment is missing and fail where it is present -- an assertion whose verdict
+# depends on who runs it, which is precisely how a stale constant survived for months in this
+# repository as an "environment note". Instead a row is skipped only where its named variable is
+# ABSENT; wherever that variable is set the row is judged like any other and must flip to VACUOUS.
+# An exemption therefore cannot mask a regression in any environment able to detect one.
+#
+# Context, because an exemption in this particular file deserves it. Until this pass
+# `control-of-the-control.py` ran in no workflow at all, so nothing anywhere checked whether the
+# thirty-one negative controls were still negative. Wiring it into `mutation-ci.yml` found four rows
+# it could not attribute, and three of the four were the job's environment rather than the row:
+# Q-04, Q-16 and Q-17 were skipping for want of `FORGEOPS_TEST_DATABASE_URL`, and Q-20 needs the real
+# Cerbos sidecar. All four now report VACUOUS.
+
+Q-19: requires=SELF_HOSTED_BASE_URL Its property builds the real application and enumerates `create_app().routes`, and route composition depends on SELF_HOSTED_BASE_URL, SELF_HOSTED_MODEL_ID, SELF_HOSTED_EMBEDDING_MODEL_ID, EMBEDDING_BACKEND and GENERATION_TIER together with a reachable model server -- the `backend` job's ollama service. Postgres with §6.4's two roles, a migrated schema, Redis, Cerbos and OPA were all added to `mutation-ci.yml` and were not enough; reproducing the model server there would duplicate the `backend` job rather than check anything new. Where the variable IS set this row is judged and passes: locally `python scripts/control-of-the-control.py Q-19` reports `neutralised -> VACUOUS`, and `pytest tests/property/test_q19_route_coverage.py` is 11 passed.

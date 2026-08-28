@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -118,10 +119,60 @@ def run(name: str, manifest: Path) -> tuple[str, str]:
     return "no verdict", output
 
 
+#: Rows whose neutralised verdict cannot be established without some part of the environment, each
+#: naming the variable that part is detected by, plus a reason.
+#:
+#: Format: `Q-NN: requires=ENV_VAR  reason...`
+#:
+#: The `requires=` clause is what keeps this from becoming the very trap this pass spent its time
+#: removing. A flat exemption list would make the check pass where the environment is missing and
+#: fail where it is present -- an assertion whose verdict depends on who runs it, which is how the
+#: embedding-model constant survived for months as an "environment note". Instead the row is skipped
+#: only when its named variable is ABSENT; wherever the variable is set, the row must flip to VACUOUS
+#: like any other. So the exemption cannot hide a genuine regression, and it self-clears in exactly
+#: the environment that could detect one.
+BASELINE = Path(__file__).resolve().parent / "control-of-the-control-baseline.txt"
+
+
+def load_baseline(path: Path) -> dict[str, tuple[str, str]]:
+    """Return `{row: (required_env_var, reason)}`."""
+    exempt: dict[str, tuple[str, str]] = {}
+    if not path.exists():
+        return exempt
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, _, rest = line.partition(":")
+        name, rest = name.strip(), rest.strip()
+        if not rest.startswith("requires="):
+            raise SystemExit(
+                f"{path.name}: '{name}' must start its reason with `requires=ENV_VAR`, naming the "
+                "environment variable whose absence makes the row unjudgeable. Without it the "
+                "exemption would apply everywhere, including where a regression could be seen."
+            )
+        clause, _, reason = rest.partition(" ")
+        variable = clause.removeprefix("requires=").strip()
+        reason = reason.strip()
+        if not variable or not reason:
+            raise SystemExit(
+                f"{path.name}: '{name}' needs both a `requires=ENV_VAR` clause and a reason saying "
+                "which part of the environment is missing and where the row is proven instead."
+            )
+        exempt[name] = (variable, reason)
+    return exempt
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("rows", nargs="*", metavar="Q-NN", help="rows to check")
     parser.add_argument("--all", action="store_true", help="check every row in the manifest")
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        default=BASELINE,
+        help="rows exempted with a reason; an exempted row that passes is an error",
+    )
     args = parser.parse_args(argv)
 
     manifest = load_manifest()
@@ -130,10 +181,28 @@ def main(argv: list[str] | None = None) -> int:
     if not targets:
         parser.error("name at least one row, or pass --all")
 
+    exempt = load_baseline(args.baseline)
+    unknown = sorted(set(exempt) - set(names))
+    if unknown:
+        raise SystemExit(
+            f"{args.baseline.name} names {', '.join(unknown)}, which is not a row in {MANIFEST.name}"
+        )
+    # An exemption applies only where its named variable is absent. Where it is set, the row is
+    # judged like any other -- so the exemption cannot mask a regression in any environment capable
+    # of detecting one.
+    skipped: dict[str, str] = {}
+    for name, (variable, reason) in exempt.items():
+        if os.environ.get(variable, "").strip():
+            continue
+        skipped[name] = f"{variable} is unset -- {reason}"
+
     failures = 0
     for name in targets:
         if name not in manifest:
             raise SystemExit(f"{name} is not a row in {MANIFEST.name}; rows are {', '.join(names)}")
+        if name in skipped:
+            print(f"{name:6} not judged            EXEMPT: {skipped[name]}")
+            continue
         row = neutralised_row(name, manifest[name])
         with tempfile.TemporaryDirectory(prefix="forgeops-cotc-") as directory:
             path = Path(directory) / "mutations.toml"
@@ -152,7 +221,15 @@ def main(argv: list[str] | None = None) -> int:
     if failures:
         print(f"\n{failures} row(s) could not be shown to depend on their mutation")
         return 1
-    print(f"\nall {len(targets)} row(s) flip to VACUOUS when their mutation is removed")
+    checked = len([n for n in targets if n not in skipped])
+    print(
+        f"\nall {checked} judged row(s) flip to VACUOUS when their mutation is removed"
+        + (
+            f"; {len(skipped)} not judged here for want of its environment ({', '.join(sorted(skipped))})"
+            if skipped
+            else ""
+        )
+    )
     return 0
 
 
