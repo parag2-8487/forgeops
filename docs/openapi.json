@@ -105,6 +105,23 @@
         "title": "ApprovalRead",
         "type": "object"
       },
+      "ArchiveRequest": {
+        "additionalProperties": false,
+        "description": "Why the project is being archived. Required, for NFR-14's \"why\".",
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ArchiveRequest",
+        "type": "object"
+      },
       "AuditEventOut": {
         "description": "One record, as the API renders it.\n\n`prev_hash` and `hash` are hex, so a caller can verify the chain independently without this\nservice being trusted to answer honestly about itself \u2014 which is the only kind of tamper\nevidence worth having.",
         "properties": {
@@ -691,13 +708,61 @@
             "title": "File Path",
             "type": "string"
           },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
           "language": {
             "title": "Language",
             "type": "string"
           },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "parent_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Symbol"
+          },
           "start_line": {
             "title": "Start Line",
             "type": "integer"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "token_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Count"
           }
         },
         "required": [
@@ -706,7 +771,8 @@
           "content",
           "start_line",
           "end_line",
-          "language"
+          "language",
+          "model_id"
         ],
         "title": "ChunkDetailResponse",
         "type": "object"
@@ -724,12 +790,39 @@
             "title": "Languages",
             "type": "array"
           },
+          "last_indexed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Indexed At"
+          },
+          "resolved_dependencies": {
+            "default": 0,
+            "title": "Resolved Dependencies",
+            "type": "integer"
+          },
           "status": {
             "title": "Status",
             "type": "string"
           },
+          "total_bytes": {
+            "default": 0,
+            "title": "Total Bytes",
+            "type": "integer"
+          },
           "total_chunks": {
             "title": "Total Chunks",
+            "type": "integer"
+          },
+          "unresolved_dependencies": {
+            "default": 0,
+            "title": "Unresolved Dependencies",
             "type": "integer"
           }
         },
@@ -826,6 +919,58 @@
           "outcome"
         ],
         "title": "CompletionResponseBody",
+        "type": "object"
+      },
+      "DeleteRequest": {
+        "additionalProperties": false,
+        "description": "Why the project is being deleted, and an explicit acknowledgement of what goes with it.\n\n`confirm_name` must equal the project's own name. Not a checkbox: a checkbox is clicked by\nreflex, and typing the name is the smallest gesture that proves the operator knows WHICH project\nthey are deleting. The same reason `gh repo delete` asks.",
+        "properties": {
+          "confirm_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Confirm Name",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "confirm_name"
+        ],
+        "title": "DeleteRequest",
+        "type": "object"
+      },
+      "DeletionReport": {
+        "description": "What the delete actually removed, counted before the statement ran.\n\nReturned rather than a bare 204 because the cascade is wide and an operator is entitled to know\nwhat it took. A 204 would make \"deleted an empty project\" and \"deleted 977 chunks and 14 change\nsets\" the same response.",
+        "properties": {
+          "audit_events_retained": {
+            "title": "Audit Events Retained",
+            "type": "integer"
+          },
+          "cascaded": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Cascaded",
+            "type": "object"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "cascaded",
+          "audit_events_retained"
+        ],
+        "title": "DeletionReport",
         "type": "object"
       },
       "DevicePage": {
@@ -1058,6 +1203,35 @@
         "title": "DryRunInput",
         "type": "object"
       },
+      "DryRunResult": {
+        "description": "The outcome of a real OPA evaluation.\n\n`decision` used to be the whole body, and when the `opa` binary was absent the route\nSYNTHESISED one \u2014 `\"allow\" if input[\"action\"] == \"allow_me\" else \"deny\"` \u2014 so a security surface\nanswered with a verdict no policy engine had computed. There is now no path that returns this\nmodel without OPA having produced the value; a missing binary is `503 dryrun-unavailable`.\n\n`rule` and `evaluated_with` exist so the answer is attributable. A decision with no statement of\nwhat produced it is indistinguishable from the fabricated one it replaces.",
+        "properties": {
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "evaluated_with": {
+            "title": "Evaluated With",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "undefined": {
+            "default": false,
+            "title": "Undefined",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "decision",
+          "rule",
+          "evaluated_with"
+        ],
+        "title": "DryRunResult",
+        "type": "object"
+      },
       "ExchangeRequest": {
         "additionalProperties": false,
         "description": "\u00a73.1's `{code, csr, agent_version, platform, fingerprint}`.\n\n`extra=\"forbid\"` because this is the one route an unauthenticated caller can reach: a body\nwith unknown members is either a client bug or a probe, and accepting it silently makes both\ninvisible.",
@@ -1105,7 +1279,7 @@
         "type": "object"
       },
       "ExchangeResponse": {
-        "description": "What the exchange issues (\u00a73.1's `201` body, as far as Phase 1 has built it).\n\n\u00a73.1's response also carries `policy_bundle` and `policy_bundle_digest`. Both come from\n`PolicyBundleService.publish`, which leaf 9.3 builds; they are absent rather than empty,\nbecause D-30 makes a missing bundle a **deny** on the agent side, so a zero-byte bundle would\nbe a field that means \"refuse everything\" while looking like a bundle.\n\nThe token and the key are hex-encoded. They are 32 random bytes each and JSON has no byte\ntype; hex rather than base64url because the agent stores them as bytes and one decoding\nmistake there is a credential that silently never matches. The certificate and CA bundle are\nPEM strings, which are already text and already have exactly one spelling.",
+        "description": "What the exchange issues (\u00a73.1's `201` body).\n\n`policy_bundle` and `policy_bundle_digest` are the project's active bundle at the moment of\npairing. They are `None` when nothing has been published -- absent rather than empty, because\nD-30 makes a missing bundle a **deny** on the agent side, so a zero-byte bundle would be a field\nthat means \"refuse everything\" while looking like a bundle.\n\nThey were previously always absent, waiting on leaf 9.3. That was not a missing feature but a\nbroken one: nothing set `agent_devices.policy_bundle_digest`, and the governance chokepoint\nrefuses any submission whose device is not pinned to the project's active digest, so every\ngeneration run ended `submission_refused` no matter what the operator did.\n\nThe token and the key are hex-encoded. They are 32 random bytes each and JSON has no byte\ntype; hex rather than base64url because the agent stores them as bytes and one decoding\nmistake there is a credential that silently never matches. The certificate and CA bundle are\nPEM strings, which are already text and already have exactly one spelling. The bundle is\nbase64 because it is a gzip archive rather than text, and base64 is what the agent's own\nhandshake already speaks.",
         "properties": {
           "ca_bundle": {
             "title": "Ca Bundle",
@@ -1143,6 +1317,28 @@
           "envelope_key": {
             "title": "Envelope Key",
             "type": "string"
+          },
+          "policy_bundle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Bundle"
+          },
+          "policy_bundle_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Bundle Digest"
           },
           "project_id": {
             "format": "uuid",
@@ -1275,6 +1471,66 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IndexResult": {
+        "description": "What was actually persisted. Every number is counted, none is asserted.",
+        "properties": {
+          "chunks_indexed": {
+            "title": "Chunks Indexed",
+            "type": "integer"
+          },
+          "dependencies_indexed": {
+            "title": "Dependencies Indexed",
+            "type": "integer"
+          },
+          "files_indexed": {
+            "title": "Files Indexed",
+            "type": "integer"
+          },
+          "files_removed": {
+            "title": "Files Removed",
+            "type": "integer"
+          },
+          "inventory_hash": {
+            "title": "Inventory Hash",
+            "type": "string"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "readiness_score": {
+            "title": "Readiness Score",
+            "type": "integer"
+          },
+          "vectors_absent_reason": {
+            "title": "Vectors Absent Reason",
+            "type": "string"
+          },
+          "vectors_written": {
+            "title": "Vectors Written",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "files_indexed",
+          "files_removed",
+          "chunks_indexed",
+          "dependencies_indexed",
+          "vectors_written",
+          "vectors_absent_reason",
+          "inventory_hash",
+          "readiness_score",
+          "partial"
+        ],
+        "title": "IndexResult",
         "type": "object"
       },
       "PairingCodeRequest": {
@@ -1418,8 +1674,48 @@
         "title": "PolicyCreate",
         "type": "object"
       },
+      "PolicyPage": {
+        "description": "A keyset page of policies, newest first.\n\nShaped exactly like `ProjectPage` and `AuditPage`: a list plus the cursor that fetches the next\npage, `None` on the last one. Keyset over `(created_at, id)` rather than `OFFSET`, for the reason\n`projects/routes.py` gives \u2014 an offset shifts as rows are inserted, so a client paging while\npolicies are authored sees duplicates or gaps.",
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "policies": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyRead"
+            },
+            "title": "Policies",
+            "type": "array"
+          }
+        },
+        "required": [
+          "policies"
+        ],
+        "title": "PolicyPage",
+        "type": "object"
+      },
       "PolicyRead": {
         "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
@@ -1475,6 +1771,18 @@
               }
             ],
             "title": "Tenant Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
           }
         },
         "required": [
@@ -1645,6 +1953,18 @@
       },
       "ProjectResponse": {
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
           "created_at": {
             "anyOf": [
               {
@@ -1657,10 +1977,20 @@
             ],
             "title": "Created At"
           },
+          "favourite": {
+            "default": false,
+            "title": "Favourite",
+            "type": "boolean"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "indexed_file_count": {
+            "default": 0,
+            "title": "Indexed File Count",
+            "type": "integer"
           },
           "name": {
             "title": "Name",
@@ -1686,6 +2016,13 @@
             "title": "Settings",
             "type": "object"
           },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
           "updated_at": {
             "anyOf": [
               {
@@ -1709,6 +2046,50 @@
         "title": "ProjectResponse",
         "type": "object"
       },
+      "ReadinessCheckResponse": {
+        "description": "One checklist item, with the indexed path that satisfied it.\n\n\u00c2\u00a71.4 asks for \"checklist checks\" and a report that says \"why it matters\"; this is that, on the\nwire. `evidence` is what makes a score auditable \u00e2\u20ac\u201d a category at 40 with no evidence anywhere is\nindistinguishable from a bug in the scorer.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "max_points": {
+            "title": "Max Points",
+            "type": "integer"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "points": {
+            "title": "Points",
+            "type": "integer"
+          },
+          "why_it_matters": {
+            "title": "Why It Matters",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "passed",
+          "points",
+          "max_points",
+          "evidence",
+          "why_it_matters"
+        ],
+        "title": "ReadinessCheckResponse",
+        "type": "object"
+      },
       "ReadinessReportResponse": {
         "properties": {
           "categories": {
@@ -1717,6 +2098,23 @@
             },
             "title": "Categories",
             "type": "object"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessCheckResponse"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "evaluated_paths": {
+            "default": 0,
+            "title": "Evaluated Paths",
+            "type": "integer"
+          },
+          "indexed": {
+            "default": true,
+            "title": "Indexed",
+            "type": "boolean"
           },
           "level": {
             "title": "Level",
@@ -1782,6 +2180,314 @@
         ],
         "title": "SSEEventType",
         "type": "string"
+      },
+      "ScanChunkIn": {
+        "description": "One cAST chunk as the agent produced it.",
+        "properties": {
+          "chunk_index": {
+            "minimum": 0.0,
+            "title": "Chunk Index",
+            "type": "integer"
+          },
+          "end_line": {
+            "minimum": 1.0,
+            "title": "End Line",
+            "type": "integer"
+          },
+          "kind": {
+            "maxLength": 32,
+            "title": "Kind",
+            "type": "string"
+          },
+          "parent_symbol": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Symbol"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "start_line": {
+            "minimum": 1.0,
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "token_count": {
+            "minimum": 0.0,
+            "title": "Token Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chunk_index",
+          "kind",
+          "start_line",
+          "end_line",
+          "token_count",
+          "text"
+        ],
+        "title": "ScanChunkIn",
+        "type": "object"
+      },
+      "ScanDependencyIn": {
+        "properties": {
+          "from_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "From Path",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 16,
+            "title": "Kind",
+            "type": "string"
+          },
+          "raw_specifier": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Raw Specifier",
+            "type": "string"
+          },
+          "resolved": {
+            "default": false,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "to_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Path"
+          }
+        },
+        "required": [
+          "from_path",
+          "raw_specifier",
+          "kind"
+        ],
+        "title": "ScanDependencyIn",
+        "type": "object"
+      },
+      "ScanFileIn": {
+        "description": "One file of the report. `content` is REDACTED text; see the module docstring.",
+        "properties": {
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/ScanChunkIn"
+            },
+            "title": "Chunks",
+            "type": "array"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "content_hash": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "detection_tier": {
+            "default": 0,
+            "title": "Detection Tier",
+            "type": "integer"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "last_modified": {
+            "format": "date-time",
+            "title": "Last Modified",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "redaction_count": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Redaction Count",
+            "type": "integer"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "symbols_supported": {
+            "default": false,
+            "title": "Symbols Supported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "content_hash",
+          "size_bytes",
+          "last_modified",
+          "content"
+        ],
+        "title": "ScanFileIn",
+        "type": "object"
+      },
+      "ScanInventoryIn": {
+        "properties": {
+          "config_files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Config Files",
+            "type": "array"
+          },
+          "entry_points": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Entry Points",
+            "type": "array"
+          },
+          "file_count": {
+            "default": 0,
+            "title": "File Count",
+            "type": "integer"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Languages",
+            "type": "array"
+          },
+          "manifests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Manifests",
+            "type": "array"
+          },
+          "total_size_bytes": {
+            "default": 0,
+            "title": "Total Size Bytes",
+            "type": "integer"
+          }
+        },
+        "title": "ScanInventoryIn",
+        "type": "object"
+      },
+      "ScanReportIn": {
+        "description": "The agent's scan report (`agent/internal/scanner/scanreport.go`).",
+        "properties": {
+          "dependencies": {
+            "items": {
+              "$ref": "#/components/schemas/ScanDependencyIn"
+            },
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "dirty_closure": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dirty Closure",
+            "type": "array"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ScanFileIn"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "inventory": {
+            "$ref": "#/components/schemas/ScanInventoryIn"
+          },
+          "inventory_hash": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Inventory Hash",
+            "type": "string"
+          },
+          "partial": {
+            "default": false,
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "redaction_count": {
+            "default": 0,
+            "title": "Redaction Count",
+            "type": "integer"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version"
+        ],
+        "title": "ScanReportIn",
+        "type": "object"
       },
       "SecretCreate": {
         "properties": {
@@ -1874,6 +2580,11 @@
       },
       "SymbolQueryResponse": {
         "properties": {
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
           "file_path": {
             "title": "File Path",
             "type": "string"
@@ -1889,15 +2600,54 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "parent_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Symbol"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
           }
         },
         "required": [
           "name",
           "kind",
           "file_path",
-          "line_number"
+          "line_number",
+          "chunk_id"
         ],
         "title": "SymbolQueryResponse",
+        "type": "object"
+      },
+      "TagRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "tag": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag"
+        ],
+        "title": "TagRequest",
         "type": "object"
       },
       "TierInfoResponse": {
@@ -2333,16 +3083,27 @@
         ]
       }
     },
-    "/api/v1/analysis/codebase/chunks/{chunk_id}": {
+    "/api/v1/analysis/codebase/{project_id}/chunks/{chunk_id}": {
       "get": {
-        "description": "Retrieve chunk content and line range by chunk_id.",
-        "operationId": "get_chunk_details_api_v1_analysis_codebase_chunks__chunk_id__get",
+        "description": "Return one stored chunk, or the non-disclosing 403.\n\nA chunk that does not exist and a chunk belonging to another project answer\nidentically, for the same reason \u00a74.2 gives for projects: a distinguishable answer is\nan oracle for ids. The content returned is the redacted text that was stored \u2014 there\nis no unredacted copy to return.",
+        "operationId": "get_chunk_details_api_v1_analysis_codebase__project_id__chunks__chunk_id__get",
         "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
           {
             "in": "path",
             "name": "chunk_id",
             "required": true,
             "schema": {
+              "format": "uuid",
               "title": "Chunk Id",
               "type": "string"
             }
@@ -2376,10 +3137,76 @@
         ]
       }
     },
-    "/api/v1/analysis/codebase/status": {
+    "/api/v1/analysis/codebase/{project_id}/index": {
+      "post": {
+        "description": "Write a scan report into `file_tree`, `file_contents`, `file_dependencies` and the\nvector tables.\n\nThis endpoint is what makes the index non-empty; nothing else writes these tables. The\ncontent it stores is already redacted \u2014 the agent redacts before serialising, because\n`file_contents` is a redacted-only store (design \u00a76.3, \u00a77.11) and redaction after\ntransmission would mean the unredacted text had already left the machine.\n\nVectors are written only when an embedding provider is configured. When there is none,\nthe tree, the contents and the dependency graph are still persisted and\n`vectors_absent_reason` says why retrieval will be sparse-only \u2014 a zero or random\nvector would be indistinguishable from a real one at query time.\n\nAUTHENTICATED AS A DEVICE, NOT AS A USER, and this is the only route in the module that is.\nAn agent cannot satisfy `require_principal` \u2014 that verifies a user OIDC token through JWKS \u2014\nso while this route sat behind it the agent's scan submit was refused with\n`Unauthenticated` after doing all of the work. `require_device` requires the client\ncertificate AND the token, the same two factors the WebSocket handshake requires, because a\ntoken-only door here would be the softer one for the same credential.\n\nSCOPED TO THE DEVICE'S OWN PROJECT. The path carries a project id, and the authenticated\ndevice is paired to exactly one; a device that could index any id could overwrite another\ntenant's index with its own workspace. The mismatch answers with the same non-disclosing 403\nthe read routes use, so it cannot be used to discover which project ids exist.",
+        "operationId": "index_scan_report_api_v1_analysis_codebase__project_id__index_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanReportIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Persist an agent scan report into the codebase index",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/v1/analysis/codebase/{project_id}/status": {
       "get": {
-        "description": "Return indexing status and summary metrics for the codebase.",
-        "operationId": "get_codebase_status_api_v1_analysis_codebase_status_get",
+        "description": "Report what is actually in the index for one project.",
+        "operationId": "get_codebase_status_api_v1_analysis_codebase__project_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2390,6 +3217,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Codebase Status",
@@ -2398,11 +3235,21 @@
         ]
       }
     },
-    "/api/v1/analysis/codebase/symbols": {
+    "/api/v1/analysis/codebase/{project_id}/symbols": {
       "get": {
-        "description": "Query indexed symbols matching a substring search.",
-        "operationId": "query_symbols_api_v1_analysis_codebase_symbols_get",
+        "description": "Substring search over indexed symbols, scoped to one project.\n\nReads the cAST metadata revision `0003` added to `embeddings`, so a project whose\nchunks were stored without vectors \u2014 the honest outcome when no embedding provider is\nconfigured \u2014 has no symbols to return and gets an empty list. That is the correct\nanswer, and it is the one the previous implementation replaced with a fixed\n`NewParser`.",
+        "operationId": "query_symbols_api_v1_analysis_codebase__project_id__symbols_get",
         "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
           {
             "in": "query",
             "name": "query",
@@ -2411,6 +3258,18 @@
               "default": "",
               "title": "Query",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
             }
           }
         ],
@@ -2422,7 +3281,7 @@
                   "items": {
                     "$ref": "#/components/schemas/SymbolQueryResponse"
                   },
-                  "title": "Response Query Symbols Api V1 Analysis Codebase Symbols Get",
+                  "title": "Response Query Symbols Api V1 Analysis Codebase  Project Id  Symbols Get",
                   "type": "array"
                 }
               }
@@ -3026,7 +3885,7 @@
     "/api/v1/auth/callback": {
       "get": {
         "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
-        "operationId": "callback_api_v1_auth_callback_get",
+        "operationId": "callback_api_v1_auth_callback_post",
         "responses": {
           "200": {
             "content": {
@@ -3044,7 +3903,7 @@
       },
       "post": {
         "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
-        "operationId": "callback_api_v1_auth_callback_get",
+        "operationId": "callback_api_v1_auth_callback_post",
         "responses": {
           "200": {
             "content": {
@@ -3064,7 +3923,7 @@
     "/api/v1/auth/login": {
       "get": {
         "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
-        "operationId": "login_api_v1_auth_login_get",
+        "operationId": "login_api_v1_auth_login_post",
         "responses": {
           "200": {
             "content": {
@@ -3082,7 +3941,7 @@
       },
       "post": {
         "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
-        "operationId": "login_api_v1_auth_login_get",
+        "operationId": "login_api_v1_auth_login_post",
         "responses": {
           "200": {
             "content": {
@@ -3102,7 +3961,7 @@
     "/api/v1/auth/logout": {
       "get": {
         "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
-        "operationId": "logout_api_v1_auth_logout_get",
+        "operationId": "logout_api_v1_auth_logout_post",
         "responses": {
           "200": {
             "content": {
@@ -3120,7 +3979,7 @@
       },
       "post": {
         "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
-        "operationId": "logout_api_v1_auth_logout_get",
+        "operationId": "logout_api_v1_auth_logout_post",
         "responses": {
           "200": {
             "content": {
@@ -3342,7 +4201,101 @@
       }
     },
     "/api/v1/policies": {
+      "get": {
+        "description": "Enumerate stored policies for the caller's tenant, newest first.\n\nTHE ROUTE THAT DID NOT EXIST. This module published publish, templates, create, read, update,\ndelete and test \u2014 every operation on a policy you already know the id of, and no way to learn an\nid. So a policy management screen was unbuildable: the only enumerable thing was the immutable\ntemplate list, which is why `/policies` was a read-only wall of templates.\n\n`project_id` filters to one project's policies; passing it with no value is not the same as\nomitting it, so a global policy (`project_id IS NULL`) is reachable only by omitting the filter.\nThat asymmetry is deliberate \u2014 a \"global\" filter would be a second meaning for an absent\nparameter.",
+        "operationId": "list_policies_api_v1_policies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "enabled",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Enabled"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List the caller's stored policies",
+        "tags": [
+          "policies"
+        ]
+      },
       "post": {
+        "description": "Store a policy, owned by the caller's tenant.\n\nTHE TENANT COMES FROM THE PRINCIPAL, not from `current_tenant_id()`, and that is a fix rather\nthan a preference. `TenantContextMiddleware` populates the context variable from the principal it\nfinds on `request.state`, so the two agree on a normal request \u2014 but they diverge wherever the\nmiddleware has not run for this request, and the divergence is silent: the row is written with\n`tenant_id = NULL` while the reader scopes on the principal's real tenant, so a create returns\n201 and the immediately following read returns 403 for the row it just made. `create_project`\nalready reads `principal.tenant_id` for the same reason; this now matches it, and the\ncreate-then-read case above is what holds it there.",
         "operationId": "create_policy_api_v1_policies_post",
         "parameters": [
           {
@@ -3608,6 +4561,7 @@
     },
     "/api/v1/policies/{policy_id}/test": {
       "post": {
+        "description": "Evaluate this policy's Rego against a caller-supplied input document, through OPA.\n\nTHIS ROUTE USED TO FABRICATE ITS ANSWER. When `shutil.which(\"opa\")` found nothing it returned\n\n    decision = \"allow\" if test_input.input.get(\"action\") == \"allow_me\" else \"deny\"\n\nwhich is a verdict on a security surface that no policy engine computed, indistinguishable on\nthe wire from a real one. Worse than useless: an operator testing a `deny` rule would see `deny`\nand conclude the rule worked, when the rule had not been read. It now raises the registered\n`dryrun-unavailable` (503) naming the missing binary, so the failure is legible and retryable\nrather than silent and wrong. `opa` is installed in the backend image (see `Dockerfile`), so the\n503 means a broken deployment rather than an ordinary state.\n\n503 rather than 500, and `dryrun-unavailable` rather than a new type: the operation cannot be\nevaluated right now and may succeed later, which is exactly what that registered type means\n(\u00a74.2, Appendix C.1's registry is closed).",
         "operationId": "test_policy_dry_run_api_v1_policies__policy_id__test_post",
         "parameters": [
           {
@@ -3635,7 +4589,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DryRunResult"
+                }
               }
             },
             "description": "Successful Response"
@@ -3659,7 +4615,7 @@
     },
     "/api/v1/projects": {
       "get": {
-        "description": "The endpoint whose absence forced the UI to be a lookup box.\n\nKeyset over `(created_at, id)`, for the same reason the approvals list is: an offset shifts as\nrows are inserted, so a client paging while projects are created sees duplicates or gaps.",
+        "description": "The endpoint whose absence forced the UI to be a lookup box, now filterable server-side.\n\nKeyset over `(created_at, id)`, for the same reason the approvals list is: an offset shifts as\nrows are inserted, so a client paging while projects are created sees duplicates or gaps.\n\n**THE FILTERS RUN IN SQL, WHICH IS THE POINT OF THEM EXISTING.** PRD FR-02 and FR-03 ask for\nsearch, tags and favourites, and the cheap version is to fetch every project and filter in the\nbrowser. That is wrong in a way that is invisible while a tenant has six projects and total once\nit has six hundred: it pages the wrong set, so `next_cursor` describes the unfiltered sequence\nand the second page of a search silently omits matches.\n\n`search` matches the name or the path, case-insensitively, and `%` and `_` in the term are\nLITERAL characters rather than wildcards the caller did not ask for.\n\n`tag` is repeatable and conjunctive: `?tag=prod&tag=eu` means both, not either. Conjunctive\nbecause that is what narrowing means \u2014 a filter that widened as you added terms would be\nsurprising in exactly the situation you were trying to narrow.\n\n`archived` is a separate view rather than an inclusive flag: the default excludes archived\nprojects, and asking for them shows those and only those. An \"include archived\" flag would mix a\nproject you have finished with the ones you have not, in one list, which is the state archiving\nexists to end.",
         "operationId": "list_projects_api_v1_projects_get",
         "parameters": [
           {
@@ -3688,6 +4644,76 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "description": "Substring of the name or path",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Substring of the name or path",
+              "title": "Search"
+            }
+          },
+          {
+            "description": "Repeatable. A project must carry EVERY tag given.",
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable. A project must carry EVERY tag given.",
+              "title": "Tag"
+            }
+          },
+          {
+            "description": "Restrict to (or exclude) this caller's favourites",
+            "in": "query",
+            "name": "favourite",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Restrict to (or exclude) this caller's favourites",
+              "title": "Favourite"
+            }
+          },
+          {
+            "description": "Show archived projects instead of active ones",
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Show archived projects instead of active ones",
+              "title": "Archived",
+              "type": "boolean"
             }
           }
         ],
@@ -3719,7 +4745,7 @@
         ]
       },
       "post": {
-        "description": "Insert a project row owned by the caller's tenant.\n\nThe settings validation is unchanged and still refuses an unknown key rather than dropping it \u2014\na typo in `embedding_backend` that silently kept the default would only surface later as a\nproject whose vectors are in the wrong table (D-48).",
+        "description": "Insert a project row owned by the caller's tenant.\n\nThe settings validation is unchanged and still refuses an unknown key rather than dropping it \u00e2\u20ac\u201d\na typo in `embedding_backend` that silently kept the default would only surface later as a\nproject whose vectors are in the wrong table (D-48).",
         "operationId": "create_project_api_v1_projects_post",
         "requestBody": {
           "content": {
@@ -3759,9 +4785,87 @@
         ]
       }
     },
-    "/api/v1/projects/{project_id}": {
+    "/api/v1/projects/tags": {
       "get": {
-        "description": "Read a stored project.\n\nThis returned a fixed `\"Sample Project\"` for every id, including ids that had never existed.\nA create-then-read now returns what was created.",
+        "description": "The distinct tags across the caller's visible projects, so the filter can be a chooser.\n\nDeclared BEFORE `/{project_id}` on purpose: FastAPI matches in declaration order, and a literal\npath registered after a parameterised one would be swallowed by it and answer\n`422 value is not a valid uuid` for a request that is perfectly well formed.",
+        "operationId": "list_tags_api_v1_projects_tags_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response List Tags Api V1 Projects Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Every tag in use in this tenant",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}": {
+      "delete": {
+        "description": "Delete the project row and let the database's declared cascade take its dependents.\n\nWHAT GOES, AND WHAT STAYS. Thirteen tables carry `ON DELETE CASCADE` references into\n`projects.id` \u2014 the file tree, its contents, the dependency graph, both vector tables, change\nsets, generation runs, agent devices, secrets, policies, policy bundles, tags and favourites \u2014 and\nall of them go. They are counted BEFORE the delete and reported, because \"deleted\" with no\nstatement of scope is not informed consent.\n\n**The audit trail survives, and it survives by design rather than by exemption.** Revision `0007`\ngave `audit_events.project_id` no foreign key, with the reason written into the migration: \"an\nimmutable log that cascades away when a project is deleted is not an immutable log.\" The table\nadditionally REVOKEs `UPDATE` and `DELETE` from the application role and carries a trigger that\nraises on either, so there is no statement this route could issue that would remove those rows,\nand none it could issue to blank the column either. The rows keep the id of a project that no\nlonger exists, which is the honest record: the events happened, and the thing they happened to is\ngone. `audit_events_retained` says how many, so the operator learns the history outlives the\nproject instead of discovering it later.\n\nA DELETE rather than an archive-with-a-longer-name: archive already exists above and is the\nreversible option. This one is not reversible, which is why it asks for the name.",
+        "operationId": "delete_project_api_v1_projects__project_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete a project and its dependent rows",
+        "tags": [
+          "projects"
+        ]
+      },
+      "get": {
+        "description": "Read a stored project.\n\nThis returned a fixed `\"Sample Project\"` for every id, including ids that had never existed.\nA create-then-read now returns what was created.\n\nHydrated through the same helper the list uses, so the detail screen and the list row cannot\ndisagree about a project's tags or whether it is a favourite.",
         "operationId": "get_project_api_v1_projects__project_id__get",
         "parameters": [
           {
@@ -3805,7 +4909,7 @@
     },
     "/api/v1/projects/{project_id}/activity": {
       "get": {
-        "description": "The project's real governance history, read from `audit_events`.\n\nThis returned a single hardcoded `project_created` item dated 2026-08-06. The audit log is\nappend-only, hash-chained and already indexed on `(project_id, created_at)`, so an activity feed\nis a query over it rather than a second store \u2014 and using it means the feed cannot disagree with\nthe audit viewer about what happened.\n\nExistence is checked first so a caller cannot use an empty feed to learn that an id is\nunallocated.",
+        "description": "The project's real governance history, read from `audit_events`.\n\nThis returned a single hardcoded `project_created` item dated 2026-08-06. The audit log is\nappend-only, hash-chained and already indexed on `(project_id, created_at)`, so an activity feed\nis a query over it rather than a second store \u00e2\u20ac\u201d and using it means the feed cannot disagree with\nthe audit viewer about what happened.\n\nExistence is checked first so a caller cannot use an empty feed to learn that an id is\nunallocated.",
         "operationId": "get_project_activity_api_v1_projects__project_id__activity_get",
         "parameters": [
           {
@@ -3851,9 +4955,149 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/archive": {
+      "post": {
+        "description": "Set `archived_at`, leaving every row that references the project untouched.\n\nReversible by `POST /unarchive`, and idempotent: archiving an already-archived project keeps the\nFIRST timestamp rather than moving it, because the answer to \"when did this stop being worked on\"\nis the first time, not the most recent click.\n\nNothing is deleted, nothing is unindexed, no device is unpaired. That is the whole distinction\nfrom delete, and it is why archive is not implemented as \"delete but keep the row\".",
+        "operationId": "archive_project_api_v1_projects__project_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive a project (soft)",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/favourite": {
+      "delete": {
+        "description": "Unstar for the caller. Idempotent.",
+        "operationId": "remove_favourite_api_v1_projects__project_id__favourite_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unstar",
+        "tags": [
+          "projects"
+        ]
+      },
+      "put": {
+        "description": "Star the project for the CALLER, not for the project.\n\n`user_id` comes from the verified principal and there is no parameter for it, so one person\ncannot star a project on another's behalf. That is the whole reason this is a table rather than\nthe `projects.settings.favourite` flag that has existed since revision `0009`.",
+        "operationId": "add_favourite_api_v1_projects__project_id__favourite_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark as this caller's favourite",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/readiness": {
       "get": {
-        "description": "Score the project with `ReadinessEngine` and return the full breakdown.\n\nTwo things change here. The project must exist, so a readiness score is no longer returned for\nan unallocated id. And the **five-category breakdown is exposed**: the engine has always\ncomputed it and `ReadinessReportResponse` dropped it, which is why \u00a712.6 step 5's \"category\nbreakdown\" had nothing to render and the radar chart was reduced to one bar.\n\nWhat it scores is still derived from the project's stored `settings` and `path` rather than from\na filesystem walk of the repository, and that limit is real: wiring repository contents into the\nengine is analysis work, not a response-model change. The score is honest about its input rather\nthan pretending to have read the tree.",
+        "description": "Score the project from its INDEX and return the \u00c2\u00a71.4 category breakdown.\n\nWhat this used to score was `projects.settings`: `config_files` was literally\n`sorted(settings.keys())` and `manifests` was `[\"Dockerfile\"] if repo_url else []`, with\n`\"README.md\"` substituted when the settings were empty. So the number described what an operator\nhad typed into the create form \u00e2\u20ac\u201d it moved when the settings changed and stayed still when the\nrepository did \u00e2\u20ac\u201d and a project with a `favourite` flag scored points for documentation.\n\nIt now reads `file_tree` and `file_contents`: the rows an agent scan persisted through\n`POST /analysis/codebase/{project_id}/index`. `projects.settings` still participates, but only as\na REFINEMENT \u00e2\u20ac\u201d `ignore_globs` removes paths from the evidence, because a path the operator has\ndeclared out of scope is not evidence about the deployment. It can no longer stand in for the\nrepository.\n\nA project with no indexed files scores zero, says `indexed: false`, and recommends running a\nscan. That is the honest answer; scoring the settings instead would produce a number that looks\nlike a measurement of a repository nobody has read.",
         "operationId": "get_project_readiness_api_v1_projects__project_id__readiness_get",
         "parameters": [
           {
@@ -3890,6 +5134,167 @@
           }
         },
         "summary": "Readiness score",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/tags": {
+      "put": {
+        "description": "Add one tag. Idempotent, and bounded.\n\nPUT rather than POST because adding a tag that is already there is not a second tag \u2014\n`ON CONFLICT DO NOTHING` against `uq_project_tags_project_id_tag` makes the operation\nidempotent, which is what PUT promises and POST does not.",
+        "operationId": "add_project_tag_api_v1_projects__project_id__tags_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add a tag to a project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/tags/{tag}": {
+      "delete": {
+        "description": "Remove one tag. Idempotent: removing a tag that is not there succeeds.",
+        "operationId": "remove_project_tag_api_v1_projects__project_id__tags__tag__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tag",
+            "required": true,
+            "schema": {
+              "title": "Tag",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove a tag",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/unarchive": {
+      "post": {
+        "description": "Clear `archived_at`. The other half of \"soft, reversible\" actually being reversible.",
+        "operationId": "unarchive_project_api_v1_projects__project_id__unarchive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore an archived project",
         "tags": [
           "projects"
         ]

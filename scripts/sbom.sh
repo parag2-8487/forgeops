@@ -24,4 +24,20 @@ if ! grep -q '"bomFormat"' "$OUT"; then
   exit 1
 fi
 
+# The agent embeds tree-sitter grammars as Wasm blobs. Syft reads `agent/go.mod` and cannot see
+# them, so the document above describes the agent's Go dependency graph and silently omits a set of
+# third-party components that ship inside the binary. `sbom-merge.py` adds them from
+# `grammars.lock.json`, which is the file that pins their versions and digests.
+#
+# It existed for this and was called from nowhere -- not this script, not release.yml, not the
+# Makefile -- so every SBOM produced so far has been incomplete in a way that only a reader who
+# already knew about the grammars could detect.
+printf 'sbom: merging tree-sitter grammar components\n'
+python scripts/sbom-merge.py "$OUT" agent/internal/scanner/grammars/grammars.lock.json
+
+if ! grep -q '"bomFormat"' "$OUT"; then
+  printf 'sbom: FAIL merge left the output invalid\n' >&2
+  exit 1
+fi
+
 printf 'sbom: OK wrote %s\n' "$OUT"

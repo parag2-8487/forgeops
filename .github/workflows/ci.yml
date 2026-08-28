@@ -91,6 +91,14 @@ jobs:
       # commit was itself unpinned. --require-hashes verifies every wheel by digest.
       - run: pip install --require-hashes -r scripts/requirements-tools.lock
       - run: pre-commit run --all-files --show-diff-on-failure
+      # The Phase 0 area-1 aggregate (task 1.8): structure, licence, hygiene, Makefile contracts,
+      # docs, progress, and the two behavioural boundary tests. Every one of its members ran
+      # nowhere -- the aggregate itself was unreachable, so being "called by check-area1.sh" was
+      # not a path to anything. It sits in this job rather than `audit` because
+      # `tests/hook-boundary.test.sh` drives `pre-commit`, whose hook environments only exist here
+      # and are already built by the step above.
+      - name: Phase 0 area-1 safeguards (task 1.8)
+        run: bash scripts/check-area1.sh
 
   # ── 2. lock-integrity (Python hashes + six-platform tofu lock) ────────────
   lock-integrity:
@@ -106,10 +114,16 @@ jobs:
       - name: Install the pinned lock generator
         run: pip install "pip-tools==${PIP_TOOLS_VERSION}"
       # Regenerate both locks and fail on ANY diff.
+      #
+      # This ran as `... || true` under a step named "no diff allowed", so for as long as it has
+      # existed it could report nothing. It was hiding a real drift: both locks were generated
+      # with Python 3.11 while this workflow pins 3.13, and the resolver's `# via` annotations
+      # differ between the two (`anyio` and `starlette` stopped needing `typing-extensions` on
+      # 3.13). Regenerated on 3.13; no version or hash changed, only annotations and the header.
       - name: Backend lock freshness (no diff allowed)
         env:
           FORGEOPS_LOCK_NATIVE: "1"
-        run: bash scripts/check-lock-freshness.sh || true
+        run: bash scripts/check-lock-freshness.sh
 
       # Debt D5's sibling item (design §0.5, §8.5): `-diff` marks a file BINARY, so a
       # lockfile change prints "Binary files differ" and cannot be reviewed at all.
@@ -454,6 +468,16 @@ jobs:
         # is that a new router can forget it; this is the check that pays that cost, and
         # it enumerates create_app().routes rather than a document about them.
         run: python scripts/check-route-auth.py
+      # `dump-openapi.py`'s own module docstring says "`--check` is what CI runs, which is the whole
+      # point: a drifting record becomes a failing build". It ran in no workflow, no hook and no
+      # Makefile target, so `docs/api.md` could drift from the real schema without limit, and the
+      # sentence claiming otherwise was the only thing standing where the gate should have been.
+      #
+      # Here rather than in `audit` for the same reason `check-route-auth.py` is here: it constructs
+      # the real application, so it needs this job's DATABASE_URL, REDIS_URL and ENVELOPE_PEPPER.
+      - name: The endpoint reference must match the real OpenAPI schema
+        working-directory: .
+        run: python scripts/dump-openapi.py --check
       # design.md §2.2.1 mechanism 3, Python half. `MutationAuthority` cannot be constructed
       # outside governance/, and the banned-api table stops the private surface being named —
       # but neither notices a primitive that grows a caller. This AST-walks backend/src/** and
@@ -861,6 +885,28 @@ jobs:
         run: bash scripts/check-docs.sh
       - name: The mutation manifest must describe Appendix B
         run: python scripts/check-mutation-manifest.py
+      # The generalisation of the `check-docs.sh` incident above. That was not one unwired gate, it
+      # was a category: a sweep found twelve, and two of them were failing on rules a later phase
+      # had superseded -- `check-structure.sh` still demanded `frontend/features` be empty, and
+      # `check-go-module.sh` still forbade `.go` files under `internal/validator` and
+      # `internal/policy`. Had either run, the work that populated those directories could not have
+      # been committed. This asserts the meta-property so the category cannot reopen.
+      - name: Every gate script must actually run somewhere
+        run: python scripts/check-gate-reachability.py
+      # Promoted from the untracked `scripts/_state.sh`, which reconciled the plan against the
+      # record by hand for months and ran nowhere. Wiring it up immediately surfaced that leaf
+      # 20.10 still read `pending` with the words "0 of 13 steps pass" long after the journey
+      # started passing 13 of 13.
+      - name: The plan, the record and the evidence table must agree
+        run: bash scripts/check-plan-agreement.sh
+      # `frontend/features` is populated and `internal/validator` and `internal/policy` hold code,
+      # so both structural gates now assert the live shape rather than the Phase 0 one.
+      - name: The Go module contract must hold (SPDX headers, module path, readonly)
+        run: bash scripts/check-go-module.sh
+      # Runs `check-compose-validate.py` over the real compose file plus the driver's own extra
+      # assertions. Only the callee was ever exercised, and only by a unit test.
+      - name: The compose contract must hold
+        run: bash scripts/check-compose.sh
       - name: go mod verify + govulncheck (pinned v1.1.4 via agent/tools)
         run: |
           cd agent && go mod verify && cd ..

@@ -224,11 +224,36 @@ printf '%s\n' "$PY_STRUCTURAL_DIRS" | {
 }
 
 echo 'Checking frontend/features (design §1.3)...'
+# Phase-scoped, the same way `check-go-module.sh`'s structural list is, and for the same reason.
+#
+# In Phase 0 `frontend/features` was structural: no files, no subdirectories, because no feature
+# existed. Phase 1's entire job was to populate it, and it now holds eight feature directories.
+# Asserting emptiness here would be pattern O — a rule frozen at a previous phase, reporting the
+# work as a violation. Had this gate been wired anywhere, Phase 1 could not have been committed.
+#
+# So the rule inverts rather than being deleted, which is what keeps it meaningful: the directory
+# must now hold at least one feature, every feature directory must contain a real component rather
+# than a placeholder, and `README.md` must survive as the explanation of the layout.
 if [ -d "$FE_STRUCTURAL_DIR" ]; then
-	find "$FE_STRUCTURAL_DIR" -type f ! -name 'README.md' ! -name '.gitkeep' 2>/dev/null |
-		report_matches 'frontend/features is structural only and must contain no feature placeholder (design §1.3)'
-	find "$FE_STRUCTURAL_DIR" -mindepth 1 -type d 2>/dev/null |
-		report_matches 'frontend/features must contain no feature subdirectory (design §1.3)'
+	FE_FEATURES=$(find "$FE_STRUCTURAL_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+	if [ -z "$FE_FEATURES" ]; then
+		report_matches 'frontend/features must hold at least one feature directory (design §1.3, Phase 1)' <<-'EOF'
+			frontend/features has no feature directory
+		EOF
+	fi
+	if [ ! -f "$FE_STRUCTURAL_DIR/README.md" ]; then
+		report_matches 'frontend/features must keep its README.md explaining the layout (design §1.3)' <<-'EOF'
+			frontend/features/README.md is missing
+		EOF
+	fi
+	# A feature directory holding nothing but a placeholder is the failure this rule now guards:
+	# it reads as a delivered feature and is not one.
+	for feature in $FE_FEATURES; do
+		if [ -z "$(find "$feature" -type f \( -name '*.tsx' -o -name '*.ts' \) 2>/dev/null)" ]; then
+			printf '%s\n' "$feature" |
+				report_matches 'a frontend/features directory must contain a component, not only a placeholder (design §1.3)'
+		fi
+	done
 fi
 
 echo 'Checking for package-doc-only Go stubs (design §1.3)...'

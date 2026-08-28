@@ -1,0 +1,33 @@
+# Gate scripts deliberately reachable from nowhere, one per line, `script: reason`.
+#
+# Read by `scripts/check-gate-reachability.py`. An entry without a reason is an error, and so is an
+# entry naming a script that has since become reachable -- the same rule
+# `scripts/ci-jobs-baseline.txt` uses, so this file cannot quietly accumulate stale excuses.
+#
+# It is EMPTY, and that is the point. A sweep in this pass found twelve gate scripts that ran in no
+# workflow, no hook and no Makefile target, including `check-docs.sh`, which had been failing for a
+# week while the security warning it guards was demoted in `docs/deployment.md`. Two of the twelve
+# were failing on rules a later phase had superseded, so had they been wired, the work that
+# populated `frontend/features`, `agent/internal/validator` and `agent/internal/policy` could not
+# have been committed. Every one of the twelve was wired in rather than excused:
+#
+#   check-area1.sh              -> ci.yml `pre-commit`, after the hook run that builds its
+#                                  hook environments
+#   check-structure.sh          -> via check-area1.sh, now that the aggregate is itself reachable
+#   check-licence.sh            -> via check-area1.sh
+#   check-hygiene.sh            -> via check-area1.sh
+#   check-makefile.sh           -> via check-area1.sh
+#   check-go-module.sh          -> ci.yml `audit`
+#   check-compose.sh            -> ci.yml `audit`
+#   control-of-the-control.py   -> mutation-ci.yml `mutation-tests`, which gained the Postgres,
+#                                  Redis and Go its own closing comment said the harness needs
+#   dump-openapi.py --check     -> ci.yml `backend`, which already provides the environment the
+#                                  script needs to construct the real app
+#   sbom-merge.py               -> scripts/sbom.sh, itself the `sbom` Makefile target
+#   gen-envelope-fixtures.py    -> backend/tests/unit/test_governance_envelope.py, inside the
+#                                  `backend` job's pytest run
+#   gen-governance-fixtures.py  -> a backend/tests/mutation/mutations.toml row, executed by the
+#                                  mutation harness
+#
+# Adding a line here is a decision that a check should exist and never run. That is almost never the
+# right answer: a check which never executes reads as coverage and is not.

@@ -58,6 +58,12 @@ def build_app() -> Any:
     os.environ.setdefault("APP_ENV", "test")
     os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://unused@127.0.0.1:1/unused")
     os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:1/0")
+    # `Settings` refuses an empty ENVELOPE_PEPPER in every environment, so without this the script
+    # could not construct the app at all and `--check` raised a validation error rather than
+    # comparing anything. Nothing noticed, because until this pass `--check` ran nowhere despite
+    # this module's own docstring saying it is what CI runs. The value is a fixed non-secret: this
+    # process only renders a schema, and it never reaches a database or signs anything.
+    os.environ.setdefault("ENVELOPE_PEPPER", "openapi-dump-only-not-a-real-secret")
 
     from src.main import create_app  # noqa: PLC0415 — after sys.path is arranged
 

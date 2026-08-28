@@ -111,6 +111,7 @@ tmp/
 *.out
 *.orig
 *.rej
+scripts/_*
 scripts/_*.py
 scripts/_*.sh
 scripts/_*.txt

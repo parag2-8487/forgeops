@@ -50,9 +50,13 @@ fi
 # had therefore been failing since then, and nothing noticed because it is wired into neither CI
 # nor pre-commit nor `make lint` — a stale check that nobody runs.
 #
-# `validator` arrives with group 14, `policy` with 9.4, `devtools` later; each must leave this list
-# in the leaf that populates it. `internal/envelope` (D-59) and `internal/session` were never here.
-for dir in validator policy devtools; do
+# That prediction came true exactly as written. `validator` was populated by group 14 and `policy`
+# by leaf 9.4 — 12 and 4 `.go` files respectively — and neither leaf removed its name here, so the
+# rule had six findings, all of them noise, and still nothing noticed because nothing ran it. Both
+# names move to 5b in this pass, which asserts the opposite and would have caught the omission the
+# day either directory was populated. `devtools` genuinely remains structural: the directory exists
+# and holds no `.go` file.
+for dir in devtools; do
 	FOUND=$(find "$AGENT_DIR/internal/$dir" -name '*.go' 2>/dev/null || true)
 	if [ -n "$FOUND" ]; then
 		err "Forbidden .go file(s) in structural directory internal/$dir: $FOUND"
@@ -62,7 +66,7 @@ done
 # 5b. And the other direction, which is what stops 5 rotting again: a directory that has LEFT the
 # structural list must actually hold code. Without this, removing a name from the loop above would
 # be indistinguishable from deleting the rule.
-for dir in executor envelope session; do
+for dir in executor envelope session validator policy; do
 	FOUND=$(find "$AGENT_DIR/internal/$dir" -name '*.go' 2>/dev/null || true)
 	if [ -z "$FOUND" ]; then
 		err "internal/$dir is no longer treated as structural but holds no .go file"

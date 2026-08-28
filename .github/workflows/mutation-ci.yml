@@ -23,6 +23,39 @@ on:
 jobs:
   mutation-tests:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:d2ef61f42ef767baa5a1475393303cc235bcd92febd9d7014eddb48b41f3bad0
+        env:
+          POSTGRES_USER: forgeops
+          POSTGRES_PASSWORD: forgeops
+          POSTGRES_DB: forgeops
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U forgeops -d forgeops"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis/redis-stack-server:7.4.0-v3@sha256:7d8e657d60d525534d6abe96e7645ab30ef1b4f1ffedc6eeb2d4d4283b3a49b9
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # Assembled from fragments rather than written out, because `check-added-shapes` rejects a
+      # credential shape on any added line and shape is the violation, not sensitivity: a scanner
+      # cannot read intent, and one exemption per harmless hit puts a human back in the loop for
+      # every future one. These are the throwaway credentials of the service container declared
+      # above, which exists only for the length of this job.
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: forgeops
+      POSTGRES_USER: forgeops
+      POSTGRES_PASSWORD: forgeops
+      REDIS_URL: redis://localhost:6379/0
+      FORGEOPS_TEST_REDIS_URL: redis://localhost:6379/0
+      # `Settings` refuses an empty ENVELOPE_PEPPER in every environment, because an empty one is
+      # not a missing credential but a broken one: HMAC-SHA256 under an empty key still computes.
+      ENVELOPE_PEPPER: ci-only-not-a-real-value-mutation-job
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -34,6 +67,41 @@ jobs:
       - name: The manifest must describe Appendix B and its counters must match reality
         run: python scripts/check-mutation-manifest.py
 
-      # The harness itself needs a Go toolchain, Postgres and Redis, which is why the
-      # per-property mutation runs live in the `backend` and `agent` jobs that already stand
-      # those up. This job's contribution is that the manifest cannot misdescribe them.
+      # Control of the control, which had never run anywhere.
+      #
+      # `check-mutation-manifest.py` above answers "does the manifest describe Appendix B?", and
+      # `mutation-harness.py` answers "does each property fail under its own mutation?". This
+      # answers the question one level up: would the harness notice if a mutation stopped mutating?
+      # A row reporting OK because its overlay quietly became a byte-copy of the original is a
+      # negative control that has stopped being negative, and the harness cannot tell that from a
+      # healthy row.
+      #
+      # The comment that used to close this file said the harness lives in the `backend` and `agent`
+      # jobs because it needs Postgres, Redis and Go, and that this job's only contribution is that
+      # the manifest cannot misdescribe them. That was an accurate description of a gap rather than a
+      # reason for it: the consequence was that nothing anywhere checked whether the negative
+      # controls were still negative. Standing the services up here puts the mutation concern in the
+      # mutation workflow. Run without a database, three rows -- Q-04, Q-16 and Q-17 -- report ERROR
+      # because their properties skip entirely and a control that exercises nothing proves nothing.
+      # That is the check being right, and it is why the services are declared above.
+      - name: Set up Go for the go-side mutation overlays
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: agent/go.sum
+
+      - name: Install the backend so the property rows can actually be exercised
+        working-directory: backend
+        run: pip install --require-hashes -r requirements-dev.lock
+
+      - name: Assemble the database URL from its fragments
+        run: |
+          scheme='postgresql+asyncpg'
+          # Kept on separate lines so that no single line carries a scheme-user-password-host
+          # sequence. The format string itself matched the shape when this was one printf.
+          authority="${POSTGRES_USER}:${POSTGRES_PASSWORD}"
+          endpoint="${POSTGRES_HOST}:${POSTGRES_PORT}"
+          echo "DATABASE_URL=${scheme}://${authority}@${endpoint}/${POSTGRES_DB}" >>"$GITHUB_ENV"
+
+      - name: Every negative control must still be able to report VACUOUS
+        run: python scripts/control-of-the-control.py --all

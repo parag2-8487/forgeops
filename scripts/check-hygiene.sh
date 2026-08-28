@@ -80,6 +80,12 @@ policies/mcp/gateway.rego'
 
 # Patterns .gitignore must carry: generated output, the local .env, caches and
 # IDE state (design §0.3).
+#
+# `scripts/_*` is here because 258 session scratch files -- `_s1.sh` through `_s21.sh`, `_probe1`
+# through `_probe8`, sixteen draft commit messages -- accumulated on disk during development. They
+# were never committed, because three extension-specific rules happened to cover them, but a
+# `_foo.ps1` or `_foo.mjs` would have gone straight in. The single prefix rule closes that, and
+# requiring it here stops the rule itself from being removed.
 REQUIRED_IGNORES='.env
 __pycache__/
 .pytest_cache/
@@ -88,7 +94,8 @@ node_modules/
 .next/
 dist/
 .terraform/
-.idea/'
+.idea/
+scripts/_*'
 
 if [ ! -f "$CONFIG" ]; then
 	fail "$CONFIG is missing"
@@ -326,6 +333,21 @@ fi
 
 # ── 5. .gitignore must ignore generated state and nothing tracked ───────────
 echo 'Checking .gitignore coverage (design §0.3)...'
+
+# An ignore rule stops a scratch file arriving by accident; it does nothing about one added with
+# `git add -f`, or added before the rule existed. This asserts the outcome rather than the
+# precaution: no session scratch file is tracked. The name `scripts/_*` is reserved for throwaway
+# work, so anything under it that is worth keeping should have been given a real name and a header
+# saying what it gates -- which is what happened to `_env.sh` (now `local-env.ps1`), `_gate.sh`
+# (now `leaf-gate.ps1`) and `_state.sh` (now `check-plan-agreement.sh`, wired into CI's audit job).
+TRACKED_SCRATCH=$(git ls-files 'scripts/_*' 2>/dev/null || true)
+if [ -n "$TRACKED_SCRATCH" ]; then
+	printf '%s\n' "$TRACKED_SCRATCH" | while IFS= read -r scratch; do
+		[ -n "$scratch" ] || continue
+		fail "session scratch file is tracked: $scratch (give it a real name and a header, or delete it)"
+	done
+fi
+
 if [ -f "$IGNORE" ]; then
 	printf '%s\n' "$REQUIRED_IGNORES" | {
 		while IFS= read -r pattern; do
