@@ -172,7 +172,12 @@ if not ready:
 # "applying blueprints (attempt 1/5)" at 10:09:20 and the next poll at 10:13:39. Three attempts
 # consumed roughly thirteen minutes of a ten-minute budget, so the deadline expired while the
 # loop was inside a filesystem scan and migrations never got the time they needed.
-BLUEPRINT_DEADLINE = 420.0
+#
+# 900s rather than 420s, matching MIGRATION_DEADLINE. Observed a run poll for 405 consecutive
+# seconds and then fail, on a runner that had already spent seven minutes migrating -- the whole
+# start was slow rather than stuck. The same argument the migration budget carries applies here:
+# being slow is not the same as being broken, and nothing about what this asserts changes.
+BLUEPRINT_DEADLINE = 900.0
 GRACE_BEFORE_MANUAL_APPLY = 45.0
 APPLY_INTERVAL = 45.0
 MAX_APPLY_ATTEMPTS = 4
@@ -184,6 +189,9 @@ apply_attempts = 0
 last_apply = 0.0
 last_log = 0.0
 last_seen = "nothing yet"
+# Set by `fetch_json` whenever it returns None, so the failure names the status rather than
+# collapsing a refusal and a half-written body into one message.
+last_reason = "nothing fetched yet"
 
 
 def fetch_json(path, **params):
@@ -191,13 +199,26 @@ def fetch_json(path, **params):
 
     Returning None rather than {} is the point. The old code could not tell an empty collection
     from an unparseable body, so "not ready" and "ready and empty" were the same value.
+
+    IT ALSO RECORDS WHY, in `last_reason`, because the caller used to report every None as "the
+    flows endpoint did not return JSON" — and that message covers two completely different
+    conditions. A run failed after polling for 405 consecutive seconds with that text, and an
+    earlier one failed at the same step reporting `403 Forbidden (Token invalid/expired)` from a
+    different code path. Those may be the same underlying problem, and the message could not say:
+    a rejected bootstrap token and a body that is still being written both arrive here as None.
+    Naming the status turns the next failure into a diagnosis instead of a guess.
     """
+    global last_reason
     resp = client.get(path, params=params or None, follow_redirects=True)
     if resp.status_code != 200:
+        body = (resp.text or "").strip().replace("\n", " ")[:120]
+        last_reason = f"HTTP {resp.status_code} from {path}: {body}"
         return None
     try:
         return resp.json()
     except (json.JSONDecodeError, ValueError):
+        head = (resp.text or "").strip().replace("\n", " ")[:120]
+        last_reason = f"200 from {path} but the body is not JSON: {head}"
         return None
 
 
@@ -214,7 +235,7 @@ while time.time() - phase2_started < BLUEPRINT_DEADLINE:
     try:
         flows_body = fetch_json("/api/v3/flows/instances/", page_size=100)
         if flows_body is None:
-            last_seen = "the flows endpoint did not return JSON"
+            last_seen = last_reason
         else:
             slugs = {f.get("slug") for f in results_of(flows_body) if isinstance(f, dict)}
             scope_body = fetch_json("/api/v3/propertymappings/provider/scope/", page_size=100)
