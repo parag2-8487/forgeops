@@ -130,6 +130,31 @@ class GovernanceAction(StrEnum):
     Closed for the reason §11.9 closes `ACTOR_KINDS` and `OUTCOMES`: an open vocabulary makes
     the log unfilterable, and "show me every mutation this project refused" stops working the
     moment one call site spells an action differently.
+
+    **There is deliberately no `applied` action, and this is a decision rather than an omission.**
+
+    It was recorded as a known limitation -- "an audit reader cannot ask *was this applied?* and must
+    consult `change_sets`" -- and the resolution is to keep it that way for three reasons and to say
+    so where a reader will look.
+
+    1.  Every member below is a decision **this process made** at a named stage: admission refused,
+        stage 1 denied, stage 4 blocked, a human approved or rejected, a revert was authorised. An
+        `applied` row would be different in kind. It is not a decision; it is a report arriving later
+        from the agent about what happened on a machine this process does not control. The value of a
+        tamper-evident decision log is precisely that it records what was authorised, and mixing in
+        what was subsequently observed makes "the log says X" ambiguous at exactly the moment after
+        an incident when it must not be.
+    2.  Q-04 requires one row per transit. An apply is not a transit through the chokepoint -- the
+        chokepoint's work ends when it mints and signs the envelope. A row written when the agent
+        reports back would be a row with no transit behind it, which is the same defect Q-04
+        forbids from the other direction.
+    3.  `change_sets.status` already is the authoritative and queryable answer, it is reached
+        through `GET /api/v1/approvals?status=applied`, and the change history timeline on a
+        project's page renders it per change set.
+
+    What was genuinely wrong is that a reader had to *notice the absence* to learn any of this. The
+    audit screen now states it: the page says in as many words that this log records authorisation
+    decisions, that application outcomes live on the change set, and links there.
     """
 
     #: Admission refused the transit: no principal, no device, a revoked device, a stale bundle.

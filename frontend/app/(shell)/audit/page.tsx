@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
@@ -68,6 +69,24 @@ export default function AuditPageRoute() {
           independently, and the panel above is that recomputation — run by the server over its own
           rows, which is why the verdict below is a starting point for an investigation rather than
           the end of one.
+        </p>
+        <p className="mt-2">
+          <strong className="text-foreground">
+            This log records authorisation decisions, not outcomes.
+          </strong>{" "}
+          Every action it can carry is something the platform itself decided at a named stage — a
+          mutation refused, a policy deny, a blast radius blocked, a human approving or rejecting, a
+          revert authorised. There is deliberately no <code>applied</code> action, so{" "}
+          <em>was this change actually applied?</em> is not a question to ask here. Application is
+          reported afterwards by the agent about a machine this server does not control, and
+          recording that alongside the decisions would make &ldquo;the log says so&rdquo; ambiguous
+          at exactly the point after an incident where it must not be. The authoritative answer is
+          the change set&apos;s own status: see{" "}
+          <Link href="/approvals" className="underline hover:no-underline">
+            Approvals
+          </Link>
+          , which lists applied, pending, rejected and failed change sets as separate queues, and
+          the change history on each project&apos;s page.
         </p>
       </aside>
     </div>

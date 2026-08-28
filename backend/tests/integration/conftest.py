@@ -9,7 +9,7 @@ HNSW index, or the readiness contract at all.
 A live PostgreSQL with the `vector` extension available is selected through
 `FORGEOPS_TEST_DATABASE_URL`, e.g.
 
-    postgresql+asyncpg://postgres@127.0.0.1:55432/forgeops_test
+    postgresql+asyncpg://postgres@127.0.0.1:25432/forgeops_test
 
 When that variable is unset the schema tests are skipped with an explicit
 reason, so a run without a database never silently reports success.

@@ -865,32 +865,89 @@ disabled on this repository.`, so there is no server-side alert list to reconcil
   lives in the `.github/workflows/release.yml` comments and in D-20 below. Not repaired,
   because doing so would require rewriting a pushed commit. **Outstanding, cosmetic.**
 - **`phase-0-implementation` is not merged into `main`.** Merging is the owner's call.
-- **`load_tier_config` is not called by production code.** `${VAR}` expansion in
-  `config/model-tiers.yaml` now works and rejects unset names (D-24 group), but a
-  repository-wide search finds no caller outside its own module: `main.py` does not build the
-  model router from the YAML, so the six-tier chain that criterion 17 exercises is assembled
-  from fixtures in tests only. Criterion 17's cascade behaviour is genuinely proven against
-  real local HTTP fixtures; what is **not** proven is that the shipped YAML is what a running
-  backend loads. **Outstanding.**
-- **`compose-smoke` still only runs `docker compose config`.** The job asserts the unprofiled
-  service set is exactly the five and that profiles stay out, which is real, but it never runs
-  `docker compose up -d --wait` and never builds either image — so criterion 4's own wording
-  and criterion 1's container half rest on local runs recorded above, not on CI. **Outstanding.**
-- **`pnpm audit` is still non-gating** (`|| true` in the `audit` job) and `govulncheck` is
-  still installed from `@latest`. The Go and Python vulnerability gates do fail the build;
-  the frontend one does not, and the vulnerability scanner itself is not pinned. **Outstanding.**
-- **No Playwright `e2e` job exists**, although `ci.yml`'s header comment lists an `e2e` stage.
-  Criterion 6's keyboard-navigation evidence is the Vitest shell-layout suite plus the new
-  bundle inspection in `scripts/check-frontend-container.sh`; the browser-level assertion
-  runs locally only. **Outstanding.**
+- **`load_tier_config` IS called by production code — this entry was stale.** It records that
+  "a repository-wide search finds no caller outside its own module", which was true when written.
+  `backend/src/main.py:36` imports it and line 547 calls
+  `load_tier_config(_resolve_config_path(settings.model_tier_config_path), env=os.environ)`, and
+  `main.py:535` carries the comment recording that Phase 0 defined it and never called it. So the
+  shipped YAML is what a running backend loads, and criterion 17's cascade rests on the real
+  router. **Resolved.**
+- **`compose-smoke` runs the stack, not just `config` — this entry was stale.** `ci.yml:766` runs
+  `docker compose up -d --wait --wait-timeout 300`, then `scripts/check-compose-healthy.sh` and
+  `scripts/check-container-nonroot.sh`. Criterion 4's wording and criterion 1's container half
+  are proven in CI rather than only locally. **Resolved.**
+- **`pnpm audit` gates and `govulncheck` is pinned — this entry was stale.** `ci.yml:922` runs
+  `pnpm audit --audit-level critical` with no `|| true`, and the govulncheck step is named
+  "govulncheck (pinned v1.1.4 via agent/tools)". All three vulnerability gates fail the build and
+  the scanner is pinned. **Resolved.**
+- **A Playwright `e2e` workflow exists — this entry was stale.** `.github/workflows/e2e-ci.yml`
+  carries a `shell-smoke` job and the thirteen-step journey, plus the SSE paint spec and the
+  onboarding walk. Criterion 6's keyboard-navigation evidence is a browser-level assertion in CI,
+  not a Vitest approximation. **Resolved.**
 - **`infisical` is not digest-pinned** (`infisical/infisical:v0.91.1`) while every other
   Compose image is, and **OPA runs the non-rootless variant** where design §13.3 specifies
   `1.4.2-rootless`. Both are inside the optional `vault` profile / the local-only topology.
   **Outstanding.**
-- **`.antigravity/steering/agent-autonomy.md` is untracked**, so the file-preservation and autonomy
-  rules do not survive a fresh clone even though the sibling `secret-safety.md` does.
-  **Outstanding — the owner's call, since it is a workflow rule rather than product code.**
-  **Outstanding.**
+- **`.antigravity/steering/agent-autonomy.md` is tracked — this entry was stale.**
+  `git ls-files .antigravity/steering/` lists `agent-autonomy.md`, `learning-journal.md` and
+  `secret-safety.md`, so all three survive a fresh clone. **Resolved.**
+
+### The four recorded limitations, resolved
+
+Each of these had been written down as known and unresolved, which is a state that quietly persists.
+Each is now either fixed and verified, or a permanent decision with its reasoning.
+
+- **`GovernanceAction` has no `applied` action — permanent decision, not an omission.** Every member
+  of that vocabulary is a decision the chokepoint itself made at a named stage: admission refused,
+  stage 1 denied, stage 4 blocked, a human approved or rejected, a revert authorised. An `applied`
+  row is different in kind — it is a report arriving later from the agent about a machine this
+  server does not control. Recording it beside the decisions makes "the log says so" ambiguous at
+  exactly the point after an incident where it must not be, and Q-04 requires one row per transit
+  while an apply is not a transit: the chokepoint's work ends when it mints and signs the envelope.
+  `change_sets.status` is the authoritative answer, reachable at
+  `GET /api/v1/approvals?status=applied`. What was genuinely wrong is that a reader had to _notice
+  the absence_ to learn any of this, so the audit screen now states it in as many words and links to
+  Approvals. Reasoning recorded in `GovernanceAction`'s own docstring.
+- **Watch mode is proven for the supported deployment.** The limitation was scoped too widely. The
+  agent is a **host binary**, and run as one on Windows the real fsnotify watcher observes a real
+  host directory: `go test ./internal/scanner -run "Watch|Watcher|Coalesce"` is **12 passed**,
+  including `TestFSNotifyWatcher_EventDelivery`, which starts `NewFSNotifyWatcher()` over
+  `t.TempDir()`, writes a file with `os.WriteFile` and requires the create event within 3 s, and
+  `TestWatchCoalesced_*` over the debounce. `go test ./internal/app -run Watch` is 2 passed. The
+  binary builds for the host (`go build ./cmd/agent`, 66.9 MB) and `watch --help` offers
+  `--project`, `--debounce` and `--once`. That inotify does not cross Docker Desktop's virtualised
+  mounts remains true and is now correctly stated as a constraint on **containerised** agents, which
+  is not the supported deployment.
+- **The test-service ports moved out of the ephemeral range.** The recorded cause was Windows'
+  excluded range 55414–55513, and that is not what is wrong: `netsh interface ipv4 show
+excludedportrange protocol=tcp` does not currently list 55432 at all. The real cause is that the
+  dynamic port range starts at **49152**, so 55432, 56379 and 53592 all sat inside it and WinNAT
+  could claim any of them at any moment — which is why the failure was intermittent and why
+  restarting winnat "fixed" it. They are now **25432**, **26379** and **23592**, comfortably below
+  49152, above the well-known range, and absent from every exclusion this host reports. Verified by
+  recreating all three containers on the new ports and running
+  `tests/integration/test_audit_writer.py` and `test_agent_pairing.py`: **49 passed**. The
+  `forgeops-test-cerbos` container was also bound to policies under a stale
+  `C:/IMP/kiro/...` path and now reads this workspace.
+- **`SELF_HOSTED_EMBEDDING_MODEL_ID` no longer disagrees with itself.**
+  `tests/integration/test_self_hosted_generation.py` carried
+  `DEFAULT_EMBEDDING_MODEL = "nomic-embed-text:latest"` under a comment claiming the constants are
+  "the values `.env.example` ships", while `.env.example` and `ci.yml` have both said `bge-m3:567m`
+  since D-48 moved the local width to 1024. Three tests therefore failed locally and passed in CI,
+  which reads as a broken machine rather than a broken constant — which is how it became an
+  environment note instead of a bug. The constant now matches, and
+  `tests/meta/test_self_hosted_defaults_agree.py` pins both model constants against `.env.example`
+  **and** `.env.example` against `ci.yml`, with a guard against the parametrised set being empty:
+  **5 passed**. The previously failing file is now **8 passed** locally.
+- **The two mutation-harness meta failures were never about unreachable services.** They were
+  recorded as "this machine cannot reach the Docker and Go services the negative controls need".
+  That diagnosis was wrong. `test_regime_end_to_end.py::test_every_check_passes_on_the_real_tree`
+  runs _every_ repository check against the real tree, and two of those checks —
+  `check-structure.sh` and `check-go-module.sh` — were failing on rules a later phase had
+  superseded. With those corrected the tests pass unchanged: **5 passed** and **1 passed**, with no
+  edit to the harness and no service that was not already running. No "cannot reach the services"
+  message was added, because that condition does not arise; saying so would have been a second
+  false explanation on top of the first.
 
 ## Property test coverage — P-01 to P-15
 

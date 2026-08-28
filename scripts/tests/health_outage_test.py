@@ -47,7 +47,7 @@ VENV_PYTHON_POSIX = BACKEND / ".venv" / "bin" / "python"
 # The already-running local test cluster (see docs/development.md); overridable.
 REAL_DATABASE_URL = os.environ.get(
     "FORGEOPS_TEST_DATABASE_URL",
-    "postgresql+asyncpg://postgres@127.0.0.1:55432/forgeops_test",
+    "postgresql+asyncpg://postgres@127.0.0.1:25432/forgeops_test",
 )
 REDIS_SERVER = os.environ.get(
     "FORGEOPS_TEST_REDIS_SERVER", r"C:\Program Files\Redis\redis-server.exe"

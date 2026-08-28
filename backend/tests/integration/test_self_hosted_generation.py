@@ -64,8 +64,15 @@ EMBEDDING_MODEL_ENV = "SELF_HOSTED_EMBEDDING_MODEL_ID"
 #: Committed defaults, so this file works with no environment set at all. They are the values
 #: `.env.example` ships, restated here because `scripts/local-env.ps1` deliberately clears every
 #: declared project key before a host-side run.
+#:
+#: `DEFAULT_EMBEDDING_MODEL` used to read `nomic-embed-text:latest`, which `.env.example` has not
+#: shipped since D-48 moved the local width to 1024. The sentence above was therefore false for one
+#: of the two constants, and the consequence was the worst kind of environment drift: three tests in
+#: this file failed on a developer's machine and passed in CI, so the natural reading was that the
+#: machine was at fault. `test_self_hosted_defaults_match_dotenv_example` now pins both constants
+#: against `.env.example`, so the claim in this comment is checked rather than asserted.
 DEFAULT_MODEL = "qwen2.5-coder:1.5b"
-DEFAULT_EMBEDDING_MODEL = "nomic-embed-text:latest"
+DEFAULT_EMBEDDING_MODEL = "bge-m3:567m"
 
 #: CPU inference is minutes, not seconds. `OUTBOUND_HTTP_TIMEOUT_SECONDS` is 60, which is a
 #: PER-READ budget on the streaming path — deltas arrive far more often than that once generation

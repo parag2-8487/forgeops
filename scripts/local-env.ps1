@@ -123,21 +123,21 @@ $__leAkCount = Import-DotEnvFile (Join-Path $__leRoot '.evidence\ak.env')
 # 2. Host-facing endpoints, overriding whatever `.env` said. These are the published ports of
 #    the five `forgeops-test-*` containers; docs/development.md lists them in one table.
 # ---------------------------------------------------------------------------------------------
-$env:FORGEOPS_TEST_DATABASE_URL = 'postgresql+asyncpg://forgeops_migrator@127.0.0.1:55432/forgeops_test'
-$env:FORGEOPS_TEST_REDIS_URL = 'redis://127.0.0.1:56379/1'
+$env:FORGEOPS_TEST_DATABASE_URL = 'postgresql+asyncpg://forgeops_migrator@127.0.0.1:25432/forgeops_test'
+$env:FORGEOPS_TEST_REDIS_URL = 'redis://127.0.0.1:26379/1'
 $env:FORGEOPS_TEST_OIDC_BASE_URL = 'http://localhost:9000'
-$env:FORGEOPS_TEST_CERBOS_URL = 'http://127.0.0.1:53592'
+$env:FORGEOPS_TEST_CERBOS_URL = 'http://127.0.0.1:23592'
 
-$env:DATABASE_URL = 'postgresql+asyncpg://forgeops_app@127.0.0.1:55432/forgeops_test'
+$env:DATABASE_URL = 'postgresql+asyncpg://forgeops_app@127.0.0.1:25432/forgeops_test'
 # Explicit and load-bearing: alembic/env.py prefers ALEMBIC_DATABASE_URL over DATABASE_URL by
 # design (§6.4 - the migrator role owns the schema), so leaving `.env`'s Compose value in place
 # is finding 61 exactly.
-$env:ALEMBIC_DATABASE_URL = 'postgresql+asyncpg://forgeops_migrator@127.0.0.1:55432/forgeops_test'
-$env:REDIS_URL = 'redis://127.0.0.1:56379/0'
+$env:ALEMBIC_DATABASE_URL = 'postgresql+asyncpg://forgeops_migrator@127.0.0.1:25432/forgeops_test'
+$env:REDIS_URL = 'redis://127.0.0.1:26379/0'
 
 $env:FORGEOPS_REQUIRE_INTEGRATION = '1'
 $env:PGHOST = '127.0.0.1'
-$env:PGPORT = '55432'
+$env:PGPORT = '25432'
 $env:PGUSER = 'postgres'
 $env:POSTGRES_USER = 'postgres'
 $env:POSTGRES_DB = 'forgeops_test'

@@ -276,9 +276,9 @@ password — there is nothing to leak.
 
 | Container                 | Image                                 | Host port | Used as                     |
 | :------------------------ | :------------------------------------ | :-------- | :-------------------------- |
-| `forgeops-test-pg`        | `pgvector/pgvector:pg17`              | `55432`   | `forgeops_test` database    |
-| `forgeops-test-redis`     | `redis/redis-stack-server:7.4.0-v3`   | `56379`   | db 0 runtime, db 1 tests    |
-| `forgeops-test-cerbos`    | `ghcr.io/cerbos/cerbos:0.54.0`        | `53592`   | `CERBOS_URL`                |
+| `forgeops-test-pg`        | `pgvector/pgvector:pg17`              | `25432`   | `forgeops_test` database    |
+| `forgeops-test-redis`     | `redis/redis-stack-server:7.4.0-v3`   | `26379`   | db 0 runtime, db 1 tests    |
+| `forgeops-test-cerbos`    | `ghcr.io/cerbos/cerbos:0.54.0`        | `23592`   | `CERBOS_URL`                |
 | `forgeops-test-ak-server` | `ghcr.io/goauthentik/server:2026.5.6` | `9000`    | OIDC issuer                 |
 | `forgeops-test-ak-worker` | `ghcr.io/goauthentik/server:2026.5.6` | —         | Authentik background worker |
 
