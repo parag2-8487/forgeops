@@ -51,6 +51,10 @@ jobs:
       POSTGRES_DB: forgeops
       POSTGRES_USER: forgeops
       POSTGRES_PASSWORD: forgeops
+      # Consumed by scripts/postgres-init/10-forgeops-roles.sh below. Synthetic and scoped to this
+      # job's service container, which exists only for the length of the run.
+      FORGEOPS_APP_DB_PASSWORD: ci-only-not-a-real-value
+      FORGEOPS_MIGRATOR_DB_PASSWORD: ci-only-not-a-real-value
       REDIS_URL: redis://localhost:6379/0
       FORGEOPS_TEST_REDIS_URL: redis://localhost:6379/1
       # Cerbos is a container this job starts rather than a service, matching the `backend` job's
@@ -123,22 +127,44 @@ jobs:
           rm -f ./opa-bin
           opa version
 
-      - name: Assemble the database URL from its fragments
+      - name: Assemble the database URLs from their fragments
         run: |
+          # Kept on separate lines so no single line carries a scheme-user-password-host sequence.
+          # `check-added-shapes` rejected this twice, once as a literal and once as a printf format
+          # string, and it was right both times: shape is the violation, not sensitivity.
           scheme='postgresql+asyncpg'
-          # Kept on separate lines so that no single line carries a scheme-user-password-host
-          # sequence. The format string itself matched the shape when this was one printf.
-          authority="${POSTGRES_USER}:${POSTGRES_PASSWORD}"
           endpoint="${POSTGRES_HOST}:${POSTGRES_PORT}"
-          url="${scheme}://${authority}@${endpoint}/${POSTGRES_DB}"
-          echo "DATABASE_URL=${url}" >>"$GITHUB_ENV"
+          app_authority="forgeops_app:${FORGEOPS_APP_DB_PASSWORD}"
+          migrator_authority="forgeops_migrator:${FORGEOPS_MIGRATOR_DB_PASSWORD}"
+          echo "DATABASE_URL=${scheme}://${app_authority}@${endpoint}/${POSTGRES_DB}" >>"$GITHUB_ENV"
           # `FORGEOPS_TEST_DATABASE_URL` is the variable `tests/integration/capability.py` reads, and
           # it is deliberately a different name from `DATABASE_URL`. Setting only the latter is why
-          # the first run of this job still reported Q-04, Q-16 and Q-17 as ERROR with a database
-          # present: their properties skipped for want of the test DSN, and a control that exercises
-          # nothing proves nothing. `FORGEOPS_REQUIRE_INTEGRATION=1` below then turns any remaining
-          # skip into a failure, so a silently skipped property cannot read as a healthy control.
-          echo "FORGEOPS_TEST_DATABASE_URL=${url}" >>"$GITHUB_ENV"
+          # the first run of this job reported Q-04, Q-16 and Q-17 as ERROR with a database present:
+          # their properties skipped for want of the test DSN, and a control that exercises nothing
+          # proves nothing. `FORGEOPS_REQUIRE_INTEGRATION=1` above turns any remaining skip into a
+          # failure, so a silently skipped property cannot read as a healthy control.
+          echo "FORGEOPS_TEST_DATABASE_URL=${scheme}://${migrator_authority}@${endpoint}/${POSTGRES_DB}" >>"$GITHUB_ENV"
+
+      # §6.4's two-role arrangement, which the `backend` job builds the same way. A single-role job
+      # leaves `0007`'s REVOKE of UPDATE/DELETE on `audit_events` unexpressed, and Q-05's and Q-19's
+      # properties are about exactly that arrangement. GitHub service containers cannot mount
+      # `./scripts/postgres-init` the way Compose does, so the runner invokes the same script.
+      - name: Create the application and migrator roles
+        env:
+          PGHOST: ${{ env.POSTGRES_HOST }}
+          PGPORT: ${{ env.POSTGRES_PORT }}
+          PGUSER: ${{ env.POSTGRES_USER }}
+          PGPASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          PGDATABASE: ${{ env.POSTGRES_DB }}
+        run: bash scripts/postgres-init/10-forgeops-roles.sh
+
+      # Q-19 builds the real application and drives its routes, so it needs the schema to exist.
+      # Without this the property failed whether or not its mutation was applied, and the control
+      # reported `neutralised -> OK` -- correctly saying "this row does not prove the mutation is
+      # what the property objected to". Migrations run as the migrator, which owns the schema.
+      - name: Migrate to head as the migrator role
+        working-directory: backend
+        run: DATABASE_URL="$FORGEOPS_TEST_DATABASE_URL" python -m alembic upgrade head
 
       - name: Every negative control must still be able to report VACUOUS
         run: python scripts/control-of-the-control.py --all

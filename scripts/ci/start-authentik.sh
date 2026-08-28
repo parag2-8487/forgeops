@@ -71,11 +71,25 @@ common_env=(
 
 docker rm -f "$server_name" "$worker_name" >/dev/null 2>&1 || true
 
+# The SERVER starts alone, and the WORKER only after migrations are done.
+#
+# Both containers run Django migrations on startup, and starting them back to back had them racing
+# for the same tables: the log filled with `relation "authentik_tasks_workerstatus" does not exist`
+# repeating on a ten-second poll and then `ERROR: deadlock detected`, followed by `current
+# transaction is aborted`. That failed three consecutive runs, so it is a race rather than a flake --
+# it just needs both processes to reach the same migration inside the same window, which a
+# two-core runner with a cold page cache makes likely rather than rare.
+#
+# Serialising costs nothing: the worker's job is to apply the default blueprints, which it cannot do
+# until migrations have finished anyway. Phase 1 below already waits on `/-/health/ready/`, which
+# reports ready only once the database is reachable AND migrations are applied, so that wait is
+# exactly the barrier the worker needs. It is started between the two phases, in `start_worker()`.
 docker run -d --name "$server_name" --network host "${common_env[@]}" "$image" server >/dev/null
-docker run -d --name "$worker_name" --network host "${common_env[@]}" "$image" worker >/dev/null
 
-echo "waiting for Authentik to finish migrating, then to apply its default blueprints..."
-SERVER_NAME="$server_name" WORKER_NAME="$worker_name" python3 - <<'EOF'
+echo "waiting for Authentik to finish migrating, then starting the worker and applying blueprints..."
+SERVER_NAME="$server_name" WORKER_NAME="$worker_name" AUTHENTIK_IMAGE="$image" \
+	COMMON_ENV_JSON="$(printf '%s\n' "${common_env[@]}" | python3 -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')" \
+	python3 - <<'EOF'
 import json
 import os
 import subprocess
@@ -101,9 +115,36 @@ def dump_diagnostics():
     for container in (server_name, worker_name):
         print(f"\n===== docker logs (tail) {container} =====", file=sys.stderr, flush=True)
         proc = subprocess.run(["docker", "logs", "--tail", "120", container], capture_output=True)
+        if proc.returncode != 0:
+            # The worker is started only after migrations finish, so during phase 1 it does not
+            # exist yet. Saying so is more useful than a docker error the reader has to interpret.
+            print(f"(no container named {container} yet)", file=sys.stderr, flush=True)
+            continue
         for stream in (proc.stdout, proc.stderr):
             if stream:
                 print(stream.decode("utf-8", "replace"), file=sys.stderr, flush=True)
+
+
+def start_worker():
+    """Start the worker, once migrations are known to be finished.
+
+    The environment is handed over as JSON rather than rebuilt here, so the worker runs under
+    byte-identical settings to the server. They must agree on the secret key or neither can read
+    the other's signed values.
+    """
+    common_env = json.loads(os.environ["COMMON_ENV_JSON"])
+    image = os.environ["AUTHENTIK_IMAGE"]
+    argv = ["docker", "run", "-d", "--name", worker_name, "--network", "host", *common_env, image, "worker"]
+    proc = subprocess.run(argv, capture_output=True)
+    if proc.returncode != 0:
+        print(
+            "FAIL: could not start the Authentik worker: "
+            + proc.stderr.decode("utf-8", "replace"),
+            file=sys.stderr,
+        )
+        dump_diagnostics()
+        sys.exit(1)
+    print("[start-authentik] migrations finished, worker started", flush=True)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -156,6 +197,14 @@ if not ready:
     )
     dump_diagnostics()
     sys.exit(1)
+
+# ---------------------------------------------------------------------------------------------
+# The migration barrier, and the worker on the far side of it.
+#
+# `/-/health/ready/` is ready only once migrations are applied, so reaching here is the guarantee
+# the worker needs. Starting it before this point had the two processes deadlocking on the same
+# migration -- see the comment above the server's `docker run`.
+start_worker()
 
 # ---------------------------------------------------------------------------------------------
 # PHASE 2 -- blueprints.
