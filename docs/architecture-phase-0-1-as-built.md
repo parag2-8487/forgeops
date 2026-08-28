@@ -30,12 +30,12 @@
 
 ## Contents
 
-| #   | Diagram                                                                                       | Answers                                      |
-| :-- | :-------------------------------------------------------------------------------------------- | :------------------------------------------- |
-| 1   | [As-built system architecture](#diagram-1--as-built-system-architecture)                      | What runs today?                             |
-| 2   | [The four security layers](#diagram-2--the-four-security-layers)                              | Why is this safe to point at a codebase?     |
-| 3   | [End-to-end approval flow + C10 status](#diagram-3--end-to-end-approval-flow-with-c10-status) | How far does the journey actually get?       |
-| 4   | [Scope boundary](#diagram-4--scope-boundary--what-is-deliberately-absent)                     | What is _not_ built, and is that on purpose? |
+| #   | Diagram                                                                                              | Answers                                                         |
+| :-- | :--------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------- |
+| 1   | [As-built system architecture](#diagram-1--as-built-system-architecture)                             | What runs today?                                                |
+| 2   | [The four security layers](#diagram-2--the-four-security-layers)                                     | Why is this safe to point at a codebase?                        |
+| 3   | [End-to-end approval flow + C10 status](#diagram-3--end-to-end-approval-flow-with-c10-status)        | How far does the journey actually get?                          |
+| 4   | [Scope boundary](#diagram-4--scope-boundary--what-is-deliberately-absent)                            | What is _not_ built, and is that on purpose?                    |
 | 5   | [The browser's reach](#the-browsers-reach--which-routes-have-a-screen-and-which-deliberately-do-not) | Which routes have a screen, and which do not — with the reason? |
 
 ### How to render these
@@ -543,50 +543,50 @@ look identical from outside.
 
 ### Reachable from the UI
 
-| Route                                       | Screen                                        |
-| :------------------------------------------ | :-------------------------------------------- |
-| `GET/POST /projects`                        | `/projects` — list with server-side search, tags, favourites; create form |
-| `GET /projects/{id}`                        | `/projects/{id}` — the detail page, its first caller ever |
-| `GET /projects/{id}/activity`               | `/projects/{id}` — activity, read from `audit_events` |
-| `GET /projects/{id}/readiness`              | `/readiness` and `/projects/{id}` |
-| `GET /projects/tags`                        | `/projects` — the tag filter's vocabulary |
-| `POST /projects/{id}/archive`, `/unarchive` | `/projects` — reversible, reason required |
-| `DELETE /projects/{id}`                     | `/projects` — cascade counted and reported, name typed back |
-| `PUT/DELETE /projects/{id}/tags[/{tag}]`    | `/projects/{id}` — tag editor |
-| `PUT/DELETE /projects/{id}/favourite`       | `/projects` — per-user star |
-| `GET /policies`                             | `/policies` — **new route**; the list a policy screen could not exist without |
-| `POST/GET/PATCH/DELETE /policies[/{id}]`    | `/policies` — full CRUD with the validator's own message |
-| `POST /policies/{id}/test`                  | `/policies` — dry run, reporting the query and the evaluator |
-| `GET /policies/templates`                   | `/policies` — read-only starting points |
-| `POST /policies/publish`                    | `/policies` — step 5 of the onboarding path, not an admin curiosity |
-| `GET/POST/PATCH/DELETE /secrets[/{id}]`     | `/vault` — write-only values, structurally |
-| `GET /approvals`, `GET /approvals/{id}`     | `/approvals` — four queues; `/projects/{id}` — the timeline |
-| `POST /approvals/{id}/approve`, `/reject`   | `/approvals` |
-| `POST /approvals/{id}/revert`               | `/approvals` — from the `applied` queue; an escalation is an outcome, not an error |
-| `POST /generation/runs`                     | `/generation` — the SSE wizard |
-| `GET /agents/devices`, `/devices/{id}`      | `/pairing` — list and single re-read |
-| `POST /agents/pairing-codes`                | `/pairing` — shown once, admin or developer |
-| `DELETE /agents/{device_id}`                | `/pairing` — admin, reason required |
-| `GET /audit/events`                         | `/audit` |
-| `GET /audit/verify`                         | `/audit` — admin; tamper evidence stops being a claim |
-| `GET /analysis/codebase/{id}/status`        | `/projects/{id}` — **the answer to "has this ever been scanned?"** |
-| `GET /analysis/codebase/{id}/symbols`       | `/projects/{id}` — offered only when the index has chunks |
-| `GET /analysis/codebase/{id}/chunks/{id}`   | `/projects/{id}` — one stored, redacted chunk |
-| `POST /analysis/plan`                       | `/analysis` — the same analyzer the chokepoint's blast-radius stage runs |
-| `GET /ai/tiers`                             | `/models` — availability and breaker state |
-| `GET /health`                               | `/` |
-| `POST /auth/refresh`, `/logout`, `/login`, `/callback` | the auth bootstrap |
+| Route                                                  | Screen                                                                             |
+| :----------------------------------------------------- | :--------------------------------------------------------------------------------- |
+| `GET/POST /projects`                                   | `/projects` — list with server-side search, tags, favourites; create form          |
+| `GET /projects/{id}`                                   | `/projects/{id}` — the detail page, its first caller ever                          |
+| `GET /projects/{id}/activity`                          | `/projects/{id}` — activity, read from `audit_events`                              |
+| `GET /projects/{id}/readiness`                         | `/readiness` and `/projects/{id}`                                                  |
+| `GET /projects/tags`                                   | `/projects` — the tag filter's vocabulary                                          |
+| `POST /projects/{id}/archive`, `/unarchive`            | `/projects` — reversible, reason required                                          |
+| `DELETE /projects/{id}`                                | `/projects` — cascade counted and reported, name typed back                        |
+| `PUT/DELETE /projects/{id}/tags[/{tag}]`               | `/projects/{id}` — tag editor                                                      |
+| `PUT/DELETE /projects/{id}/favourite`                  | `/projects` — per-user star                                                        |
+| `GET /policies`                                        | `/policies` — **new route**; the list a policy screen could not exist without      |
+| `POST/GET/PATCH/DELETE /policies[/{id}]`               | `/policies` — full CRUD with the validator's own message                           |
+| `POST /policies/{id}/test`                             | `/policies` — dry run, reporting the query and the evaluator                       |
+| `GET /policies/templates`                              | `/policies` — read-only starting points                                            |
+| `POST /policies/publish`                               | `/policies` — step 5 of the onboarding path, not an admin curiosity                |
+| `GET/POST/PATCH/DELETE /secrets[/{id}]`                | `/vault` — write-only values, structurally                                         |
+| `GET /approvals`, `GET /approvals/{id}`                | `/approvals` — four queues; `/projects/{id}` — the timeline                        |
+| `POST /approvals/{id}/approve`, `/reject`              | `/approvals`                                                                       |
+| `POST /approvals/{id}/revert`                          | `/approvals` — from the `applied` queue; an escalation is an outcome, not an error |
+| `POST /generation/runs`                                | `/generation` — the SSE wizard                                                     |
+| `GET /agents/devices`, `/devices/{id}`                 | `/pairing` — list and single re-read                                               |
+| `POST /agents/pairing-codes`                           | `/pairing` — shown once, admin or developer                                        |
+| `DELETE /agents/{device_id}`                           | `/pairing` — admin, reason required                                                |
+| `GET /audit/events`                                    | `/audit`                                                                           |
+| `GET /audit/verify`                                    | `/audit` — admin; tamper evidence stops being a claim                              |
+| `GET /analysis/codebase/{id}/status`                   | `/projects/{id}` — **the answer to "has this ever been scanned?"**                 |
+| `GET /analysis/codebase/{id}/symbols`                  | `/projects/{id}` — offered only when the index has chunks                          |
+| `GET /analysis/codebase/{id}/chunks/{id}`              | `/projects/{id}` — one stored, redacted chunk                                      |
+| `POST /analysis/plan`                                  | `/analysis` — the same analyzer the chokepoint's blast-radius stage runs           |
+| `GET /ai/tiers`                                        | `/models` — availability and breaker state                                         |
+| `GET /health`                                          | `/`                                                                                |
+| `POST /auth/refresh`, `/logout`, `/login`, `/callback` | the auth bootstrap                                                                 |
 
 ### Deliberately not surfaced, with the reason
 
-| Route                                      | Why not                                                                                     |
-| :----------------------------------------- | :------------------------------------------------------------------------------------------ |
-| `POST /agents/pair/exchange`               | The one public route. It takes a certificate request from the machine that will hold the credential; a browser has no CSR to offer and no filesystem to store the result in. The UI's job is the code and the command, which `/pairing` does. |
-| `POST /analysis/codebase/{id}/index`       | Device-authenticated (`require_device`), not user-authenticated. The agent submits its own scan report; a browser cannot satisfy the mTLS half of that door and should not be able to. |
-| `WS /ws/agent`                             | The agent hub. Authenticated inside its handshake by client certificate and device token. |
-| `POST /ai/complete`                        | The MCP gateway's token contract, not the product API's (§4.4 keeps them separate on purpose). Generation is how a user reaches a model; a raw completion box would be a second, ungoverned path to one. |
-| `GET/POST /mcp/*`                          | Machine-to-machine gateway ingress under a different audience. A screen would imply a human caller. |
-| `GET /health/ready`, `/health/live`        | Orchestrator probes. `/` shows the versioned echo, which is the part a person can act on. |
+| Route                                | Why not                                                                                                                                                                                                                                       |
+| :----------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /agents/pair/exchange`         | The one public route. It takes a certificate request from the machine that will hold the credential; a browser has no CSR to offer and no filesystem to store the result in. The UI's job is the code and the command, which `/pairing` does. |
+| `POST /analysis/codebase/{id}/index` | Device-authenticated (`require_device`), not user-authenticated. The agent submits its own scan report; a browser cannot satisfy the mTLS half of that door and should not be able to.                                                        |
+| `WS /ws/agent`                       | The agent hub. Authenticated inside its handshake by client certificate and device token.                                                                                                                                                     |
+| `POST /ai/complete`                  | The MCP gateway's token contract, not the product API's (§4.4 keeps them separate on purpose). Generation is how a user reaches a model; a raw completion box would be a second, ungoverned path to one.                                      |
+| `GET/POST /mcp/*`                    | Machine-to-machine gateway ingress under a different audience. A screen would imply a human caller.                                                                                                                                           |
+| `GET /health/ready`, `/health/live`  | Orchestrator probes. `/` shows the versioned echo, which is the part a person can act on.                                                                                                                                                     |
 
 ### What no endpoint reports, and which screen says so
 

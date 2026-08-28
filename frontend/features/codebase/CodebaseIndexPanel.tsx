@@ -178,8 +178,8 @@ function ScanInstructions({ projectId, projectPath }: { projectId: string; proje
         <strong>the workspace it was configured with</strong> — it is the only party that can read
         those files — so the directory is a property of the agent rather than of this command. This
         project records <code className="break-all">{projectPath}</code>; if the agent&apos;s
-        workspace is somewhere else the scan will succeed and index the wrong tree, and the file count
-        above is how you would notice.
+        workspace is somewhere else the scan will succeed and index the wrong tree, and the file
+        count above is how you would notice.
       </p>
       <p className="mt-2 text-xs text-muted-foreground">
         Or leave <code>{watchCommand}</code> running: it watches with fsnotify, debounces, and

@@ -624,13 +624,13 @@ disagree with the property suite for the opposite reason.
 
 What closed it, per deliverable, with the screen and the test in `phases.md`'s own boxes:
 
-| §    | Frontend clause that was unbuilt                            | Now                                                                         |
-| :--- | :---------------------------------------------------------- | :-------------------------------------------------------------------------- |
-| 1.2  | project list with search/tags/favourites; project detail page | `/projects` with SQL-side filtering, `/projects/{id}` — plus FR-01's create form and FR-05's archive and delete, which had no route on either side |
-| 1.4  | detailed category breakdown with expandable items            | `features/readiness/ReadinessBreakdown.tsx`, each check naming its indexed evidence and FR-19's "why it matters" |
-| 1.6  | change history timeline per project                          | `features/approvals/ChangeHistoryTimeline.tsx`, all thirteen §3.6 states explained; revert reachable for the first time |
-| 1.7  | policy list and editor UI; violation display with explanation | `/policies` over the new `GET /api/v1/policies`; `components/ui/governance-refusal.tsx` |
-| 1.8  | secret vault add/edit/delete                                 | `features/vault/SecretVault.tsx`, write-only enforced structurally |
+| §   | Frontend clause that was unbuilt                              | Now                                                                                                                                                |
+| :-- | :------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.2 | project list with search/tags/favourites; project detail page | `/projects` with SQL-side filtering, `/projects/{id}` — plus FR-01's create form and FR-05's archive and delete, which had no route on either side |
+| 1.4 | detailed category breakdown with expandable items             | `features/readiness/ReadinessBreakdown.tsx`, each check naming its indexed evidence and FR-19's "why it matters"                                   |
+| 1.6 | change history timeline per project                           | `features/approvals/ChangeHistoryTimeline.tsx`, all thirteen §3.6 states explained; revert reachable for the first time                            |
+| 1.7 | policy list and editor UI; violation display with explanation | `/policies` over the new `GET /api/v1/policies`; `components/ui/governance-refusal.tsx`                                                            |
+| 1.8 | secret vault add/edit/delete                                  | `features/vault/SecretVault.tsx`, write-only enforced structurally                                                                                 |
 
 Ten further capabilities had tested endpoints and no UI at all and are now surfaced — project
 create, scan state and the exact command, mint a pairing code, revoke a device, device detail, the

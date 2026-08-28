@@ -103,12 +103,15 @@ test.describe("Shell layout", () => {
 
   test("no placeholder or disabled navigation items", async ({ page }) => {
     const nav = page.getByRole("navigation", { name: "Primary" });
-    // Nine routes: Home plus the eight feature modules, each of which now has a page. This
-    // asserted exactly 1 while the sidebar had a single Home link and the other eight modules
-    // were mounted on nothing. The count is deliberately exact rather than `>= 1`, so adding a
-    // nav entry without a route to back it fails here.
+    // Twelve routes: Home, the onboarding path, the eight feature modules, and the two surfaces added
+    // for endpoints that were served, tested and called by nothing — plan analysis and model tiers.
+    //
+    // This asserted exactly 1 while the sidebar had a single Home link and the other eight modules
+    // were mounted on nothing, then 9. The count is deliberately exact rather than `>= 1`, so adding a
+    // nav entry without a route to back it fails here — which is the whole point of the assertion and
+    // the reason this number has to be edited deliberately each time.
     const links = nav.locator("a");
-    await expect(links).toHaveCount(9);
+    await expect(links).toHaveCount(12);
     // No disabled elements
     const disabled = nav.locator('[aria-disabled="true"], [disabled]');
     await expect(disabled).toHaveCount(0);
@@ -134,14 +137,17 @@ test.describe("Shell layout", () => {
  */
 const ROUTES = [
   { path: "/", nav: "Home" },
+  { path: "/onboarding", nav: "Getting started" },
   { path: "/projects", nav: "Projects" },
   { path: "/readiness", nav: "Readiness" },
-  { path: "/audit", nav: "Audit" },
+  { path: "/generation", nav: "Generation" },
+  { path: "/approvals", nav: "Approvals" },
   { path: "/policies", nav: "Policies" },
   { path: "/vault", nav: "Vault" },
-  { path: "/approvals", nav: "Approvals" },
-  { path: "/generation", nav: "Generation" },
   { path: "/pairing", nav: "Pairing" },
+  { path: "/analysis", nav: "Plan analysis" },
+  { path: "/models", nav: "Model tiers" },
+  { path: "/audit", nav: "Audit" },
 ] as const;
 
 test.describe("Feature routes", () => {
