@@ -60,6 +60,67 @@ that argued otherwise were stale.**
   session, and the gate was already wired) and agent 78.8 % (the gate's own method gives 76.7 %).
   Frontend thresholds raised 70 → 90/90/90/80, because a floor of 70 against 95.81 % permits 25
   points of silent decay instead of gating anything.
+
+### The PRD P0 pass (later session)
+
+An audit against the PRD's 32 P0 functional requirements found 14 met, 14 partial and 4 hard gaps,
+with several ticked completion criteria resting on code commented as unimplemented. That gap is now
+closed. The measured figures after it:
+
+| Component | Coverage    | Gate | Was     |
+| --------- | ----------- | ---- | ------- |
+| Agent     | **78.1 %**  | 70   | 77.2 %  |
+| Backend   | **86.50 %** | 70   | 86.01 % |
+
+Backend coverage dipped to 85.65 % when the new modules landed and was recovered by testing
+`artifact_checks.py` properly, which took that module from 64 % to 99 %. `opa test policies/agent`
+went **41 → 62** with FR-34's exemption bounds.
+
+What was actually wrong, in one line each, because the shape repeated:
+
+- **FR-27** — `agent/internal/validator` was substring matching wearing a validator's name, and the
+  dispatcher refused all six validators as `unimplemented`, so "generated files pass validation"
+  was green in two incompatible ways at once. Now six real tool invocations.
+- **FR-32/33** — `chokepoint.py` sent `"policy_parameters": {}` with a comment stating the
+  consequence: "no blocked weekday blocks nothing, no glob protects nothing". `policies` had
+  nowhere to store the values its rules read. Revision `0014` added it.
+- **FR-01** — a **live violation of the no-fabricated-data rule**: the App token source returned a
+  string built from GitHub's server-token prefix whenever the App id matched a hardcoded default,
+  and that default was reached on every machine that had not set `GITHUB_APP_ID`. It also sent the
+  private key itself as the bearer credential. There was no route, and the only test asserted the
+  fabricated prefix.
+- **FR-10** — framework detection did not exist.
+- **FR-11** — the inventory was computed, validated on the wire, then discarded; only
+  `inventory_hash` survived, which is determinism evidence rather than the record. Entry points
+  were five hardcoded filenames that missed every `cmd/server/serve.go` and invented entry points
+  from `testdata/`. Revision `0015` persists the inventory.
+- **FR-20** — "pipeline stages" and "K8s resource limits" had no checks at all; the engine had 20
+  where the design names about 30. A manifest with no `resources` block and a workflow with no
+  runnable step both scored full marks.
+- **FR-34** — `auto_approve_readme_only` was a validated setting since revision `0009` that nothing
+  read: absent from `PROJECT_PARAMETER_KEYS`, mentioned by no rule.
+- **FR-42** — the scan ran on every index and `file_contents.redaction_count` recorded the answer
+  from revision `0003`; nothing read it. The one check on the subject asked whether a scanner was
+  _configured_.
+- **The last four `unimplemented(...)` handlers** — `project.register`, `project.unregister`,
+  `git.branch_commit_push`, `git.open_pr`. `internal/git` was a complete client with no caller.
+  `grep "run: unimplemented" dispatcher.go` now returns nothing.
+
+Two guard tests were **deleted on their own instruction** rather than repointed:
+`TestTheUnimplementedExampleIsStillUnimplemented` was written for exactly this moment and failed
+with "needs a different example or, if none remains, deletion". They are replaced by
+`TestEveryCatalogueRowHasABody` and `TestUnimplementedStillReportsItsOwnCode`.
+
+Three "good repository" test fixtures were corrected rather than the new checks: each used an
+untagged `distroless` image (`:latest` by default) or a workflow job with no steps, so each was
+claiming a property it did not have.
+
+**Not verified in CI.** `origin`'s Actions are disabled for billing — five workflows on `741ca93`
+failed in 3–6 s with "recent account payments have failed or your spending limit needs to be
+increased" — and the mirror's PAT returns 401. Every figure above is local. The `validate.k8s`
+server-side dry-run path is also unexercised: no cluster is reachable locally or in CI, so only the
+offline local-schema fallback has run.
+
 - **§1.3's watch mode built and proven live.** `forgeops-agent watch` runs fsnotify → a real
   debounce → an incremental submit; one edit of a module two files import gave `submitted 3 file(s)
 in the closure of depdemo/lib.js`. Running it found two defects: `DebouncedWatcher` accepted a
