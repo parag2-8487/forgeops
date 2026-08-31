@@ -74,6 +74,11 @@ class TestTheSettingsValidator:
             "auto_approve_readme_only": False,
             "max_file_size_bytes": 1_048_576,
             "ignore_globs": ["**/node_modules/**", "*.min.js"],
+            # Written by the GitHub import (FR-01). Declared rather than written past the validator,
+            # because an import that bypassed it would be the only writer in the system allowed to.
+            "repo_default_branch": "main",
+            "repo_private": True,
+            "repo_languages": ["Go", "Python"],
         }
         assert set(settings) == set(PROJECT_SETTINGS_KEYS)
         assert validate_project_settings(settings) == settings

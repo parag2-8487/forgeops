@@ -257,6 +257,18 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     redis_url: RedisDsn
 
+    # GitHub App (FR-01). All three default to empty, and empty means UNCONFIGURED rather than
+    # "use a development value". `github_import.py` refuses with `GitHubAppNotConfigured` when a
+    # credential is needed and absent, which the route renders as a 503.
+    #
+    # The previous code defaulted `app_id` to a hardcoded development value and branched on it to return a
+    # fabricated string built from GitHub's server-token prefix and the installation id — so on every
+    # machine that had not set the variable, which was all of them, the fabricated branch was the only
+    # branch. A default here would restore that.
+    github_app_id: str = Field(default="")
+    github_app_private_key: str = Field(default="")
+    github_api_base_url: str = Field(default="https://api.github.com")
+
     # MCP Gateway
     mcp_oidc_issuers: str = Field(default="")
     mcp_oidc_audience: str = Field(default="forgeops-mcp-gateway")

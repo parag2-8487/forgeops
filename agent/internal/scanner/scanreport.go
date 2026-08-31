@@ -15,6 +15,7 @@ import (
 
 	"github.com/parag8487/ForgeOps/agent/internal/scanner/chunking"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner/depgraph"
+	"github.com/parag8487/ForgeOps/agent/internal/scanner/frameworks"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner/langdetect"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner/symbols"
 	"github.com/parag8487/ForgeOps/agent/internal/secretscan"
@@ -105,6 +106,10 @@ type ScanReport struct {
 		EntryPoints    []string `json:"entry_points"`
 		FileCount      int      `json:"file_count"`
 		TotalSizeBytes int64    `json:"total_size_bytes"`
+		// Frameworks and PackageManagers are FR-10's answer, carried on the report rather than left in
+		// the agent so the generation prompt can say "a Django project" instead of "a Python project".
+		Frameworks      []frameworks.Finding `json:"frameworks"`
+		PackageManagers []string             `json:"package_managers"`
 	} `json:"inventory"`
 	Files        []ScanFile       `json:"files"`
 	Dependencies []ScanDependency `json:"dependencies"`
@@ -167,6 +172,8 @@ func (r *ReportScanner) BuildReport(ctx context.Context, targetDir string) (*Sca
 	report.Inventory.EntryPoints = inv.EntryPoints
 	report.Inventory.FileCount = inv.FileCount
 	report.Inventory.TotalSizeBytes = inv.TotalSizeBytes
+	report.Inventory.Frameworks = inv.Frameworks
+	report.Inventory.PackageManagers = inv.PackageManagers
 
 	detector := langdetect.NewDetector("")
 	res := &resolver{

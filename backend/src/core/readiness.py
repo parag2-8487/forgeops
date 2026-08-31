@@ -38,6 +38,16 @@ from typing import Any, Final
 from pydantic import BaseModel, Field
 
 from .index_evidence import IndexEvidence
+from .manifest_facts import (
+    dockerfile_base_pinned,
+    dockerfile_healthcheck,
+    kubernetes_image_tags_pinned,
+    kubernetes_probes,
+    kubernetes_resource_limits,
+    pipeline_actions_pinned,
+    pipeline_runs_tests,
+    pipeline_stages_declared,
+)
 
 #: The §1.4 categories and their weights. Summing to 100 makes the overall score a
 #: weighted mean of six 0-100 category scores, which is what lets one category's absence
@@ -353,6 +363,31 @@ class ReadinessEngine:
                 "A container with no USER runs as root, so a process escape starts with root in the namespace.",
             )
         )
+        # The two remaining checks the design's Phase 1 list names — "pins a base image digest" and
+        # "has a `HEALTHCHECK`" — neither of which existed. Both read INSTRUCTIONS rather than search the
+        # text, so a commented-out `HEALTHCHECK` and a `FROM` in a comment do not count.
+        base_pinned = dockerfile_base_pinned(docker_body)
+        checks.append(
+            self._check(
+                "dockerfile_base_pinned",
+                "containerization",
+                base_pinned,
+                20,
+                dockerfile if base_pinned else "",
+                "An unpinned base means two builds of one Dockerfile can produce different images.",
+            )
+        )
+        healthcheck = dockerfile_healthcheck(docker_body)
+        checks.append(
+            self._check(
+                "dockerfile_healthcheck_present",
+                "containerization",
+                healthcheck,
+                15,
+                dockerfile if healthcheck else "",
+                "Without a HEALTHCHECK the runtime cannot tell a wedged container from a busy one.",
+            )
+        )
         dockerignore = _match_exact(paths, (".dockerignore",))
         checks.append(
             self._check(
@@ -401,6 +436,51 @@ class ReadinessEngine:
             )
         )
 
+        # ─── FR-20's "pipeline stages" ────────────────────────────────────────
+        #
+        # `ci_pipeline_present` matched a PATH, so a workflow file with a `jobs:` key and no steps
+        # satisfied it while running nothing. These three read the parsed workflow instead.
+        stages_ok, stages_evidence = pipeline_stages_declared(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "pipeline_stages_declared",
+                "ci_config",
+                stages_ok,
+                25,
+                stages_evidence,
+                "A workflow with no runnable step and no trigger is a file, not a pipeline.",
+            )
+        )
+        ci_tests_ok, ci_tests_evidence = pipeline_runs_tests(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "pipeline_runs_tests",
+                "ci_config",
+                ci_tests_ok,
+                30,
+                ci_tests_evidence,
+                "A pipeline that does not run the tests reports green for every change.",
+            )
+        )
+        # Scored only when a workflow exists, for the reason the orchestration block gives: a repository
+        # with no CI already fails `ci_pipeline_present`, and a second failure would misdescribe why.
+        pinned_ok, pinned_evidence = pipeline_actions_pinned(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "pipeline_actions_pinned",
+                "ci_config",
+                pinned_ok if ci else False,
+                15,
+                # `or ci` is the evidence fallback for the case where the workflow PATH is indexed but its
+                # body is not available to this evaluation: the check then has nothing to examine and no
+                # finding to cite, and `test_every_check_that_passes_names_its_evidence` requires a
+                # passing check to name something. The workflow is the honest citation, since it is the
+                # file the answer is about.
+                pinned_evidence or ci,
+                "A tag is mutable, so an unpinned action is code this repository does not control.",
+            )
+        )
+
         # ─── Orchestration (§1.4) ────────────────────────────────────────────
         k8s_body = _content_of(evidence, paths, ("*.yaml", "*.yml"))
         k8s_path = _match(paths, ("k8s/*", "kubernetes/*", "deploy/*.yaml", "manifests/*.yaml"))
@@ -435,6 +515,49 @@ class ReadinessEngine:
                 25,
                 compose,
                 "A compose file is the reproducible local topology; without one, 'works here' is unfalsifiable.",
+            )
+        )
+
+        # ─── FR-20's missing orchestration checks ─────────────────────────────
+        #
+        # These three had no implementation. A manifest with no `resources` block, no probes and
+        # `image: app:latest` scored full marks for orchestration, because the only question asked was
+        # whether a manifest existed. FR-20 names "K8s resource limits" explicitly.
+        #
+        # Each is scored ONLY when a manifest exists. Failing a repository with no Kubernetes for having
+        # no resource limits would double-count the absence: `kubernetes_manifests_present` already
+        # reports it, and the second failure would say the manifests are wrong rather than absent.
+        limits_ok, limits_evidence = kubernetes_resource_limits(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "kubernetes_resource_limits_declared",
+                "orchestration",
+                limits_ok if has_k8s else False,
+                35,
+                limits_evidence,
+                "An unbounded container evicts its neighbours; one missing limit is enough to take a node.",
+            )
+        )
+        probes_ok, probes_evidence = kubernetes_probes(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "kubernetes_probes_declared",
+                "orchestration",
+                probes_ok if has_k8s else False,
+                25,
+                probes_evidence,
+                "Without probes a wedged container keeps serving traffic, because nothing is asking it.",
+            )
+        )
+        tags_ok, tags_evidence = kubernetes_image_tags_pinned(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "kubernetes_image_tags_pinned",
+                "orchestration",
+                tags_ok if has_k8s else False,
+                20,
+                tags_evidence,
+                "A `latest` tag means two deployments of one manifest can run different code.",
             )
         )
 

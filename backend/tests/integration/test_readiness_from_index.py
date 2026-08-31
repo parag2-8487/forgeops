@@ -40,11 +40,63 @@ USER = uuid.UUID("99990000-1111-2222-3333-444455556666")
 
 MULTI_STAGE_DOCKERFILE = (
     "FROM golang:1.24 AS build\nWORKDIR /src\nRUN go build -o /app ./...\n\n"
-    "FROM gcr.io/distroless/static\nCOPY --from=build /app /app\nUSER 65532:65532\n"
+    # `:nonroot` and the HEALTHCHECK were added when FR-20's `dockerfile_base_pinned` and
+    # `dockerfile_healthcheck_present` checks landed. The second stage was `gcr.io/distroless/static`
+    # with no tag — `:latest` by default — so this fixture, used as the example of a production-grade
+    # Dockerfile, was not pinned.
+    "FROM gcr.io/distroless/static:nonroot\nCOPY --from=build /app /app\nUSER 65532:65532\n"
+    'HEALTHCHECK CMD ["/app", "-healthcheck"]\n'
     'ENTRYPOINT ["/app"]\n'
 )
 SINGLE_STAGE_DOCKERFILE = "FROM golang:1.24\nWORKDIR /src\nRUN go build ./...\n"
-K8S_DEPLOYMENT = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  replicas: 2\n"
+
+#: A deployment that satisfies FR-20's three orchestration checks. It was `apiVersion`, `kind`, a name and
+#: `replicas: 2` — enough to establish that a manifest exists, which was the only question asked before
+#: `kubernetes_resource_limits_declared` existed, and not enough to establish anything about it.
+K8S_DEPLOYMENT = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/acme/api:1.4.0
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+"""
+
+#: A workflow that satisfies the three CI checks: a trigger, a runnable step, a real test command, and
+#: every action pinned to a full commit SHA. It was `on: push` with a job that had no steps at all, which
+#: `pipeline_stages_declared` now correctly refuses.
+CI_WORKFLOW = """\
+name: ci
+on:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: pytest -q
+"""
 TERRAFORM = 'terraform {\n  backend "s3" {\n    bucket = "state"\n  }\n}\n'
 
 
@@ -167,7 +219,7 @@ def _report(files: list[dict[str, Any]]) -> dict[str, Any]:
 PRODUCTION_TREE = [
     _file("Dockerfile", MULTI_STAGE_DOCKERFILE, "dockerfile"),
     _file(".dockerignore", ".git\n", "unknown"),
-    _file(".github/workflows/ci.yml", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n"),
+    _file(".github/workflows/ci.yml", CI_WORKFLOW),
     _file("tests/test_api.py", "def test_ok():\n    assert True\n", "python"),
     _file(".pre-commit-config.yaml", "repos: []\n"),
     _file("k8s/deployment.yaml", K8S_DEPLOYMENT),

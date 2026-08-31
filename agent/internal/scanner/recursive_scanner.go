@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
+	"github.com/parag8487/ForgeOps/agent/internal/scanner/frameworks"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner/langdetect"
 )
 
@@ -21,6 +21,12 @@ type Inventory struct {
 	EntryPoints    []string `json:"entry_points"`
 	FileCount      int      `json:"file_count"`
 	TotalSizeBytes int64    `json:"total_size_bytes"`
+	// Frameworks is what the project is built with (FR-10). Each finding carries the manifest it was
+	// read from, so an operator can check the conclusion rather than take it.
+	Frameworks []frameworks.Finding `json:"frameworks"`
+	// PackageManagers is derived from the lock files present, which is the only reliable evidence: a
+	// `package.json` is compatible with npm, pnpm, yarn and bun, and the lock file names exactly one.
+	PackageManagers []string `json:"package_managers"`
 }
 
 type FilteredScanner struct {
@@ -131,10 +137,13 @@ func (s *FilteredScanner) ScanDirectory(targetDir string) (*Inventory, error) {
 		EntryPoints: []string{},
 	}
 	langSet := make(map[string]bool)
+	entries := newEntryPointClassifier()
+	// Contents are retained ONLY for the manifests, and only so framework detection can read the
+	// dependency declarations without a second walk. Holding every file would put the whole tree in
+	// memory for a report that needs a dozen files.
+	manifestContents := map[string][]byte{}
 
 	err := s.walkFiles(targetDir, func(f scannedFile) error {
-		name := filepath.Base(f.RelPath)
-
 		inv.FileCount++
 		inv.TotalSizeBytes += f.Info.Size()
 
@@ -143,18 +152,23 @@ func (s *FilteredScanner) ScanDirectory(targetDir string) (*Inventory, error) {
 			langSet[res.Language] = true
 		}
 
-		if res.Tier == 1 {
+		isManifest := res.Tier == 1
+		if isManifest {
 			inv.Manifests = append(inv.Manifests, f.RelPath)
+			manifestContents[f.RelPath] = f.Content
 		}
 
-		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".json") || strings.HasPrefix(name, ".") {
+		// A narrower rule than `.yaml || .json || startswith(".")`, which classified every manifest,
+		// every Kubernetes object and every `.gitignore` as configuration — and counted manifests
+		// twice, since the branch above had already claimed them.
+		if classifyConfigFile(f.RelPath, isManifest) {
 			inv.ConfigFiles = append(inv.ConfigFiles, f.RelPath)
 		}
 
-		if name == "main.go" || name == "index.ts" || name == "main.py" || name == "app.py" || name == "server.js" {
-			inv.EntryPoints = append(inv.EntryPoints, f.RelPath)
-		}
-
+		// Entry points are established from declarations and code structure (FR-11), replacing a match
+		// against five hardcoded filenames that missed every `cmd/server/serve.go` and accepted every
+		// `app.py` fixture.
+		entries.consider(f.RelPath, f.Content)
 		return nil
 	})
 
@@ -166,6 +180,35 @@ func (s *FilteredScanner) ScanDirectory(targetDir string) (*Inventory, error) {
 	// determinism evidence `analysis_reports` stores — differ between runs of the same
 	// scan.
 	sort.Strings(inv.Languages)
+	sort.Strings(inv.Manifests)
+	sort.Strings(inv.ConfigFiles)
+	inv.EntryPoints = entries.resolve()
+
+	// Framework detection (FR-10) reads the manifests this walk already collected, so it costs no
+	// additional I/O. `entries.present` is the authoritative file set, which is what lets a layout
+	// signal be checked without a stat call.
+	report := frameworks.Detect(&walkedTree{contents: manifestContents, present: entries.present}, inv.Manifests)
+	inv.Frameworks = report.Findings
+	inv.PackageManagers = report.PackageManagers
 
 	return inv, err
+}
+
+// walkedTree exposes the files a walk saw to the framework detector.
+//
+// A `FileReader` over what is already in memory rather than over the filesystem, so detection cannot read
+// a file the scanner excluded — an ignored `node_modules/**/package.json` must not contribute a framework,
+// and a filesystem-backed reader would happily open it.
+type walkedTree struct {
+	contents map[string][]byte
+	present  map[string]bool
+}
+
+func (t *walkedTree) ReadFile(relPath string) ([]byte, bool) {
+	content, ok := t.contents[relPath]
+	return content, ok
+}
+
+func (t *walkedTree) Exists(relPath string) bool {
+	return t.present[relPath]
 }

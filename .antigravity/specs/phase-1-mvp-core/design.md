@@ -5312,6 +5312,8 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `dryrun-unavailable` | 503 | No agent or no cluster for a required dry-run validator | Names the validator |
 | `validator-unavailable` | 503 | A blocking validator cannot run at `infrastructure` radius | Names the validator and how to provide it |
 | `tenant-context-missing` | 500 | A tenant-scoped query ran without `app.tenant_id` | Internal invariant violation; generic detail plus `trace_id` |
+| `repository-import-unconfigured` | 503 | A GitHub import was requested and the server has no App credentials | Names the two environment variables to set |
+| `repository-import-failed` | 502 | GitHub refused a request during an import | Names the action and the upstream status, never the response body |
 
 `audit-write-failed` deserves a note. A failed audit write **aborts the mutation**, because §1.9's guarantee is that every action is logged — an action that happened without a record would break Q-04 and, worse, would be invisible. Availability is traded for auditability, deliberately.
 

@@ -32,7 +32,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, Field
@@ -103,6 +103,25 @@ class ScanDependencyIn(BaseModel):
     resolved: bool = False
 
 
+class ScanFrameworkIn(BaseModel):
+    """One detected framework and the evidence for it (FR-10).
+
+    `confidence` is a closed vocabulary, not a number. `declared` means a manifest names the dependency;
+    `inferred` means the layout is characteristic but nothing declares it. A generator may act on the
+    first and must not act on the second, and a float would invite arithmetic that means nothing.
+    """
+
+    name: str = Field(min_length=1, max_length=64)
+    kind: Literal["web", "frontend", "build", "test", "runtime"]
+    confidence: Literal["declared", "inferred"]
+    #: The repo-relative path the conclusion came from. Required, because a finding with no evidence
+    #: cannot be checked and is therefore an assertion rather than a detection.
+    evidence: str = Field(min_length=1, max_length=1024)
+    #: The declared constraint verbatim ("^4.18.2"), not a resolved version — resolving would mean
+    #: running the package manager against the operator's tree.
+    version: str = Field(default="", max_length=64)
+
+
 class ScanInventoryIn(BaseModel):
     languages: list[str] = Field(default_factory=list)
     manifests: list[str] = Field(default_factory=list)
@@ -110,6 +129,11 @@ class ScanInventoryIn(BaseModel):
     entry_points: list[str] = Field(default_factory=list)
     file_count: int = 0
     total_size_bytes: int = 0
+    #: FR-10. Defaulted to empty so an agent older than this revision still reports successfully — the
+    #: absence of frameworks then means "this agent does not detect them", which `package_managers`
+    #: being empty as well makes evident.
+    frameworks: list[ScanFrameworkIn] = Field(default_factory=list)
+    package_managers: list[str] = Field(default_factory=list)
 
 
 class ScanReportIn(BaseModel):
@@ -673,6 +697,7 @@ async def _record_analysis_report(
     project_id: uuid.UUID,
     tenant_id: uuid.UUID | None,
     inventory_hash: str,
+    inventory: ScanInventoryIn | None = None,
 ) -> int:
     """Score the freshly written index and store the report row (§1.4).
 
@@ -680,15 +705,21 @@ async def _record_analysis_report(
     known and hashed: `analysis_reports.inventory_hash` is determinism evidence, and a
     report row whose hash came from a different scan than its score is not evidence of
     anything. A read endpoint that wrote a row would also make an idempotent GET mutate.
+
+    The INVENTORY is persisted here too, as of revision `0015`, and that is FR-11. It used to be
+    validated on the way in and then discarded — the entry points, config files, manifests and
+    frameworks the agent computed survived only as an input to the hash, so nothing could show them to
+    an operator or put them in a generation prompt. The hash proves two scans agreed; it does not say
+    what they agreed about.
     """
     evidence = await load_index_evidence(session, project_id=project_id)
     result = ReadinessEngine().evaluate(evidence)
     await session.execute(
         text(
             "INSERT INTO analysis_reports (id, project_id, tenant_id, score, categories, "
-            "inventory_hash, report_version, created_at) "
+            "inventory_hash, inventory, report_version, created_at) "
             "VALUES (:id, :project_id, :tenant_id, :score, CAST(:categories AS jsonb), "
-            ":inventory_hash, 1, now())"
+            ":inventory_hash, CAST(:inventory AS jsonb), 1, now())"
         ),
         {
             "id": uuid.uuid4(),
@@ -699,9 +730,44 @@ async def _record_analysis_report(
             # Truncated to the column width rather than rejected: a report with no hash is
             # still a report, and the hash is evidence rather than a key.
             "inventory_hash": (inventory_hash or "")[:64],
+            # `{}` when a caller has no inventory, matching the column's server default. An empty
+            # object reads as "not recorded", which is not the same claim as "this project has no
+            # entry points" — and writing a fabricated shape with empty lists would make it one.
+            "inventory": _json_dumps(_inventory_document(inventory)) if inventory is not None else "{}",
         },
     )
     return result.overall_score
+
+
+#: The most inventory entries persisted per list. A ceiling rather than a default: a repository with
+#: thirty thousand configuration files is not being described by that list, and an unbounded JSONB
+#: document written on every scan is a row that grows without limit.
+MAX_PERSISTED_INVENTORY_ENTRIES: Final[int] = 500
+
+
+def _inventory_document(inventory: ScanInventoryIn) -> dict[str, Any]:
+    """Project the validated inventory onto what the row stores.
+
+    Truncation is RECORDED, not silent. A caller reading `entry_points` needs to know whether it is the
+    whole set or the first five hundred, because "these are the entry points" and "these are some of
+    the entry points" support different conclusions.
+    """
+    document: dict[str, Any] = {
+        "file_count": inventory.file_count,
+        "total_size_bytes": inventory.total_size_bytes,
+        "package_managers": inventory.package_managers,
+        "frameworks": [f.model_dump() for f in inventory.frameworks],
+    }
+    truncated: list[str] = []
+    for field in ("languages", "manifests", "config_files", "entry_points"):
+        values = getattr(inventory, field)
+        if len(values) > MAX_PERSISTED_INVENTORY_ENTRIES:
+            truncated.append(field)
+            values = values[:MAX_PERSISTED_INVENTORY_ENTRIES]
+        document[field] = values
+    if truncated:
+        document["truncated_fields"] = sorted(truncated)
+    return document
 
 
 def _json_dumps(value: dict[str, Any]) -> str:

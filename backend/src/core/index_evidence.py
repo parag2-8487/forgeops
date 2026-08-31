@@ -37,6 +37,19 @@ CONTENT_PATTERNS: Final[tuple[str, ...]] = (
     "%.github/workflows/%",
     "%k8s/%.yaml",
     "%k8s/%.yml",
+    # Widened for FR-20. The three Kubernetes checks PARSE the manifest, so the body has to be loaded —
+    # and manifests live under more than one conventional directory. Without these the checks would read
+    # an empty body and report every repository as unbounded: the fail-closed direction, but not a true
+    # answer, and a readiness score that is wrong in the pessimistic direction is still wrong.
+    "%kubernetes/%.yaml",
+    "%kubernetes/%.yml",
+    "%manifests/%.yaml",
+    "%manifests/%.yml",
+    "%deploy/%.yaml",
+    "%deploy/%.yml",
+    "%deployment/%.yaml",
+    "%deployment/%.yml",
+    "%charts/%/templates/%.yaml",
 )
 
 

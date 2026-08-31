@@ -43,7 +43,7 @@ FIRST_REVISION = "0001"
 #: `projects.settings.favourite`, which has existed since `0009`, is per project: in a tenant with
 #: two people one person starring a project would reorder the other's list. Tags needed nothing,
 #: because `project_tags` was created by `0009` and nothing had ever written to it.
-EXPECTED_HEAD = "0014"
+EXPECTED_HEAD = "0015"
 
 
 def _script_directory() -> ScriptDirectory:

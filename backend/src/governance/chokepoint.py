@@ -209,7 +209,35 @@ async def load_policy_parameters(session: AsyncSession, project_id: uuid.UUID) -
         ),
         {"project": project_id},
     )
-    return merge_policy_parameters([row[0] for row in result.all() if isinstance(row[0], Mapping)])
+    merged = merge_policy_parameters([row[0] for row in result.all() if isinstance(row[0], Mapping)])
+
+    # FR-34's flag lives in `projects.settings`, not in `policies.parameters`, and it has to be merged
+    # here because `input.project` is the only place a rule can read it from.
+    #
+    # WHY IT IS A PROJECT SETTING AND NOT A POLICY PARAMETER. The other five parameters describe
+    # restrictions a policy imposes, so they compose: two policies each naming a protected glob protect
+    # both. This one is a standing property of the project itself — "documentation changes here do not
+    # need review" — and there is exactly one answer per project, which is what `projects.settings` is
+    # for. It was already validated there; what was missing was the journey from the column to the rule.
+    #
+    # A POLICY MAY WITHDRAW IT BUT NOT GRANT IT. `setdefault` would let the project setting win over an
+    # explicit `false` from a policy, so the policy's value is preserved when present, and the project
+    # setting only fills a gap. That direction is the safe one: an administrator's policy saying "never
+    # auto-approve" must not be overridden by a per-project convenience flag.
+    settings_row = await session.execute(
+        text("SELECT settings FROM projects WHERE id = :project"),
+        {"project": project_id},
+    )
+    row = settings_row.first()
+    if row is not None and isinstance(row[0], Mapping):
+        flag = row[0].get("auto_approve_readme_only")
+        # Only a real boolean travels. A string "true" from a mis-parsed source must not enable an
+        # exemption, and the bundle's `== true` comparison would reject it anyway — sending it would
+        # merely make the input document disagree with what the rule can act on.
+        if isinstance(flag, bool) and "auto_approve_readme_only" not in merged:
+            merged["auto_approve_readme_only"] = flag
+
+    return merged
 
 
 class GovernanceAction(StrEnum):

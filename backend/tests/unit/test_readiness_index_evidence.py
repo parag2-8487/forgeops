@@ -20,8 +20,64 @@ from src.projects.readiness import (
 
 pytestmark = [pytest.mark.mandatory]
 
-MULTI_STAGE = "FROM golang:1.24 AS build\nRUN go build ./...\n\nFROM gcr.io/distroless/static\nUSER 65532:65532\n"
+MULTI_STAGE = (
+    "FROM golang:1.24 AS build\n"
+    "RUN go build ./...\n"
+    "\n"
+    "FROM gcr.io/distroless/static:nonroot\n"
+    "USER 65532:65532\n"
+    # `:nonroot` and the HEALTHCHECK were added when FR-20's `dockerfile_base_pinned` and
+    # `dockerfile_healthcheck_present` checks landed. The second stage was `gcr.io/distroless/static`
+    # with no tag, which is `:latest` by default — so this fixture, used everywhere as the example of a
+    # good Dockerfile, was not pinned. Fixing the fixture rather than the check: the check is right.
+    'HEALTHCHECK CMD ["/app", "-healthcheck"]\n'
+)
 SINGLE_STAGE_ROOT = "FROM golang:1.24\nRUN go build ./...\n"
+
+#: A Kubernetes manifest that satisfies FR-20's three orchestration checks: both resource dimensions
+#: bounded in requests and limits, both probes declared, and a pinned image.
+BOUNDED_DEPLOYMENT = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/acme/app:1.2.3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+"""
+
+#: A workflow that satisfies the three CI checks: a trigger, a runnable step, a test command, and every
+#: action pinned to a full commit SHA.
+PINNED_WORKFLOW = """\
+name: ci
+on:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: pytest -q
+"""
 
 
 def _check(result, check_id: str):
@@ -210,7 +266,11 @@ def test_the_score_is_bounded_and_the_levels_follow_it() -> None:
         ),
         contents={
             "dockerfile": MULTI_STAGE,
-            "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
+            # Real bodies, because FR-20's six new checks PARSE them. This was
+            # `"apiVersion: apps/v1\nkind: Deployment\n"` — enough to establish that a manifest exists,
+            # which was the only question asked before, and not enough to establish anything about it.
+            "k8s/deployment.yaml": BOUNDED_DEPLOYMENT,
+            ".github/workflows/ci.yml": PINNED_WORKFLOW,
             "infra/main.tf": 'terraform {\n  backend "s3" {}\n}\n',
         },
     )

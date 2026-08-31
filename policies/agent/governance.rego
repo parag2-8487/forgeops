@@ -30,6 +30,7 @@ package forgeops.governance
 import rego.v1
 
 import data.forgeops.governance.approval
+import data.forgeops.governance.exemption
 import data.forgeops.governance.paths
 import data.forgeops.governance.schedule
 
@@ -75,14 +76,34 @@ named_operation if is_string(input.operation)
 # that neither of the two clauses below can be evaluated at all.
 default result := "deny"
 
+# FR-34's exemption is applied HERE, in the file whose header says precedence between sub-policies is
+# decided in this file "and nowhere else", rather than inside `approval.rego`.
+#
+# `approval.require_approval` stays TRUE and its reason stays populated when the exemption fires: a
+# documentation-only change in production really does trip the production clause, and the operator has
+# separately said that trip may be waived. Recording it as "no approval was required" would erase the
+# reason from the audit trail, which is the opposite of what FR-37 asks for.
+#
+# EVERY clause below still requires `count(deny_reasons) == 0`, so the exemption can never override a
+# blocked window or a protected path. It only ever converts `require_approval` into `allow`.
 result := "require_approval" if {
 	count(deny_reasons) == 0
 	approval.require_approval
+	not exemption.applies
 }
 
 result := "allow" if {
 	count(deny_reasons) == 0
 	not approval.require_approval
+}
+
+# The second `result := "allow"` clause. Two clauses assigning the SAME value are not a conflict in Rego —
+# a complete rule only errors when two bodies hold with DIFFERENT values — and this one is mutually
+# exclusive with the `require_approval` clause above by `exemption.applies`.
+result := "allow" if {
+	count(deny_reasons) == 0
+	approval.require_approval
+	exemption.applies
 }
 
 # Kept beside `result` because §10.6's Evaluator reports both, and because a caller
@@ -98,6 +119,16 @@ reason := concat("; ", deny_reasons) if count(deny_reasons) > 0
 reason := concat("; ", sort(approval.reasons)) if {
 	count(deny_reasons) == 0
 	approval.require_approval
+	not exemption.applies
+}
+
+# When the exemption fires the reason states BOTH facts: what would have required an approval, and why it
+# did not. Reporting only the exemption would hide the production clause from the audit trail; reporting
+# only the approval reasons would make an allowed decision read as a required one.
+reason := concat("; ", array.concat(sort(approval.reasons), [exemption.reason])) if {
+	count(deny_reasons) == 0
+	approval.require_approval
+	exemption.applies
 }
 
 # Which rule decided, for explainability (FR-37). The four bodies are mutually
@@ -122,6 +153,15 @@ rule := "paths.protected_path" if {
 rule := "approval.required" if {
 	count(deny_reasons) == 0
 	approval.require_approval
+	not exemption.applies
+}
+
+# Named distinctly from `governance.allow` so FR-37's "which rule decided" answers the question an operator
+# actually has when they see a production change go through without review.
+rule := "exemption.readme_only" if {
+	count(deny_reasons) == 0
+	approval.require_approval
+	exemption.applies
 }
 
 rule := "governance.allow" if {

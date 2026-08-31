@@ -36,7 +36,13 @@ from ..audit.writer import AuditDraft
 from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
 from ..core.db import get_session
-from ..core.errors import forbidden_problem
+from ..core.errors import forbidden_problem, problem
+from .github_import import (
+    GitHubAppError,
+    GitHubAppNotConfiguredError,
+    GitHubAppTokenSource,
+    GitHubImporter,
+)
 from .models import ProjectSettingsError, validate_project_settings
 
 router = APIRouter(
@@ -923,3 +929,126 @@ async def remove_favourite(
     await session.commit()
     row = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
     return (await hydrate_projects(session, [row], user_id=principal.user_id))[0]
+
+
+class GitHubImportRequest(BaseModel):
+    """The three things an import needs. `extra="forbid"` so a misspelled field is a 422, not a default."""
+
+    model_config = {"extra": "forbid"}
+
+    #: The App installation that grants access. There is no way to import without one: the App model
+    #: has no notion of a token that is not scoped to an installation.
+    installation_id: int = Field(..., ge=1)
+    owner: str = Field(..., max_length=39, min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+    repo: str = Field(..., max_length=100, min_length=1, pattern=r"^[A-Za-z0-9._-]+$")
+
+
+@router.post(
+    "/import/github",
+    response_model=ProjectResponse,
+    status_code=201,
+    summary="Import a GitHub repository as a project",
+)
+async def import_github_repository(
+    body: GitHubImportRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ProjectResponse:
+    """Read a repository over the real GitHub API and record it as a project (FR-01).
+
+    **This endpoint is new, and its absence was the finding.** `src/projects/github_import.py` has existed
+    since Leaf 12.2 with a `GitHubImporter` and a `GitHubAppTokenSource`, and nothing called either one —
+    the only thing that exercised them was a unit test asserting the fabricated token prefix. So FR-01
+    ("import a repository from GitHub") was satisfied by a class that no request could reach, returning a
+    credential no API would accept.
+
+    Registered BEFORE `/{project_id}` would match it? No — `/import/github` is a two-segment path and
+    `/{project_id}` is one, so there is no ambiguity to order around. `/tags` sits above for the same
+    reason and needs no special placement either.
+
+    The route is deliberately thin. It resolves the repository, writes one row, and audits it. It does
+    NOT clone, scan or index: those are the agent's, and coupling them here would make an import fail
+    because a scan did.
+    """
+    token_source = GitHubAppTokenSource()
+    if not token_source.configured:
+        # Checked before any network call so an unconfigured server answers immediately, and answers
+        # with the reason. This is the branch that used to return a fabricated token instead.
+        raise problem(
+            "repository-import-unconfigured",
+            detail=(
+                "This server has no GitHub App credentials configured, so it cannot import a "
+                "repository. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY."
+            ),
+        )
+
+    try:
+        imported = await GitHubImporter(token_source).import_repository(body.installation_id, body.owner, body.repo)
+    except GitHubAppNotConfiguredError as exc:
+        # Reachable despite the check above when the private key is present but unusable — a truncated
+        # PEM, say. Still a configuration fault, so still a 503.
+        raise problem("repository-import-unconfigured", detail=str(exc)) from exc
+    except GitHubAppError as exc:
+        # The upstream status is named in the detail but NOT copied into this response's status: a 404
+        # from GitHub means "this installation cannot see that repository", which is not the same claim
+        # as "this endpoint does not exist", and returning 404 here would say the latter.
+        raise problem("repository-import-failed", detail=str(exc)) from exc
+
+    settings_payload = validate_project_settings(imported.as_project_settings())
+    project_id = uuid.uuid4()
+    result = await session.execute(
+        text(
+            "INSERT INTO projects (id, tenant_id, name, path, repo_url, settings) "
+            "VALUES (:id, :tenant_id, :name, :path, :repo_url, CAST(:settings AS jsonb)) "
+            f"RETURNING {_COLUMNS}"
+        ),
+        {
+            "id": project_id,
+            "tenant_id": principal.tenant_id,
+            "name": imported.name,
+            # The workspace path an agent will later be pointed at. Derived from the repository name
+            # rather than accepted from the caller, so an import cannot nominate an arbitrary directory.
+            "path": f"{imported.owner}/{imported.name}",
+            "repo_url": imported.repo_url,
+            "settings": json.dumps(settings_payload),
+        },
+    )
+    row = result.mappings().first()
+    if row is None:  # pragma: no cover - RETURNING on a successful INSERT always yields a row
+        raise problem("repository-import-failed", detail="the project row could not be written")
+
+    await _writer(request).append(
+        session,
+        AuditDraft(
+            action="project_imported",
+            resource_kind="project",
+            resource_id=str(project_id),
+            # The installation id and the repository, never the token. `ImportedRepository` has no
+            # token field precisely so that this record cannot capture one by accident — the previous
+            # version returned the credential inside its result dict, so anything that logged the
+            # import outcome captured it.
+            reason=(
+                f"imported {imported.owner}/{imported.name} from GitHub "
+                f"(installation {body.installation_id}, default branch {imported.default_branch})"
+            ),
+            outcome="allowed",
+            actor_kind="user",
+            actor_user_id=principal.user_id,
+            tenant_id=principal.tenant_id,
+            project_id=project_id,
+            # No before state: the project did not exist. `None` rather than `{}`, which would claim
+            # an empty prior state was observed.
+            before_state=None,
+            after_state={
+                "repo_url": imported.repo_url,
+                "default_branch": imported.default_branch,
+                "private": imported.private,
+                "languages": list(imported.languages),
+                "manifests": list(imported.detected_manifests),
+            },
+        ),
+    )
+    await session.commit()
+    loaded = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    return (await hydrate_projects(session, [loaded], user_id=principal.user_id))[0]

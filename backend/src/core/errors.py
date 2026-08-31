@@ -155,6 +155,16 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # ─── Validation (§1.5) ───────────────────────────────────────────────────
     "dryrun-unavailable": ProblemSpec(503, "Dry run unavailable"),
     "validator-unavailable": ProblemSpec(503, "Validator unavailable"),
+    # ─── Repository import (§1.1, FR-01) ─────────────────────────────────────
+    # Two types rather than one, because the two failures need different operator actions and a
+    # single "import failed" would conflate them. Unconfigured is 503: the server cannot do this
+    # yet and no retry by the caller will change that. Refused is 502: the request reached GitHub
+    # and GitHub declined, so the caller's installation or permissions are what to look at.
+    #
+    # Registered here rather than raised ad hoc precisely because this set is closed — the previous
+    # code's answer to "no credential" was to fabricate a token, which produced a 200.
+    "repository-import-unconfigured": ProblemSpec(503, "Repository import not configured"),
+    "repository-import-failed": ProblemSpec(502, "Repository import failed"),
     # ─── Tenancy (§6.7) ──────────────────────────────────────────────────────
     "tenant-context-missing": ProblemSpec(500, "Tenant context missing"),
 }

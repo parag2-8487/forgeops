@@ -82,6 +82,13 @@ PROJECT_SETTINGS_KEYS: frozenset[str] = frozenset(
         "auto_approve_readme_only",
         "max_file_size_bytes",
         "ignore_globs",
+        # Recorded by the GitHub import (FR-01) so a project knows which branch it was imported from
+        # without a second API call. Declared here rather than written past the validator, because
+        # `validate_project_settings` refuses an unknown key and the import must go through it like
+        # any other writer.
+        "repo_default_branch",
+        "repo_private",
+        "repo_languages",
     }
 )
 
