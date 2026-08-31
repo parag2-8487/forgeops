@@ -4,7 +4,7 @@
 WHAT WAS MISSING
 ----------------
 Every piece of the retrieval side existed and none of it reached a model call. `analysis/bm25.py` builds a
-Redis-backed sparse index. `ai/rrf.py` implements Reciprocal Rank Fusion. `generation/context.py` has
+Redis-backed sparse index. `core/rrf.py` implements Reciprocal Rank Fusion. `generation/context.py` has
 `assemble_prompt`. The `embeddings` and `embeddings_local` tables hold dense vectors behind HNSW indexes.
 A repository-wide search found no production caller for any of them, and `build_generation_prompt` was
 handed only `ProjectFacts` -- five scalars read from the `projects` row.
@@ -38,7 +38,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..ai.rrf import reciprocal_rank_fusion
+from ..core.rrf import reciprocal_rank_fusion
 
 #: How many chunks reach the prompt. Small on purpose: a prompt stuffed with forty chunks costs tokens on
 #: every attempt and buries the operator's actual request, and §3.8 allows three attempts.

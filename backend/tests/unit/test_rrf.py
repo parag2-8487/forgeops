@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
 import pytest
-from src.ai.rrf import reciprocal_rank_fusion
+from src.core.rrf import reciprocal_rank_fusion
 
 pytestmark = [pytest.mark.mandatory]
 
