@@ -70,6 +70,17 @@ class IndexEvidence(BaseModel):
     #: the honest default — the field exists because a caller may know something the path list does
     #: not, NOT so that it can be assumed true.
     has_tests: bool | None = None
+    #: `file_contents.redaction_count` keyed by path, for files where it is above zero (FR-42).
+    #:
+    #: A redaction IS a secret finding: the agent's scanner matched something, and the body that reached
+    #: the database has a marker where the value was. That evidence has been persisted since revision
+    #: `0003` and nothing read it, so "secret scanning of the codebase" happened on every index and was
+    #: invisible afterwards — which is what made FR-42 partial.
+    #:
+    #: COUNTS, NEVER VALUES. §7.11 puts `file_contents` in the "redacted text only" class, and the whole
+    #: point of the redaction is that the value did not survive. A count and a path are enough to send an
+    #: operator to the line.
+    redaction_counts: Mapping[str, int] = Field(default_factory=dict)
 
     model_config = {"frozen": True}
 
@@ -100,4 +111,17 @@ async def load_index_evidence(session: AsyncSession, *, project_id: uuid.UUID) -
         {"project_id": project_id, **{f"p{i}": pattern for i, pattern in enumerate(CONTENT_PATTERNS)}},
     )
     contents = {str(row[0]).replace("\\", "/").lower(): str(row[1]) for row in content_rows}
-    return IndexEvidence(paths=tuple(paths), contents=contents)
+
+    # A third statement, and a deliberately narrow one: only the files with a redaction, which in a clean
+    # repository is none. `WHERE c.redaction_count > 0` rather than reading every row and filtering here,
+    # because the interesting set is small and the whole table is not.
+    redaction_rows = await session.execute(
+        text(
+            "SELECT f.path, c.redaction_count FROM file_contents c JOIN file_tree f ON f.id = c.file_id "
+            "WHERE f.project_id = :project_id AND c.redaction_count > 0 ORDER BY c.redaction_count DESC, f.path"
+        ),
+        {"project_id": project_id},
+    )
+    redaction_counts = {str(row[0]).replace("\\", "/"): int(row[1]) for row in redaction_rows}
+
+    return IndexEvidence(paths=tuple(paths), contents=contents, redaction_counts=redaction_counts)

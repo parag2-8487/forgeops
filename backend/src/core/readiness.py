@@ -623,6 +623,30 @@ class ReadinessEngine:
                 "Secret scanning in the repository is the only control that catches a credential before it is pushed.",
             )
         )
+        # FR-42's other half, and the one that was missing. `secret_scanning_configured` asks whether a
+        # scanner is CONFIGURED; this asks what the scan FOUND. The agent's scanner ran on every index and
+        # `file_contents.redaction_count` has recorded the answer since revision `0003`, and nothing read
+        # it — so "secret scanning of the codebase" happened every time and was invisible afterwards.
+        #
+        # A redaction IS a finding: the scanner matched something and the value did not survive into the
+        # database. The check reports the worst-affected PATH and never a value, for the reason §7.11
+        # gives.
+        worst_offender = max(evidence.redaction_counts.items(), key=lambda item: (item[1], item[0]), default=("", 0))[0]
+        checks.append(
+            self._check(
+                "no_secrets_found_by_scan",
+                "security_policy",
+                # `bool(paths) and` is not redundant: an UNINDEXED project has an empty
+                # `redaction_counts` and would otherwise pass, which is the fail-open reading of an absent
+                # scan — no findings and no assurance are not the same thing.
+                # `test_an_unscanned_project_scores_zero_and_says_it_is_unindexed` caught it, and the
+                # `/secrets` route makes the same distinction through its `clean` field.
+                bool(paths) and not evidence.redaction_counts,
+                30,
+                worst_offender,
+                "A credential in the tree is already disclosed to everyone who can read the repository.",
+            )
+        )
         lockfile = _match_exact(paths, _LOCKFILES)
         checks.append(
             self._check(

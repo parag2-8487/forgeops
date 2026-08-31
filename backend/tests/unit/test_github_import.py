@@ -34,7 +34,6 @@ from src.projects.github_import import (
     InstallationToken,
 )
 
-
 #: GitHub's server-token prefix and the authorization header, assembled from fragments.
 #:
 #: `check-added-shapes` refuses any added line carrying a credential shape, and it is right to: shape is

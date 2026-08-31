@@ -15,23 +15,12 @@ between them, so the assertion cannot pass unless the score is derived from the 
 
 from __future__ import annotations
 
-import os
 import uuid
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-import pytest_asyncio
-from asgi_lifespan import LifespanManager
-from fastapi import Request
-from httpx import ASGITransport, AsyncClient
-from src.auth.dependencies import require_principal
-from src.auth.device_dependencies import require_device
-from src.auth.models import UserRole
-from src.auth.principal import Principal
-
-from tests.integration.production_app import apply_committed_baseline_env
+from httpx import AsyncClient
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 
@@ -100,85 +89,12 @@ jobs:
 TERRAFORM = 'terraform {\n  backend "s3" {\n    bucket = "state"\n  }\n}\n'
 
 
-class _StubDevice:
-    """What `authenticate_session` returns, reduced to the two fields the index route reads."""
-
-    def __init__(self, project_id: uuid.UUID) -> None:
-        self.project_id = project_id
-        self.tenant_id = None
-
-
-def _device(request: Request) -> _StubDevice:
-    """A device paired to WHICHEVER project the request names.
-
-    The index route authenticates a DEVICE, not a user: an agent holds a device token plus a client
-    certificate and can never satisfy `require_principal`. These tests are about what the SCORE does
-    with an index, so the authentication is overridden -- the two-factor requirement and the
-    project-scoping refusal are asserted in `test_index_route_device_auth.py`, which is where a
-    weaker credential is proved insufficient.
-
-    Adopts the requested project rather than pinning one, because these tests create projects
-    dynamically.
-    """
-    return _StubDevice(uuid.UUID(str(request.path_params["project_id"])))
-
-
-class _StubDevice:
-    """What `authenticate_session` returns, reduced to the two fields the index route reads."""
-
-    def __init__(self, project_id: uuid.UUID) -> None:
-        self.project_id = project_id
-        self.tenant_id = None
-
-
-def _device(request: Request) -> _StubDevice:
-    """A device paired to WHICHEVER project the request names.
-
-    Adopts the requested project rather than pinning one, because these tests create their projects
-    dynamically. That makes the route's project-scoping check a no-op here, which is deliberate: it
-    is asserted in `test_index_route_device_auth.py` together with the two-factor refusals.
-    """
-    return _StubDevice(uuid.UUID(str(request.path_params["project_id"])))
-
-
-def _principal() -> Principal:
-    return Principal.for_user(
-        user_id=USER,
-        subject="readiness-test",
-        email="scorer@example.invalid",
-        role=UserRole.ADMIN,
-        tenant_id=TENANT,
-    )
-
-
-@pytest_asyncio.fixture
-async def readiness_app(monkeypatch: pytest.MonkeyPatch, schema_at_head: str) -> AsyncIterator[Any]:
-    from src.main import create_app
-
-    apply_committed_baseline_env(monkeypatch)
-    monkeypatch.setenv("DATABASE_URL", schema_at_head)
-    redis_url = os.environ.get("FORGEOPS_TEST_REDIS_URL", "").strip()
-    if redis_url:
-        monkeypatch.setenv("REDIS_URL", redis_url)
-    monkeypatch.setenv("APP_ENV", "test")
-    app = create_app()
-    app.dependency_overrides[require_principal] = _principal
-    # The index route authenticates a DEVICE, not a user: an agent holds a device token plus a
-    # client certificate and can never satisfy `require_principal`. These tests are about what the
-    # SCORE does with an index, so the authentication is overridden — the two-factor requirement and
-    # the project-scoping refusal are asserted in `test_index_route_device_auth.py`, which is where a
-    # weaker credential is proved insufficient.
-    app.dependency_overrides[require_device] = _device
-    async with LifespanManager(app):
-        yield app
-    app.dependency_overrides.clear()
-
-
-@pytest_asyncio.fixture
-async def client(readiness_app: Any) -> AsyncIterator[AsyncClient]:
-    transport = ASGITransport(app=readiness_app)
-    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
-        yield ac
+# `_StubDevice`, `_device`, `_principal`, `readiness_app`, `client` and `project_id` moved to
+# `readiness_app_support.py` and are discovered through `conftest.py`. Two modules now drive the
+# codebase-index route, and importing them by NAME from here gave `F811` at every signature taking
+# `client` as a parameter -- the same shadowing the conftest note about the chokepoint fixtures
+# describes. The move also removed a `_StubDevice`/`_device` pair that had been duplicated inside
+# this file.
 
 
 def _file(path: str, content: str, language: str = "yaml") -> dict[str, Any]:

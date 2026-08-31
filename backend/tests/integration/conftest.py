@@ -46,6 +46,10 @@ from .migration_support import (  # noqa: F401
 # transport, never a collaborator.
 from .production_app import composed_state_attributes, production_app  # noqa: F401
 
+# Re-exported for the reason the chokepoint note above gives: two modules now drive the codebase-index
+# route, and a test importing client by NAME gets F811 at every signature that takes it as a parameter.
+from .readiness_app_support import client, project_id, readiness_app  # noqa: F401
+
 TEST_DATABASE_URL_ENV = "FORGEOPS_TEST_DATABASE_URL"
 
 

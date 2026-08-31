@@ -455,3 +455,99 @@ async def get_chunk_details(
         token_count=row["token_count"],
         model_id=str(row["model_id"]),
     )
+
+
+class SecretFindingResponse(BaseModel):
+    """One file the scanner found secret material in.
+
+    NO VALUE FIELD, and that absence is the requirement rather than a precaution. §7.11 places
+    `file_contents` in the "redacted text only" class, and the value did not survive the redaction that
+    produced this count — there is nothing to return even if returning it were acceptable. A path and a
+    count send an operator to the right file, which is what they need.
+    """
+
+    file_path: str
+    #: How many distinct secrets were redacted in this file. A count rather than a boolean, because "one
+    #: hardcoded token" and "forty" call for different responses.
+    redaction_count: int
+
+
+class SecretScanSummaryResponse(BaseModel):
+    """FR-42's answer for one project."""
+
+    project_id: uuid.UUID
+    #: True when the project has been indexed at all. An unindexed project has no findings AND no
+    #: assurance, and reporting `clean: true` for it would be the fail-open reading.
+    indexed: bool
+    #: True only when the project is indexed and no file carries a redaction.
+    clean: bool
+    files_with_findings: int
+    total_findings: int
+    findings: list[SecretFindingResponse]
+
+
+@router.get("/codebase/{project_id}/secrets", response_model=SecretScanSummaryResponse)
+async def secret_scan_summary(
+    project_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: int = Query(default=100, ge=1, le=500),
+) -> SecretScanSummaryResponse:
+    """What the secret scan found, per file (FR-42).
+
+    **This endpoint is new, and its absence was the finding.** The agent's scanner runs on every file of
+    every index — that is what produces the redacted bodies `file_contents` stores — and
+    `file_contents.redaction_count` has recorded the per-file result since revision `0003`. Nothing read
+    it. So "secret scanning of the codebase for hardcoded secrets" happened on every scan and left no
+    trace an operator could reach, which is a scan whose result is a private fact.
+
+    A GET rather than an operation to dispatch: the scan has already run, and asking the agent to run it
+    again would make reading a result a mutation of the workspace. The agent's `secretscan.run` operation
+    remains, for the case where an operator wants a fresh scan without a full re-index.
+    """
+    await _require_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+
+    # Two aggregates and a page, in one statement each. The totals must cover every file rather than the
+    # page, because "12 findings" and "the first 100 files had 12" are different claims.
+    totals = await session.execute(
+        text(
+            "SELECT count(*) AS files, coalesce(sum(c.redaction_count), 0) AS total "
+            "FROM file_contents c JOIN file_tree f ON f.id = c.file_id "
+            "WHERE f.project_id = :project_id AND c.redaction_count > 0"
+        ),
+        {"project_id": project_id},
+    )
+    totals_row = totals.mappings().one()
+
+    indexed_row = await session.execute(
+        text("SELECT count(*) AS n FROM file_tree WHERE project_id = :project_id"),
+        {"project_id": project_id},
+    )
+    indexed = int(indexed_row.mappings().one()["n"]) > 0
+
+    rows = await session.execute(
+        text(
+            "SELECT f.path, c.redaction_count FROM file_contents c JOIN file_tree f ON f.id = c.file_id "
+            "WHERE f.project_id = :project_id AND c.redaction_count > 0 "
+            # Worst first: an operator triaging this wants the file with forty findings, not the
+            # alphabetically first one with one.
+            "ORDER BY c.redaction_count DESC, f.path LIMIT :limit"
+        ),
+        {"project_id": project_id, "limit": limit},
+    )
+    findings = [
+        SecretFindingResponse(file_path=str(row["path"]), redaction_count=int(row["redaction_count"]))
+        for row in rows.mappings()
+    ]
+
+    files_with_findings = int(totals_row["files"] or 0)
+    return SecretScanSummaryResponse(
+        project_id=project_id,
+        indexed=indexed,
+        # `clean` requires BOTH indexed and no findings. An unindexed project has no findings and no
+        # assurance either, and reporting it clean would be the fail-open reading of an absent scan.
+        clean=indexed and files_with_findings == 0,
+        files_with_findings=files_with_findings,
+        total_findings=int(totals_row["total"] or 0),
+        findings=findings,
+    )
