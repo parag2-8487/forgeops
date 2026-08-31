@@ -140,9 +140,12 @@ var handlerTable = map[Operation]entry{
 		mutating: true, requiresApproval: true, timeout: timeoutNetwork,
 		run: unimplemented("the git operations, which wrap Phase 0's client unchanged"),
 	},
+	// Mutating and approval-required despite writing no byte: it changes what a later deployment does,
+	// which is the thing an approver is being asked about. Classifying it as a read because it happens
+	// not to call os.WriteFile would let a production environment change through without a human.
 	OpSecretsInject: {
-		mutating: true, requiresApproval: true, timeout: timeoutQuick,
-		run: unimplemented("group 10's secret injection"),
+		mutating: true, requiresApproval: true, timeout: timeoutQuick, implemented: true,
+		run: secretsInject,
 	},
 }
 
@@ -174,6 +177,8 @@ type dispatcher struct {
 	root    string
 	now     func() time.Time
 	indexer CodebaseIndexer
+	// secrets holds deploy-time injected values in memory, never on disk (FR-45).
+	secrets *secretEnvironment
 }
 
 // New builds a Dispatcher and refuses to build an unusable one.
@@ -185,7 +190,7 @@ func New(deps Deps) (Dispatcher, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &dispatcher{root: deps.Root, now: clock, indexer: deps.Indexer}, nil
+	return &dispatcher{root: deps.Root, now: clock, indexer: deps.Indexer, secrets: newSecretEnvironment()}, nil
 }
 
 // Execute runs one verified command (§10.5).

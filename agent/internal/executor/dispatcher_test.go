@@ -596,16 +596,16 @@ func TestOperations_IsDerivedFromTheTable(t *testing.T) {
 	//
 	// Named individually rather than counted alone, because a count that matches for the wrong reason
 	// is the failure this pin exists to catch.
-	const expectedImplemented = 10
+	const expectedImplemented = 11
 	if implemented != expectedImplemented {
 		t.Errorf("%d operations report Implemented, expected %d: changeset.apply, changeset.revert, "+
-			"the six validate.* operations, readiness.inventory and secretscan.run. "+
+			"the six validate.* operations, readiness.inventory, secretscan.run and secrets.inject. "+
 			"Update this number in the same commit as the new handler.", implemented, expectedImplemented)
 	}
 	for _, op := range []Operation{
 		OpChangeSetApply, OpChangeSetRevert,
 		OpValidateCompose, OpValidateK8s, OpValidateTofu, OpValidateHelm, OpValidateYAML, OpValidateTrivy,
-		OpReadinessInventory, OpSecretScanRun,
+		OpReadinessInventory, OpSecretScanRun, OpSecretsInject,
 	} {
 		if !handlerTable[op].implemented {
 			t.Errorf("%q is expected to be implemented and the table says otherwise", op)
