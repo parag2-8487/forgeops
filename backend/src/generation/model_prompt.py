@@ -97,8 +97,16 @@ def build_generation_prompt(
     facts: ProjectFacts,
     previous_findings: Sequence[str] = (),
     attempt: int = 1,
+    context_lines: Sequence[str] = (),
 ) -> str:
     """The full model prompt for one attempt.
+
+    `context_lines` are FR-13's retrieval excerpts, produced by `retrieval.render_context_section` and
+    passed in rather than fetched here: this module builds a string and must not acquire a database
+    session, which is what keeps it unit-testable and keeps the retrieval decision in one place.
+
+    They are EMPTY, not a placeholder, when a project has never been scanned. A heading with nothing under
+    it invites a model to fill the gap, which is the opposite of grounding it.
 
     `previous_findings` are the deterministic gate's verdict on the PREVIOUS attempt, quoted back
     verbatim. That is what makes retry #2 a repair rather than a repeat, and it is also what
@@ -126,6 +134,11 @@ def build_generation_prompt(
     ]
     if start:
         lines.append(f"- start command: {start}")
+    # FR-13's excerpts sit AFTER the facts and BEFORE the operator's request, deliberately. The facts are
+    # authoritative and short; the excerpts are evidence the model should prefer over its assumptions but
+    # not over the facts, and the section says so. Putting them last would bury the operator's request
+    # under a page of code.
+    lines += list(context_lines)
     lines += [
         "",
         "OPERATOR REQUEST:",
