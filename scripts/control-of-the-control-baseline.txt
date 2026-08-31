@@ -9,13 +9,23 @@
 # depends on who runs it, which is precisely how a stale constant survived for months in this
 # repository as an "environment note". Instead a row is skipped only where its named variable is
 # ABSENT; wherever that variable is set the row is judged like any other and must flip to VACUOUS.
-# An exemption therefore cannot mask a regression in any environment able to detect one.
 #
-# Context, because an exemption in this particular file deserves it. Until this pass
-# `control-of-the-control.py` ran in no workflow at all, so nothing anywhere checked whether the
-# thirty-one negative controls were still negative. Wiring it into `mutation-ci.yml` found four rows
-# it could not attribute, and three of the four were the job's environment rather than the row:
-# Q-04, Q-16 and Q-17 were skipping for want of `FORGEOPS_TEST_DATABASE_URL`, and Q-20 needs the real
-# Cerbos sidecar. All four now report VACUOUS.
-
-Q-19: requires=SELF_HOSTED_BASE_URL Its property builds the real application and enumerates `create_app().routes`, and route composition depends on SELF_HOSTED_BASE_URL, SELF_HOSTED_MODEL_ID, SELF_HOSTED_EMBEDDING_MODEL_ID, EMBEDDING_BACKEND and GENERATION_TIER together with a reachable model server -- the `backend` job's ollama service. Postgres with §6.4's two roles, a migrated schema, Redis, Cerbos and OPA were all added to `mutation-ci.yml` and were not enough; reproducing the model server there would duplicate the `backend` job rather than check anything new. Where the variable IS set this row is judged and passes: locally `python scripts/control-of-the-control.py Q-19` reports `neutralised -> VACUOUS`, and `pytest tests/property/test_q19_route_coverage.py` is 11 passed.
+# THE FILE IS EMPTY, AND ALL THIRTY-ONE ROWS ARE JUDGED IN CI.
+#
+# Until this pass `control-of-the-control.py` ran in no workflow at all, so nothing anywhere checked
+# whether the negative controls were still negative. Wiring it into `mutation-ci.yml` found four rows it
+# could not attribute, and every one was the job's environment rather than the row:
+#
+#   Q-04, Q-16, Q-17  their properties skipped for want of `FORGEOPS_TEST_DATABASE_URL`, and a control
+#                     that exercises nothing proves nothing. Fixed by exporting it.
+#   Q-20              needs the real Cerbos sidecar, because it asks the sidecar rather than a Python
+#                     reimplementation of it. Fixed by starting Cerbos in the job.
+#   Q-19              builds the real application and enumerates `create_app().routes`, so it needs the
+#                     model-tier settings that decide route composition. It does NOT need a reachable
+#                     model server -- nothing in the property calls a model -- so the job sets
+#                     `SELF_HOSTED_BASE_URL` to a port nothing listens on. That is deliberate: if a
+#                     future change made the property depend on a live endpoint, it would fail here
+#                     rather than silently start requiring one.
+#
+# Adding a line back is a decision that a negative control should exist and never be checked. That is
+# almost never the right answer.

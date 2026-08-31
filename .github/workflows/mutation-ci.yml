@@ -69,6 +69,20 @@ jobs:
       # `Settings` refuses an empty ENVELOPE_PEPPER in every environment, because an empty one is
       # not a missing credential but a broken one: HMAC-SHA256 under an empty key still computes.
       ENVELOPE_PEPPER: ci-only-not-a-real-value-mutation-job
+      # Q-19's property builds the real application and enumerates `create_app().routes`, and route
+      # composition reads the model-tier settings. Without these it fails whether or not its mutation is
+      # applied, so `control-of-the-control.py` could not attribute its verdict and the row sat in
+      # `control-of-the-control-baseline.txt` unjudged.
+      #
+      # A REACHABLE MODEL SERVER IS NOT NEEDED, which is what makes this cheap. The variables decide the
+      # routes; nothing in the property calls a model. `SELF_HOSTED_BASE_URL` points at a port nothing
+      # listens on, deliberately: if a future change made the property depend on a live endpoint, it
+      # would fail here rather than silently start requiring one.
+      SELF_HOSTED_BASE_URL: http://127.0.0.1:1/v1
+      SELF_HOSTED_MODEL_ID: qwen2.5-coder:1.5b
+      SELF_HOSTED_EMBEDDING_MODEL_ID: bge-m3:567m
+      EMBEDDING_BACKEND: bge_m3
+      GENERATION_TIER: self_hosted
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
