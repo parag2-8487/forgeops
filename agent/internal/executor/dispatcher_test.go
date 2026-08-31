@@ -430,10 +430,21 @@ func TestExecute_TheControlShowsTheSameApplySucceedsWithAnApproval(t *testing.T)
 	}
 }
 
-func TestExecute_AnUnknownOperationIsDistinctFromAnUnimplementedOne(t *testing.T) {
-	// The two facts a backend has to tell apart: "we do not have that operation" is a version
-	// skew, "we have it and its body arrives later" is a decomposition boundary (D-85). One code
-	// for both would send an operator hunting the wrong problem.
+func TestExecute_AnUnknownOperationIsRefusedByName(t *testing.T) {
+	// This was `TestExecute_AnUnknownOperationIsDistinctFromAnUnimplementedOne`, and it asserted the
+	// two facts a backend has to tell apart: "we do not have that operation" is a version skew, and
+	// "we have it and its body arrives later" is a decomposition boundary (D-85).
+	//
+	// THE SECOND HALF IS GONE BECAUSE THE CONDITION IT DESCRIBED IS GONE. Every catalogued operation
+	// now has a body, so there is no row left to demonstrate `operation-unimplemented` with, and
+	// `TestTheUnimplementedExampleIsStillUnimplemented` — written to catch exactly this — failed with
+	// the instruction to delete rather than repoint. Repointing it at an implemented operation would
+	// have made it assert the opposite of its name while still passing.
+	//
+	// `ErrUnimplemented` is NOT dead: `unimplemented()` remains, the six validators return it wrapped
+	// when their tool is missing, and `TestEveryCatalogueRowHasABody` below is what would notice a new
+	// row arriving without one. The distinction is preserved by
+	// `TestUnimplementedStillReportsItsOwnCode`.
 	d := newDispatcher(t, t.TempDir())
 
 	_, unknown := d.Execute(context.Background(),
@@ -441,40 +452,55 @@ func TestExecute_AnUnknownOperationIsDistinctFromAnUnimplementedOne(t *testing.T
 	if !isErr(unknown, ErrUnknownOperation) || Code(unknown) != "operation-unknown" {
 		t.Errorf("an off-catalogue operation gave %v (code %q)", unknown, Code(unknown))
 	}
+}
 
-	// `project.register`, not `validate.compose` and not `scan.full`. This assertion needs a row that
-	// is genuinely catalogued-but-absent, and the example has had to move twice for exactly the
-	// reason the original comment gave: the scan operations became implemented when the indexer
-	// landed, and the six validators became implemented when they were built against real tools.
-	// An example that quietly stops being an example of the thing it illustrates is how this
-	// assertion would go vacuous, so `TestTheUnimplementedExampleIsStillUnimplemented` below pins
-	// the choice rather than leaving it to be noticed.
-	_, unimplemented := d.Execute(context.Background(),
-		verified(t, OpProjectRegister, "", map[string]any{}, 4), nil)
-	if !isErr(unimplemented, ErrUnimplemented) || Code(unimplemented) != "operation-unimplemented" {
-		t.Errorf("a catalogued-but-unimplemented operation gave %v (code %q)",
-			unimplemented, Code(unimplemented))
-	}
-	if Code(unknown) == Code(unimplemented) {
-		t.Error("the two report the same code, so the distinction is unobservable")
+// TestEveryCatalogueRowHasABody is what the deleted guard becomes.
+//
+// The old pair maintained an EXAMPLE of an unimplemented operation. The stronger and simpler property, now
+// that it holds, is that there is no such operation at all — and a new catalogue row added without a body
+// fails here by name rather than being noticed when a command comes back refused.
+func TestEveryCatalogueRowHasABody(t *testing.T) {
+	// The scan pair is excluded because its `implemented` is computed from whether an indexer is wired
+	// rather than declared in the table — `TestScan_CapabilityAdvertisementFollowsTheWiringNotTheTable`
+	// covers that, and this dispatcher is built without one.
+	computed := map[Operation]struct{}{OpScanFull: {}, OpScanIncremental: {}}
+	for _, op := range allOperations {
+		if _, isComputed := computed[op]; isComputed {
+			continue
+		}
+		row, ok := handlerTable[op]
+		if !ok {
+			t.Errorf("%q is catalogued and absent from the dispatch table", op)
+			continue
+		}
+		if !row.implemented {
+			t.Errorf("%q has no body. Implement it, or restore the unimplemented-example tests this "+
+				"replaced so `operation-unimplemented` is still demonstrated.", op)
+		}
 	}
 }
 
-// TestTheUnimplementedExampleIsStillUnimplemented keeps the assertion above from going vacuous.
+// TestUnimplementedStillReportsItsOwnCode keeps D-85's distinction observable.
 //
-// The test it guards needs one catalogued operation with no body. When the last such row gains one,
-// that test can no longer demonstrate anything and must be deleted rather than pointed at an
-// implemented operation — which would make it assert the opposite of its name while still passing.
-// This states the dependency so the failure names the reason.
-func TestTheUnimplementedExampleIsStillUnimplemented(t *testing.T) {
-	row, ok := handlerTable[OpProjectRegister]
-	if !ok {
-		t.Fatal("project.register left the catalogue")
+// `unimplemented()` has no caller in the table any more, so without this the code path that turns it into
+// `operation-unimplemented` would be untested — and a refactor could collapse it into
+// `operation-unknown`, which is the confusion D-85 exists to prevent. Called directly, because there is no
+// longer a catalogued row that produces it.
+func TestUnimplementedStillReportsItsOwnCode(t *testing.T) {
+	handler := unimplemented("a later group")
+	_, err := handler(context.Background(), nil, nil, nil)
+	if !isErr(err, ErrUnimplemented) {
+		t.Fatalf("unimplemented() gave %v", err)
 	}
-	if row.implemented {
-		t.Fatal("project.register is now implemented, so " +
-			"TestExecute_AnUnknownOperationIsDistinctFromAnUnimplementedOne needs a different " +
-			"example or, if none remains, deletion")
+	if Code(err) != "operation-unimplemented" {
+		t.Errorf("code %q, want operation-unimplemented", Code(err))
+	}
+	if Code(err) == "operation-unknown" {
+		t.Error("the two codes have collapsed, so a version skew and a decomposition boundary are " +
+			"indistinguishable")
+	}
+	if !strings.Contains(err.Error(), "a later group") {
+		t.Errorf("the refusal does not name its owner: %v", err)
 	}
 }
 
@@ -596,16 +622,18 @@ func TestOperations_IsDerivedFromTheTable(t *testing.T) {
 	//
 	// Named individually rather than counted alone, because a count that matches for the wrong reason
 	// is the failure this pin exists to catch.
-	const expectedImplemented = 11
+	const expectedImplemented = 15
 	if implemented != expectedImplemented {
 		t.Errorf("%d operations report Implemented, expected %d: changeset.apply, changeset.revert, "+
-			"the six validate.* operations, readiness.inventory, secretscan.run and secrets.inject. "+
+			"the six validate.* operations, readiness.inventory, secretscan.run, secrets.inject, "+
+			"project.register, project.unregister, git.branch_commit_push and git.open_pr. "+
 			"Update this number in the same commit as the new handler.", implemented, expectedImplemented)
 	}
 	for _, op := range []Operation{
 		OpChangeSetApply, OpChangeSetRevert,
 		OpValidateCompose, OpValidateK8s, OpValidateTofu, OpValidateHelm, OpValidateYAML, OpValidateTrivy,
 		OpReadinessInventory, OpSecretScanRun, OpSecretsInject,
+		OpProjectRegister, OpProjectUnregister, OpGitBranchCommitPush, OpGitOpenPR,
 	} {
 		if !handlerTable[op].implemented {
 			t.Errorf("%q is expected to be implemented and the table says otherwise", op)

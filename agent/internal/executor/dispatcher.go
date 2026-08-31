@@ -90,8 +90,12 @@ const (
 // call site — a convenience wrapper, a retry helper, an "internal" fast path — would fail the
 // test rather than quietly become a second way in that skips the approval and timeout rules.
 var handlerTable = map[Operation]entry{
-	OpProjectRegister:   {timeout: timeoutQuick, run: unimplemented("group 12's workspace registry")},
-	OpProjectUnregister: {timeout: timeoutQuick, run: unimplemented("group 12's workspace registry")},
+	// Read-only despite their names: they write nothing to the workspace and create nothing on the
+	// machine. The registry is this agent's in-memory statement of which projects it will accept commands
+	// for, and the authoritative record is `agent_devices` on the backend. Requiring an approval would
+	// mean an operator needs one to connect a workspace they already own.
+	OpProjectRegister:   {timeout: timeoutQuick, implemented: true, run: projectRegister},
+	OpProjectUnregister: {timeout: timeoutQuick, implemented: true, run: projectUnregister},
 
 	// `implemented` is deliberately absent here and computed in `Operations` instead: these two
 	// are implemented in this package but need a `CodebaseIndexer` supplied by the app layer, so
@@ -134,11 +138,11 @@ var handlerTable = map[Operation]entry{
 	},
 	OpGitBranchCommitPush: {
 		mutating: true, requiresApproval: true, timeout: timeoutNetwork,
-		run: unimplemented("the git operations, which wrap Phase 0's client unchanged"),
+		implemented: true, run: gitBranchCommitPush,
 	},
 	OpGitOpenPR: {
 		mutating: true, requiresApproval: true, timeout: timeoutNetwork,
-		run: unimplemented("the git operations, which wrap Phase 0's client unchanged"),
+		implemented: true, run: gitOpenPR,
 	},
 	// Mutating and approval-required despite writing no byte: it changes what a later deployment does,
 	// which is the thing an approver is being asked about. Classifying it as a read because it happens
@@ -167,6 +171,9 @@ type Deps struct {
 	Root string
 	// Clock is time.Now unless a test replaces it.
 	Clock func() time.Time
+	// Git is the forge client for `git.branch_commit_push` and `git.open_pr`. Optional: an agent wired
+	// without one refuses those two by name rather than reporting a push that never happened.
+	Git GitClient
 	// Policy is the agent's own evaluator for FR-38's independent check. Optional: an agent wired
 	// without one still enforces the envelope signature, the approval requirement and the bundle
 	// digest binding, and advertises that it performs no second evaluation rather than pretending to.
@@ -183,6 +190,10 @@ type dispatcher struct {
 	indexer CodebaseIndexer
 	// policy is the agent's own evaluator (FR-38).
 	policy PolicySource
+	// gitClient reaches the forge. Nil means the two git operations refuse by name.
+	gitClient GitClient
+	// projects is the set of projects this agent serves.
+	projects *projectRegistry
 	// secrets holds deploy-time injected values in memory, never on disk (FR-45).
 	secrets *secretEnvironment
 }
@@ -197,11 +208,13 @@ func New(deps Deps) (Dispatcher, error) {
 		clock = time.Now
 	}
 	return &dispatcher{
-		root:    deps.Root,
-		now:     clock,
-		indexer: deps.Indexer,
-		policy:  deps.Policy,
-		secrets: newSecretEnvironment(),
+		root:      deps.Root,
+		now:       clock,
+		indexer:   deps.Indexer,
+		policy:    deps.Policy,
+		gitClient: deps.Git,
+		projects:  newProjectRegistry(),
+		secrets:   newSecretEnvironment(),
 	}, nil
 }
 

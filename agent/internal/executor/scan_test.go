@@ -87,8 +87,11 @@ func TestScan_CapabilityAdvertisementFollowsTheWiringNotTheTable(t *testing.T) {
 		if !implemented(d, OpChangeSetApply) {
 			t.Error("changeset.apply stopped being implemented")
 		}
-		if implemented(d, OpProjectRegister) {
-			t.Error("project.register became implemented")
+		// There is no longer any catalogued operation that is unimplemented, so the negative half of
+		// this check is now stated the other way round: the COMPUTED answer applies to the scan pair
+		// and to nothing else, which the two assertions here and above establish together.
+		if !implemented(d, OpProjectRegister) {
+			t.Error("project.register is not implemented despite having a body")
 		}
 		// And the validators are implemented irrespective of the indexer, which is the other half of
 		// "the computed answer applies only to the scan pair".
