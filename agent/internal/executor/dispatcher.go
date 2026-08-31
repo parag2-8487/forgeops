@@ -167,6 +167,10 @@ type Deps struct {
 	Root string
 	// Clock is time.Now unless a test replaces it.
 	Clock func() time.Time
+	// Policy is the agent's own evaluator for FR-38's independent check. Optional: an agent wired
+	// without one still enforces the envelope signature, the approval requirement and the bundle
+	// digest binding, and advertises that it performs no second evaluation rather than pretending to.
+	Policy PolicySource
 	// Indexer builds and submits the codebase index. Optional: an agent wired without one
 	// advertises `scan.full` and `scan.incremental` as unimplemented and refuses them by name,
 	// which is the honest report for a build that cannot reach a backend to submit to.
@@ -177,6 +181,8 @@ type dispatcher struct {
 	root    string
 	now     func() time.Time
 	indexer CodebaseIndexer
+	// policy is the agent's own evaluator (FR-38).
+	policy PolicySource
 	// secrets holds deploy-time injected values in memory, never on disk (FR-45).
 	secrets *secretEnvironment
 }
@@ -190,7 +196,13 @@ func New(deps Deps) (Dispatcher, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &dispatcher{root: deps.Root, now: clock, indexer: deps.Indexer, secrets: newSecretEnvironment()}, nil
+	return &dispatcher{
+		root:    deps.Root,
+		now:     clock,
+		indexer: deps.Indexer,
+		policy:  deps.Policy,
+		secrets: newSecretEnvironment(),
+	}, nil
 }
 
 // Execute runs one verified command (§10.5).
@@ -210,6 +222,16 @@ func (d *dispatcher) Execute(ctx context.Context, v *envelope.Verified, sink Pro
 	}
 	if row.requiresApproval && v.ApprovalID() == "" {
 		return Result{}, fmt.Errorf("%w: %q", ErrApprovalRequired, op)
+	}
+	// FR-38's independent evaluation, AFTER the cheap structural guards and BEFORE any argument is
+	// decoded or any work begins. Ordered here for the same reason the guards above are ordered: a
+	// command the agent's own rules refuse should cost an evaluation and nothing more.
+	//
+	// This is a second opinion and not a veto in both directions — it can only add refusals. See
+	// `policy_gate.go` for why an agent that could overrule a DENY would be a bypass rather than a
+	// check.
+	if err := d.evaluateIndependently(ctx, v); err != nil {
+		return Result{}, err
 	}
 	if sink == nil {
 		// A nil sink is a caller that does not want progress, not an error. Replaced rather
