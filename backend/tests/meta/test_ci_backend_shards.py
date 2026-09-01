@@ -80,7 +80,26 @@ def test_the_shards_do_not_overlap() -> None:
             seen[path] = shard
 
 
-@pytest.mark.parametrize("shard", ["unit", "integration"])
+@pytest.mark.parametrize("shard", ["unit", "meta", "integration"])
 def test_each_shard_still_exists_by_name(shard: str) -> None:
-    """The names are referenced by the coverage artefact pattern, so a rename must be deliberate."""
+    """The names are referenced by the coverage artefact pattern and by the combine job's count guard.
+
+    `meta` was added after the first split proved slower than the job it replaced: it runs the entire
+    mutation harness against the real tree, 54 minutes of a 65-minute shard locally.
+    """
     assert shard in shard_paths()
+
+
+def test_the_combine_job_requires_one_file_per_shard() -> None:
+    """The count guard in `backend-coverage` must match the number of shards.
+
+    A guard that is lower than the shard count would let the 70% gate be computed over a partial suite,
+    which is the one thing the split must not do.
+    """
+    document = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    steps = document["jobs"]["backend-coverage"]["steps"]
+    combine = next(s for s in steps if "combine" in (s.get("name") or "").lower())
+    expected = len(shard_paths())
+    assert f"-lt {expected} " in combine["run"], (
+        f"the combine step does not require {expected} coverage files, one per shard. Its script is:\n" + combine["run"]
+    )

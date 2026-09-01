@@ -355,10 +355,18 @@ jobs:
       matrix:
         include:
           - shard: unit
-            # 	ests/generation and 	ests/secrets hold one file each and are easy to lose in a split —
-            # the union of the two shards' paths MUST equal what pytest tests/ collected, or the suite
-            # quietly shrinks. 	est_shard_paths_cover_every_test_directory asserts that union.
-            paths: tests/unit tests/meta tests/property tests/generation tests/secrets
+            # `tests/generation` and `tests/secrets` hold one file each and are easy to lose in a split.
+            # The union of the shards' paths MUST equal what `pytest tests/` collected, or the suite
+            # quietly shrinks and the coverage gate is computed over less than the whole thing.
+            # `test_shard_paths_cover_every_test_directory` asserts that union, and caught exactly this.
+            paths: tests/unit tests/property tests/generation tests/secrets
+            needs_model: "false"
+          - shard: meta
+            # Its own leg, because `test_regime_end_to_end.py` runs the ENTIRE mutation harness against
+            # the real tree: 31 rows, each spawning its own pytest. Measured locally at 54 minutes of a
+            # 65-minute shard — which would have made this split SLOWER than the job it replaced. It is
+            # the one suite whose cost is process spawning rather than tests, so it belongs alone.
+            paths: tests/meta
             needs_model: "false"
           - shard: integration
             paths: tests/integration
@@ -711,10 +719,11 @@ jobs:
         run: |
           set -euo pipefail
           # Asserted rather than assumed: `coverage combine` over zero files reports 0% and would fail the
-          # gate for the wrong reason, and over ONE file it would silently gate a single shard.
+          # gate for the wrong reason, and over fewer than every shard it would gate a partial suite. The
+          # number is the shard count, so adding a shard without updating it fails loudly here.
           count=$(find shards -name '.coverage.*' | wc -l)
           echo "shard coverage files: $count"
-          if [ "$count" -lt 2 ]; then
+          if [ "$count" -lt 3 ]; then
             echo "::error::expected one coverage file per shard, found $count; the gate would apply to a partial suite" >&2
             exit 1
           fi

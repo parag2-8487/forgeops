@@ -1453,7 +1453,7 @@ retrieval results, which is worse than degrading. The mutation emits each candid
 every non-empty draw fails.
 """
 patch = """
-from src.ai import reranker as reranker_module
+from src.core import reranker as reranker_module
 
 _original_rerank = reranker_module.Reranker.rerank
 
