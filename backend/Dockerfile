@@ -30,6 +30,20 @@ RUN pip install --no-deps -e .
 # ---------- Stage 2: runtime ----------
 FROM python:3.13-slim AS runtime
 
+# The commit this image was built from, as an OCI standard label.
+#
+# WHY IT EXISTS. `start-forgeops.ps1` used to skip the image build whenever any forgeops image was
+# present, so a developer who pulled new commits got yesterday's backend — and the script then ran
+# `alembic upgrade head` from inside that stale image and reported "the schema is at head" while the
+# database sat two revisions behind the migrations on disk. This label is what lets the script tell a
+# CURRENT image from a merely PRESENT one.
+#
+# Declared AFTER the `FROM` because build arguments do not cross stage boundaries, and defaulted so a
+# hand-run `docker compose build` still succeeds. `unknown` is treated as not-current by the caller,
+# which is the fail-safe direction: an unnecessary rebuild rather than a silent stale run.
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+
 # The OPA binary, for `POST /api/v1/policies/{id}/test` and `policies/validation.py::validate_rego`.
 #
 # WHY IT IS HERE AT ALL. The dry-run route used to answer with a SYNTHESISED allow/deny when

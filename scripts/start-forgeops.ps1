@@ -723,6 +723,33 @@ if (Need-Secret -Key $keySecret) { $updates[$keySecret] = New-RandomSecret -Byte
 if (Need-Secret -Key $keyAdminPw) { $updates[$keyAdminPw] = New-RandomSecret -Bytes 16 -Prefix 'local-only-not-a-real-secret-'; $generated += $keyAdminPw }
 if (Need-Secret -Key $keyToken)  { $updates[$keyToken] = New-RandomSecret -Bytes 32 -Prefix 'local-only-not-a-real-secret-'; $generated += $keyToken }
 
+# The generation tier, without which the platform starts and cannot generate anything from a model.
+#
+# WHY THIS IS HERE. `docker-compose.yml` ships an `ollama` service in the DEFAULT profile whose entrypoint
+# pulls `$SELF_HOSTED_MODEL_ID` and `$SELF_HOSTED_EMBEDDING_MODEL_ID`. Neither was ever written to `.env`
+# by this script, so on a fresh clone both expanded to the empty string, the pull failed, and the model
+# server never became healthy. Generation then attempted the configured endpoint chain, could not reach it,
+# and honestly recorded `template_fallback` — a correct row describing a stack that had been reported ready.
+#
+# Written only when ABSENT, like the ports and the secrets above: an operator who has pointed this at their
+# own endpoint or a different model must not have it overwritten on the next start.
+$tierDefaults = [ordered]@{
+    'GENERATION_TIER'                 = 'self_hosted'
+    'EMBEDDING_BACKEND'               = 'bge_m3'
+    # Container-network name and port, because this is read by the backend inside compose. A `localhost`
+    # here would resolve to the backend's own container.
+    'SELF_HOSTED_BASE_URL'            = 'http://ollama:11434/v1'
+    'SELF_HOSTED_MODEL_ID'            = 'qwen2.5-coder:1.5b'
+    'SELF_HOSTED_EMBEDDING_MODEL_ID'  = 'bge-m3:567m'
+}
+$tierAdded = @()
+foreach ($key in $tierDefaults.Keys) {
+    if (-not $existing.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($existing[$key])) {
+        $updates[$key] = $tierDefaults[$key]
+        $tierAdded += $key
+    }
+}
+
 # Did the value the frontend bundle is built from change? If so the image MUST be rebuilt, because
 # Next.js inlines NEXT_PUBLIC_* at build time. Missing this produces a frontend that calls the wrong
 # port and fails in the browser with what looks like a CORS problem.
@@ -731,6 +758,7 @@ $apiBaseChanged = ($previousApiBase -ne $apiBaseUrl)
 
 Set-EnvValues -Path $EnvPath -Values $updates
 Write-Ok ("wrote {0} settings to .env" -f $updates.Count)
+if ($tierAdded.Count -gt 0) { Write-Ok ('generation tier defaulted: ' + ($tierAdded -join ', ')) }
 if ($generated.Count -gt 0) { Write-Ok ('generated secrets: ' + ($generated -join ', ')) }
 if ($apiBaseChanged -and $previousApiBase) {
     Write-Warn2 ("the API base URL changed from {0} to {1}; the frontend image will be rebuilt" -f $previousApiBase, $apiBaseUrl)
@@ -770,8 +798,60 @@ if (-not $needBuild) {
     if ($needBuild) { Write-Info 'no ForgeOps images found yet' }
 }
 
+# The images may EXIST and still be stale, and that is not a cosmetic problem.
+#
+# This block used to skip the build whenever any `forgeops` image was present. A developer who pulled new
+# commits and ran `start.cmd` therefore got yesterday's backend, and step 12 then ran `alembic upgrade head`
+# from inside that stale image -- so it reported "the schema is at head" while the database sat two
+# revisions behind the migrations on disk. That is a false statement from the one script whose job is to
+# tell you the stack is ready, and it cost a debugging session: the journey failed with a 500 from
+# `column policies.parameters does not exist` on a tree where `0014` had been committed and passing for
+# hours.
+#
+# The signal is the commit the image was built from, recorded as a LABEL rather than inferred. A file
+# timestamp comparison would be cheaper and wrong in both directions -- a checkout sets mtimes to the
+# checkout time, and an edit that is reverted leaves a newer mtime with identical content.
+if (-not $needBuild) {
+    $head = (Invoke-Native -Command 'git rev-parse HEAD' -Quiet).Output
+    if ($head) {
+        $head = $head.Trim()
+        # The image is named WITHOUT a tag: `check-no-latest` refuses a floating reference in a tracked
+        # script, and it is right to even for a locally built image -- the rule is about the reference, and
+        # an untagged name resolves to the same image compose just built.
+        #
+        # Parsed from JSON rather than read with `--format`. A Go template containing quoted strings does
+        # not survive PowerShell's native-command argument handling — the first attempt produced
+        # `template parsing error: function "org" not defined`, which would have made this check silently
+        # useless in exactly the direction it exists to prevent.
+        $built = ''
+        $inspect = Invoke-Native -Command 'docker image inspect forgeops-backend' -Quiet
+        if ($inspect.Ok -and $inspect.Output) {
+            try {
+                $labels = ($inspect.Output | ConvertFrom-Json)[0].Config.Labels
+                if ($labels) { $built = [string]$labels.'org.opencontainers.image.revision' }
+            } catch {
+                # An image that cannot be inspected is not demonstrably current.
+                $built = ''
+            }
+        }
+        if ($built -ne $head) {
+            $needBuild = $true
+            if ($built) {
+                Write-Info ("the backend image was built from {0} and the tree is at {1}" -f $built.Substring(0, [Math]::Min(8, $built.Length)), $head.Substring(0, 8))
+            } else {
+                Write-Info 'the backend image records no source commit, so it cannot be shown to be current'
+            }
+        }
+    }
+}
+
 if ($needBuild) {
     Write-Info 'this takes several minutes on a first run; output is summarised'
+    # `GIT_COMMIT` is what stamps the label the staleness check above reads. Passed through the
+    # environment because compose substitutes it into the build args, and defaulted to the real HEAD here
+    # rather than in compose so a build outside this script still records something.
+    $head = (Invoke-Native -Command 'git rev-parse HEAD' -Quiet).Output
+    if ($head) { $env:GIT_COMMIT = $head.Trim() }
     $build = Invoke-Compose -Arguments 'build backend worker frontend agent'
     if (-not $build.Ok) {
         Stop-WithAdvice -Problem 'the image build failed.' -Advice @(
@@ -780,7 +860,7 @@ if ($needBuild) {
     }
     Write-Ok 'images built'
 } else {
-    Write-Ok 'images already present and the API base URL is unchanged; skipping the build'
+    Write-Ok 'images already present, current with the tree, and the API base URL is unchanged'
 }
 
 # --- 8. Infrastructure ---------------------------------------------------------------------------
@@ -796,6 +876,28 @@ if (-not $infra.Ok) {
     )
 }
 Write-Ok 'postgres, redis, opa and cerbos are healthy'
+
+# The model server, started here rather than with the application because its first run PULLS two models
+# and the wait belongs before the parts that depend on it.
+#
+# WHY IT WAS MISSING AND WHY THAT MATTERED. `ollama` is in `docker-compose.yml`'s DEFAULT profile, but this
+# script names its services explicitly at every step — so the model server was never started, and the
+# generation tier pointed at an endpoint nothing was listening on. Generation then attempted the provider,
+# failed, and recorded `template_fallback`: an honest row describing a stack this script had just reported
+# ready. Criterion 10's step 7 asserts `accepted`, so the journey failed on a stack that looked healthy.
+#
+# NOT FATAL when it does not come up. A stack with no model server is still a usable stack — generation
+# falls back to the template library and says so in the run row — and refusing to start over a model pull
+# would make the whole platform unavailable because one optional component could not fetch a blob. So this
+# warns and continues, which is the difference between a degraded stack and a failed one.
+Write-Step 'Starting the model server'
+$model = Invoke-Compose -Arguments 'up -d --wait ollama' -Quiet
+if ($model.Ok) {
+    Write-Ok 'the model server is ready and its models are pulled'
+} else {
+    Write-Info 'the model server did not become healthy; generation will use the template library'
+    Write-Info ("    docker compose {0} logs ollama" -f $ComposeFiles)
+}
 
 Write-Step "Ensuring Authentik's database exists"
 

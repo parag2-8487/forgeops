@@ -337,7 +337,19 @@ services:
       retries: 12
 
   backend:
-    build: { context: ./backend, target: runtime }
+    # `GIT_COMMIT` is stamped into an OCI revision label so `start-forgeops.ps1` can tell a CURRENT image
+    # from a merely PRESENT one. It used to skip the build whenever any forgeops image existed, then run
+    # `alembic upgrade head` from that stale image and report "the schema is at head" while the database
+    # was two revisions behind the migrations on disk.
+    #
+    # Defaulted to `unknown` rather than left required, so `docker compose build` still works by hand. An
+    # image labelled `unknown` is treated as not-current, which is the fail-safe direction: it causes an
+    # unnecessary rebuild rather than a silent stale run.
+    build:
+      context: ./backend
+      target: runtime
+      args:
+        GIT_COMMIT: "${GIT_COMMIT:-unknown}"
     env_file: *service-env
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
