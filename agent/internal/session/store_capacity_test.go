@@ -28,10 +28,23 @@ import (
 
 // platformKeychainLimits records what each OS credential store actually accepts.
 //
-// ASSERTED PER PLATFORM RATHER THAN ASSUMED TO AGREE, because they do not. The Windows number is
-// a hard ceiling enforced by the library; macOS and libsecret have no comparable small limit, so
-// a single shared constant would either be wrong for two platforms or needlessly punitive on
-// them. `secretHalfBudget` is what this repository commits to fitting inside the smallest one.
+// ASSERTED PER PLATFORM RATHER THAN ASSUMED TO AGREE, because they do not. The Windows number is a
+// hard ceiling enforced by the library; macOS and libsecret have no comparable small limit, so a
+// single shared constant would either be wrong for two platforms or needlessly punitive on them.
+// `secretHalfBudget` is what this repository commits to fitting inside the smallest one.
+//
+// WHICH OF THESE ARE MEASURED, and which are read from documentation:
+//
+//   - windows — MEASURED, on a real Credential Manager, locally and by the `agent-host` CI job.
+//     Binary-searched at 2560 single-byte characters accepted and 2561 refused.
+//   - darwin — MEASURED, against a real Keychain in the `agent-host` job.
+//   - linux — NOT MEASURED. Every Linux runner and every container the agent ships in is headless
+//     with no Secret Service, so `auto` selects the 0600 file backend there and that is what CI
+//     exercises. Standing up gnome-keyring in CI was tried and abandoned: the daemon answers on
+//     D-Bus but the default collection does not exist until something creates it, so go-keyring
+//     reports `failed to unlock correct collection`, and creating it non-interactively is not
+//     something to make every run depend on. The number below is libsecret's documented behaviour
+//     and nothing here proves it.
 var platformKeychainLimits = map[string]struct {
 	bytes  int
 	source string
@@ -39,7 +52,7 @@ var platformKeychainLimits = map[string]struct {
 	"windows": {
 		bytes: 2560,
 		source: "CRED_MAX_CREDENTIAL_BLOB_SIZE, enforced by go-keyring's own length check in " +
-			"keyring_windows.go before CredWriteW is called",
+			"keyring_windows.go before CredWriteW is called; measured on a real store",
 	},
 	"darwin": {
 		bytes: 1 << 20,
@@ -49,7 +62,8 @@ var platformKeychainLimits = map[string]struct {
 	"linux": {
 		bytes: 1 << 20,
 		source: "libsecret has no per-item limit; the practical bound is the D-Bus maximum " +
-			"message size, which defaults to 128 MiB",
+			"message size, which defaults to 128 MiB. NOT measured — CI exercises the file " +
+			"backend on Linux, because that is what a headless host actually provides",
 	},
 }
 

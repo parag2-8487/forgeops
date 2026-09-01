@@ -465,36 +465,25 @@ jobs:
         working-directory: .
         run: pip install "yamllint==1.37.1"
 
-      # A REAL SECRET SERVICE, so the third platform's credential store is verified rather than
-      # believed.
+      # THE CREDENTIAL-STORE SUITE MUST RUN HERE TOO, against the backend a Linux host really has.
       #
-      # `real_keychain_test.go` asks the machine's actual credential manager to hold a full-size
-      # credential — the test that would have caught the Windows defect. It is opt-in through
-      # `FORGEOPS_REAL_KEYCHAIN=1`, and on a bare ubuntu runner there is no Secret Service, so those
-      # five tests SKIPPED here. `check-no-skips.py` refused that, correctly: a skip inside a green run
-      # is indistinguishable from coverage, and its message offers exactly this remedy — provide the
-      # capability.
+      # `real_keychain_test.go` asks the machine's actual credential store to hold a full-size
+      # credential — the test that would have caught the Windows defect. Without the opt-in those five
+      # tests SKIPPED on this runner, and `check-no-skips.py` refused that, correctly: a skip inside a
+      # green run is indistinguishable from coverage.
       #
-      # It also closes a real gap. `platformKeychainLimits` records libsecret as having no per-item
-      # limit, sourced from documentation and asserted nowhere. With a live keyring that claim is
-      # tested on every run instead.
+      # Setting the variable is the whole fix, because the suite selects the store with `auto` — the
+      # same preference the agent itself uses. On a headless runner that resolves to the 0600 file
+      # backend, which is exactly what every containerised agent uses and what OQ-26 exists to accept.
       #
-      # `--components=secrets` and nothing else: the daemon's ssh and pkcs11 components are not wanted
-      # and starting them adds two more things that can fail. The empty password on stdin unlocks the
-      # default collection non-interactively, which is the only way this works with no session.
-      - name: Provide a real Secret Service so the credential-store suite cannot skip
+      # A REAL SECRET SERVICE WAS TRIED HERE AND ABANDONED. `gnome-keyring-daemon --unlock` starts and
+      # answers on D-Bus, but the default collection does not exist until something creates it, so
+      # go-keyring reports `failed to unlock correct collection`. Creating it non-interactively is not
+      # something worth making every run depend on, so libsecret is recorded as unmeasured in
+      # `platformKeychainLimits` rather than pretended about here.
+      - name: Exercise the real credential store on this platform
         working-directory: .
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gnome-keyring dbus-x11 libsecret-1-0
-          # `dbus-launch` prints assignments; exporting them into GITHUB_ENV makes the session visible
-          # to every later step, which is where `go test` runs.
-          eval "$(dbus-launch --sh-syntax)"
-          echo "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS}" >> "$GITHUB_ENV"
-          echo "DBUS_SESSION_BUS_PID=${DBUS_SESSION_BUS_PID}" >> "$GITHUB_ENV"
-          printf '' | gnome-keyring-daemon --unlock --components=secrets
-          echo "FORGEOPS_REAL_KEYCHAIN=1" >> "$GITHUB_ENV"
+        run: echo "FORGEOPS_REAL_KEYCHAIN=1" >> "$GITHUB_ENV"
 
       - name: Assert every validator tool is on PATH so no validate test can skip
         working-directory: .
