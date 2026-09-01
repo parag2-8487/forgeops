@@ -89,7 +89,21 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.11"
+          # 3.13, the version the project targets everywhere else: `backend/Dockerfile` builds on
+          # `python:3.13-slim` and `ci.yml` sets `PYTHON_VERSION: 3.13`.
+          #
+          # THIS WAS 3.11, AND IT MADE Q-19 UNJUDGEABLE. `test_q19_route_coverage.py` uses
+          # `sys.monitoring` to prove a handler body never executed, and that module arrived in Python
+          # 3.12 — so four of its eleven tests failed with `AttributeError: module 'sys' has no attribute
+          # 'monitoring'` on every run, mutated or not. The harness saw a non-zero exit and a failing
+          # test and read it as "the control bit", while `control-of-the-control.py` correctly refused to
+          # call the verdict attributable: the property was objecting to the interpreter, not the
+          # mutation.
+          #
+          # That is the Q-04 lesson in a third place, and this file already states it twice for Go: a
+          # control that CRASHES is indistinguishable from one that bites if you only read the exit code.
+          # Here the crash was in the runner definition rather than in the argv.
+          python-version: "3.13"
 
       - name: The manifest must describe Appendix B and its counters must match reality
         run: python scripts/check-mutation-manifest.py

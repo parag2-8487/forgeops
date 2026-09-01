@@ -959,6 +959,12 @@ jobs:
       # `check-go-module.sh` still forbade `.go` files under `internal/validator` and
       # `internal/policy`. Had either run, the work that populated those directories could not have
       # been committed. This asserts the meta-property so the category cannot reopen.
+      # A Python skew in a runner definition silently disabled a negative control: `mutation-ci.yml`
+      # pinned 3.11, `test_q19_route_coverage.py` needs `sys.monitoring` (3.12+), and four of its tests
+      # raised `AttributeError` on every run — so the harness read a crash as a kill. Only
+      # `control-of-the-control.py` noticed, three layers up, and it could only report the symptom.
+      - name: Every workflow must run the Python the project targets
+        run: python scripts/check-workflow-python.py
       - name: Every gate script must actually run somewhere
         run: python scripts/check-gate-reachability.py
       # Promoted from the untracked `scripts/_state.sh`, which reconciled the plan against the
