@@ -33,10 +33,9 @@ import (
 // calls the network, and a mock store that accepted any call sequence could not answer it.
 type countingStore struct {
 	*FileStore
-	calls         []string
-	capacityErr   error
-	saveErr       error
-	exchangeCount *int32
+	calls       []string
+	capacityErr error
+	saveErr     error
 }
 
 func (c *countingStore) CheckCapacity(ctx context.Context, creds Credentials) error {

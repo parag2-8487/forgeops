@@ -24,10 +24,11 @@ import (
 //
 // WHAT IT DOES NOT DO. It does not ignore sync failures generally, and it does not ignore them on
 // Windows generally. Only the specific errno values that mean "this file descriptor does not
-// support flushing" are treated as success. `ENOSPC`, `EIO` and `EBADF` are real: a full disk or a
-// closed descriptor while writing a log is a fact the operator needs, and a log sink that is a
-// FILE reports those through this same path. Suppressing the whole error on Windows — the obvious
-// one-line fix — would have thrown those away with it.
+// support flushing" are treated as success, and which values those are is a fact about THIS
+// package's sink rather than a general licence. `ENOSPC` and `EIO` still propagate: a full disk
+// while writing a log is something an operator needs to know. Suppressing the whole error on
+// Windows — the obvious one-line fix — would have thrown those away with it. See
+// `posixUnsyncableErrnos` for why `EBADF` is in the list and what would have to change to remove it.
 func Sync(logger *zap.Logger) error {
 	if logger == nil {
 		return nil
@@ -64,11 +65,22 @@ func isStreamThatCannotSync(err error) bool {
 //   - EINVAL: Linux returns this for a pipe or a socket.
 //   - ENOTSUP: some filesystems and macOS devices report it this way.
 //   - ENOTTY: returned by older BSD-derived systems for a character device.
+//   - EBADF: what macOS returns for `/dev/stderr` when stderr is a pipe, which is how every CI job
+//     and every `docker compose exec` runs the agent. Found by running this on a real macOS runner,
+//     where it printed `sync /dev/stderr: bad file descriptor` on a SUCCESSFUL `agent version`.
 //
-// EBADF is deliberately absent. A bad descriptor means the log sink was closed underneath the
-// logger, which is a real defect and must not be swallowed.
+// EBADF WAS DELIBERATELY EXCLUDED IN THE FIRST VERSION OF THIS FILE, on the reasoning that a bad
+// descriptor means the log sink was closed underneath the logger. That reasoning was wrong here, and
+// the reason it is wrong is a fact about this package rather than about errno: THIS AGENT HAS NO FILE
+// SINK. `New` takes zap's default `OutputPaths`, which is `stderr`, and `NewRedacted` calls
+// `zap.Open("stderr")` explicitly. There is no configuration that writes the log to a file, so an
+// EBADF from syncing it cannot mean "the log file went away" — there is no log file to lose.
+//
+// `TestTheLoggerOnlyEverWritesToAStandardStream` pins that premise. If a file sink is ever added,
+// that test fails and points here, and EBADF must move back out of this list at the same time.
 var posixUnsyncableErrnos = []syscall.Errno{
 	syscall.EINVAL,
 	syscall.ENOTSUP,
 	syscall.ENOTTY,
+	syscall.EBADF,
 }

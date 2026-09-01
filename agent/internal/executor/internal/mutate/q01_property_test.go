@@ -268,14 +268,31 @@ func TestProperty_Q01_NoPathOutsideRootIsEverWritten(t *testing.T) {
 		})
 		if err == nil {
 			// Not refused, so every written path must be inside root.
-			resolvedRoot, absErr := filepath.Abs(root)
+			//
+			// BOTH SIDES ARE CANONICALISED, and that is not cosmetic. `filepath.Abs` alone compared
+			// an unresolved root against a path the product had already resolved, and the two can
+			// spell the same directory differently:
+			//
+			//   * on Windows, `t.TempDir()` under a runner returns an 8.3 short name
+			//     (`C:\Users\RUNNER~1\...`) while the write resolves to `C:\Users\runneradmin\...`;
+			//   * on macOS, `/var` is a symlink to `/private/var`, so `TMPDIR` differs the same way.
+			//
+			// The prefix test then failed on a write that was correctly INSIDE root, reporting a
+			// containment breach that had not happened. Found by running this suite on real Windows
+			// and macOS runners for the first time; it had only ever run on Linux, where the two
+			// spellings coincide.
+			resolvedRoot, absErr := canonical(root)
 			if absErr != nil {
-				rt.Fatalf("Abs(root): %v", absErr)
+				rt.Fatalf("canonical(root): %v", absErr)
 			}
 			for _, w := range report.Written {
-				if w.AbsPath != resolvedRoot && !strings.HasPrefix(w.AbsPath, resolvedRoot+sep) {
+				written, wErr := canonical(w.AbsPath)
+				if wErr != nil {
+					rt.Fatalf("canonical(%q): %v", w.AbsPath, wErr)
+				}
+				if written != resolvedRoot && !strings.HasPrefix(written, resolvedRoot+sep) {
 					rt.Fatalf("%q was accepted and wrote %q, which is outside root %q",
-						candidate, w.AbsPath, resolvedRoot)
+						candidate, written, resolvedRoot)
 				}
 			}
 		}
@@ -412,4 +429,25 @@ func TestProperty_Q01_AStaleChangeSetWritesNothing(t *testing.T) {
 		}
 		assertPreImagesIntact(rt, root, plans)
 	})
+}
+
+// canonical resolves a path to the one spelling the filesystem agrees on.
+//
+// `filepath.EvalSymlinks` after `Abs`, because that collapses BOTH divergences that broke this test
+// on non-Linux platforms: it expands a Windows 8.3 short name to its long form, and it follows the
+// macOS `/var` -> `/private/var` symlink. Comparing paths without it is comparing two strings that
+// may name the same directory.
+func canonical(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		// A path that does not exist cannot be resolved, and that is not a failure here: the
+		// absolute form is the best available answer and remains directly comparable, because the
+		// caller canonicalises the other side the same way.
+		return absolute, nil //nolint:nilerr // deliberate: see above
+	}
+	return resolved, nil
 }
