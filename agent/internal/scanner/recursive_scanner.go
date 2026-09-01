@@ -188,8 +188,20 @@ func (s *FilteredScanner) ScanDirectory(targetDir string) (*Inventory, error) {
 	// additional I/O. `entries.present` is the authoritative file set, which is what lets a layout
 	// signal be checked without a stat call.
 	report := frameworks.Detect(&walkedTree{contents: manifestContents, present: entries.present}, inv.Manifests)
+	// NEVER NIL, and that is a wire contract rather than a style preference — the same one
+	// `TestBuildReport_NoSliceIsSerialisedAsNull` was written for. Go marshals a nil slice as `null`,
+	// the backend's `ScanInventoryIn` declares both of these as lists, and pydantic refuses `null` for
+	// one — so a repository with no detectable framework made the backend reject the WHOLE report with a
+	// 422, losing the index for every file in it. That is exactly what happened in CI the first time both
+	// sides were current: `fatal: submitting the scan report: the backend refused the scan report (422)`.
 	inv.Frameworks = report.Findings
+	if inv.Frameworks == nil {
+		inv.Frameworks = []frameworks.Finding{}
+	}
 	inv.PackageManagers = report.PackageManagers
+	if inv.PackageManagers == nil {
+		inv.PackageManagers = []string{}
+	}
 
 	return inv, err
 }

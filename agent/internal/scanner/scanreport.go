@@ -272,6 +272,23 @@ func (r *ReportScanner) BuildReport(ctx context.Context, targetDir string) (*Sca
 		}
 		return report.Dependencies[i].RawSpecifier < report.Dependencies[j].RawSpecifier
 	})
+	// NEITHER LIST MAY BE NIL ON THE WIRE, for the reason `ScanChunk`'s own comment gives at length: Go
+	// marshals a nil slice as `null`, `ScanReportIn` declares both as required lists, and pydantic refuses
+	// `null` for one — so the backend rejects the ENTIRE report with a 422 and the index is lost for every
+	// file in it.
+	//
+	// `TestBuildReport_NoSliceIsSerialisedAsNull` has forbidden `"dependencies":null` since it was written,
+	// and the bug survived anyway: its fixture tree contains an import, so `Dependencies` was never empty
+	// there and the assertion never fired. A tree with no import edges at all — a repository of manifests
+	// and data files, which is a perfectly ordinary thing to scan — produced `"dependencies": null` and a
+	// 422. Found by dumping a real report and feeding it to the real pydantic model, which is what
+	// `cmd/reportdump` and `test_scan_report_contract.py` now do on every run.
+	if report.Files == nil {
+		report.Files = []ScanFile{}
+	}
+	if report.Dependencies == nil {
+		report.Dependencies = []ScanDependency{}
+	}
 	report.InventoryHash = inventoryHash(report.Files)
 	return report, nil
 }

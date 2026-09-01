@@ -72,6 +72,12 @@ func TestBuildReport_NoSliceIsSerialisedAsNull(t *testing.T) {
 		`"manifests":null`,
 		`"config_files":null`,
 		`"entry_points":null`,
+		// FR-10's two fields, added to this list the day the omission cost a CI run: a repository
+		// with no detectable framework serialised `"frameworks":null`, and the backend refused the
+		// whole report with a 422. The list is the contract, so a new inventory field belongs here in
+		// the same commit that adds it.
+		`"frameworks":null`,
+		`"package_managers":null`,
 	} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Errorf("the report serialises %s, which the backend refuses as a non-list", forbidden)

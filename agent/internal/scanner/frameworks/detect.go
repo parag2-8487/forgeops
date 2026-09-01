@@ -274,7 +274,10 @@ func Detect(reader FileReader, manifests []string) Report {
 
 	acc.layoutOnly(reader)
 
-	report := Report{Findings: acc.sorted()}
+	// `sorted()` already returns a non-nil empty slice, and `PackageManagers` is normalised below.
+	// Both matter on the wire: the backend refuses `null` for a list, so a project with no findings
+	// would otherwise have its entire scan report rejected with a 422.
+	report := Report{Findings: acc.sorted(), PackageManagers: []string{}}
 	for lock, manager := range lockFiles {
 		if reader.Exists(lock) {
 			report.PackageManagers = append(report.PackageManagers, manager)
