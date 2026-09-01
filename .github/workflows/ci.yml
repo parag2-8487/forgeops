@@ -335,6 +335,34 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.infra == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # SHARDED, because this job WAS the whole critical path. Measured on the first fully green run:
+    # `ci` took 46m17s, this job took 46m02s of it, and `pytest` took 2621s of that — 95% of the job in
+    # one command. Every other job in the workflow finished inside 11m and then waited.
+    #
+    # The split is by TEST DIRECTORY rather than by a test-count splitter, because the directories already
+    # mean something: `tests/integration` needs the model server and the real services, and the rest does
+    # not. A count-based splitter would put half the integration tests in each shard and buy nothing.
+    #
+    # WHY THIS NEEDS NO PER-SHARD DATABASE. A matrix produces one JOB per shard, and service containers are
+    # per-job — so each shard already gets its own PostgreSQL and Redis. That matters because
+    # `schema_at_head` runs `alembic downgrade base` at session start: two shards sharing a database would
+    # have one destroy the other's schema mid-run.
+    #
+    # The job KEY stays `backend`, which is what Appendix E cites and what `check-ci-jobs.py` reads; only
+    # the display name gains the shard.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: unit
+            # 	ests/generation and 	ests/secrets hold one file each and are easy to lose in a split —
+            # the union of the two shards' paths MUST equal what pytest tests/ collected, or the suite
+            # quietly shrinks. 	est_shard_paths_cover_every_test_directory asserts that union.
+            paths: tests/unit tests/meta tests/property tests/generation tests/secrets
+            needs_model: "false"
+          - shard: integration
+            paths: tests/integration
+            needs_model: "true"
     defaults:
       run:
         working-directory: backend
@@ -536,7 +564,10 @@ jobs:
       # The two models are small on purpose — a coder model at 1.5B and a 1024-d embedding model.
       # `bge-m3` is the width `embeddings_local` is declared at (D-48); `nomic-embed-text` is 768
       # and would be refused by `SelfHostedChunkEmbedder`'s dimension check.
+      # Only the integration shard needs a model: 	est_self_hosted_generation.py and the tier-config
+      # proofs live there. The unit shard skips a 2.2 GB pull it never reads.
       - name: Start the local model server and pull the two models
+        if: matrix.needs_model == 'true'
         working-directory: .
         run: |
           docker run -d --name forgeops-ci-ollama -p 11434:11434 \
@@ -555,15 +586,37 @@ jobs:
           # the symptom rather than the missing model.
           curl -fsS http://localhost:11434/v1/models >/dev/null
           python scripts/ci/check-embedding-width.py
-      # Criterion 11's BACKEND third rides on this step: `--cov=src --cov-branch
-      # --cov-fail-under=70` is in `backend/pyproject.toml`'s addopts, so this invocation
-      # enforces the gate without naming it. That is deliberate — the gate applies to every
-      # pytest run, including a developer's, rather than only to the CI entry point.
+      # Criterion 11's BACKEND third rides on this step. `--cov=src --cov-branch --cov-fail-under=70` is in
+      # `backend/pyproject.toml`'s addopts, so a plain `pytest` enforces the gate without naming it — which
+      # is deliberate, because a gate only the CI entry point applies is a gate a developer can be
+      # surprised by.
       #
-      # Previously none of it existed: the flags were in no configuration file and a unit test
-      # asserted their absence (LEARNING-JOURNAL finding 81). Measured under this exact marker
-      # selection on 2026-08-21: 87.06%, so the gate passes with real margin.
-      - run: pytest tests/ -m "not oidc and not infisical" -q
+      # `--cov-fail-under=0` HERE, AND THE GATE IS NOT LOWERED. A shard sees part of the suite, so its own
+      # percentage is meaningless — asserting 70 against it would fail a correct run. The threshold moves to
+      # the `backend-coverage` job below, which combines both shards and runs `coverage report`, and that
+      # reads `fail_under = 70` from `[tool.coverage.report]` in `pyproject.toml`. The enforced property is
+      # unchanged (whole suite ≥ 70) and is now an explicit assertion over a combined dataset rather than an
+      # implicit consequence of running everything in one process. `test_metadata.py` asserts the config
+      # value, so the 70 cannot be edited quietly either.
+      #
+      # `--durations=25` because this step was 95% of the critical path and nothing reported where the time
+      # went. Measured on 2026-08-21 under this marker selection: 87.06%.
+      - name: pytest (${{ matrix.shard }})
+        env:
+          # Parallel mode plus a per-shard name, so `coverage combine` has two distinct files to merge
+          # rather than one overwriting the other.
+          COVERAGE_FILE: .coverage.${{ matrix.shard }}
+        run: pytest ${{ matrix.paths }} -m "not oidc and not infisical" -q --cov-fail-under=0 --durations=25
+      - name: Upload this shard's coverage data
+        # `always()` so a failing shard still contributes what it measured; the combine job then reports a
+        # real total rather than silently one shard's.
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backend-coverage-${{ matrix.shard }}
+          path: backend/.coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          retention-days: 1
       - name: Cerbos logs on failure
         if: failure()
         working-directory: .
@@ -574,7 +627,11 @@ jobs:
       # the table, and that all three immutability triggers are installed. It connects
       # with the real DATABASE_URL, so it reports the privileges of whatever role that
       # URL authenticates as rather than the role the configuration claims.
+      # ONCE, not per shard. These four read the composed app or the database rather than the test suite, so
+      # a second shard would assert the identical thing on identical inputs. Pinned to unit because that
+      # shard finishes first and does not wait on a model pull.
       - name: Every route requires a principal or is an explicit public exemption
+        if: matrix.shard == 'unit'
         working-directory: .
         # Deny-by-default is attached per route (§4.4), which a global dependency would
         # have made invisible at the route definition. The cost of per-route attachment
@@ -589,6 +646,7 @@ jobs:
       # Here rather than in `audit` for the same reason `check-route-auth.py` is here: it constructs
       # the real application, so it needs this job's DATABASE_URL, REDIS_URL and ENVELOPE_PEPPER.
       - name: The endpoint reference must match the real OpenAPI schema
+        if: matrix.shard == 'unit'
         working-directory: .
         run: python scripts/dump-openapi.py --check
       # design.md §2.2.1 mechanism 3, Python half. `MutationAuthority` cannot be constructed
@@ -598,9 +656,11 @@ jobs:
       # src/governance/ or to receive a MutationAuthority, and it fails when the discovered
       # primitive set is EMPTY so a renamed decorator cannot make it trivially pass.
       - name: Chokepoint reachability, Python half
+        if: matrix.shard == 'unit'
         working-directory: .
         run: bash scripts/check-chokepoint.sh --python
       - name: The application role must not be able to rewrite the audit log
+        if: matrix.shard == 'integration'
         working-directory: .
         run: |
           # Migrate explicitly rather than relying on whatever revision the last test
@@ -608,6 +668,70 @@ jobs:
           # result depends on test ordering is not a gate.
           (cd backend && DATABASE_URL="$FORGEOPS_TEST_DATABASE_URL" python -m alembic upgrade head)
           python scripts/check-db-roles.py
+
+  # ── 6b. backend-coverage: criterion 11's backend third, over the WHOLE suite ─
+  # design.md §7.13, D-31; criterion 11.
+  #
+  # WHY THIS JOB EXISTS. `backend` is sharded, so no single shard sees the whole suite and no shard's
+  # percentage means anything on its own. The 70% gate therefore cannot live in the shards — it lives here,
+  # over the combined dataset.
+  #
+  # THE THRESHOLD IS NOT LOWERED, AND THIS IS THE PLACE TO SAY SO. `coverage report` reads
+  # `fail_under = 70` from `[tool.coverage.report]` in `backend/pyproject.toml` — the same value the
+  # unsharded run enforced through `--cov-fail-under=70` in addopts, and the one `test_metadata.py` asserts
+  # so it cannot be edited quietly. What changed is that the assertion is now explicit over a combined
+  # dataset instead of implicit in a single process.
+  #
+  # `needs: backend` waits for EVERY matrix leg, and `if: always()` runs even when a shard failed — so a
+  # coverage drop is reported alongside a test failure rather than hidden behind it. The job still fails if
+  # a shard failed, because `needs` propagates that.
+  backend-coverage:
+    needs: backend
+    if: always() && needs.backend.result != 'skipped'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # `coverage` alone, not the whole dev lock: this job runs one command and does not need a database,
+      # a model server or a test framework.
+      - name: Install coverage at the locked version
+        run: pip install "coverage[toml]==7.15.2"
+      - name: Download every shard's coverage data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: backend-coverage-*
+          path: backend/shards
+          merge-multiple: true
+      - name: Combine and enforce the gate over the whole suite
+        run: |
+          set -euo pipefail
+          # Asserted rather than assumed: `coverage combine` over zero files reports 0% and would fail the
+          # gate for the wrong reason, and over ONE file it would silently gate a single shard.
+          count=$(find shards -name '.coverage.*' | wc -l)
+          echo "shard coverage files: $count"
+          if [ "$count" -lt 2 ]; then
+            echo "::error::expected one coverage file per shard, found $count; the gate would apply to a partial suite" >&2
+            exit 1
+          fi
+          find shards -name '.coverage.*' -exec mv {} . \;
+          coverage combine
+          # No `--fail-under` flag: the value comes from `[tool.coverage.report]`, which is the one a test
+          # can read and therefore the one that cannot drift.
+          coverage report
+      - name: Publish the combined report
+        if: always()
+        run: coverage xml -o coverage.xml || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: backend-coverage-combined
+          path: backend/coverage.xml
+          retention-days: 7
 
   # ── 7. auth: the code+PKCE flow and the RBAC matrix against REAL Authentik ─
   # design.md §8.3 (new job), §13.1, §13.3, §16.4, §17.1 D-34; task 6.3.
