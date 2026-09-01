@@ -25,6 +25,7 @@ have nothing to render.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncGenerator, Mapping
 from typing import Annotated, Any
@@ -40,6 +41,7 @@ from ..auth.principal import Principal
 from ..core.db import get_session
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from ..governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, MutationRequest
+from .retrieval import retrieve_generation_context
 from .service import GenerationOutcome, GenerationService
 
 #: The two event types that end a stream (§7.4). Anything after one of these is unreachable by a
@@ -207,8 +209,33 @@ async def create_generation_run(
         # The project row, so the rendered manifests name the REAL application. Loaded here because
         # this is where the session lives; the service takes facts, not a database handle.
         project_row = await _load_project_for_generation(session, body.project_id)
+
+        # FR-13's retrieval, ONCE per run rather than once per attempt.
+        #
+        # This call is the whole of FR-13 on the runtime path, and its absence was the finding: the
+        # retrieval module, `bm25.py`, `rrf.py` and the `embeddings` tables all existed with no
+        # production caller, so `build_generation_prompt` was handed five scalars read from the
+        # `projects` row and the platform produced the same Dockerfile for a `pyproject.toml` project as
+        # for a `Cargo.toml` one.
+        #
+        # ONCE, not per attempt, for two reasons. The repair loop re-prompts with the validator's
+        # findings, and the codebase has not changed between attempts — so retrieving again would spend
+        # a hybrid search to get the same rows. And the cache key is computed over the prompt: context
+        # that varied between attempts would make attempt 2 of an identical request miss a cache entry
+        # attempt 1 had just written.
+        #
+        # Retrieved HERE rather than in the service for the reason the comment above gives about the
+        # project row: this is where the session lives, and `service.py` takes facts rather than a
+        # database handle.
+        retrieval = await retrieve_generation_context(session, project_id=body.project_id, query=body.prompt)
+        # Persisted whether or not it found anything, because "we searched and the index held nothing
+        # relevant" and "we never searched" are different facts about a run, and only the first is
+        # consistent with a project that has been scanned. `generation_runs.retrieval` has existed since
+        # revision `0006` and was never written.
+        outcome.retrieval = retrieval.as_record()
+
         async for frame in service.stream_generation(
-            body.project_id, body.prompt, outcome=outcome, project=project_row
+            body.project_id, body.prompt, outcome=outcome, project=project_row, retrieval=retrieval
         ):
             if _is_terminal(frame):
                 withheld = frame
@@ -347,7 +374,11 @@ async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: Gene
         text(
             "UPDATE generation_runs SET status = :status, prompt_tokens = :prompt_tokens, "
             "completion_tokens = :completion_tokens, served_from = :served_from, tier = :tier, "
-            "endpoint_id = :endpoint_id, iterations_used = :iterations_used, finished_at = now() "
+            "endpoint_id = :endpoint_id, iterations_used = :iterations_used, "
+            # FR-13. This column has existed since revision `0006` and was never written, so a run's
+            # grounding was unrecoverable after the request finished — which made "generated using RAG
+            # context" a claim with no record behind it.
+            "retrieval = CAST(:retrieval AS jsonb), finished_at = now() "
             "WHERE id = :id"
         ),
         {
@@ -359,6 +390,10 @@ async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: Gene
             "tier": outcome.tier,
             "endpoint_id": outcome.endpoint_id,
             "iterations_used": outcome.iterations_used,
+            # Serialised explicitly, and left NULL when retrieval was never attempted. Passing a dict
+            # to a JSONB parameter through `text()` leaves the driver to guess, and the guess differs
+            # between asyncpg and psycopg.
+            "retrieval": json.dumps(outcome.retrieval) if outcome.retrieval is not None else None,
         },
     )
     await session.commit()

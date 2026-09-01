@@ -48,6 +48,7 @@ from .model_prompt import (
     parse_artifacts,
 )
 from .models import MAX_GENERATION_ITERATIONS
+from .retrieval import RetrievalContext, render_context_section
 
 
 class RunRecord(BaseModel):
@@ -94,6 +95,14 @@ class GenerationOutcome:
     tier: str = "template"
     #: Which endpoint answered, for the NFR-04 evidence `generation_runs.endpoint_id` exists for.
     endpoint_id: str | None = None
+    #: FR-13's retrieval record: which retrievers ran, how many chunks reached the prompt, and their
+    #: paths. Persisted to `generation_runs.retrieval`, a column that has existed since revision `0006`
+    #: and was never written.
+    #:
+    #: `None` means retrieval was never ATTEMPTED, which is a different fact from an empty result — a
+    #: project that has been scanned and yielded nothing relevant is not the same as one that was never
+    #: searched. That is why this is not defaulted to an empty dict.
+    retrieval: dict[str, Any] | None = None
     #: Provider attempts consumed, bounded by §3.8's three. `0` for a cache hit or a run with no
     #: router configured, which is the truth in both cases: neither called a provider.
     iterations_used: int = 0
@@ -298,6 +307,7 @@ class GenerationService:
         *,
         outcome: GenerationOutcome | None = None,
         project: Mapping[str, Any] | None = None,
+        retrieval: RetrievalContext | None = None,
     ) -> AsyncGenerator[str]:
         """Yield §7.4 frames for one generation run.
 
@@ -321,7 +331,12 @@ class GenerationService:
         if self.routes_to_a_model:
             report = _ModelReport()
             async for frame in self._stream_from_model(
-                run_id=run_id, prompt=prompt, project=project, outcome=outcome, report=report
+                run_id=run_id,
+                prompt=prompt,
+                project=project,
+                outcome=outcome,
+                report=report,
+                retrieval=retrieval,
             ):
                 yield frame
             if report.succeeded:
@@ -350,6 +365,7 @@ class GenerationService:
         project: Mapping[str, Any] | None,
         outcome: GenerationOutcome | None,
         report: _ModelReport,
+        retrieval: RetrievalContext | None = None,
     ) -> AsyncGenerator[str]:
         """Route through the cascade, streaming real deltas, up to `max_attempts` times.
 
@@ -376,7 +392,15 @@ class GenerationService:
             )
 
             model_prompt = build_generation_prompt(
-                operator_prompt=prompt, facts=facts, previous_findings=findings, attempt=attempt
+                operator_prompt=prompt,
+                facts=facts,
+                previous_findings=findings,
+                attempt=attempt,
+                # FR-13. Rendered per attempt from the SAME retrieval, so the repair loop keeps the
+                # grounding it started with rather than searching again for rows that cannot have
+                # changed between attempts. `render_context_section` returns an empty tuple when there
+                # is nothing to say, so an unscanned project gets no heading rather than an empty one.
+                context_lines=render_context_section(retrieval) if retrieval is not None else (),
             )
             # D-44: the cache key AND the L2 vector are computed over this value, and it is the
             # only thing handed to the provider. Redacting here rather than inside the port keeps
