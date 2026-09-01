@@ -1,0 +1,20 @@
+---
+replicaCount: 1
+
+image:
+  repository: onboarding-mti15hj6
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# Empty by default rather than guessed. A generated resource request that does not match the workload
+# is worse than none: it either wastes capacity or gets the pod evicted.
+resources: {}
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false

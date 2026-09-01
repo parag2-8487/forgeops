@@ -39,13 +39,24 @@ import { gotoAsOperator, OPERATOR } from "./helpers/auth";
 import { sqlScalar } from "./helpers/stack";
 
 /**
- * A prompt chosen to be SEMANTICALLY DISTINCT from the journey's, and no larger than it needs to be.
+ * A prompt chosen to be SEMANTICALLY DISTINCT from the journey's, from the OTHER prompts in this pool, and
+ * no larger than it needs to be.
  *
  * DISTINCT, because the six-tier router's L1 cache is a digest and its L2 is a cosine similarity at
  * >= 0.95. A prompt that merely appends a timestamp defeats L1 and not L2 — the run is then served
  * from cache in microseconds and paints in a single update. Observed exactly that: `Lengths: 1071`,
  * one sample, from a cache hit. A different language and a different tool put the embedding far
  * enough away that the tier which answers is a model rather than a cache.
+ *
+ * WHY THIS IS NOW A POOL RATHER THAN ONE STRING. A single fixed prompt is distinct from the journey's and
+ * from nothing else — including its own previous run. Running this spec twice in one session failed the
+ * second time with `painted 2 time(s); lengths: [69,953]`, which is an L1 hit on the identical digest
+ * replaying a stored completion instead of streaming it. That is correct cache behaviour and a broken
+ * test: the assertion is about tokens ARRIVING, and a replay has none to arrive.
+ *
+ * So a run picks one of several prompts that differ in LANGUAGE and TOOLCHAIN, not in wording. Rust/cargo,
+ * Go/modules and Java/Maven produce genuinely different embeddings, which is what L2 measures — a pool of
+ * paraphrases would defeat L1 and sail straight into L2, which is the mistake the timestamp made.
  *
  * SMALL, because a MutationObserver does not need volume. An earlier version of this prompt also
  * asked for a Kubernetes CronJob and a comment explaining every stage; the run was still emitting
@@ -54,8 +65,21 @@ import { sqlScalar } from "./helpers/stack";
  * because the observer is called for every DOM change and cannot miss any. Asking for less output
  * makes the test faster without making it weaker.
  */
-const PROMPT =
-  "Write a multi-stage Dockerfile for a Rust service built with cargo, using a distroless runtime stage.";
+const PROMPT_POOL = [
+  "Write a multi-stage Dockerfile for a Rust service built with cargo, using a distroless runtime stage.",
+  "Write a multi-stage Dockerfile for a Go service built with go modules, using a scratch runtime stage.",
+  "Write a multi-stage Dockerfile for a Java service built with Maven, using a JRE-only runtime stage.",
+  "Write a multi-stage Dockerfile for a Ruby service installed with bundler, using an Alpine runtime stage.",
+  "Write a multi-stage Dockerfile for a .NET service built with the dotnet CLI, using a runtime-deps stage.",
+] as const;
+
+/**
+ * Chosen at random rather than round-robin, because there is no state between runs to advance a counter
+ * with, and the pool only has to make a REPEAT unlikely rather than impossible. A repeat still produces a
+ * cache hit, and the failure then names the cause — the assertion message reports the paint count and the
+ * lengths, which is how the original was diagnosed.
+ */
+const PROMPT = PROMPT_POOL[Math.floor(Math.random() * PROMPT_POOL.length)];
 
 test.describe("Criterion 13: the model's tokens are painted as they arrive", () => {
   test("the stream output grows across at least three distinct renders", async ({ page }) => {
