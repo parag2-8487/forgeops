@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import base64
 import uuid
-from typing import Annotated, Final
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field
@@ -48,6 +48,7 @@ from ..core.db import get_session
 from ..core.errors import problem
 from .ca import CertificateAuthorityUnavailableError
 from .dependencies import require_principal, require_role
+from .device_dependencies import require_device_token
 from .devices import (
     AgentMeta,
     CsrRejectedError,
@@ -71,12 +72,6 @@ router = APIRouter(
 #: the single entry in `PUBLIC_ROUTES` that is not part of the auth flow.
 public_router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
-#: Assembled from fragments, and declared here rather than imported, matching what
-#: `device_dependencies.py`, `analysis/indexer.py` and four other modules do for the same pair: the
-#: repository's secret gate greps added lines for the literal header name beside anything
-#: token-shaped, and a false positive there trains people to ignore the gate.
-_AUTH_HEADER: Final[str] = "Author" + "ization"
-_BEARER_PREFIX: Final[str] = "Bear" + "er "
 
 #: A generous ceiling on the submitted PEM. A P-256 CSR is ~450 bytes; 8 KiB leaves room for
 #: extensions and refuses a body that could only be an attempt to make the parser work.
@@ -284,39 +279,36 @@ async def exchange_pairing_code(
 )
 async def abandon_self(
     request: Request,
+    device_id: Annotated[uuid.UUID, Depends(require_device_token)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
     """Let an agent give back a device whose credential it could not persist (§3.7).
 
-    ON `public_router` RATHER THAN `router`, and that is not an omission. `router` carries
-    `require_principal`, which an agent can never satisfy: what the exchange issues is a device
-    token and a certificate, not an OIDC access token. The authentication here is the device token
-    in the header, checked by `DeviceService.abandon_self`, whose docstring sets out why one factor
-    is right for this route and wrong for every route that grants something.
-
-    THE HOLE THIS CLOSES. `pair` is not atomic across the network and the local credential store:
-    the exchange burns the code and marks the device `active`, and only then does the agent try to
-    write what it received. On Windows that write could not succeed — the full bundle is past the
+    THE HOLE THIS CLOSES. `pair` is not atomic across the network and the local credential store: the
+    exchange burns the code and marks the device `active`, and only then does the agent try to write
+    what it received. On Windows that write could not succeed — the full bundle is past the
     Credential Manager's 2560-byte ceiling — so every attempt left an `active` device whose token
     existed nowhere. The agent now checks capacity before spending the code, and calls this when a
     write fails anyway.
 
-    Idempotent in effect: the `UPDATE` matches only an `active` row, so a repeat gets the same 401
-    as an unknown token and no second audit row is written.
-    """
-    header = request.headers.get(_AUTH_HEADER, "")
-    if not header.startswith(_BEARER_PREFIX):
-        raise problem(
-            "unauthenticated",
-            detail="a device token is required",
-        )
-    token = header[len(_BEARER_PREFIX) :].strip()
+    ON `public_router`, AND LISTED IN `PUBLIC_ROUTES` WITH ITS REASON. `router` carries
+    `require_principal`, which an agent can never satisfy: what the exchange issues is a device token
+    and a certificate, not an OIDC access token. "Public" in that registry means "no principal", not
+    "unauthenticated" — `require_device_token` resolves the caller before this function starts.
 
+    AUTHENTICATED IN A DEPENDENCY, NOT HERE, and that was a correction. The first version read the
+    header in this body, and Q-19's `TestEveryProtectedRouteRefusesEveryTokenlessRequest` caught it:
+    it asserts the handler's code object never even STARTS for a tokenless request, which is a far
+    stronger guarantee than returning 401 from inside it. A handler that runs before authentication
+    can have side effects.
+
+    The device id is the dependency's, so this route cannot name any device but its caller.
+    """
     try:
-        await _service(request).abandon_self(session, device_token=token)
+        await _service(request).abandon_self(session, device_id=device_id)
     except DeviceAuthenticationError as exc:
-        # The same body whether the token was malformed, unknown, or names a device that is not
-        # active. Distinguishing them would make this route an oracle for whether a token is live.
+        # Authenticated a moment ago and no longer active: a concurrent revocation, or a repeat. The
+        # same non-disclosing body, for the same reason the dependency gives.
         raise problem("unauthenticated", detail="a device token is required") from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

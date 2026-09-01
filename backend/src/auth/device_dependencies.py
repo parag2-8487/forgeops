@@ -78,8 +78,8 @@ DEVICE_STATE_ATTR: Final[str] = "forgeops_authenticated_device"
 #: Assembled rather than written out, for the reason `scanner/uploader.go` gives for the same pair:
 #: the repository's secret gate greps added lines for the literal header beside anything
 #: token-shaped, and a false positive there trains people to ignore the gate.
-_AUTH_HEADER: Final[str] = "Author" + "ization"
-_BEARER_PREFIX: Final[str] = "Bear" + "er "
+AUTH_HEADER: Final[str] = "Author" + "ization"
+BEARER_PREFIX: Final[str] = "Bear" + "er "
 
 
 def _unauthenticated() -> ProblemException:
@@ -97,6 +97,57 @@ def _unauthenticated() -> ProblemException:
         title="Unauthenticated",
         detail="a client certificate and a matching device token are both required",
     )
+
+
+async def require_device_token(request: Request, session: Annotated[AsyncSession, Depends(get_session)]) -> Any:
+    """Authenticate an agent on its device token alone, or raise 401. Returns the device id.
+
+    WHY THIS EXISTS SEPARATELY FROM `require_device`, WHICH INSISTS ON BOTH FACTORS.
+
+    `require_device`'s docstring rejects token-only authentication because it would make an HTTP
+    route a softer door than the WebSocket for the same credential, and an attacker chooses the
+    softer door. That reasoning is about routes that GRANT something. It does not transfer to a route
+    whose entire effect is to DESTROY the caller's own credential.
+
+    `POST /agents/self/abandon` is the only such route. It exists because `pair` is not atomic across
+    the network and the agent's local credential store: the exchange burns a single-use code and marks
+    the device `active`, and only then does the agent try to write what it received. An agent that
+    cannot persist it must be able to give the device back, and at that moment it holds a device token
+    and a certificate — but the certificate is only presented on the mTLS listener, and the pairing
+    exchange it just completed was plain HTTP. Requiring both factors would make the surrender
+    unreachable in exactly the situation it is for.
+
+    The residual risk is stated rather than waved away: somebody holding a stolen device token could
+    abandon that device — a denial of service against a device they already fully control, which adds
+    no capability.
+
+    WHY A DEPENDENCY RATHER THAN A CHECK INSIDE THE HANDLER. The first version of that route read the
+    header in the handler body, and Q-19 caught it: `TestEveryProtectedRouteRefusesEveryTokenlessRequest`
+    asserts the handler's code object never even STARTS for a tokenless request, which is a far
+    stronger guarantee than "the handler returned 401" — a handler that runs before authentication can
+    have side effects. Moving it here satisfies the property by construction.
+    """
+    devices: Any = getattr(request.app.state, "device_service", None)
+    if devices is None:
+        # A missing collaborator is a composition error in the app factory, not a fact about the
+        # caller. Reporting it as "unauthenticated" would let a broken deployment look like a wall of
+        # correctly-rejected clients. `require_device` takes the same line for the same reason.
+        raise RuntimeError("app.state.device_service must be composed; POST /api/v1/agents/self/abandon depends on it")
+
+    header = request.headers.get(AUTH_HEADER, "")
+    if not header.startswith(BEARER_PREFIX):
+        raise _unauthenticated()
+    token = header[len(BEARER_PREFIX) :].strip()
+
+    try:
+        return await devices.authenticate_device_token(session, device_token=token)
+    except Exception as exc:  # noqa: BLE001 - narrowed on the next line
+        # Matched BY CLASS NAME, because §2.2.1 bans importing `src.auth.devices` outside
+        # `governance/`. Anything else is RE-RAISED, so a database outage still surfaces as a 500 with
+        # a stack trace rather than being flattened into "your credentials are wrong".
+        if type(exc).__name__ != "DeviceAuthenticationError":
+            raise
+        raise _unauthenticated() from exc
 
 
 async def require_device(request: Request, session: Annotated[AsyncSession, Depends(get_session)]) -> Any:
@@ -133,10 +184,10 @@ async def require_device(request: Request, session: Annotated[AsyncSession, Depe
         # the route was called on the ordinary port, where no device can be identified at all.
         raise _unauthenticated()
 
-    header = request.headers.get(_AUTH_HEADER, "")
-    if not header.startswith(_BEARER_PREFIX):
+    header = request.headers.get(AUTH_HEADER, "")
+    if not header.startswith(BEARER_PREFIX):
         raise _unauthenticated()
-    token = header[len(_BEARER_PREFIX) :].strip()
+    token = header[len(BEARER_PREFIX) :].strip()
 
     try:
         device = await devices.authenticate_session(session, certificate_pem=certificate_pem, device_token=token)

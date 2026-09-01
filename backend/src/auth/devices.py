@@ -1289,40 +1289,21 @@ class DeviceService:
             ),
         )
 
-    async def abandon_self(self, session: AsyncSession, *, device_token: str) -> uuid.UUID:
-        """Abandon the device that holds `device_token`, and return its id (§3.7).
+    async def authenticate_device_token(self, session: AsyncSession, *, device_token: str) -> uuid.UUID:
+        """Resolve the active device holding `device_token`, or raise. Returns its id.
 
-        WHAT THIS IS FOR. The pairing exchange is single-use and irreversible: it burns the code,
-        issues a certificate and marks the device `active`. If the agent then cannot persist what
-        it was given, the row stays `active` for a device whose credential exists nowhere — the
-        backend counts it against the project, its certificate is valid for its full lifetime, and
-        no operator has any reason to look at it. This is how an agent gives that row back.
+        ONE FACTOR, and only for `POST /agents/self/abandon`. `require_device_token`'s docstring sets
+        out why that is right for a route whose whole effect is to destroy the caller's own
+        credential, and wrong for every route that grants something.
 
-        WHY THE TOKEN ALONE AUTHENTICATES IT, when `require_device` insists on both factors.
+        Separated from `abandon_self` so the authentication can run as a FastAPI DEPENDENCY, before
+        the handler's code object starts. Q-19 asserts exactly that for every route it can reach, and
+        it caught the first version of this, which read the header in the handler body.
 
-        `require_device`'s docstring rejects token-only authentication because it would make an
-        HTTP route a softer door than the WebSocket for the same credential, and an attacker
-        chooses the softer door. That reasoning is about routes that GRANT something. This one
-        grants nothing: its entire effect is to destroy the caller's own credential. It takes no
-        device id — the token selects the row — so it cannot name another device, and the token is
-        issued to exactly one process at exactly one moment.
-
-        The residual risk is honest and small: somebody holding a stolen device token could abandon
-        that device, a denial of service against a device they already fully control. Anybody able
-        to do that can already do everything the agent can do, so it adds no capability.
-
-        It cannot be used to abandon a device that is not active, so it is not a way to disturb a
-        revoked or already-abandoned row, and it writes an audit record naming the device itself as
-        the actor rather than a user.
-
-        Constant-time comparison is not needed and is not claimed: the lookup is by HMAC digest,
-        which is a single indexed equality on a value the caller cannot influence without already
-        knowing the token.
+        No constant-time comparison is claimed and none is needed: the lookup is a single indexed
+        equality on an HMAC digest of a value the caller cannot influence without already knowing the
+        token.
         """
-        recorder = self._recorder
-        if recorder is None:
-            raise DeviceKeyError("abandoning a device writes an audit record; this DeviceService has no recorder")
-
         try:
             token_bytes = bytes.fromhex(device_token)
         except ValueError as exc:
@@ -1332,31 +1313,65 @@ class DeviceService:
 
         digest = hmac.new(self._pepper.encode("utf-8"), token_bytes, hashlib.sha256).digest()
         result = await session.execute(
+            text("SELECT id FROM agent_devices WHERE device_token_hmac = :digest AND status = :active"),
+            {"digest": digest, "active": DeviceStatus.ACTIVE.value},
+        )
+        row = result.first()
+        if row is None:
+            # Indistinguishable, deliberately, from a token that never existed. This route is
+            # reachable without a principal, and saying which of the two happened would turn it into
+            # an oracle for whether a token is live.
+            raise DeviceAuthenticationError("no active device holds this token")
+        resolved: uuid.UUID = row[0]
+        return resolved
+
+    async def abandon_self(self, session: AsyncSession, *, device_id: uuid.UUID) -> uuid.UUID:
+        """Abandon the device the caller authenticated as, and return its id (§3.7).
+
+        WHAT THIS IS FOR. The pairing exchange is single-use and irreversible: it burns the code,
+        issues a certificate and marks the device `active`. If the agent then cannot persist what it
+        was given, the row stays `active` for a device whose credential exists nowhere — the backend
+        counts it against the project, its certificate is valid for its full lifetime, and no operator
+        has any reason to look at it. This is how an agent gives that row back.
+
+        `device_id` COMES FROM `authenticate_device_token`, NEVER FROM THE REQUEST. The route accepts
+        no device id in its path or its body, so a caller cannot name a device other than the one its
+        own token resolved to — which is the property that makes one-factor authentication
+        defensible here. `tests/integration/test_device_surrender.py` asserts it directly, and the
+        agent-side `TestPair_TheSurrenderNamesNoDevice` asserts the request carries no device id.
+
+        The transition is a single conditional UPDATE matching `status = active`, so a repeat is a
+        no-op rather than a second audit row.
+        """
+        recorder = self._recorder
+        if recorder is None:
+            raise DeviceKeyError("abandoning a device writes an audit record; this DeviceService has no recorder")
+
+        result = await session.execute(
             text(
                 "UPDATE agent_devices SET status = :abandoned, device_token_hmac = NULL, "
                 "pairing_token_hmac = NULL, pairing_expires_at = NULL "
-                "WHERE device_token_hmac = :digest AND status = :active "
+                "WHERE id = :id AND status = :active "
                 "RETURNING id, project_id, tenant_id"
             ),
             {
                 "abandoned": DeviceStatus.ABANDONED.value,
                 "active": DeviceStatus.ACTIVE.value,
-                "digest": digest,
+                "id": device_id,
             },
         )
         row = result.first()
         if row is None:
-            # No active device holds this token. Indistinguishable, deliberately, from a token that
-            # never existed: this route is reachable without a user principal, and saying which of
-            # the two happened would turn it into an oracle for whether a token is live.
-            raise DeviceAuthenticationError("no active device holds this token")
+            # Authenticated a moment ago and no longer active: a concurrent revocation, or a repeat.
+            # Reported as an authentication failure for the same non-disclosure reason.
+            raise DeviceAuthenticationError("the device is no longer active")
 
-        device_id, project_id, tenant_id = row[0], row[1], row[2]
+        resolved_id, project_id, tenant_id = row[0], row[1], row[2]
 
         # The same enforcement set a revocation writes. An abandoned device must be refused by any
-        # socket that is somehow already open, and by every future handshake, for the same reason
-        # and by the same mechanism.
-        await self._publish_revocation(device_id)
+        # socket that is somehow already open, and by every future handshake, for the same reason and
+        # by the same mechanism.
+        await self._publish_revocation(resolved_id)
         await recorder.record(
             session,
             DeviceAuditEvent(
@@ -1364,15 +1379,15 @@ class DeviceService:
                 reason="the agent could not persist the credential it was issued",
                 outcome="allowed",
                 project_id=project_id,
-                device_id=device_id,
+                device_id=resolved_id,
                 tenant_id=tenant_id,
-                # No user did this. The device reported on itself, and inventing a user id here
-                # would put a person's name against an action they did not take.
+                # No user did this. The device reported on itself, and inventing a user id here would
+                # put a person's name against an action they did not take.
                 actor_user_id=None,
-                details={"device_id": str(device_id), "surrendered_by": "agent"},
+                details={"device_id": str(resolved_id), "surrendered_by": "agent"},
             ),
         )
-        return device_id
+        return resolved_id
 
 
 def _as_text(value: Any) -> str:

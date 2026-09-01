@@ -81,6 +81,19 @@ PUBLIC_ROUTES: Final[tuple[PublicRoute, ...]] = (
         "The agent has no credential yet; protected by single-use codes, a 5-attempt "
         "cap, per-IP and global rate limits, and 5-minute expiry (§10.3)",
     ),
+    PublicRoute(
+        "/api/v1/agents/self/abandon",
+        frozenset({"POST"}),
+        "An agent that could not persist the credential it was just issued gives the device "
+        "back, so the backend is not left holding an `active` row whose token exists nowhere "
+        "(§3.7). PUBLIC ONLY IN THE SENSE THIS REGISTRY MEANS — no OIDC principal — because an "
+        "agent holds a device token and a certificate, never an access token, so "
+        "`require_principal` is unsatisfiable for it. It is NOT unauthenticated: "
+        "`require_device_token` resolves the caller from its own device token before the "
+        "handler runs, and the route takes no device id, so it cannot name any device but the "
+        "caller. The worst a stolen token achieves is abandoning a device its holder already "
+        "fully controls",
+    ),
 )
 
 #: Paths only, for the O(1) membership test the dependency and the checker both need.

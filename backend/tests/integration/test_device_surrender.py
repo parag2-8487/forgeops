@@ -83,7 +83,8 @@ class TestAbandonSelf:
             )
 
         async with sessions() as session:
-            returned = await service.abandon_self(session, device_token=token)
+            resolved = await service.authenticate_device_token(session, device_token=token)
+            returned = await service.abandon_self(session, device_id=resolved)
             await session.commit()
 
         assert returned == device_id
@@ -101,7 +102,8 @@ class TestAbandonSelf:
         project_id, token, _ = await pair_a_device(sessions, service)
 
         async with sessions() as session:
-            await service.abandon_self(session, device_token=token)
+            resolved = await service.authenticate_device_token(session, device_token=token)
+            await service.abandon_self(session, device_id=resolved)
             await session.commit()
 
         async with sessions() as session:
@@ -116,12 +118,15 @@ class TestAbandonSelf:
         project_id, token, _ = await pair_a_device(sessions, service)
 
         async with sessions() as session:
-            await service.abandon_self(session, device_token=token)
+            resolved = await service.authenticate_device_token(session, device_token=token)
+            await service.abandon_self(session, device_id=resolved)
             await session.commit()
 
         async with sessions() as session:
             with pytest.raises(DeviceAuthenticationError):
-                await service.abandon_self(session, device_token=token)
+                # The token no longer resolves, so authentication is where it stops — which is the
+                # point: the dependency refuses before the handler is entered at all.
+                await service.authenticate_device_token(session, device_token=token)
 
         async with sessions() as session:
             events = await audit_for(session, project_id)
@@ -134,7 +139,8 @@ class TestAbandonSelf:
         project_id, token, device_id = await pair_a_device(sessions, service)
 
         async with sessions() as session:
-            await service.abandon_self(session, device_token=token)
+            resolved = await service.authenticate_device_token(session, device_token=token)
+            await service.abandon_self(session, device_id=resolved)
             await session.commit()
 
         async with sessions() as session:
@@ -167,7 +173,7 @@ class TestAbandonSelf:
 
         async with sessions() as session:
             with pytest.raises(DeviceAuthenticationError):
-                await service.abandon_self(session, device_token=bad_token)
+                await service.authenticate_device_token(session, device_token=bad_token)
 
     async def test_one_device_cannot_surrender_another(
         self, sessions: async_sessionmaker[AsyncSession], service: DeviceService
@@ -182,7 +188,8 @@ class TestAbandonSelf:
         second_project, second_token, _ = await pair_a_device(sessions, service)
 
         async with sessions() as session:
-            await service.abandon_self(session, device_token=first_token)
+            resolved = await service.authenticate_device_token(session, device_token=first_token)
+            await service.abandon_self(session, device_id=resolved)
             await session.commit()
 
         async with sessions() as session:

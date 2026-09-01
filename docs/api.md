@@ -163,7 +163,7 @@ The application publishes **63 operations across 52 paths**.
 | `GET` | `/api/v1/agents/devices/{device_id}` | Read one agent device | principal |
 | `POST` | `/api/v1/agents/pair/exchange` | Exchange a pairing code for device credentials (public) | public |
 | `POST` | `/api/v1/agents/pairing-codes` | Issue a single-use pairing code for a project | principal |
-| `POST` | `/api/v1/agents/self/abandon` | Surrender the calling device (agent, authenticated by its own device token) | principal |
+| `POST` | `/api/v1/agents/self/abandon` | Surrender the calling device (agent, authenticated by its own device token) | public |
 | `DELETE` | `/api/v1/agents/{device_id}` | Revoke a device | principal |
 
 ### `ai`
