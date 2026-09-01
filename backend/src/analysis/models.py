@@ -23,6 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
@@ -186,6 +187,21 @@ class AnalysisReport(SQLModel, table=True):
     score: int = Field(sa_column=Column("score", Integer, nullable=False))
     categories: dict = Field(sa_column=Column("categories", JSONB, nullable=False))
     inventory_hash: str = Field(max_length=64)
+    #: The inventory that scan produced (revision `0015`, FR-11).
+    #:
+    #: JSONB because its shape is the agent's versioned report schema, so a field added there must not
+    #: need a migration here. `{}` means "this report predates the column", which is not the same claim as
+    #: "this project has no entry points".
+    #:
+    #: DECLARED HERE and not only in the migration. The first attempt added the migration and missed this,
+    #: and `test_alembic_autogenerate_clean.py` caught it exactly as designed: `alembic check` reported
+    #: `remove_column ... analysis_reports.inventory`, because the database had a column the metadata did
+    #: not. Its own message says why that matters — every such difference is a real defect, either a model
+    #: change with no migration or a migration with no model change.
+    inventory: dict = Field(
+        default_factory=dict,
+        sa_column=Column("inventory", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    )
     report_version: int = Field(default=1)
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))
 

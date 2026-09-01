@@ -111,6 +111,13 @@ jobs:
       - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
+          # The wrapper is a shell script that re-emits tofu's output with GitHub Actions
+          # workflow commands appended -- `::error::OpenTofu exited with code 1.` after the JSON.
+          # That made `tofu validate -json` unparseable, so `tofuDiagnostics` fell back to one
+          # finding per LINE and lost the file and line every diagnostic names. Disabled at the
+          # source; `jsonObject()` in the validator remains as defence, because the agent also
+          # runs outside CI where other tools may print around their JSON.
+          tofu_wrapper: false
       # `pip` is pinned alongside `pip-tools`, and the pair matters more than either alone. pip 25.2
       # removed `stdlib_pkgs` from `pip._internal.utils.compat`, which `pip-tools 7.6.0` imports, so
       # on the runner's current pip the lock check died with an ImportError before resolving anything.
@@ -172,6 +179,13 @@ jobs:
       - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
+          # The wrapper is a shell script that re-emits tofu's output with GitHub Actions
+          # workflow commands appended -- `::error::OpenTofu exited with code 1.` after the JSON.
+          # That made `tofu validate -json` unparseable, so `tofuDiagnostics` fell back to one
+          # finding per LINE and lost the file and line every diagnostic names. Disabled at the
+          # source; `jsonObject()` in the validator remains as defence, because the agent also
+          # runs outside CI where other tools may print around their JSON.
+          tofu_wrapper: false
       - name: Assert tofu is on PATH so the iac integration tests cannot skip
         run: tofu version
 
@@ -423,6 +437,32 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq redis-server
       - name: Install dev lock with hash enforcement
         run: pip install --require-hashes -r requirements-dev.lock
+      # The validator toolchain, because two integration tests VALIDATE the artifacts FR-24 generates
+      # with the real tools rather than asserting their text: `test_generated_artifacts_validate.py` runs
+      # `helm lint`, `helm template`, `tofu init`/`validate` and `yamllint` over the rendered output.
+      #
+      # Only the `agent` job installed these, so those tests failed here with
+      # `FORGEOPS_REQUIRE_INTEGRATION is set but tofu is not on PATH`. That refusal is correct and is the
+      # point of that variable: a capability probe must never quietly remove a criterion's only evidence.
+      # The answer is to provide the capability, not to let the test skip.
+      #
+      # Pinned to the same versions the agent job uses, so a generated artifact that passes there cannot
+      # fail here for a version reason.
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1.0.8
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
+        with:
+          version: v3.16.1
+      - name: Install yamllint at a pinned version
+        run: pip install "yamllint==1.37.1"
+      - name: Assert the validator toolchain is present
+        run: |
+          set -euo pipefail
+          tofu version
+          helm version --short
+          yamllint --version
       # A service container starts before checkout, so it cannot mount
       # ./scripts/postgres-init the way Compose does (design §13.3). The runner invokes
       # the SAME script instead, over TCP with PGHOST/PGPASSWORD — so the two-role
