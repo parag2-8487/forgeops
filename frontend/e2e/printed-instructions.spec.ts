@@ -155,15 +155,26 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     const panel = page.getByTestId("agent-connect-panel");
     await expect(panel).toBeVisible();
 
-    // The panel must offer the reader's platform. The runner is Linux, so that is what it detected —
-    // and the install command must be the POSIX one, not a PowerShell line.
+    // THE PLATFORM IS CHOSEN, NOT ASSUMED.
+    //
+    // The panel detects the platform from the browser, and Playwright's `Desktop Chrome` descriptor
+    // sends a WINDOWS user-agent whatever host it runs on — so detection correctly answered "windows"
+    // on a Linux runner and this spec, which asserts the POSIX form, failed on its own assumption.
+    // That was a defect in the spec, not in the panel.
+    //
+    // Choosing explicitly is also the better test: the picker exists precisely because detection can
+    // be wrong, and a user whose platform was misdetected relies on it. Driving it here is the only
+    // end-to-end assertion that it works.
+    await panel.getByTestId("platform-picker").selectOption("linux");
+
     const install = await panel.getByTestId("install-command").innerText();
     printed.installCommand = install.trim();
     expect(printed.installCommand).toContain("forgeops-agent");
     expect(
       printed.installCommand,
-      "a Linux reader must not be shown a PowerShell command",
+      "after choosing Linux the panel must not print a PowerShell command",
     ).not.toContain("$env:");
+    expect(printed.installCommand).toContain("/usr/local/bin/forgeops-agent");
 
     // NOTHING TO COMPILE. Building from source was the first step of the old flow, and it is what put
     // the five-minute code expiry out of reach.
@@ -242,8 +253,13 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     expect(countdown, "the countdown must show minutes and seconds").toMatch(/^\d+:\d{2}$/);
     await expect(page.getByTestId("pairing-code")).not.toContainText(/\d{4}-\d{2}-\d{2}T/);
 
-    // The command the user is told to run, read from the DOM.
-    const connect = (await page.getByTestId("connect-command").innerText()).trim();
+    // The command the user is told to run, read from the DOM — with the platform chosen rather than
+    // assumed, for the reason step 2 records: Playwright's browser reports a Windows user-agent.
+    const panel = page.getByTestId("agent-connect-panel");
+    await expect(panel).toBeVisible();
+    await panel.getByTestId("platform-picker").selectOption("linux");
+
+    const connect = (await panel.getByTestId("connect-command").innerText()).trim();
     printed.connectCommand = connect;
 
     // It must carry the code, and the --backend the old command was missing entirely.
@@ -251,7 +267,7 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     expect(connect, "the printed command must carry --backend or pair refuses").toContain(
       "--backend",
     );
-    expect(connect, "a Linux reader must not be given a .exe").not.toContain(".exe");
+    expect(connect, "after choosing Linux there must be no .exe").not.toContain(".exe");
     expect(connect, "the binary is on PATH, so no ./ prefix").not.toContain("./forgeops-agent");
   });
 

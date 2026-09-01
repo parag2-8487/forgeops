@@ -76,21 +76,31 @@ func (f *fakeTransport) Send(_ context.Context, payload []byte) error {
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return err
 	}
+	// `rejectID` and `connect` are SNAPSHOTTED UNDER THE SAME LOCK that records the request, because
+	// tests mutate them WHILE `Serve` is running: `TestServe_ASuccessfulHandshakeResetsTheBackoffToTheBase`
+	// clears `rejectID` mid-flight to let the handshake succeed, and takes `f.mu` to do it.
+	//
+	// This method took the lock only to append to `sent` and then read `rejectID` after releasing it,
+	// which is a genuine data race that `-race` reported on a CI runner — the test's write was already
+	// correctly guarded, so the unsynchronised half was here. It had gone unnoticed because it needs
+	// the write and the read to interleave, and on a developer machine they rarely do.
 	f.mu.Lock()
 	f.sent = append(f.sent, request)
+	rejectID := f.rejectID
+	connectResult := f.connect
 	f.mu.Unlock()
 
 	if request.Method == "session.connect" && request.ID != nil {
-		if f.rejectID != "" {
+		if rejectID != "" {
 			f.push(mustJSON(connection.Response{
 				JSONRPC: "2.0", ID: request.ID,
-				Error: &connection.RPCError{Code: -32000, Message: f.rejectID},
+				Error: &connection.RPCError{Code: -32000, Message: rejectID},
 			}))
 			return nil
 		}
-		if f.connect != nil {
+		if connectResult != nil {
 			f.push(mustJSON(connection.Response{
-				JSONRPC: "2.0", ID: request.ID, Result: mustJSON(*f.connect),
+				JSONRPC: "2.0", ID: request.ID, Result: mustJSON(*connectResult),
 			}))
 		}
 	}
