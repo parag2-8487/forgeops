@@ -82,6 +82,35 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      # This job ran out of disk before it ran anything: `ENOSPC: no space left on device` while
+      # downloading the Playwright browser, having got as far as `Failed to download Chrome for Testing`.
+      # It is the heaviest job in the repository — two model pulls of about 2.2 GB, four image builds, a
+      # nine-service stack with its volumes, plus a browser — against a runner that ships with roughly
+      # 14 GB free and about 30 GB of preinstalled toolchains this job never touches.
+      #
+      # So the space is reclaimed rather than the job trimmed. Capping the model pulls or skipping the
+      # browser would change what the criterion proves, and the criterion is the point.
+      #
+      # `|| true` on each removal is DELIBERATE and is not a masked failure: the paths differ between
+      # runner images, and a job must not fail because a directory it wanted to delete was already
+      # absent. The `df -h` afterwards is the real assertion — it reports what was actually freed, so a
+      # future runner image that moves these paths shows up as a small number here rather than as a
+      # confusing ENOSPC twenty minutes later.
+      - name: Reclaim runner disk
+        run: |
+          echo "before:"
+          df -h / | tail -n 1
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo docker image prune --all --force || true
+          echo "after:"
+          df -h / | tail -n 1
+
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

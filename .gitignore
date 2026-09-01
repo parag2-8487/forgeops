@@ -198,3 +198,13 @@ tests/e2e/fixture-project/Dockerfile
 tests/e2e/fixture-project/k8s/
 tests/e2e/fixture-project/.forgeops/
 tests/e2e/fixture-project/*.backup.*
+# The three artifact kinds FR-24 added, and the reason this list needed extending: the generator gained
+# GitHub Actions workflows, Helm charts and OpenTofu modules, and nothing extended the ignore list — so a
+# journey run left them in the working tree and a `git add -A` swept them into a commit. The Helm chart is
+# the one that made it visible, because a template is not parseable YAML and `check-yaml` refused it in CI.
+#
+# The chart directory carries a per-run suffix (`charts/onboarding-mti15hj6/`), so the pattern has to be the
+# parent rather than a name.
+tests/e2e/fixture-project/charts/
+tests/e2e/fixture-project/infra/
+tests/e2e/fixture-project/.github/

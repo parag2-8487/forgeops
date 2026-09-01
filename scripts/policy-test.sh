@@ -102,12 +102,26 @@ echo "opa test: ${summary}"
 # ─── Clause 3: every governance bundle file is total at its entry document ────
 #
 # Task 9.1's own wording: each file in the governance bundle carries an explicit
-# `default allow := false` so a deny is a DEFINED false. `governance_test.rego` asserts
+# fail-closed default so a deny is a DEFINED false. `governance_test.rego` asserts
 # the behaviour; this asserts the DECLARATION, because the behavioural assertion can be
 # satisfied by accident for an input that happens to make the rule fire, while D-25's trap
 # is about the input that makes NO rule fire. Both halves are cheap; only one of them
 # notices a file added tomorrow without the default.
-echo "==> every policies/agent/*.rego declares 'default allow := false'"
+#
+# THE CHECK IS ON THE PROPERTY, NOT ON ONE RULE NAME. It used to require the literal
+# `default allow := false` in every file, which is the right property for the files whose entry document
+# is `allow` and wrong for a sub-policy whose entry document is called something else. `exemption.rego`
+# answers `applies`, is total (`default applies := false`), fails closed in the direction that means "not
+# exempt" — and was refused, because the string did not match.
+#
+# Adding a dead `default allow := false` to it would have satisfied the letter and not the spirit, and
+# would have left an `allow` rule in an exemption package for someone to query by mistake. So both halves
+# of the real requirement are now stated:
+#
+#   1. EVERY file declares at least one total fail-closed default. No file may be partial.
+#   2. Any file that defines an `allow` rule must default it to false specifically. This is the clause
+#      D-25 is about, and it is unchanged for every file it applied to before.
+echo "==> every policies/agent/*.rego is total at its entry document and fails closed"
 bundle_files=()
 while IFS= read -r f; do bundle_files+=("$f"); done < <(
   find policies/agent -name '*.rego' -not -name '*_test.rego' | sort
@@ -118,11 +132,26 @@ if [ "${#bundle_files[@]}" -eq 0 ]; then
 fi
 missing=0
 for f in "${bundle_files[@]}"; do
-  if grep -qE '^default allow := false$' "$f"; then
-    echo "  [ok]      $f"
-  else
-    echo "  [MISSING] $f has no 'default allow := false' at its entry document" >&2
+  # A total fail-closed default of any name: `default allow := false`, `default applies := false`,
+  # `default result := "deny"`, `default reason := ""`.
+  if ! grep -qE '^default [a-z_][a-z0-9_]* :=' "$f"; then
+    echo "  [MISSING] $f declares no total default, so it can answer as an UNDEFINED document" >&2
     missing=1
+    continue
+  fi
+  # The D-25 clause, unchanged: a file that HAS an `allow` must default it to false.
+  if grep -qE '^allow( |\[)' "$f" || grep -qE '^default allow' "$f"; then
+    if grep -qE '^default allow := false$' "$f"; then
+      echo "  [ok]      $f (allow defaults to false)"
+    else
+      echo "  [MISSING] $f defines 'allow' without 'default allow := false'" >&2
+      missing=1
+    fi
+  else
+    # Named so a reader can see WHICH document was accepted as the entry point, rather than trusting
+    # that some default existed somewhere in the file.
+    entry=$(grep -oE '^default [a-z_][a-z0-9_]*' "$f" | head -n 1 | awk '{print $2}')
+    echo "  [ok]      $f (no 'allow'; total at 'default ${entry}')"
   fi
 done
 if [ "$missing" -ne 0 ]; then

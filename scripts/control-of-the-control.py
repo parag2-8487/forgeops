@@ -102,6 +102,9 @@ def run(name: str, manifest: Path) -> tuple[str, str]:
             name,
             "--allow-incomplete",
             "--skip-git-check",
+            # An OK verdict here is a FAILURE, and the property's own output is the only thing that says
+            # what it objected to instead of the mutation.
+            "--show-output",
         ],
         capture_output=True,
         cwd=str(REPO_ROOT),
@@ -216,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{name:6} neutralised -> {verdict}")
         print("  the harness did NOT report VACUOUS with the mutation removed, so an OK verdict for")
         print("  this row does not prove the mutation is what the property objected to.")
-        print("\n".join(f"  | {line}" for line in output.splitlines()[-12:]))
+        print("\n".join(f"  | {line}" for line in output.splitlines()[-45:]))
 
     if failures:
         print(f"\n{failures} row(s) could not be shown to depend on their mutation")

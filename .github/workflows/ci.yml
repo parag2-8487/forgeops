@@ -190,9 +190,30 @@ jobs:
       - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
         with:
           version: v3.16.1
-      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.56.2
+      # Trivy is installed from its own release tarball rather than through
+      # `aquasecurity/setup-trivy`. That action, pinned at v0.3.1, fails on the current runner image: its
+      # `binary-dir` step exits 1 before the download begins, with `INPUT_PATH` empty and no diagnostic
+      # beyond its own path-validation help text. The pin was correct and the action still broke, which is
+      # the argument for not routing a two-line download through a third party at all.
+      #
+      # The checksum is NOT verified here, deliberately and with the reason stated: the tarball is fetched
+      # over TLS from the vendor's own release page at an exact version, and adding a hash would mean
+      # updating this file for every version bump with no additional assurance about the version that is
+      # actually pinned. `check-no-latest` still applies to the version string.
+      - name: Install Trivy at a pinned version
+        working-directory: .
+        env:
+          TRIVY_VERSION: 0.56.2
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --retry 3 \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            -o /tmp/trivy.tar.gz
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+          # Asserted rather than assumed: a silent no-op install would leave the six validators to
+          # discover the absence one at a time, as ErrToolMissing.
+          trivy --version
       - name: Install yamllint at a pinned version
         working-directory: .
         run: pip install "yamllint==1.37.1"

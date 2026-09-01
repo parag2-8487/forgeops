@@ -359,7 +359,20 @@ def run_python_row(row: Row, tmp: Path) -> Result:
             f"pytest exited {completed.returncode} but reported no failing test, so the control was "
             "not shown to break the property: " + " | ".join(tail),
         )
-    return Result(row, OK, f"failed as required (exit {completed.returncode})")
+    # The output is CARRIED on an OK result rather than discarded. `control-of-the-control.py` needs it:
+    # for the meta-check an OK verdict on a NEUTRALISED row is a FAILURE, and the property's own output is
+    # the only thing that says what it objected to instead of the mutation. Without it a broken control
+    # reported `EXPECTED FAIL OBSERVED OK` and nothing else, which costs a round trip through CI to
+    # diagnose.
+    #
+    # From `combined` rather than `tail`: `tail` is bound only on the branches above, and reading it here
+    # raised `UnboundLocalError` the first time this ran. Thirty lines, because a pytest failure's useful
+    # part — the assertion and the values — sits above the summary line.
+    return Result(
+        row,
+        OK,
+        f"failed as required (exit {completed.returncode})\n" + "\n".join(combined.strip().splitlines()[-30:]),
+    )
 
 
 def run_go_row(row: Row, tmp: Path) -> Result:
@@ -463,7 +476,7 @@ def git_status_is_clean() -> tuple[bool, str]:
 # ── reporting ────────────────────────────────────────────────────────────────
 
 
-def print_table(results: list[Result]) -> None:
+def print_table(results: list[Result], *, show_output: bool = False) -> None:
     if not results:
         print("(no rows ran)")
         return
@@ -479,6 +492,21 @@ def print_table(results: list[Result]) -> None:
         if result.status != OK:
             print(f"{result.status} {result.row.ident}: {result.row.mutation}")
             print(f"    {result.detail}")
+
+    # An OK row's detail is normally uninteresting — the property failed, which is what was wanted, and
+    # printing its traceback for thirty-one passing controls would bury the table.
+    #
+    # It is exactly what `control-of-the-control.py` needs, though, and that is why this flag exists. For
+    # the meta-check an OK verdict on a NEUTRALISED row is a FAILURE: the property objected to something
+    # other than the mutation, and the only thing that says what is the property's own output. Without
+    # this, a failing control reported `EXPECTED FAIL OBSERVED OK` and twelve lines of the harness's own
+    # table — enough to know a row broke and not enough to know why, which cost a debugging round trip
+    # through CI.
+    if show_output:
+        for result in results:
+            if result.status == OK and result.detail:
+                print(f"\n--- {result.row.ident} property output ---")
+                print(result.detail)
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -504,6 +532,15 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-git-check",
         action="store_true",
         help="skip the clean-tree assertion; for the harness's own meta tests only",
+    )
+    parser.add_argument(
+        "--show-output",
+        action="store_true",
+        help=(
+            "print the property's own output for rows that PASSED their control. Used by "
+            "control-of-the-control.py, for which an OK verdict on a neutralised row is a failure that "
+            "has to be diagnosed"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -546,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
     print()
-    print_table(results)
+    print_table(results, show_output=args.show_output)
 
     if any(r.status != OK for r in results):
         exit_code = 1
