@@ -155,7 +155,12 @@ export default function OnboardingPage() {
          *
          * Rendered here rather than only on /pairing so this page alone takes a user from nothing to
          * a paired, scanning agent — which is what `onboarding.spec.ts` now follows literally. */}
-        {projectId === "" ? null : <AgentConnectPanel projectId={projectId} />}
+        {/* The commands themselves live BELOW this list, outside it.
+         *
+         * Not inside, and the reason is mechanical: the panel renders its own three numbered steps as
+         * `<li>` elements, and `onboarding.spec.ts` asserts the count of `li` under
+         * `onboarding-steps` is exactly eight. Nesting it here made that eleven. A list whose length
+         * is an assertion is a list that must contain only its own items. */}
         <Step
           n={4}
           title="Scan the codebase"
@@ -225,6 +230,18 @@ export default function OnboardingPage() {
         />
       </ol>
 
+      {/* Every command a first run needs, correct for the reader's platform, with nothing to edit.
+       *
+       * Step 3 above used to say: run `forgeops-agent pair --code <code>`. That command does not
+       * work. On Windows PowerShell will not execute a bare name from the current directory and the
+       * binary is `forgeops-agent.exe`; everywhere, `pair` refuses without `--backend`, and the value
+       * was derivable only from BACKEND_PORT in the repository's own `.env`. Three corrections a user
+       * had to make before anything happened, none of them written down anywhere.
+       *
+       * Rendered on THIS page rather than only on /pairing, so this screen alone takes a user from
+       * nothing to a paired, scanning agent — which is what `printed-instructions.spec.ts` follows
+       * literally, executing what it reads out of the DOM. */}
+      {projectId === "" ? null : <AgentConnectPanel projectId={projectId} />}
       <aside className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
         <p className="font-medium text-foreground">Why a missing step is reported as a step.</p>
         <p className="mt-2">

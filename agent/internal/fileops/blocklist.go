@@ -88,6 +88,15 @@ func blockedForRead(absPath string) bool {
 func blockedForWrite(absPath string) bool {
 	base := filepath.Base(filepath.Clean(absPath))
 	for _, permitted := range writableExemptions {
+		// CASE-SENSITIVE, while `blockedForRead` case-FOLDS, and the asymmetry is deliberate.
+		//
+		// On Windows and macOS the filesystem is case-insensitive by default, so `.ENV.EXAMPLE` and
+		// `.env.example` are the same file. Folding here would widen the exemption to every casing;
+		// not folding means an oddly-cased name misses the exemption and is then caught by
+		// `blockedForRead`, which does fold. So the asymmetry fails CLOSED: the worst outcome is
+		// refusing to write a file that would have been allowed, and the caller is told which rule
+		// refused it. Folding both would make the exemption the wider of the two rules, which is the
+		// direction that cannot be safe.
 		if base == permitted {
 			// Still refuse if the path is inside a sensitive directory: a file named
 			// `.env.example` under ~/.ssh is not an example file, it is a way into

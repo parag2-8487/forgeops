@@ -100,7 +100,7 @@
 - [x] Health check endpoint returns 200
 - [x] Frontend loads at localhost:3000
 - [x] Go binary compiles for Windows, macOS, Linux (amd64 + arm64)
-- [ ] GoReleaser pipeline produces signed + SBOM-attested binaries
+- [x] GoReleaser pipeline produces signed + SBOM-attested binaries
 - [x] Pre-commit hooks pass on all files
 - [x] MCP Gateway responds to `tools/list` and `tools/call` requests
 - [x] MCP Tasks lifecycle works (create → poll → cancel)
@@ -108,22 +108,28 @@
 - [x] Plan Analyzer returns results for sample input
 - [x] SQLModel models defined with pgvector column support (HNSW index)
 - [x] CycloneDX SBOM generated for Go agent build
-- [ ] Cosign keyless signing verified on release artifact
+- [x] Cosign keyless signing verified on release artifact
 - [x] Model routing fallback cascade functions end-to-end
 - [x] Circuit breaker trips on simulated failures
 
-> **Two boxes above stay unticked, and the reason is the same for both.** "GoReleaser pipeline produces
-> signed + SBOM-attested binaries" and "Cosign keyless signing verified on release artifact" are claims
-> about a **published release**, and this branch has never cut a tag. `.github/workflows/release.yml` runs
-> `goreleaser/goreleaser-action`, Syft for a CycloneDX SBOM per artifact, and Cosign keyless signing through
-> Fulcio and Rekor — so the pipeline is written and pinned — but a workflow that has not run has produced
-> nothing to verify. Publishing a release to satisfy a checkbox would also be an irreversible act taken for
-> a record rather than for a reason.
+> **Both boxes above are now ticked, and the note that used to be here was wrong.** It said "this branch
+> has never cut a tag". The repository has three: `v0.0.1-rc1`, `v0.0.1-rc2` and `v0.0.1-rc3`, all
+> released on 2026-07-29, and `.github/workflows/release.yml` ran to completion for each. The claim was
+> made from reading the workflow rather than from asking the remote, which is exactly the mistake the
+> evidence table exists to prevent.
 >
-> What IS verified: the `supply` job is green and generates the SBOM, and the agent cross-compiles for all
-> six targets (windows, darwin and linux × amd64 and arm64, confirmed by building each). Criterion 16's
-> self-verification runs before any provenance step, so a provenance failure cannot mask it. These two turn
-> green on the first tagged release and not before.
+> **The evidence, produced from a developer machine with no shared secret.** `v0.0.1-rc3` carries all six
+> targets — windows, darwin and linux × amd64 and arm64 — plus `.deb` and `.rpm`, and every artifact has a
+> `.sig`, a `.pem`, a `.sbom.json`, an `.intoto.jsonl` and an `.att.sigstore.json` beside it.
+>
+> * **Signed:** `cosign verify-blob` against `forgeops-agent_0.0.1-rc3_windows_amd64.zip`, with
+>   `--certificate-identity-regexp` pinned to this repository's `release.yml` on a `v*` tag and
+>   `--certificate-oidc-issuer https://token.actions.githubusercontent.com`, answered **`Verified OK`**.
+> * **SBOM-attested:** that artifact's `.sbom.json` is CycloneDX `specVersion` 1.6 with **91 components**.
+> * **Real binary:** the `.exe` inside the archive runs and reports
+>   `forgeops-agent 0.0.1-rc3 (commit: 7f5213f65931b80f6abd6a16baa46c808e723e75, built: 2026-07-29T16:15:30Z)`.
+>
+> Criterion 16's self-verification runs before any provenance step, so a provenance failure cannot mask it.
 
 ### Excluded (for this phase)
 - ❌ Any feature logic (analysis, generation, deployment)

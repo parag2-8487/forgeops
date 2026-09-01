@@ -130,8 +130,8 @@ export function AgentConnectPanel({ code, projectId, platform }: AgentConnectPan
           Connect an agent
         </h2>
         <p className="text-xs text-muted-foreground">
-          Three steps, and every command below is correct for your platform and can be pasted without
-          editing it. You do not need Go, and you do not need to build anything.
+          Three steps, and every command below is correct for your platform and can be pasted
+          without editing it. You do not need Go, and you do not need to build anything.
         </p>
       </div>
 

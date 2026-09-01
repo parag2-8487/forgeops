@@ -54,6 +54,12 @@ is genuinely serving:
 | API documentation, Swagger | <http://localhost:8000/api/v1/docs>  |
 | Frontend shell             | <http://localhost:3000>              |
 
+**Connecting an agent.** Open **Onboarding** in the UI and it prints the three commands — download,
+put on PATH, connect — already filled in for your platform, including the `--backend` value it
+computes from the deployment. [`docs/connecting-an-agent.md`](docs/connecting-an-agent.md) is the same
+thing written down, with the diagnostics. You do not need Go for this and you do not build anything;
+`make build-agent` is for working on the agent itself.
+
 `make down` stops the containers and preserves the volumes. Everything else — the Compose
 profiles, the seeded development credentials, the test containers, the full target list —
 is in [`docs/development.md`](docs/development.md) and is deliberately not duplicated here.

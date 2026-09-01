@@ -87,6 +87,21 @@ export default defineConfig({
           use: { ...devices["Desktop Chrome"] },
           timeout: 2_460_000,
         },
+        {
+          // Part F: the printed commands, executed verbatim, with the agent as a HOST process.
+          //
+          // Its own project because it is the only spec that runs the agent OUTSIDE a container. Every
+          // other one calls `composeExec("agent", [...])` with arguments the spec chose — which proves
+          // the CLI works and proves nothing about the command the UI printed. The UI printed
+          // `forgeops-agent pair --code X`, which fails three ways, and nothing noticed.
+          //
+          // A generous bound: it builds the agent, installs it onto PATH, pairs, and indexes a real
+          // workspace, all as separate processes on the runner.
+          name: "printed-instructions",
+          testMatch: /printed-instructions\.spec\.ts/,
+          use: { ...devices["Desktop Chrome"] },
+          timeout: 900_000,
+        },
       ]
     : [
         {

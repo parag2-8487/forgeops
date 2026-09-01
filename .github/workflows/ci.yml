@@ -149,6 +149,223 @@ jobs:
         run: bash scripts/check-tofu-lock.sh
 
   # ── 3+4+5. agent: lint → test → build (working-directory: agent) ──────────
+  # ── The agent as a HOST BINARY on the platforms it ships for ───────────────────────────────
+  #
+  # THE SYSTEMIC GAP THIS CLOSES. Every other job runs on ubuntu-latest, and the journey and
+  # onboarding specs run the agent INSIDE A LINUX CONTAINER. So the entire Windows path was
+  # untested: the OS credential store, console handles, path separators and PowerShell's invocation
+  # rules. `pair` on Windows could never have succeeded — the credential bundle is 28014 bytes
+  # against the Credential Manager's 2560-byte ceiling — and the whole suite stayed green, because
+  # the fake keyring in the unit tests has no size limit and the container used the file backend.
+  #
+  # WHAT THIS COVERS AND WHAT IT CANNOT. GitHub's documentation is explicit that service containers
+  # require a Linux runner, so a Windows or macOS runner cannot host Postgres, Redis and the backend.
+  # There is no live backend to pair against here, and standing up a fake one would not be a test of
+  # anything.
+  #
+  # So the split is deliberate and stated: this job exercises everything decided ON THE HOST — the
+  # real OS credential store at real credential size, the real console handle, the real refusals and
+  # the real `.env` discovery. `agent-host-live` runs the same host binary against a live backend on
+  # Linux, covering pair, scan, run and watch as a host process rather than a container entrypoint.
+  agent-host:
+    name: agent (${{ matrix.os }} host binary)
+    needs: changes
+    if: needs.changes.outputs.agent == 'true' || github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Enables `real_keychain_test.go`, which asks the machine's ACTUAL credential manager to hold a
+      # full-size credential. Opt-in because a keychain write on a developer's macOS laptop can raise
+      # an interactive unlock prompt and hang a run; here there is no interactive session, so this is
+      # exactly where it belongs. `TestRealKeychain_TheOptInIsNamedInCI` fails if this line is removed,
+      # so the suite cannot quietly become dead code the way Q-19's did.
+      FORGEOPS_REAL_KEYCHAIN: "1"
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: agent/go.sum
+
+      # macOS needs an unlocked keychain with no UI. The runner's login keychain exists but is not
+      # unlocked for a non-interactive session, so a write would block on a prompt nothing will answer.
+      # A throwaway keychain, created and unlocked here, is the real Keychain Services API against a
+      # real keychain file — the same code path, without the UI.
+      - name: Create and unlock a keychain for this session (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          security create-keychain -p forgeops-ci forgeops-ci.keychain
+          security set-keychain-settings -lut 21600 forgeops-ci.keychain
+          security unlock-keychain -p forgeops-ci forgeops-ci.keychain
+          security list-keychains -d user -s forgeops-ci.keychain
+          security default-keychain -s forgeops-ci.keychain
+
+      # THE TEST THAT WOULD HAVE CAUGHT THE DEFECT. First, because if the real store cannot hold a
+      # real credential then nothing else about this platform matters.
+      - name: The real OS credential store must hold a full-size credential
+        run: go test ./internal/session/ -run TestRealKeychain -count=1 -v
+
+      - name: The whole agent suite on this platform
+        run: go test ./... -count=1
+
+      - name: Build the binary a user would download
+        shell: pwsh
+        run: |
+          $name = if ($IsWindows) { "forgeops-agent.exe" } else { "forgeops-agent" }
+          go build -o $name ./cmd/agent
+          if ($LASTEXITCODE -ne 0) { throw "the agent did not build" }
+
+      # `version` is the shortest command that constructs the app and runs the full shutdown sequence.
+      # Every invocation on Windows used to end with "shutdown: logger: sync /dev/stderr: The handle is
+      # invalid." — on SUCCESSFUL runs — printed above the real message, which trains a reader to skim
+      # the last lines of output.
+      - name: version prints one line and no spurious shutdown error
+        shell: pwsh
+        run: |
+          $binary = if ($IsWindows) { ".\forgeops-agent.exe" } else { "./forgeops-agent" }
+          $output = & $binary version 2>&1 | Out-String
+          Write-Host $output
+          if ($output -match "handle is invalid" -or $output -match "shutdown: logger") {
+            throw "a successful version printed a shutdown error"
+          }
+          if ($output -notmatch "forgeops-agent") { throw "version printed no version line" }
+
+      # `doctor` is where a user looks first, so it is where "will pairing work?" belongs. It must name
+      # the store AND say whether a credential fits, by performing a real trial write — the prediction
+      # that was missing when `pair` burned a single-use code to find out.
+      - name: doctor reports the credential store and whether a credential fits
+        shell: pwsh
+        run: |
+          $binary = if ($IsWindows) { ".\forgeops-agent.exe" } else { "./forgeops-agent" }
+          $env:AGENT_STATE_DIR = Join-Path $env:RUNNER_TEMP "forgeops-doctor"
+          $output = & $binary doctor 2>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch "Credential store:") { throw "doctor did not report the credential store" }
+          if ($output -notmatch "a device credential fits") { throw "doctor did not confirm a credential fits" }
+          # The misdiagnosis: with no backend URL this said "credential store unusable", naming the
+          # wrong one of two independent facts.
+          if ($output -match "credential store unusable") {
+            throw "doctor blamed the credential store for a missing backend URL"
+          }
+
+      # Every refusal a first-run user can hit, asserted to name its remedy. These messages decide
+      # whether somebody gets unstuck or gives up.
+      - name: pair refuses without a backend and names every source
+        shell: pwsh
+        run: |
+          $binary = Join-Path $PWD $(if ($IsWindows) { "forgeops-agent.exe" } else { "forgeops-agent" })
+          $env:AGENT_STATE_DIR = Join-Path $env:RUNNER_TEMP "forgeops-refusal"
+          $empty = Join-Path $env:RUNNER_TEMP "forgeops-empty"
+          New-Item -ItemType Directory -Force -Path $empty | Out-Null
+          Push-Location $empty
+          $output = & $binary pair --code ABC234 2>&1 | Out-String
+          Pop-Location
+          Write-Host $output
+          foreach ($needle in @("--backend", "AGENT_BACKEND_WSS_URL", "BACKEND_PORT", "Onboarding")) {
+            if ($output -notmatch [regex]::Escape($needle)) {
+              throw "the refusal does not mention '$needle'"
+            }
+          }
+
+      - name: the backend URL is discovered from a local .env
+        shell: pwsh
+        run: |
+          $binary = Join-Path $PWD $(if ($IsWindows) { "forgeops-agent.exe" } else { "forgeops-agent" })
+          $env:AGENT_STATE_DIR = Join-Path $env:RUNNER_TEMP "forgeops-discovery"
+          $work = Join-Path $env:RUNNER_TEMP "forgeops-workdir"
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          Set-Content -Path (Join-Path $work ".env") -Value "BACKEND_PORT=18000"
+          Push-Location $work
+          # Nothing is listening, so this fails — but it must fail having RESOLVED the URL from .env and
+          # having said so. This is the value users could not find anywhere.
+          $output = & $binary pair --code ABC234 2>&1 | Out-String
+          Pop-Location
+          Write-Host $output
+          if ($output -notmatch "ws://localhost:18000/api/v1/ws/agent") {
+            throw "the backend URL was not discovered from BACKEND_PORT in .env"
+          }
+          if ($output -notmatch "BACKEND_PORT in .env") {
+            throw "the source of the discovered URL was not reported"
+          }
+
+      - name: an explicit --backend works on its own
+        shell: pwsh
+        run: |
+          $binary = Join-Path $PWD $(if ($IsWindows) { "forgeops-agent.exe" } else { "forgeops-agent" })
+          $env:AGENT_STATE_DIR = Join-Path $env:RUNNER_TEMP "forgeops-flag"
+          $empty = Join-Path $env:RUNNER_TEMP "forgeops-empty-flag"
+          New-Item -ItemType Directory -Force -Path $empty | Out-Null
+          Push-Location $empty
+          # It used to refuse with "pair needs --backend" while --backend was on the command line,
+          # because the session was built from configuration before any flag was read.
+          $output = & $binary pair --code ABC234 --backend "ws://127.0.0.1:1/api/v1/ws/agent" 2>&1 | Out-String
+          Pop-Location
+          Write-Host $output
+          if ($output -notmatch "from the --backend flag") { throw "--backend alone did not resolve" }
+
+      - name: wipe works with no backend configured
+        shell: pwsh
+        run: |
+          $binary = Join-Path $PWD $(if ($IsWindows) { "forgeops-agent.exe" } else { "forgeops-agent" })
+          $env:AGENT_STATE_DIR = Join-Path $env:RUNNER_TEMP "forgeops-wipe"
+          $empty = Join-Path $env:RUNNER_TEMP "forgeops-empty-wipe"
+          New-Item -ItemType Directory -Force -Path $empty | Out-Null
+          Push-Location $empty
+          # It demanded a backend, so an agent that could not reach one could not clear its credentials
+          # either — which is exactly the state a failed pairing leaves.
+          $output = & $binary pair --wipe 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Pop-Location
+          Write-Host $output
+          if ($code -ne 0) { throw "pair --wipe failed with no backend configured (exit $code)" }
+          if ($output -notmatch "unpaired") { throw "wipe did not confirm the unpaired state" }
+
+      # Every verb the UI renders must exist with the flags it renders. `check-rendered-commands.py`
+      # reads the Go source; this asks the BUILT BINARY on this platform, which no parse can fool.
+      - name: every rendered verb and flag exists in the built binary
+        shell: pwsh
+        run: |
+          $binary = Join-Path $PWD $(if ($IsWindows) { "forgeops-agent.exe" } else { "forgeops-agent" })
+          $expected = [ordered]@{
+            "pair"    = @("code", "backend", "wipe")
+            "connect" = @("code", "backend", "project", "workspace")
+            "scan"    = @("project")
+            "watch"   = @("project", "debounce", "once")
+            "run"     = @()
+            "doctor"  = @()
+            "version" = @()
+          }
+          foreach ($verb in $expected.Keys) {
+            $help = & $binary $verb --help 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "'$verb --help' failed:`n$help" }
+            foreach ($flag in $expected[$verb]) {
+              if ($help -notmatch "--$flag") { throw "'$verb' does not accept --$flag but the UI renders it" }
+            }
+          }
+          # And the flag the UI must never render, because it does not exist.
+          $scanHelp = & $binary scan --help 2>&1 | Out-String
+          if ($scanHelp -match "--path") { throw "scan gained a --path flag; update the UI declaration" }
+
+      - name: Cross-compile for every published target
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          foreach ($target in @("windows/amd64", "windows/arm64", "darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64")) {
+            $parts = $target.Split("/")
+            $env:GOOS = $parts[0]
+            $env:GOARCH = $parts[1]
+            go build -o (Join-Path $env:RUNNER_TEMP "probe") ./cmd/agent
+            if ($LASTEXITCODE -ne 0) { throw "$target did not build" }
+            Write-Host "  $target ok"
+          }
+
   agent:
     needs: changes
     if: needs.changes.outputs.agent == 'true' || github.ref == 'refs/heads/main'
@@ -1150,6 +1367,7 @@ jobs:
       # `pair` refuses, and with a bare program name PowerShell will not execute.
       - name: Every rendered command must be composed of flags the CLI accepts
         run: python scripts/check-rendered-commands.py
+
       - name: Every gate script must actually run somewhere
         run: python scripts/check-gate-reachability.py
       # Promoted from the untracked `scripts/_state.sh`, which reconciled the plan against the
@@ -1168,6 +1386,13 @@ jobs:
       # the linter that gates every commit must not itself float.
       - name: Install the pinned repository tooling
         run: pip install --require-hashes -r scripts/requirements-tools.lock
+      # The Windows host-binary job is a page of PowerShell embedded in YAML, and a syntax error there
+      # is invisible until a runner reaches the step — minutes into a run, on a platform no other job
+      # uses. Its first version contained `Join-Path $PWD (if ($IsWindows) { ... })`, which is not valid
+      # PowerShell: `if` is a statement, so an argument position needs `$(...)`. Nothing in the
+      # repository could have caught that.
+      - name: Every PowerShell block in a workflow must parse
+        run: python scripts/check-powershell-syntax.py
 
       # Runs `check-compose-validate.py` over the real compose file plus the driver's own extra
       # assertions. Only the callee was ever exercised, and only by a unit test.

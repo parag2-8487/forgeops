@@ -124,6 +124,14 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "AGENT_BACKEND_WSS_URL",
         "AGENT_SHUTDOWN_TIMEOUT_SECONDS",
         "AGENT_MCP_TRANSPORT",
+        # What the UI tells a user to run and where to get the binary. These are read by
+        # `GET /api/v1/agents/connection-info`, which is how the Onboarding screen prints a command
+        # that works: the backend knows its own port, and a literal in the UI would be wrong for any
+        # deployment that publishes on another one.
+        "AGENT_CONNECT_HOST",
+        "AGENT_CONNECT_TLS",
+        "AGENT_RELEASE_TAG",
+        "AGENT_DOWNLOAD_BASE_URL",
         # Telemetry
         "TRACE_PROPAGATION_ENABLED",
         # Frontend

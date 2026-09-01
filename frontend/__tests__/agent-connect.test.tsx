@@ -75,9 +75,9 @@ describe("renderCommand", () => {
   it("refuses a flag the CLI does not have", () => {
     // THE `scan --path` DEFECT, as a unit test. A component that asks for a flag that does not
     // exist now fails the test that renders it, rather than reaching a user.
-    expect(() =>
-      renderCommand({ verb: "scan", platform: "linux", flags: { path: "." } }),
-    ).toThrow(/has no --path flag/);
+    expect(() => renderCommand({ verb: "scan", platform: "linux", flags: { path: "." } })).toThrow(
+      /has no --path flag/,
+    );
   });
 
   it("names the flags a verb does have when it refuses", () => {
@@ -160,8 +160,12 @@ describe("installOnPathCommand", () => {
 
 describe("archiveName", () => {
   it("matches GoReleaser's archive naming, lowercase and underscore separated", () => {
-    expect(archiveName("windows", "v0.1.0", "amd64")).toBe("forgeops-agent_0.1.0_windows_amd64.zip");
-    expect(archiveName("macos", "v0.1.0", "arm64")).toBe("forgeops-agent_0.1.0_darwin_arm64.tar.gz");
+    expect(archiveName("windows", "v0.1.0", "amd64")).toBe(
+      "forgeops-agent_0.1.0_windows_amd64.zip",
+    );
+    expect(archiveName("macos", "v0.1.0", "arm64")).toBe(
+      "forgeops-agent_0.1.0_darwin_arm64.tar.gz",
+    );
     expect(archiveName("linux", "0.1.0", "amd64")).toBe("forgeops-agent_0.1.0_linux_amd64.tar.gz");
   });
 });
@@ -214,7 +218,9 @@ describe("CodeCountdown", () => {
     clock += 61_000;
     // ct because the interval's setState happens outside React's batching otherwise, so the
     // component never re-renders and the assertion reads the first paint.
-    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
     expect(screen.getByTestId("code-countdown-value").textContent).toBe("3:59");
   });
 
@@ -230,7 +236,9 @@ describe("CodeCountdown", () => {
       />,
     );
     clock += 3000;
-    act(() => { vi.advanceTimersByTime(1000); });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
 
     // THE DEFECT: the first code always expired on a first run, and the screen offered no way to
     // issue another without starting the flow again.

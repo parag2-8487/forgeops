@@ -440,6 +440,33 @@ jobs:
           E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: cd frontend && npx playwright test --project=paint
 
+      # PART F: the printed commands, executed verbatim, with the agent as a HOST PROCESS.
+      #
+      # THE GAP THIS CLOSES. Every spec above runs the agent with `composeExec("agent", [...])` —
+      # inside a Linux container, with arguments the spec chose. That proves the CLI works and proves
+      # nothing about the command the UI printed. The UI printed `forgeops-agent pair --code X`, which
+      # fails three ways: PowerShell will not execute a bare name from the current directory, the
+      # binary is `.exe` on Windows, and `pair` refuses without `--backend`. A rendered command also
+      # once carried `scan --path`, a flag that has never existed.
+      #
+      # This reads the commands out of the DOM and runs them unmodified. Go is needed because the
+      # published archive is not available in CI, but the INSTALL and CONNECT commands are the printed
+      # ones — what is under test is whether they run, not where the binary came from.
+      #
+      # Runs last because it pairs a device of its own and leaves an agent resident, and the specs
+      # above are stateful about which devices exist.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: agent/go.sum
+      - name: Follow the onboarding screen's printed instructions literally
+        env:
+          FORGEOPS_E2E_EXTERNAL_STACK: "1"
+          E2E_FRONTEND_URL: http://localhost:3000
+          E2E_API_BASE_URL: http://localhost:8000/api/v1
+          E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
+        run: cd frontend && npx playwright test --project=printed-instructions
+
       # ?8.3.2: "Playwright traces and the agent's logs are uploaded on failure, because an e2e
       # failure with no artifacts is a rerun rather than a diagnosis."
       - name: Collect the agent and service logs
