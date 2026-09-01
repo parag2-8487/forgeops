@@ -69,6 +69,20 @@ EXPECTED_ROUTES = {
     # and no GET -- so a paired agent could be created and destroyed but never observed.
     ("/api/v1/agents/devices", "GET"): True,
     ("/api/v1/agents/devices/{device_id}", "GET"): True,
+    # The agent gives back a device whose credential it could not persist (§3.7). `pair` is not atomic
+    # across the network and the agent's local credential store: the exchange burns the code and marks
+    # the device `active`, and only then does the agent try to write what it received. On Windows that
+    # write could not succeed at all, so every attempt left an `active` row whose token existed nowhere.
+    #
+    # `False` here means "no OIDC PRINCIPAL", which is the only thing `route_requires_principal`
+    # measures. It is NOT unauthenticated: `require_device_token` resolves the caller from its own
+    # device token before the handler starts, and the route takes no device id, so it cannot name any
+    # device but the caller.
+    ("/api/v1/agents/self/abandon", "POST"): False,
+    # What the Onboarding screen reads to print a command that actually works. The backend computes
+    # the `--backend` value from its own configuration, because a literal in the UI would be wrong for
+    # any deployment that publishes on another port -- which is what left the first run stuck.
+    ("/api/v1/agents/connection-info", "GET"): True,
 }
 
 

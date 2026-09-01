@@ -247,12 +247,31 @@ class TestEveryRejectionIsTheSameProblem:
 
 
 class TestThePublicRouteSet:
-    def test_it_has_exactly_the_seven_design_entries(self) -> None:
+    def test_it_has_exactly_the_design_entries_plus_the_agent_surrender(self) -> None:
         """§4.4's table has seven rows; two of them name two paths each
         (`openapi.json`/`docs`, and the four auth endpoints), which is why the tuple is
-        longer than the table."""
-        assert len(PUBLIC_ROUTES) == 10
-        assert len(PUBLIC_PATHS) == 10
+        longer than the table.
+
+        The eleventh is `POST /agents/self/abandon`, added after `pair` was found to be non-atomic
+        across the network and the agent's local credential store. It is "public" only in the sense
+        this registry means — no OIDC principal, which an agent can never hold — and is authenticated
+        by `require_device_token` before its handler starts. The count is asserted so that adding a
+        public route stays a deliberate act with a test to update, which is the whole reason this
+        number is written down.
+        """
+        assert len(PUBLIC_ROUTES) == 11
+        assert len(PUBLIC_PATHS) == 11
+
+    def test_the_agent_surrender_is_public_and_says_it_is_still_authenticated(self) -> None:
+        """The reason must not let a reader think this route is wide open.
+
+        It sits in the same list as `/health`, which genuinely needs nothing. Anyone auditing that
+        list has to be able to tell the two apart from the entry alone.
+        """
+        entry = next(r for r in PUBLIC_ROUTES if r.path == "/api/v1/agents/self/abandon")
+        assert "require_device_token" in entry.reason
+        assert "NOT unauthenticated" in entry.reason
+        assert "takes no device id" in entry.reason
 
     def test_every_entry_carries_a_reason(self) -> None:
         for route in PUBLIC_ROUTES:

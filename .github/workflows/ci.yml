@@ -256,6 +256,11 @@ jobs:
 
       # Every refusal a first-run user can hit, asserted to name its remedy. These messages decide
       # whether somebody gets unstuck or gives up.
+      #
+      # EACH OF THESE COMMANDS IS SUPPOSED TO FAIL, and that has to be said out loud: GitHub's `pwsh`
+      # shell appends `exit $LASTEXITCODE`, so a step whose last command refused would fail the job
+      # for doing exactly what it was asked to do. The exit code is captured, asserted to be
+      # non-zero — a refusal that returns 0 is its own defect — and the step then ends deliberately.
       - name: pair refuses without a backend and names every source
         shell: pwsh
         run: |
@@ -265,13 +270,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path $empty | Out-Null
           Push-Location $empty
           $output = & $binary pair --code ABC234 2>&1 | Out-String
+          $code = $LASTEXITCODE
           Pop-Location
           Write-Host $output
+          if ($code -eq 0) { throw "pair must refuse when no backend URL can be found, but it exited 0" }
           foreach ($needle in @("--backend", "AGENT_BACKEND_WSS_URL", "BACKEND_PORT", "Onboarding")) {
             if ($output -notmatch [regex]::Escape($needle)) {
               throw "the refusal does not mention '$needle'"
             }
           }
+          exit 0
 
       - name: the backend URL is discovered from a local .env
         shell: pwsh
@@ -293,6 +301,7 @@ jobs:
           if ($output -notmatch "BACKEND_PORT in .env") {
             throw "the source of the discovered URL was not reported"
           }
+          exit 0
 
       - name: an explicit --backend works on its own
         shell: pwsh
@@ -303,11 +312,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path $empty | Out-Null
           Push-Location $empty
           # It used to refuse with "pair needs --backend" while --backend was on the command line,
-          # because the session was built from configuration before any flag was read.
+          # because the session was built from configuration before any flag was read. Port 1 has
+          # nothing on it, so the dial fails — what matters is that the flag RESOLVED.
           $output = & $binary pair --code ABC234 --backend "ws://127.0.0.1:1/api/v1/ws/agent" 2>&1 | Out-String
           Pop-Location
           Write-Host $output
           if ($output -notmatch "from the --backend flag") { throw "--backend alone did not resolve" }
+          exit 0
 
       - name: wipe works with no backend configured
         shell: pwsh
@@ -453,6 +464,37 @@ jobs:
       - name: Install yamllint at a pinned version
         working-directory: .
         run: pip install "yamllint==1.37.1"
+
+      # A REAL SECRET SERVICE, so the third platform's credential store is verified rather than
+      # believed.
+      #
+      # `real_keychain_test.go` asks the machine's actual credential manager to hold a full-size
+      # credential — the test that would have caught the Windows defect. It is opt-in through
+      # `FORGEOPS_REAL_KEYCHAIN=1`, and on a bare ubuntu runner there is no Secret Service, so those
+      # five tests SKIPPED here. `check-no-skips.py` refused that, correctly: a skip inside a green run
+      # is indistinguishable from coverage, and its message offers exactly this remedy — provide the
+      # capability.
+      #
+      # It also closes a real gap. `platformKeychainLimits` records libsecret as having no per-item
+      # limit, sourced from documentation and asserted nowhere. With a live keyring that claim is
+      # tested on every run instead.
+      #
+      # `--components=secrets` and nothing else: the daemon's ssh and pkcs11 components are not wanted
+      # and starting them adds two more things that can fail. The empty password on stdin unlocks the
+      # default collection non-interactively, which is the only way this works with no session.
+      - name: Provide a real Secret Service so the credential-store suite cannot skip
+        working-directory: .
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gnome-keyring dbus-x11 libsecret-1-0
+          # `dbus-launch` prints assignments; exporting them into GITHUB_ENV makes the session visible
+          # to every later step, which is where `go test` runs.
+          eval "$(dbus-launch --sh-syntax)"
+          echo "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_PID=${DBUS_SESSION_BUS_PID}" >> "$GITHUB_ENV"
+          printf '' | gnome-keyring-daemon --unlock --components=secrets
+          echo "FORGEOPS_REAL_KEYCHAIN=1" >> "$GITHUB_ENV"
 
       - name: Assert every validator tool is on PATH so no validate test can skip
         working-directory: .

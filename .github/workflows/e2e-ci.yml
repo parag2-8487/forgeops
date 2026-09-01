@@ -61,6 +61,38 @@ jobs:
       - name: Build frontend
         run: cd frontend && pnpm build
 
+      # EVERY SPEC MUST LOAD, AND EVERY PROJECT MUST COLLECT AT LEAST ONE TEST.
+      #
+      # `printed-instructions.spec.ts` used `__dirname`, which does not exist in this package's ESM
+      # build, so the module threw at import and Playwright reported "No tests found". That was caught
+      # only after eighteen minutes of stack setup in the other job, and only because Playwright
+      # happens to exit non-zero on an empty selection. A spec that cannot be LOADED is worse than one
+      # that fails: it executes nothing while looking like it ran.
+      #
+      # `--list` needs no stack and no browser, so this costs seconds and runs before anything slow.
+      # `FORGEOPS_E2E_EXTERNAL_STACK` is set because `playwright.config.ts` declares the four
+      # stack-dependent projects only when it is — without it, `--project=journey` answers "not found"
+      # rather than listing, which would make this check pass by not looking.
+      - name: Every spec must load and every project must collect tests
+        env:
+          FORGEOPS_E2E_EXTERNAL_STACK: "1"
+        run: |
+          set -euo pipefail
+          cd frontend
+          for project in journey onboarding paint printed-instructions smoke; do
+            if ! output=$(npx playwright test --project="$project" --list 2>&1); then
+              echo "$output"
+              echo "FAIL: project '$project' could not be listed; a spec failed to load" >&2
+              exit 1
+            fi
+            if printf '%s' "$output" | grep -qi "no tests found"; then
+              echo "$output"
+              echo "FAIL: project '$project' collected zero tests" >&2
+              exit 1
+            fi
+            printf '  %-22s %s\n' "$project" "$(printf '%s' "$output" | grep -i '^Total:')"
+          done
+
       # Only shell.spec.ts. FORGEOPS_E2E_EXTERNAL_STACK is unset, so playwright.config.ts excludes
       # the journey project entirely rather than attempting thirteen steps against no backend.
       - name: Run the shell smoke spec

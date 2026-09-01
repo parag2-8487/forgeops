@@ -27,7 +27,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
@@ -37,7 +37,18 @@ import { eventually, sqlScalar } from "./helpers/stack";
 test.describe.configure({ mode: "serial" });
 
 const API = process.env.E2E_API_BASE_URL ?? "http://localhost:8000/api/v1";
-const REPO_ROOT = join(__dirname, "..", "..");
+
+/**
+ * The repository root, resolved from the working directory rather than from `__dirname`.
+ *
+ * `frontend/package.json` declares `"type": "module"`, so `__dirname` does not exist — the first
+ * version used it and the whole module failed to load, which Playwright reported as "No tests found".
+ * A spec that cannot be loaded is worse than one that fails: the run went green-adjacent with zero
+ * tests executed. `e2e/helpers/stack.ts` already resolves the root as
+ * `path.resolve(process.cwd(), "..")`, and Playwright is invoked from `frontend/`, so this matches
+ * what the rest of the suite does instead of inventing a second convention.
+ */
+const REPO_ROOT = resolve(process.cwd(), "..");
 
 /** Unique per run, so a rerun does not collide with the previous run's project. */
 const SUFFIX = Date.now().toString(36);
