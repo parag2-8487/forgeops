@@ -163,7 +163,24 @@ async def _take_pending(request: Request, state: str) -> PendingLogin | None:
         return None
 
 
-@router.api_route("/login", methods=["GET", "POST"])
+# `operation_id` is EXPLICIT on the three dual-method routes, and that is a determinism fix rather than a
+# naming preference.
+#
+# FastAPI derives an operationId from the handler name and ONE of the route's methods, taken from a set —
+# so `/login` registered for GET and POST produced `login_api_v1_auth_login_get` in one process and
+# `login_api_v1_auth_login_post` in the next, depending on hash randomisation. `docs/openapi.json` was
+# therefore non-deterministic, and `dump-openapi.py --check` passed or failed by luck: it reported the file
+# stale immediately after writing it. The isolation that script re-execs itself for was an attempt at this
+# same symptom and could not fix it, because the cause is set ordering inside FastAPI rather than the
+# environment.
+#
+# Each METHOD is registered separately rather than through one `api_route(methods=["GET", "POST"])`, so the
+# two ids are distinct. A single shared id would be deterministic and still wrong: FastAPI warns
+# `Duplicate Operation ID` because two path-operations carrying one id make a generated client collide on
+# the method name. Stacked decorators on one handler keep the behaviour identical -- the same function
+# serves both -- while giving the document two nameable operations.
+@router.get("/login", operation_id="auth_login_get")
+@router.post("/login", operation_id="auth_login_post")
 async def login(request: Request) -> RedirectResponse:
     """Begin the authorization-code + PKCE flow (§3.5 steps 2–3).
 
@@ -180,7 +197,8 @@ async def login(request: Request) -> RedirectResponse:
     return RedirectResponse(url=authorization.url, status_code=302)
 
 
-@router.api_route("/callback", methods=["GET", "POST"])
+@router.get("/callback", operation_id="auth_callback_get")
+@router.post("/callback", operation_id="auth_callback_post")
 async def callback(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -272,7 +290,8 @@ async def refresh(
     return response
 
 
-@router.api_route("/logout", methods=["GET", "POST"])
+@router.get("/logout", operation_id="auth_logout_get")
+@router.post("/logout", operation_id="auth_logout_post")
 async def logout(
     request: Request,
     session: AsyncSession = Depends(get_session),

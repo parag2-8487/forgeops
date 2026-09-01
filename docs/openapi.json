@@ -1460,6 +1460,38 @@
         "title": "GenerationRequest",
         "type": "object"
       },
+      "GitHubImportRequest": {
+        "additionalProperties": false,
+        "description": "The three things an import needs. `extra=\"forbid\"` so a misspelled field is a 422, not a default.",
+        "properties": {
+          "installation_id": {
+            "minimum": 1.0,
+            "title": "Installation Id",
+            "type": "integer"
+          },
+          "owner": {
+            "maxLength": 39,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$",
+            "title": "Owner",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "installation_id",
+          "owner",
+          "repo"
+        ],
+        "title": "GitHubImportRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1650,6 +1682,11 @@
             "title": "Name",
             "type": "string"
           },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
           "rego_rules": {
             "title": "Rego Rules",
             "type": "string"
@@ -1732,6 +1769,11 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
           },
           "project_id": {
             "anyOf": [
@@ -1856,6 +1898,18 @@
               }
             ],
             "title": "Name"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
           },
           "rego_rules": {
             "anyOf": [
@@ -2379,6 +2433,56 @@
         "title": "ScanFileIn",
         "type": "object"
       },
+      "ScanFrameworkIn": {
+        "description": "One detected framework and the evidence for it (FR-10).\n\n`confidence` is a closed vocabulary, not a number. `declared` means a manifest names the dependency;\n`inferred` means the layout is characteristic but nothing declares it. A generator may act on the\nfirst and must not act on the second, and a float would invite arithmetic that means nothing.",
+        "properties": {
+          "confidence": {
+            "enum": [
+              "declared",
+              "inferred"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "evidence": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Evidence",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "web",
+              "frontend",
+              "build",
+              "test",
+              "runtime"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "confidence",
+          "evidence"
+        ],
+        "title": "ScanFrameworkIn",
+        "type": "object"
+      },
       "ScanInventoryIn": {
         "properties": {
           "config_files": {
@@ -2400,6 +2504,13 @@
             "title": "File Count",
             "type": "integer"
           },
+          "frameworks": {
+            "items": {
+              "$ref": "#/components/schemas/ScanFrameworkIn"
+            },
+            "title": "Frameworks",
+            "type": "array"
+          },
           "languages": {
             "items": {
               "type": "string"
@@ -2412,6 +2523,13 @@
               "type": "string"
             },
             "title": "Manifests",
+            "type": "array"
+          },
+          "package_managers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Package Managers",
             "type": "array"
           },
           "total_size_bytes": {
@@ -2518,6 +2636,25 @@
         "title": "SecretCreate",
         "type": "object"
       },
+      "SecretFindingResponse": {
+        "description": "One file the scanner found secret material in.\n\nNO VALUE FIELD, and that absence is the requirement rather than a precaution. \u00a77.11 places\n`file_contents` in the \"redacted text only\" class, and the value did not survive the redaction that\nproduced this count \u2014 there is nothing to return even if returning it were acceptable. A path and a\ncount send an operator to the right file, which is what they need.",
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "redaction_count": {
+            "title": "Redaction Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path",
+          "redaction_count"
+        ],
+        "title": "SecretFindingResponse",
+        "type": "object"
+      },
       "SecretResponse": {
         "properties": {
           "environment": {
@@ -2563,6 +2700,49 @@
           "is_local"
         ],
         "title": "SecretResponse",
+        "type": "object"
+      },
+      "SecretScanSummaryResponse": {
+        "description": "FR-42's answer for one project.",
+        "properties": {
+          "clean": {
+            "title": "Clean",
+            "type": "boolean"
+          },
+          "files_with_findings": {
+            "title": "Files With Findings",
+            "type": "integer"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/SecretFindingResponse"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "indexed": {
+            "title": "Indexed",
+            "type": "boolean"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "total_findings": {
+            "title": "Total Findings",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "indexed",
+          "clean",
+          "files_with_findings",
+          "total_findings",
+          "findings"
+        ],
+        "title": "SecretScanSummaryResponse",
         "type": "object"
       },
       "SecretUpdate": {
@@ -3186,6 +3366,62 @@
           }
         },
         "summary": "Persist an agent scan report into the codebase index",
+        "tags": [
+          "analysis"
+        ]
+      }
+    },
+    "/api/v1/analysis/codebase/{project_id}/secrets": {
+      "get": {
+        "description": "What the secret scan found, per file (FR-42).\n\n**This endpoint is new, and its absence was the finding.** The agent's scanner runs on every file of\nevery index \u2014 that is what produces the redacted bodies `file_contents` stores \u2014 and\n`file_contents.redaction_count` has recorded the per-file result since revision `0003`. Nothing read\nit. So \"secret scanning of the codebase for hardcoded secrets\" happened on every scan and left no\ntrace an operator could reach, which is a scan whose result is a private fact.\n\nA GET rather than an operation to dispatch: the scan has already run, and asking the agent to run it\nagain would make reading a result a mutation of the workspace. The agent's `secretscan.run` operation\nremains, for the case where an operator wants a fresh scan without a full re-index.",
+        "operationId": "secret_scan_summary_api_v1_analysis_codebase__project_id__secrets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretScanSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Secret Scan Summary",
         "tags": [
           "analysis"
         ]
@@ -3885,7 +4121,7 @@
     "/api/v1/auth/callback": {
       "get": {
         "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
-        "operationId": "callback_api_v1_auth_callback_get",
+        "operationId": "auth_callback_get",
         "responses": {
           "200": {
             "content": {
@@ -3903,7 +4139,7 @@
       },
       "post": {
         "description": "Complete the exchange, upsert the user, open a session (\u00a73.5 steps 5\u201311).",
-        "operationId": "callback_api_v1_auth_callback_get",
+        "operationId": "auth_callback_post",
         "responses": {
           "200": {
             "content": {
@@ -3923,7 +4159,7 @@
     "/api/v1/auth/login": {
       "get": {
         "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
-        "operationId": "login_api_v1_auth_login_get",
+        "operationId": "auth_login_get",
         "responses": {
           "200": {
             "content": {
@@ -3941,7 +4177,7 @@
       },
       "post": {
         "description": "Begin the authorization-code + PKCE flow (\u00a73.5 steps 2\u20133).\n\n302 rather than a JSON body carrying the URL: the browser has to end up at the IdP,\nand a redirect keeps that a property of the endpoint instead of something every\ncaller has to reimplement.",
-        "operationId": "login_api_v1_auth_login_get",
+        "operationId": "auth_login_post",
         "responses": {
           "200": {
             "content": {
@@ -3961,7 +4197,7 @@
     "/api/v1/auth/logout": {
       "get": {
         "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
-        "operationId": "logout_api_v1_auth_logout_get",
+        "operationId": "auth_logout_get",
         "responses": {
           "200": {
             "content": {
@@ -3979,7 +4215,7 @@
       },
       "post": {
         "description": "End the session and clear the cookie. Always 200 (\u00a74.4).\n\nDeliberately succeeds when there is no live session: the common case is a user\nclicking log out after their token expired, and a 401 there would leave the cookie\nin place \u2014 the browser would keep presenting a credential the server has already\nforgotten.",
-        "operationId": "logout_api_v1_auth_logout_get",
+        "operationId": "auth_logout_post",
         "responses": {
           "200": {
             "content": {
@@ -4780,6 +5016,48 @@
           }
         },
         "summary": "Create a project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/import/github": {
+      "post": {
+        "description": "Read a repository over the real GitHub API and record it as a project (FR-01).\n\n**This endpoint is new, and its absence was the finding.** `src/projects/github_import.py` has existed\nsince Leaf 12.2 with a `GitHubImporter` and a `GitHubAppTokenSource`, and nothing called either one \u2014\nthe only thing that exercised them was a unit test asserting the fabricated token prefix. So FR-01\n(\"import a repository from GitHub\") was satisfied by a class that no request could reach, returning a\ncredential no API would accept.\n\nRegistered BEFORE `/{project_id}` would match it? No \u2014 `/import/github` is a two-segment path and\n`/{project_id}` is one, so there is no ambiguity to order around. `/tags` sits above for the same\nreason and needs no special placement either.\n\nThe route is deliberately thin. It resolves the repository, writes one row, and audits it. It does\nNOT clone, scan or index: those are the agent's, and coupling them here would make an import fail\nbecause a scan did.",
+        "operationId": "import_github_repository_api_v1_projects_import_github_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import a GitHub repository as a project",
         "tags": [
           "projects"
         ]
