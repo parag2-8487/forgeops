@@ -1398,6 +1398,13 @@ jobs:
       # `pair` refuses, and with a bare program name PowerShell will not execute.
       - name: Every rendered command must be composed of flags the CLI accepts
         run: python scripts/check-rendered-commands.py
+      # An invented `data-testid` cost a twenty-nine-minute CI run. `printed-instructions.spec.ts`
+      # selected `create-project`, which exists nowhere in the app, so Playwright waited the full
+      # per-test timeout for an element that could never appear — after building four images, pulling
+      # two models and provisioning an identity provider. It is a spelling mistake with a half-hour
+      # feedback loop, and it is a pure string match.
+      - name: Every end-to-end test id must exist in the application
+        run: python scripts/check-e2e-testids.py
 
       - name: Every gate script must actually run somewhere
         run: python scripts/check-gate-reachability.py

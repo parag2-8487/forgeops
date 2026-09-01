@@ -135,7 +135,10 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     await page.getByLabel(/directory on the machine/i).check();
     await page.getByLabel("Name", { exact: true }).fill(PROJECT_NAME);
     await page.getByLabel(/working-tree path/i).fill(printed.workspace);
-    await page.getByTestId("create-project").click();
+    // `getByRole`, not a testid. `create-project` was an invented `data-testid` that exists nowhere
+    // in the app — the spec waited the full 15-minute timeout for an element that could never appear.
+    // `onboarding.spec.ts` already submits this form by its accessible name, so this matches it.
+    await page.getByRole("button", { name: /create project/i }).click();
 
     const id = await eventually("the project row", () =>
       sqlScalar(`SELECT id FROM projects WHERE name = '${PROJECT_NAME}'`),
