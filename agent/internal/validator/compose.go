@@ -109,7 +109,10 @@ func (r *Runner) clusterReachable(ctx context.Context) bool {
 			GitVersion string `json:"gitVersion"`
 		} `json:"serverVersion"`
 	}
-	if json.Unmarshal([]byte(probe.Output), &parsed) != nil {
+	// `jsonObject` for the reason given on the tofu path: kubectl also prints diagnostics around its JSON
+	// in some environments, and a failed parse here reports the cluster as unreachable — which silently
+	// downgrades `validate.k8s` from a server dry run to the offline schema fallback.
+	if json.Unmarshal([]byte(jsonObject(probe.Output)), &parsed) != nil {
 		return false
 	}
 	return parsed.ServerVersion != nil && parsed.ServerVersion.GitVersion != ""

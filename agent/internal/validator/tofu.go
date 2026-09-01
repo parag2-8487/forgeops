@@ -87,7 +87,7 @@ func tofuDiagnostics(output, moduleDir string) []Finding {
 			} `json:"range"`
 		} `json:"diagnostics"`
 	}
-	if err := json.Unmarshal([]byte(output), &parsed); err != nil || len(parsed.Diagnostics) == 0 {
+	if err := json.Unmarshal([]byte(jsonObject(output)), &parsed); err != nil || len(parsed.Diagnostics) == 0 {
 		return findingsFromLines(output, SeverityHigh, "tofu-validate", moduleDir)
 	}
 	findings := make([]Finding, 0, len(parsed.Diagnostics))
@@ -108,6 +108,37 @@ func tofuDiagnostics(output, moduleDir string) []Finding {
 		findings = append(findings, finding)
 	}
 	return findings
+}
+
+// jsonObject returns the outermost JSON object in `output`, or `output` unchanged when there is none.
+//
+// WHY A `-json` FLAG IS NOT ENOUGH. Under GitHub Actions, OpenTofu detects the CI environment and appends
+// workflow commands to its own output:
+//
+//	}
+//	::error::OpenTofu exited with code 1.
+//
+// The document is then no longer parseable JSON, `json.Unmarshal` fails, and `tofuDiagnostics` takes its
+// line-splitting fallback — producing one HIGH finding per LINE of the JSON, each carrying the module
+// directory instead of the `.tf` file and line the diagnostic actually names. That is not a cosmetic
+// difference: `validate.tofu`'s whole value is telling an operator which line of which file is wrong, and
+// `TestValidateTofu_AcceptsAValidModuleAndRejectsABrokenOne` failed on exactly that assertion — in CI only,
+// because the annotation is only emitted there.
+//
+// Slicing on the first `{` and last `}` rather than stripping known prefixes, because the set of things a
+// tool may print around its JSON is not knowable in advance: colour codes, deprecation notices and CI
+// annotations have all appeared, and each would need its own rule. The braces are the document's own
+// delimiters.
+//
+// The fallback is PRESERVED for output with no object at all — a crash, or a version that stops honouring
+// `-json` — because reporting nothing would be worse than reporting lines.
+func jsonObject(output string) string {
+	start := strings.Index(output, "{")
+	end := strings.LastIndex(output, "}")
+	if start < 0 || end < start {
+		return output
+	}
+	return output[start : end+1]
 }
 
 // ValidateYAML runs yamllint and then checks the document against a JSON Schema when one applies.
@@ -265,7 +296,9 @@ func trivyFindings(output, target string) ([]Finding, error) {
 			} `json:"Secrets"`
 		} `json:"Results"`
 	}
-	if err := json.Unmarshal([]byte(trimmed), &report); err != nil {
+	// `jsonObject` for the reason it exists on the tofu path: a tool that appends a CI workflow annotation
+	// after its JSON makes the document unparseable, and trivy runs in the same job.
+	if err := json.Unmarshal([]byte(jsonObject(trimmed)), &report); err != nil {
 		return nil, err
 	}
 	var findings []Finding
