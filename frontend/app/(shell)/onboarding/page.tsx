@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { ProjectPicker } from "@/components/ui/project-picker";
 import type { CodebaseStatus, ProjectPage } from "@/features/projects/types";
+import { AgentConnectPanel } from "@/features/agent/AgentConnectPanel";
 
 /**
  * Nothing to an applied change set, in order, with the current state of each step observed.
@@ -139,11 +140,22 @@ export default function OnboardingPage() {
           state={projectId === "" ? "todo" : activeDevice ? "done" : "todo"}
           observedBy="GET /api/v1/agents/devices"
           done="A device is active for this project, with a certificate issued by the internal CA."
-          todo="Run `forgeops-agent pair --code <code>` on the machine holding the working tree. The exchange submits a certificate request and receives a client certificate, a device token and the project's current policy bundle."
+          todo="Download the agent, put it on your PATH, and run one command. The panel below prints all three, correct for your platform — no editing, and nothing to compile."
           href="/pairing"
           hrefLabel="See device state"
         />
 
+        {/* The commands themselves, on this page, correct for the reader's platform.
+         *
+         * The step above used to say: run `forgeops-agent pair --code <code>`. That command does not
+         * work. On Windows PowerShell will not execute a bare name from the current directory and the
+         * binary is `forgeops-agent.exe`; everywhere, `pair` refuses without `--backend`, and the
+         * value was derivable only from BACKEND_PORT in the repository's .env. Three corrections a
+         * user had to make before anything happened, none of them written down.
+         *
+         * Rendered here rather than only on /pairing so this page alone takes a user from nothing to
+         * a paired, scanning agent — which is what `onboarding.spec.ts` now follows literally. */}
+        {projectId === "" ? null : <AgentConnectPanel projectId={projectId} />}
         <Step
           n={4}
           title="Scan the codebase"

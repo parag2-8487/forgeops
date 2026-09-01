@@ -17,6 +17,12 @@ builds:
 
 archives:
   - id: default
+    # DECLARED EXPLICITLY, not left to the default. The UI builds download links from this shape
+    # (`frontend/features/agent/commands.ts`, `archiveName`), and GoReleaser's built-in default has
+    # differed between major versions over whether the OS is title-cased — so relying on it means a
+    # toolchain upgrade silently turns every per-platform download link into a 404.
+    # `scripts/check-rendered-commands.py` asserts this template and the UI agree.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
         format: zip

@@ -369,10 +369,29 @@ const PROJECT_LIST = {
  * page's real payload would never arrive.
  */
 function serving(handler: (path: string) => Promise<unknown>, usesPicker = false) {
-  if (!usesPicker) return handler;
+  // `/agents/connection-info` is answered for every page, not only the picker pages.
+  //
+  // The Pairing screen now renders `AgentConnectPanel`, which reads this route to build a connect
+  // command carrying the deployment's real `--backend` value — the thing the old printed command was
+  // missing. It is intercepted here rather than in each case because it is infrastructure for the
+  // page under test, not the page's own subject, and an unanswered query leaves react-query with no
+  // data for a component that is about to render it.
+  const withConnectionInfo = (path: string) =>
+    path.startsWith("/agents/connection-info")
+      ? Promise.resolve(AGENT_CONNECTION_INFO)
+      : handler(path);
+  if (!usesPicker) return withConnectionInfo;
   return (path: string) =>
-    path.startsWith("/projects?limit=") ? Promise.resolve(PROJECT_LIST) : handler(path);
+    path.startsWith("/projects?limit=") ? Promise.resolve(PROJECT_LIST) : withConnectionInfo(path);
 }
+
+/** What `GET /api/v1/agents/connection-info` answers on the development stack. */
+const AGENT_CONNECTION_INFO = {
+  backend_ws_url: "ws://localhost:18000/api/v1/ws/agent",
+  agent_ws_path: "/api/v1/ws/agent",
+  release_tag: "",
+  download_base_url: "",
+};
 
 describe.each(LIVE_PAGES)(
   "$name route",

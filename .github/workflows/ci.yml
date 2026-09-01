@@ -1143,6 +1143,13 @@ jobs:
       # `control-of-the-control.py` noticed, three layers up, and it could only report the symptom.
       - name: Every workflow must run the Python the project targets
         run: python scripts/check-workflow-python.py
+      # A rendered command carried `scan --path`, a flag the CLI has never accepted, and it was
+      # found by running it. The UI builds a string, the CLI parses a string, and nothing compared
+      # the two — so every command the UI or the docs print was an unverified claim about the CLI.
+      # The same class of gap printed `forgeops-agent pair --code X` with no `--backend`, which
+      # `pair` refuses, and with a bare program name PowerShell will not execute.
+      - name: Every rendered command must be composed of flags the CLI accepts
+        run: python scripts/check-rendered-commands.py
       - name: Every gate script must actually run somewhere
         run: python scripts/check-gate-reachability.py
       # Promoted from the untracked `scripts/_state.sh`, which reconciled the plan against the

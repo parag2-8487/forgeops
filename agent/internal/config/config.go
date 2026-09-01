@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,19 +13,23 @@ import (
 
 // Config holds the fully-validated agent configuration.
 type Config struct {
-	LogLevel        string
-	LogFormat       string // "json" | "console"
-	BackendWSSURL   string
-	ShutdownTimeout time.Duration
-	Tofu            TofuConfig
-	Git             GitConfig
-	MCP             MCPConfig
-	Session         SessionConfig
-	Journal         JournalConfig
-	Identity        IdentityConfig
-	Executor        ExecutorConfig
-	Scanner         ScannerConfig
-	Validator       ValidatorConfig
+	LogLevel      string
+	LogFormat     string // "json" | "console"
+	BackendWSSURL string
+	// BackendWSSURLSource says which of the three sources supplied BackendWSSURL, so a command
+	// can log where it came from. A user who does not know why the agent is dialling a
+	// particular host has no way to find out otherwise.
+	BackendWSSURLSource BackendURLSource
+	ShutdownTimeout     time.Duration
+	Tofu                TofuConfig
+	Git                 GitConfig
+	MCP                 MCPConfig
+	Session             SessionConfig
+	Journal             JournalConfig
+	Identity            IdentityConfig
+	Executor            ExecutorConfig
+	Scanner             ScannerConfig
+	Validator           ValidatorConfig
 }
 
 // TofuConfig holds OpenTofu runner settings.
@@ -156,11 +161,18 @@ func Load(getenv func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Sprintf("LOG_FORMAT: must be 'json' or 'console', got %q", logFormat))
 	}
 
-	backendWSSURL := getenv("AGENT_BACKEND_WSS_URL")
-	if backendWSSURL != "" {
-		if _, err := url.Parse(backendWSSURL); err != nil {
-			errs = append(errs, fmt.Sprintf("AGENT_BACKEND_WSS_URL: invalid URL: %v", err))
-		}
+	// Discovery, not a guess. The environment variable still wins over anything found on disk,
+	// and a value found on disk is accepted only when it is loopback — see
+	// `backend_discovery.go` for why that distinction is the whole safety argument.
+	//
+	// The working directory is the search root. That is deliberate: a developer running the agent
+	// from the repository that started the stack gets the right answer with no flag at all, and a
+	// user anywhere else gets the refusal plus a message naming every source.
+	workingDir, _ := os.Getwd()
+	backendWSSURL, backendWSSURLSource, backendErr := DiscoverBackendURL(
+		"", getenv("AGENT_BACKEND_WSS_URL"), workingDir)
+	if backendErr != nil {
+		errs = append(errs, backendErr.Error())
 	}
 
 	shutdownTimeout := parseDurationDefault(getenv, "AGENT_SHUTDOWN_TIMEOUT_SECONDS", "15", &errs)
@@ -256,10 +268,11 @@ func Load(getenv func(string) string) (*Config, error) {
 	}
 
 	return &Config{
-		LogLevel:        logLevel,
-		LogFormat:       logFormat,
-		BackendWSSURL:   backendWSSURL,
-		ShutdownTimeout: shutdownTimeout,
+		LogLevel:            logLevel,
+		LogFormat:           logFormat,
+		BackendWSSURL:       backendWSSURL,
+		BackendWSSURLSource: backendWSSURLSource,
+		ShutdownTimeout:     shutdownTimeout,
 		Tofu: TofuConfig{
 			BinaryPath:     tofuBinary,
 			DefaultTimeout: tofuTimeout,

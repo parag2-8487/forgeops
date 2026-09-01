@@ -283,6 +283,39 @@ func (a *App) Session() (*session.Manager, error) {
 	return a.sessionMgr, a.sessionErr
 }
 
+// UseBackendURL applies a backend URL resolved on the command line.
+//
+// MUST BE CALLED BEFORE `Session()`, and that is enforced rather than documented: `Session` is
+// memoised with a `sync.Once`, so a later call would be silently ignored and the agent would dial
+// the configured host while printing the one the user asked for. Calling this after the manager
+// exists is a programming error and says so.
+//
+// It exists because `--backend` was unusable on its own. `Session()` built its collaborators from
+// `a.cfg.BackendWSSURL` before any flag was read, so an agent given `--backend` and nothing else
+// refused with "no backend URL configured: pair needs --backend" — naming the flag the user had
+// just passed.
+func (a *App) UseBackendURL(rawURL string, source config.BackendURLSource) {
+	if a.sessionMgr != nil {
+		panic("app: UseBackendURL called after Session(); the memoised manager already holds a URL")
+	}
+	a.cfg.BackendWSSURL = rawURL
+	a.cfg.BackendWSSURLSource = source
+	a.conn = connection.NewManager(rawURL, a.logger.Named("conn"), a.tracer)
+}
+
+// UseWorkspaceRoot applies a workspace directory named on the command line.
+//
+// No guard against a late call, unlike `UseBackendURL`: `codebaseIndexer()` is built fresh on every
+// call and reads `cfg.Executor.WorkspaceRoot` at that moment, so there is no memoised value this
+// could contradict. If that ever becomes memoised, this needs the same panic `UseBackendURL` has.
+//
+// It exists so `connect --workspace <path>` can point the agent at a directory without the user
+// having to set `AGENT_WORKSPACE_ROOT` first. Setting an environment variable in order to run one
+// command is exactly the friction this change removes.
+func (a *App) UseWorkspaceRoot(root string) {
+	a.cfg.Executor.WorkspaceRoot = root
+}
+
 // CredentialStore is the credential store, opened independently of the session manager.
 //
 // INDEPENDENT ON PURPOSE. It used to be reachable only through `Session()`, and `Session()` needs a

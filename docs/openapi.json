@@ -29,6 +29,39 @@
         "title": "ActivityFeedItem",
         "type": "object"
       },
+      "AgentConnectionInfo": {
+        "description": "Everything needed to render a runnable connect command.",
+        "properties": {
+          "agent_ws_path": {
+            "description": "The WebSocket route, for reference.",
+            "title": "Agent Ws Path",
+            "type": "string"
+          },
+          "backend_ws_url": {
+            "description": "The value for --backend. Computed from this deployment's own configuration.",
+            "title": "Backend Ws Url",
+            "type": "string"
+          },
+          "download_base_url": {
+            "description": "Where the signed per-platform archives live, or an empty string.",
+            "title": "Download Base Url",
+            "type": "string"
+          },
+          "release_tag": {
+            "description": "The agent release the UI should offer for download, or an empty string when this deployment pins none.",
+            "title": "Release Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend_ws_url",
+          "agent_ws_path",
+          "release_tag",
+          "download_base_url"
+        ],
+        "title": "AgentConnectionInfo",
+        "type": "object"
+      },
       "ApprovalDecisionRequest": {
         "description": "The body of an approve or reject.\n\nA **body**, not query parameters, and this is the point of the rewrite. The old handlers took\n`approver: str = \"admin\"` and `rejector: str = \"admin\"` in the query string, so the caller\nsupplied the identity that the audit record would attribute the decision to \u2014 and defaulted it\nto an administrator. The approver is now taken from the verified principal and cannot be\nexpressed on the wire at all; there is deliberately no `approver` field here.\n\n`comment` carries the reviewer's reason into `approvals.comment` and into the audit record's\n`reason`. `expected_version` is the change set's `version` as the client last saw it.",
         "properties": {
@@ -2927,6 +2960,28 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/agents/connection-info": {
+      "get": {
+        "description": "Report this deployment's agent connection details.\n\nBehind `require_principal` and not public. Nothing here is a secret -- a port and a release tag\n-- but it is a map of the deployment, and an unauthenticated endpoint that describes where the\nagent socket lives is a courtesy to a scanner. The UI is authenticated anyway, so there is no\ncost to requiring it.",
+        "operationId": "get_connection_info_api_v1_agents_connection_info_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentConnectionInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "What an agent needs in order to connect to this backend",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/v1/agents/devices": {
       "get": {
         "description": "The devices the caller's tenant can see, newest first.\n\n`status` is typed as `DeviceStatus`, so an unknown value is FastAPI's registered\n`validation-failed` 422 rather than a query that matches nothing and looks like an empty\ninventory.",

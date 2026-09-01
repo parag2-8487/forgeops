@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/parag8487/ForgeOps/agent/internal/config"
 	"github.com/parag8487/ForgeOps/agent/internal/connection"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner"
 	"github.com/parag8487/ForgeOps/agent/internal/session"
@@ -43,6 +44,9 @@ func NewRootCommand(a *App) *cobra.Command {
 		newVersionCmd(a),
 		newDoctorCmd(a),
 		newPairCmd(a),
+		// Listed after `pair` and before `run` because that is the order it performs them in, and
+		// `cobra` prints help in registration order.
+		newConnectCmd(a),
 		newRunCmd(a),
 		newScanCmd(a),
 		newWatchCmd(a),
@@ -235,17 +239,21 @@ func newPairCmd(a *App) *cobra.Command {
 			"same code fails by design. Use --wipe to unpair before pairing again.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			manager, err := a.Session()
-			if err != nil {
-				return err
-			}
 			ctx := cmd.Context()
 
+			// WIPE NEEDS NO BACKEND, and used to demand one. `a.Session()` ran first
+			// unconditionally, and it fails when no backend URL is configured — so an agent that
+			// could not reach a backend could not clear its own credentials either, which is
+			// exactly the state a failed pairing leaves and exactly when wiping is needed.
 			if wipe {
 				if code != "" {
 					return fmt.Errorf("pair: --wipe and --code are mutually exclusive")
 				}
-				if err := manager.Wipe(ctx); err != nil {
+				store, err := a.CredentialStore()
+				if err != nil {
+					return err
+				}
+				if err := store.Wipe(ctx); err != nil {
 					return err
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Credentials wiped; this agent is unpaired.\n")
@@ -255,7 +263,38 @@ func newPairCmd(a *App) *cobra.Command {
 				return fmt.Errorf("pair: --code is required (get one from the ForgeOps UI)")
 			}
 
-			result, err := manager.Pair(ctx, code, backend)
+			// THE BACKEND URL IS RESOLVED BEFORE THE SESSION IS BUILT, and the flag alone is
+			// enough. It was not: `a.Session()` was constructed from `a.cfg.BackendWSSURL` before
+			// the flag was consulted, so `--backend` was documented but unusable on its own and a
+			// user had to set an environment variable as well. The refusal they got named the flag
+			// they had just passed.
+			//
+			// The config already ran discovery and RECORDED WHICH SOURCE ANSWERED. Re-running
+			// discovery here with `a.cfg.BackendWSSURL` in the environment slot would relabel a
+			// value found in `.env` as having come from `AGENT_BACKEND_WSS_URL` — which it did,
+			// briefly, and a message that is wrong about where a value came from is worse than no
+			// message.
+			resolved, source := a.cfg.BackendWSSURL, a.cfg.BackendWSSURLSource
+			if explicit := strings.TrimSpace(backend); explicit != "" {
+				var err error
+				resolved, source, err = config.DiscoverBackendURL(explicit, "", "")
+				if err != nil {
+					return err
+				}
+			}
+			if resolved == "" {
+				workingDir, _ := os.Getwd()
+				return fmt.Errorf("pair: %s", config.BackendURLRemedy(workingDir))
+			}
+			a.UseBackendURL(resolved, source)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Using backend %s (from %s).\n", resolved, source)
+
+			manager, err := a.Session()
+			if err != nil {
+				return err
+			}
+
+			result, err := manager.Pair(ctx, code, resolved)
 			if err != nil {
 				return err
 			}
@@ -282,8 +321,12 @@ func newPairCmd(a *App) *cobra.Command {
 	// Defaulted from configuration rather than required, so the common case is
 	// `pair --code X` and the flag exists for an operator pairing against a backend other
 	// than the one in the environment.
-	cmd.Flags().StringVar(&backend, "backend", a.cfg.BackendWSSURL,
-		"backend URL (defaults to AGENT_BACKEND_WSS_URL)")
+	// EMPTY DEFAULT, not a.cfg.BackendWSSURL. Defaulting the flag to the configured value would
+	// make "the user passed --backend" indistinguishable from "the environment supplied it", and
+	// the precedence chain could then not report its own source honestly. The resolution happens
+	// in RunE, where all three sources are visible at once.
+	cmd.Flags().StringVar(&backend, "backend", "",
+		"backend URL; overrides AGENT_BACKEND_WSS_URL and any value discovered from .env")
 	cmd.Flags().BoolVar(&wipe, "wipe", false, "remove stored credentials and return to the unpaired state")
 
 	return cmd

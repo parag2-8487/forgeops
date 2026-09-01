@@ -747,6 +747,14 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(agent_public_router)
 
+    # What an agent needs in order to connect, computed from this deployment's own configuration.
+    # Its own module because it reads settings and nothing else — no device state, no CA, no Redis —
+    # and because the pairing routers above carry authentication decisions that this one must not be
+    # able to blur.
+    from .agents.connection_info_routes import router as agent_connection_info_router
+
+    app.include_router(agent_connection_info_router)
+
     # The device READ surface (§3.7, criterion 10 step 4). Pairing was write-only — a POST to mint,
     # a public POST to exchange, a DELETE to revoke, and no GET — so a paired agent could not be
     # observed and the /pairing screen had nothing to read. Its own module so the public exemption

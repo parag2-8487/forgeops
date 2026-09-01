@@ -363,6 +363,43 @@ class Settings(BaseSettings):
     #: Only ever joined with a path `_safe_next` has already reduced to a same-origin absolute
     #: path, so a hostile `next` cannot turn this into an open redirect.
     frontend_base_url: str = Field(default="http://localhost:3000")
+
+    #: The port this backend is reachable on FROM OUTSIDE its container, and therefore the port an
+    #: agent must dial.
+    #:
+    #: WHY IT HAS TO BE HERE. `pair` refuses to guess a backend URL, which is correct — a device
+    #: token is a bearer credential and an agent that invented a host would hand one to whatever
+    #: answered. But the UI told users to run `forgeops-agent pair --code <code>` with no `--backend`
+    #: at all, and there was no value anywhere for them to find: `BACKEND_PORT` was in the known-env
+    #: allow-list for the compose file's benefit and was not a setting, so the backend did not know
+    #: its own external port and could not put it in the instructions it printed.
+    #:
+    #: The default matches `.env.example`. A deployment that publishes on another port sets
+    #: `BACKEND_PORT`, which `docker-compose.yml` already interpolates for the published mapping —
+    #: so one value drives the mapping and the instructions together and they cannot drift.
+    backend_port: int = Field(default=8000, ge=1, le=65_535)
+
+    #: The host an agent should dial, when it is not the same machine as the backend.
+    #:
+    #: Empty means "localhost", which is right for the development stack and for every case where
+    #: the agent runs beside the backend. It is a SETTING rather than something derived from an
+    #: inbound request's `Host` header: that header is caller-supplied, and building connection
+    #: instructions out of it would let anyone who can reach the API decide what host the next agent
+    #: is told to send its device token to.
+    agent_connect_host: str = Field(default="")
+
+    #: Whether an agent should use `wss` rather than `ws`. Follows deployment, not preference.
+    agent_connect_tls: bool = Field(default=False)
+
+    #: The agent release the UI offers for download, e.g. `v0.1.0`.
+    #:
+    #: Empty means this deployment pins none, and the UI then says so rather than linking to
+    #: something that may not exist. It is NOT defaulted to "latest": a download link that silently
+    #: follows the newest tag can hand a user an agent newer than the backend it is pairing with.
+    agent_release_tag: str = Field(default="")
+
+    #: Where the signed archives live. Empty disables the download offer entirely.
+    agent_download_base_url: str = Field(default="")
     session_cookie_name: str = Field(default="forgeops_session")
     session_ttl_seconds: int = Field(default=3600, ge=60, le=86_400)
     refresh_ttl_seconds: int = Field(default=1_209_600, ge=3600)

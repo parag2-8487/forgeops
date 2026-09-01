@@ -165,7 +165,7 @@ describe("minting a pairing code", () => {
     );
   });
 
-  it("shows the code once, with its expiry, and says it cannot be recovered", async () => {
+  it("shows the code once, with a live countdown rather than a raw timestamp, and says it cannot be recovered", async () => {
     signInAs("admin");
     serve();
     mockPost.mockResolvedValue({
@@ -178,7 +178,14 @@ describe("minting a pairing code", () => {
 
     const panel = await screen.findByTestId("pairing-code");
     expect(screen.getByTestId("pairing-code-value")).toHaveTextContent("K7X2QP");
-    expect(panel).toHaveTextContent("2026-08-28T10:05:00Z");
+    // THE RAW TIMESTAMP IS GONE, DELIBERATELY. It used to be printed as `expires_at` verbatim, which
+    // left the user to subtract two times in their head to learn how long they had — and on a first
+    // run the code always expired before it could be used. It is replaced by a live countdown, or by
+    // an expired notice with a re-mint button, and this fixture's expiry is in the past.
+    expect(panel).not.toHaveTextContent("2026-08-28T10:05:00Z");
+    expect(screen.getByTestId("code-expired")).toBeInTheDocument();
+    expect(screen.getByTestId("remint-code")).toBeInTheDocument();
+    expect(panel).toHaveTextContent(/cannot be extended/i);
     // The code exists in the clear in exactly one place: this response body. Only its HMAC is stored,
     // so there is no endpoint that could show it again — a "reveal" control would have nothing to
     // reveal. Saying so is what stops someone closing the panel expecting to find it later.

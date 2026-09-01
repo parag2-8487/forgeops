@@ -8,6 +8,8 @@ import { AsyncState } from "@/components/ui/async-state";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { ProjectPicker } from "@/components/ui/project-picker";
 import { useCapability } from "@/hooks/use-role";
+import { AgentConnectPanel } from "@/features/agent/AgentConnectPanel";
+import { CodeCountdown } from "@/features/agent/CodeCountdown";
 
 /**
  * Mirrors `DeviceRead` in `backend/src/auth/device_read_routes.py`.
@@ -90,7 +92,7 @@ export default function PairingPage() {
         isPending={devices.isPending}
         error={devices.error}
         isEmpty={devices.data?.devices.length === 0}
-        emptyMessage="No agent devices exist for this tenant. Mint a pairing code above, then run `forgeops-agent pair --code <code>` on the machine that holds the working tree."
+        emptyMessage="No agent devices exist for this tenant. Mint a pairing code above; the panel beneath it prints the exact command to run on the machine that holds the working tree."
         label="agent devices"
       >
         <ul className="space-y-4">
@@ -326,10 +328,6 @@ function MintPairingCode() {
             {issued.code}
           </p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-            <dt className="font-medium">Expires</dt>
-            <dd>
-              <time dateTime={issued.expires_at}>{issued.expires_at}</time>
-            </dd>
             <dt className="font-medium">Device</dt>
             <dd>
               <code>{issued.device_id}</code>
@@ -340,11 +338,20 @@ function MintPairingCode() {
             audit record and no database column — only its HMAC is stored — so there is no way to
             show it again, and nothing here has saved it. If you lose it, mint another.
           </p>
-          <p className="text-xs">
-            Then run: <code className="break-all">forgeops-agent pair --code {issued.code}</code>
-          </p>
+          <CodeCountdown
+            expiresAt={issued.expires_at}
+            onRemint={() => mint.mutate()}
+            isReminting={mint.isPending}
+          />
         </div>
       ) : null}
+
+      {/* The whole connect flow, with every command correct for the reader's platform.
+       *
+       * Rendered whether or not a code exists: a user can download the binary and put it on PATH
+       * before minting, which is what makes the five-minute window comfortable instead of a race.
+       * That ordering is the actual fix for code expiry — the countdown only tells you about it. */}
+      <AgentConnectPanel code={issued?.code} projectId={projectId === "" ? undefined : projectId} />
 
       <GovernanceRefusal error={mint.error} action="mint a pairing code" />
     </section>

@@ -22,8 +22,16 @@ import (
 // backend URL configured", naming the wrong one of two independent facts.
 
 // doctorApp builds an App with the given environment overlaid on a working baseline.
+//
+// It runs the process in an EMPTY directory. `config.Load` discovers a backend URL from
+// `BACKEND_PORT` in a `.env` above the working directory, so a test run from inside this
+// repository would find the repository's own `.env` and never see the unconfigured state it is
+// trying to cover. That is the discovery feature working correctly, and it made two of these tests
+// fail the moment it landed.
 func doctorApp(t *testing.T, overrides map[string]string) *App {
 	t.Helper()
+
+	t.Chdir(t.TempDir())
 
 	dir := t.TempDir()
 	env := map[string]string{
