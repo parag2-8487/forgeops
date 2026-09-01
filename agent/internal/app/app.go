@@ -52,7 +52,12 @@ type App struct {
 	// The session manager is built on demand; see Session for why.
 	sessionOnce sync.Once
 	sessionMgr  *session.Manager
-	sessionErr  error
+	// credentialStore is opened without a backend URL, so `doctor` can report on it even when
+	// the agent is not configured to reach a backend at all.
+	credentialStore     *session.FileStore
+	credentialStoreOnce sync.Once
+	credentialStoreErr  error
+	sessionErr          error
 }
 
 type namedCloser struct {
@@ -123,7 +128,7 @@ func New(cfg *config.Config, bi BuildInfo) (*App, error) {
 	a.closers = []namedCloser{
 		{"connection", conn.Close},
 		{"mcp", mcpSrv.Close},
-		{"logger", func() error { return logger.Sync() }},
+		{"logger", func() error { return logging.Sync(logger) }},
 	}
 
 	return a, nil
@@ -263,7 +268,7 @@ func (a *App) MCP() *mcp.Server       { return a.mcpSrv }
 // refused at the first dial for want of an identity provider.
 func (a *App) Session() (*session.Manager, error) {
 	a.sessionOnce.Do(func() {
-		store, err := session.NewStore(a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
+		store, err := a.CredentialStore()
 		if err != nil {
 			a.sessionErr = err
 			return
@@ -276,4 +281,23 @@ func (a *App) Session() (*session.Manager, error) {
 		a.sessionMgr, a.sessionErr = session.NewManager(a.cfg.BackendWSSURL, deps)
 	})
 	return a.sessionMgr, a.sessionErr
+}
+
+// CredentialStore is the credential store, opened independently of the session manager.
+//
+// INDEPENDENT ON PURPOSE. It used to be reachable only through `Session()`, and `Session()` needs a
+// backend URL — so on a machine with no `AGENT_BACKEND_WSS_URL`, `doctor` reported "credential
+// store unusable: no backend URL configured". The store was entirely fine. Two separate facts had
+// been collapsed into one message, and the message named the wrong one, which is precisely the kind
+// of misdirection that made the Windows first run take as long as it did.
+//
+// Memoised separately for the same reason `Session` is: a keychain probe writes and deletes a
+// marker, and running it twice per command could produce two different verdicts on a machine where
+// the keychain is intermittently available.
+func (a *App) CredentialStore() (*session.FileStore, error) {
+	a.credentialStoreOnce.Do(func() {
+		a.credentialStore, a.credentialStoreErr = session.NewStore(
+			a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
+	})
+	return a.credentialStore, a.credentialStoreErr
 }

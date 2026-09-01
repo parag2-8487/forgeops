@@ -128,23 +128,42 @@ func newDoctorCmd(a *App) *cobra.Command {
 func reportPairing(cmd *cobra.Command, a *App) []string {
 	out := cmd.OutOrStdout()
 
+	// THE STORE IS REPORTED FIRST, AND WITHOUT ASKING FOR A SESSION. `a.Session()` needs a
+	// backend URL, so when none is configured it fails — and this function used to report that
+	// failure as "credential store unusable", naming the wrong one of two independent facts.
+	issues := reportCredentialStore(cmd, a)
+
 	manager, err := a.Session()
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "%s Pairing: credential store unusable: %v\n", glyphFail, err)
-		return []string{"The credential store cannot be opened; check AGENT_CREDENTIAL_STORE and AGENT_STATE_DIR"}
+		if errors.Is(err, connection.ErrDisabled) {
+			// Not an issue. An agent used purely as a local CLI has no backend, and §10.10 exists
+			// so `doctor` can tell that apart from a half-configured one.
+			_, _ = fmt.Fprintf(out, "%s Pairing: no backend configured\n", glyphInfo)
+			_, _ = fmt.Fprintf(out, "  set AGENT_BACKEND_WSS_URL, or pass --backend to `pair`\n")
+			return issues
+		}
+		_, _ = fmt.Fprintf(out, "%s Pairing: session unavailable: %v\n", glyphFail, err)
+		return append(issues, "The session manager could not be built: "+err.Error())
 	}
 
 	status, err := manager.Status(cmd.Context())
 	switch {
 	case errors.Is(err, connection.ErrDisabled):
 		_, _ = fmt.Fprintf(out, "%s Pairing: no backend configured (AGENT_BACKEND_WSS_URL is unset)\n", glyphInfo)
-		return nil
+		return issues
 	case errors.Is(err, session.ErrUnpaired):
 		_, _ = fmt.Fprintf(out, "%s Pairing: unpaired (backend configured, no device token)\n", glyphFail)
-		return []string{"Run `forgeops-agent pair --code <code>` with a code from the ForgeOps UI"}
+		return append(issues,
+			"Run `forgeops-agent pair --code <code>` with a code from the ForgeOps UI")
+	case errors.Is(err, session.ErrCredentialsIncomplete):
+		// Its own case, because the remedy is different from every other failure: retrying
+		// achieves nothing and the agent must be wiped before it can pair again.
+		_, _ = fmt.Fprintf(out, "%s Pairing: incomplete — %v\n", glyphFail, err)
+		return append(issues,
+			"Run `forgeops-agent pair --wipe`, then pair again with a new code")
 	case err != nil:
 		_, _ = fmt.Fprintf(out, "%s Pairing: %v\n", glyphFail, err)
-		return []string{"The stored credential could not be read; re-pair this agent"}
+		return append(issues, "The stored credential could not be read; re-pair this agent")
 	}
 
 	_, _ = fmt.Fprintf(out, "%s Pairing: device %s (credentials: %s)\n",
@@ -160,6 +179,43 @@ func reportPairing(cmd *cobra.Command, a *App) []string {
 		_, _ = fmt.Fprintf(out,
 			"  note: no OS keychain was usable, so credentials are in a 0600 file\n")
 	}
+	return issues
+}
+
+// reportCredentialStore names the backend and, crucially, says whether a credential would fit
+// BEFORE the user spends a pairing code finding out.
+//
+// This exists because `pair` on Windows could never succeed and said so only after the exchange
+// had burned the code: the OS Credential Manager refuses a blob over 2560 bytes, and the full
+// credential set is an order of magnitude past that. `doctor` is where a user looks first, so it
+// is where the answer belongs.
+func reportCredentialStore(cmd *cobra.Command, a *App) []string {
+	out := cmd.OutOrStdout()
+
+	store, err := a.CredentialStore()
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "%s Credential store: unusable: %v\n", glyphFail, err)
+		return []string{"The credential store cannot be opened; check AGENT_CREDENTIAL_STORE and AGENT_STATE_DIR"}
+	}
+
+	where := store.Backend()
+	if path := store.Path(); path != "" {
+		where += " at " + path
+	}
+
+	// A real trial write of a real-sized credential, not a comparison against a constant. The
+	// numbers differ per platform and the only one that matters is this machine's.
+	if err := store.CheckCapacity(cmd.Context(), session.CapacityProbeForDoctor()); err != nil {
+		_, _ = fmt.Fprintf(out, "%s Credential store: %s cannot hold a device credential\n", glyphFail, where)
+		_, _ = fmt.Fprintf(out, "  %v\n", err)
+		return []string{
+			"This machine's credential store will refuse a device credential, so `pair` would " +
+				"fail after spending the code. Set AGENT_CREDENTIAL_STORE=file to use a 0600 " +
+				"file in the state directory instead",
+		}
+	}
+
+	_, _ = fmt.Fprintf(out, "%s Credential store: %s, and a device credential fits\n", glyphOK, where)
 	return nil
 }
 

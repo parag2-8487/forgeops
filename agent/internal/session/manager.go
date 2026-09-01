@@ -33,6 +33,14 @@ import (
 // exchangePath is the one unauthenticated backend route (§4.4, §3.1).
 const exchangePath = "/api/v1/agents/pair/exchange"
 
+// abandonPath is the self-surrender route, used only when a credential was issued and could
+// not be persisted (§3.7's `abandoned` state).
+const abandonPath = "/api/v1/agents/self/abandon"
+
+// abandonTimeout bounds the surrender attempt. The user is already waiting on a failure
+// whose outcome is decided; this is worth a few seconds and must not be worth more.
+const abandonTimeout = 10 * time.Second
+
 // pairingCSRCommonName is the placeholder subject the agent puts in its CSR.
 //
 // §3.1's flow builds the CSR before the device id exists — the backend assigns it — so
@@ -371,6 +379,25 @@ func (m *Manager) Pair(ctx context.Context, code string, backendURL string) (*Pa
 		return nil, err
 	}
 
+	// CAN THIS MACHINE EVEN STORE THE RESULT? ASKED BEFORE THE CODE IS SPENT.
+	//
+	// The exchange is single-use and irreversible: it burns the code, issues a certificate
+	// and marks the device active. Finding out afterwards that the credential does not fit
+	// in the OS credential store leaves the user with a burned code, a backend that thinks
+	// a device is active, and an agent holding nothing — which is what every `pair` on
+	// Windows did, because the full bundle is past the 2560-byte Credential Manager
+	// ceiling.
+	//
+	// The probe is built from what is already known at this point rather than from a guess:
+	// the private key is the real one just generated and is the largest secret field, and
+	// the token and envelope key are `credentialByteLength` by protocol on both sides. The
+	// device id is not known until the response, so the probe uses a longer id than the
+	// backend's ULID — erring towards refusing a credential that would have just fitted
+	// rather than accepting one that will not.
+	if err := m.store.CheckCapacity(ctx, capacityProbe(pair.KeyPEM)); err != nil {
+		return nil, err
+	}
+
 	response, err := m.exchange(ctx, endpoint, exchangeRequest{
 		Code:         code,
 		CSR:          string(csrPEM),
@@ -387,7 +414,15 @@ func (m *Manager) Pair(ctx context.Context, code string, backendURL string) (*Pa
 		return nil, err
 	}
 	if err := m.store.Save(ctx, creds); err != nil {
-		return nil, err
+		// THE CODE HAS BEEN SPENT AND THE CREDENTIAL CANNOT BE KEPT, so the device is
+		// surrendered rather than left active with nobody holding its token.
+		//
+		// `CheckCapacity` above makes the size case unreachable, so arriving here means
+		// something changed between the probe and the write — a full disk, a keychain
+		// locked mid-flight. Rare, but the resulting state is the worst one in the system:
+		// the backend counts an active device against the project, the certificate is
+		// valid for 24 hours, and no operator has a reason to look.
+		return nil, m.surrender(ctx, response, err)
 	}
 
 	// Logged without the code, the token or the key. The device id and the certificate
@@ -555,6 +590,120 @@ func exchangeError(status int, raw []byte) error {
 // Every field is checked before anything is persisted. A credential set that is wrong in
 // a way the agent could have detected here becomes, otherwise, a stored credential that
 // fails at every future handshake with an error that points at the backend.
+// CapacityProbeForDoctor is a credential of the shape and size a real pairing produces, for
+// `agent doctor` to ask the store whether it could hold one.
+//
+// Exported for `doctor` alone. `pair` uses `capacityProbe` with the real private key it has just
+// generated; `doctor` has no key pair and no reason to make one, so it uses the largest PEM the
+// agent can produce. Both go through `Store.CheckCapacity`, so they cannot disagree about what
+// "fits" means.
+func CapacityProbeForDoctor() Credentials {
+	// An EC P-256 private key PEM is ~227 bytes. A generous 512 keeps the answer valid if the
+	// key type ever changes, and erring large is the safe direction: it can only predict a
+	// failure slightly early, never miss one.
+	// Opaque bytes: `CheckCapacity` marshals and measures, so only the length matters. No PEM
+	// armour, which would put credential-shaped text on a production path for no coverage.
+	return capacityProbe([]byte(strings.Repeat("A", 512)))
+}
+
+// capacityProbe builds a credential of the same shape and at least the same size as the one
+// the exchange is about to return, for `Store.CheckCapacity` to try to write.
+//
+// NOT A FABRICATED CREDENTIAL: it is never returned to a caller, never stored under the real
+// key, and never used to authenticate anything. It exists to be measured and is deleted
+// immediately. The one field that is real is the private key, because it is the largest
+// secret and is already in hand; the other two are sized from `credentialByteLength`, the
+// protocol constant both sides agree on.
+func capacityProbe(keyPEM []byte) Credentials {
+	return Credentials{
+		// Longer than the backend's 26-character ULID, so the probe cannot succeed where the
+		// real save would fail.
+		DeviceID:    strings.Repeat("D", 64),
+		DeviceToken: make([]byte, credentialByteLength),
+		EnvelopeKey: make([]byte, credentialByteLength),
+		ClientKey:   keyPEM,
+	}
+}
+
+// surrender gives back a device whose credential could not be stored, and returns the error
+// the caller should report.
+//
+// WHY THE AGENT MAY DO THIS AT ALL, given `DELETE /api/v1/agents/{device_id}` is admin-only:
+// this is not that operation. It is a self-report authenticated by the device token the
+// exchange just issued, and its only possible effect is to abandon the caller's own device.
+// It cannot name another device, so it gains no authority the individual verbs do not have —
+// the token holder already IS the device, and the worst it can do to itself is precisely
+// what this call does on purpose.
+//
+// The original persistence error is always preserved and always reported: the user's problem
+// is that pairing failed. A failed surrender is appended rather than substituted, and the
+// device id is named in both branches because that is what an operator needs.
+func (m *Manager) surrender(ctx context.Context, response *exchangeResponse, cause error) error {
+	surrenderErr := m.abandonSelf(ctx, response)
+	if surrenderErr == nil {
+		m.logger.Warn("credential could not be stored; device surrendered",
+			zap.String("device_id", response.DeviceID),
+			zap.String("credential_store", m.store.Backend()),
+			zap.Error(cause),
+		)
+		return fmt.Errorf(
+			"%w. The pairing code was already spent, so device %s was surrendered and is no "+
+				"longer active — nothing was left half-paired. Fix the cause above, then pair "+
+				"again with a new code",
+			cause, response.DeviceID)
+	}
+
+	// Both failed. This is the one path that can still leave a row an operator must clean
+	// up, so it says exactly that rather than implying the system is consistent.
+	m.logger.Error("credential could not be stored and the device could not be surrendered",
+		zap.String("device_id", response.DeviceID),
+		zap.NamedError("store_error", cause),
+		zap.NamedError("surrender_error", surrenderErr),
+	)
+	return fmt.Errorf(
+		"%w. The pairing code was already spent and this agent then failed to surrender the "+
+			"device (%v), so device %s may still be active on the backend with no agent holding "+
+			"its credential. Revoke it from the ForgeOps UI, then pair again",
+		cause, surrenderErr, response.DeviceID)
+}
+
+// abandonSelf tells the backend the agent could not keep the credential it was just issued.
+//
+// Authenticated by the device token from the response, which is the only credential in
+// existence for this device and is held by exactly one process — this one. The route accepts
+// no device id in its body: the token identifies the device, so the call cannot name another.
+func (m *Manager) abandonSelf(ctx context.Context, response *exchangeResponse) error {
+	endpoint, err := abandonURL(m.backendURL)
+	if err != nil {
+		return err
+	}
+
+	// A short, independent deadline. The caller's context may already be near its end after
+	// a failed write, and surrendering is worth a fresh few seconds; equally it must not
+	// hang, because the user is waiting on an error that is already determined.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), abandonTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, http.NoBody)
+	if err != nil {
+		return fmt.Errorf("session: building the surrender request: %w", err)
+	}
+	req.Header.Set(authorizationHeader, bearerScheme+response.DeviceToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := m.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("session: surrender request failed: %w", redactURLError(err))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("session: surrender returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func credentialsFrom(r *exchangeResponse, keyPEM []byte, sentFingerprint string) (Credentials, error) {
 	var zero Credentials
 
@@ -714,6 +863,25 @@ func exchangeURL(raw string) (string, error) {
 		return "", fmt.Errorf("session: backend origin is not a URL: %w", err)
 	}
 	parsed.Path = exchangePath
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+// abandonURL turns the configured backend URL into the self-surrender endpoint.
+//
+// Built the same way as `exchangeURL` and from the same origin, so a surrender can only ever
+// reach the backend the credential was issued by.
+func abandonURL(raw string) (string, error) {
+	origin, err := HTTPOrigin(raw)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return "", fmt.Errorf("session: backend origin is not a URL: %w", err)
+	}
+	parsed.Path = abandonPath
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String(), nil

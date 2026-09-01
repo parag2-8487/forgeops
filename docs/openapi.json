@@ -3134,6 +3134,21 @@
         ]
       }
     },
+    "/api/v1/agents/self/abandon": {
+      "post": {
+        "description": "Let an agent give back a device whose credential it could not persist (\u00a73.7).\n\nON `public_router` RATHER THAN `router`, and that is not an omission. `router` carries\n`require_principal`, which an agent can never satisfy: what the exchange issues is a device\ntoken and a certificate, not an OIDC access token. The authentication here is the device token\nin the header, checked by `DeviceService.abandon_self`, whose docstring sets out why one factor\nis right for this route and wrong for every route that grants something.\n\nTHE HOLE THIS CLOSES. `pair` is not atomic across the network and the local credential store:\nthe exchange burns the code and marks the device `active`, and only then does the agent try to\nwrite what it received. On Windows that write could not succeed \u2014 the full bundle is past the\nCredential Manager's 2560-byte ceiling \u2014 so every attempt left an `active` device whose token\nexisted nowhere. The agent now checks capacity before spending the code, and calls this when a\nwrite fails anyway.\n\nIdempotent in effect: the `UPDATE` matches only an `active` row, so a repeat gets the same 401\nas an unknown token and no second audit row is written.",
+        "operationId": "abandon_self_api_v1_agents_self_abandon_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Surrender the calling device (agent, authenticated by its own device token)",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/v1/agents/{device_id}": {
       "delete": {
         "description": "Revoke a device. Idempotent: a second call succeeds and writes no second audit row.",

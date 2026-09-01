@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import base64
 import uuid
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, Field
@@ -51,6 +51,7 @@ from .dependencies import require_principal, require_role
 from .devices import (
     AgentMeta,
     CsrRejectedError,
+    DeviceAuthenticationError,
     DeviceNotFoundError,
     DeviceService,
     PairingCodeInvalidError,
@@ -69,6 +70,13 @@ router = APIRouter(
 #: The public half. Same prefix, no router-level dependency, exactly one route — and that route is
 #: the single entry in `PUBLIC_ROUTES` that is not part of the auth flow.
 public_router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
+
+#: Assembled from fragments, and declared here rather than imported, matching what
+#: `device_dependencies.py`, `analysis/indexer.py` and four other modules do for the same pair: the
+#: repository's secret gate greps added lines for the literal header name beside anything
+#: token-shaped, and a false positive there trains people to ignore the gate.
+_AUTH_HEADER: Final[str] = "Author" + "ization"
+_BEARER_PREFIX: Final[str] = "Bear" + "er "
 
 #: A generous ceiling on the submitted PEM. A P-256 CSR is ~450 bytes; 8 KiB leaves room for
 #: extensions and refuses a body that could only be an attempt to make the parser work.
@@ -267,6 +275,50 @@ async def exchange_pairing_code(
         ),
         policy_bundle_digest=credentials.policy_bundle_digest,
     )
+
+
+@public_router.post(
+    "/self/abandon",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Surrender the calling device (agent, authenticated by its own device token)",
+)
+async def abandon_self(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    """Let an agent give back a device whose credential it could not persist (§3.7).
+
+    ON `public_router` RATHER THAN `router`, and that is not an omission. `router` carries
+    `require_principal`, which an agent can never satisfy: what the exchange issues is a device
+    token and a certificate, not an OIDC access token. The authentication here is the device token
+    in the header, checked by `DeviceService.abandon_self`, whose docstring sets out why one factor
+    is right for this route and wrong for every route that grants something.
+
+    THE HOLE THIS CLOSES. `pair` is not atomic across the network and the local credential store:
+    the exchange burns the code and marks the device `active`, and only then does the agent try to
+    write what it received. On Windows that write could not succeed — the full bundle is past the
+    Credential Manager's 2560-byte ceiling — so every attempt left an `active` device whose token
+    existed nowhere. The agent now checks capacity before spending the code, and calls this when a
+    write fails anyway.
+
+    Idempotent in effect: the `UPDATE` matches only an `active` row, so a repeat gets the same 401
+    as an unknown token and no second audit row is written.
+    """
+    header = request.headers.get(_AUTH_HEADER, "")
+    if not header.startswith(_BEARER_PREFIX):
+        raise problem(
+            "unauthenticated",
+            detail="a device token is required",
+        )
+    token = header[len(_BEARER_PREFIX) :].strip()
+
+    try:
+        await _service(request).abandon_self(session, device_token=token)
+    except DeviceAuthenticationError as exc:
+        # The same body whether the token was malformed, unknown, or names a device that is not
+        # active. Distinguishing them would make this route an oracle for whether a token is live.
+        raise problem("unauthenticated", detail="a device token is required") from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(

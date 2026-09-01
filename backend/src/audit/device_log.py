@@ -81,14 +81,18 @@ __all__ = [
 
 #: The closed action vocabulary for a device-lifecycle record.
 #:
-#: Appendix A.1 names the first three; §3.1's revocation sequence names the fourth. Closed and
-#: asserted disjoint from `GovernanceAction` in `tests/meta/test_device_audit_shape.py`, because
-#: the disjointness is what stops this type being usable to write a transit record.
+#: Appendix A.1 names the first three; §3.1's revocation sequence names the fourth. `device_abandoned`
+#: is §3.7's `abandoned` state becoming reachable on purpose: an agent that was issued a credential
+#: and could not persist it gives the device back, so the row is not left `active` with its token
+#: held by nobody. Closed and asserted disjoint from `GovernanceAction` in
+#: `tests/meta/test_device_audit_shape.py`, because the disjointness is what stops this type being
+#: usable to write a transit record.
 DEVICE_AUDIT_ACTIONS: Final[tuple[str, ...]] = (
     "pairing_code_issued",
     "pairing_failed",
     "device_paired",
     "device_revoked",
+    "device_abandoned",
 )
 
 #: The single resource kind these rows describe. A **constant, not a field** — a field would let
@@ -122,6 +126,10 @@ DEVICE_AUDIT_DETAIL_KEYS: Final[frozenset[str]] = frozenset(
         "failure_kind",
         "attempts",
         "revoked_at",
+        # Who gave the device back. Only ever "agent": a self-report has no user behind it, and
+        # this key exists so the row states that rather than leaving `actor_user_id` NULL and
+        # letting a reader guess whether the actor was simply not recorded.
+        "surrendered_by",
     }
 )
 
