@@ -203,7 +203,12 @@ jobs:
       - name: Install Trivy at a pinned version
         working-directory: .
         env:
-          TRIVY_VERSION: 0.56.2
+          # 0.74.0, verified to exist. The previous pin was v0.56.2, which the vendor has since removed —
+          # the release list now starts at v0.69.3, so the tarball URL answered 404 and the direct install
+          # failed with `curl: (22)`. The `setup-trivy` action it replaced was ALSO pinned to that version
+          # and failed differently, before the download, which is why the stale pin was not visible until
+          # the download was in this file.
+          TRIVY_VERSION: 0.74.0
         run: |
           set -euo pipefail
           curl --fail --show-error --silent --location --retry 3 \
