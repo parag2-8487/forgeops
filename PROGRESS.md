@@ -121,6 +121,54 @@ increased" — and the mirror's PAT returns 401. Every figure above is local. Th
 server-side dry-run path is also unexercised: no cluster is reachable locally or in CI, so only the
 offline local-schema fallback has run.
 
+### CI ran, and it found six more defects
+
+Billing was restored partway through the pass, so the workflows ran for the first time. **All five are
+now green.** Getting there took six fixes, none of them spurious:
+
+| What failed   | Cause                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pre-commit`  | A generated Helm chart had been committed. `.gitignore` covered the artifact kinds that existed before FR-24 and was never extended for the three it added, so a journey run left them in the tree and `git add -A` swept them in. A Helm template is not parseable YAML, so `check-yaml` refused it.                                                                                                                                       |
+| `agent`       | `aquasecurity/setup-trivy` exits 1 on the current runner image before it downloads anything. Replaced with a direct pinned fetch — which then revealed the pin named `v0.56.2`, a release the vendor has removed.                                                                                                                                                                                                                           |
+| `policy`      | The bundle gate required the literal `default allow := false` in every `.rego`. FR-34's `exemption.rego` is total and fail-closed at `default applies := false`, and was refused because the string did not match.                                                                                                                                                                                                                          |
+| `e2e-journey` | `ENOSPC` on the runner: two model pulls, four image builds and a browser against ~14 GB free.                                                                                                                                                                                                                                                                                                                                               |
+| `mutation`    | **`mutation-ci.yml` pinned Python 3.11.** `test_q19_route_coverage.py` uses `sys.monitoring`, which arrived in 3.12, so four of its tests raised `AttributeError` on every run — and the harness read a crash as a kill. Q-19 had been reporting a kill it never made.                                                                                                                                                                      |
+| `backend`     | Three alembic drift failures from one cause: `AnalysisReport` never declared revision `0015`'s `inventory` column. Then the OpenAPI drift gate, which could not have passed: `/login`, `/callback` and `/logout` used `api_route(methods=["GET", "POST"])`, and FastAPI derives an `operationId` from one method taken from a **set** — so the document was non-deterministic and `--check` reported it stale immediately after writing it. |
+
+Two of those are worth keeping in mind rather than merely fixing. The Python skew was found only because
+`control-of-the-control.py` refuses to call a verdict attributable unless it flips to VACUOUS when the
+mutation is removed — a meta-check three layers up caught a runner definition. And the harness discarded the
+property's output on a passing row, so the first CI report said a control had broken and nothing about why;
+`--show-output` now carries it, and named the cause on its first run.
+
+### Final measured state
+
+Every figure below is from CI unless marked local.
+
+| Component | Coverage                             | Gate        |
+| --------- | ------------------------------------ | ----------- |
+| Backend   | **86.56 %** (2829 passed, 1 skipped) | 70          |
+| Agent     | **78.6 %**                           | 70          |
+| Frontend  | **95.8 / 85.94 / 93.86 / 96.06**     | 90/90/90/80 |
+
+- `opa test policies/` **89/89**; `policies/agent` alone 62/62, up from 41 with FR-34's exemption bounds.
+- Mutation: **31/31 negative controls attributable**, empty baseline, zero exemptions.
+- Gate reachability: **49 of 49**, zero exempted.
+- Criterion 10: journey **13/13 twice back to back** in CI, and again locally against a stack the one-click
+  script brought up unaided (3.3 m then 34.7 s, no cleanup between). Onboarding 10/10, paint 1/1, smoke
+  24/24.
+- Deliverable boxes: Phase 0 **62/62** deliverables and **16/18** criteria; Phase 1 **91/91** deliverables
+  and **14/14** criteria. Phases 2–5 remain 0/211, untouched.
+
+**The two unticked boxes are named where they live** (`phases.md`, Phase 0 criteria): both are claims about a
+published release, and this branch has never cut a tag. The pipeline is written, pinned and green in the
+`supply` job; a workflow that has not run has produced nothing to verify, and publishing a release to
+satisfy a checkbox would be an irreversible act taken for a record rather than a reason.
+
+**What is still not verified.** `validate.k8s`'s server-side dry run has never executed: it needs a
+reachable cluster, and neither this machine nor the runner has one, so only the offline local-schema
+fallback has been exercised. That is stated in the validator's own comments as well as here.
+
 - **§1.3's watch mode built and proven live.** `forgeops-agent watch` runs fsnotify → a real
   debounce → an incremental submit; one edit of a module two files import gave `submitted 3 file(s)
 in the closure of depdemo/lib.js`. Running it found two defects: `DebouncedWatcher` accepted a

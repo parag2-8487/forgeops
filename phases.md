@@ -13,104 +13,117 @@
 ### Deliverables
 
 #### 0.1 Repository Structure
-- [ ] Create monorepo layout as defined in PRD Section 8
-- [ ] Set up `agent/`, `backend/`, `frontend/`, `docs/`, `.github/` directories
-- [ ] Create root `Makefile` with common commands (build, test, lint, clean)
-- [ ] Create root `docker-compose.yml` for full-stack development
-- [ ] Create `.env.example` with all required environment variables
-- [ ] Create `.gitignore` (Go binaries, Python caches, node_modules, .env, IDE files)
-- [ ] Set up **pre-commit framework** with Gitleaks, Ruff, gofmt hooks
+- [x] Create monorepo layout as defined in PRD Section 8
+- [x] Set up `agent/`, `backend/`, `frontend/`, `docs/`, `.github/` directories
+- [x] Create root `Makefile` with common commands (build, test, lint, clean)
+- [x] Create root `docker-compose.yml` for full-stack development
+- [x] Create `.env.example` with all required environment variables
+- [x] Create `.gitignore` (Go binaries, Python caches, node_modules, .env, IDE files)
+- [x] Set up **pre-commit framework** with Gitleaks, Ruff, gofmt hooks
 
 #### 0.2 Go Agent Scaffold
-- [ ] Initialize Go module: `go mod init github.com/org/ai-devops-agent`
-- [ ] Create `cmd/agent/main.go` — thin entry point
-- [ ] Create `internal/` subdirectories: connection, docker, k8s, scanner, executor, validator, policy, fileops, iac, devtools, telemetry, mcp
-- [ ] Use **constructor injection** pattern (not wire/uber-fx) for DI
-- [ ] Implement **graceful shutdown** pattern with signal.NotifyContext + errgroup
-- [ ] Add core dependencies: `github.com/coder/websocket` (WebSocket), `github.com/docker/docker/client` (Docker API), `k8s.io/client-go` (K8s API), `go.uber.org/zap` (logging), `github.com/spf13/cobra` (CLI), `github.com/fsnotify/fsnotify` (file watching), `github.com/minio/selfupdate` (auto-update), `github.com/sergi/go-diff` (diff generation), `github.com/mark3labs/mcp-go` (MCP server), `github.com/tree-sitter/go-tree-sitter` (AST parsing)
-- [ ] Set up `golangci-lint` configuration
-- [ ] Set up GitHub Actions CI for Go: lint + test + build
-- [ ] Configure **GoReleaser** with Cosign signing + Syft SBOM + SLSA provenance
-- [ ] Set up Cosign keyless signing configuration
-- [ ] Set up Syft for CycloneDX SBOM generation per release
+- [x] Initialize Go module: `go mod init github.com/org/ai-devops-agent`
+- [x] Create `cmd/agent/main.go` — thin entry point
+- [x] Create `internal/` subdirectories: connection, docker, k8s, scanner, executor, validator, policy, fileops, iac, devtools, telemetry, mcp
+- [x] Use **constructor injection** pattern (not wire/uber-fx) for DI
+- [x] Implement **graceful shutdown** pattern with signal.NotifyContext + errgroup
+- [x] Add core dependencies: `github.com/coder/websocket` (WebSocket), `github.com/docker/docker/client` (Docker API), `k8s.io/client-go` (K8s API), `go.uber.org/zap` (logging), `github.com/spf13/cobra` (CLI), `github.com/fsnotify/fsnotify` (file watching), `github.com/minio/selfupdate` (auto-update), `github.com/sergi/go-diff` (diff generation), `github.com/mark3labs/mcp-go` (MCP server), `github.com/tree-sitter/go-tree-sitter` (AST parsing)
+- [x] Set up `golangci-lint` configuration
+- [x] Set up GitHub Actions CI for Go: lint + test + build
+- [x] Configure **GoReleaser** with Cosign signing + Syft SBOM + SLSA provenance
+- [x] Set up Cosign keyless signing configuration
+- [x] Set up Syft for CycloneDX SBOM generation per release
 
 #### 0.3 Python Backend Scaffold
-- [ ] Initialize FastAPI project structure in `backend/` using **domain-driven modular monolith** layout
-- [ ] Set up `src/core/` with config, logging, **async database session management (expire_on_commit=False)**
-- [ ] Create `src/main.py` with health check endpoint, **lifespan events**, **middleware stack**
-- [ ] Set up PostgreSQL + pgvector in docker-compose
-- [ ] Set up Alembic for migrations (including pgvector column detection)
-- [ ] Set up **pytest + pytest-asyncio + httpx** for async integration tests (coverage >70% goal)
-- [ ] Create Dockerfile with multi-stage build
-- [ ] Set up `ruff` configuration (lint + format)
-- [ ] Set up `pip-audit` in CI for dependency vulnerability scanning
+- [x] Initialize FastAPI project structure in `backend/` using **domain-driven modular monolith** layout
+- [x] Set up `src/core/` with config, logging, **async database session management (expire_on_commit=False)**
+- [x] Create `src/main.py` with health check endpoint, **lifespan events**, **middleware stack**
+- [x] Set up PostgreSQL + pgvector in docker-compose
+- [x] Set up Alembic for migrations (including pgvector column detection)
+- [x] Set up **pytest + pytest-asyncio + httpx** for async integration tests (coverage >70% goal)
+- [x] Create Dockerfile with multi-stage build
+- [x] Set up `ruff` configuration (lint + format)
+- [x] Set up `pip-audit` in CI for dependency vulnerability scanning
 
 #### 0.4 Next.js Frontend Scaffold
-- [ ] Initialize Next.js 16 project with App Router
-- [ ] Set up shadcn/ui with base theme
-- [ ] Create layout with sidebar navigation, header, theme toggle
-- [ ] Set up TanStack Query and Zustand
-- [ ] Create **API client wrapper with RFC 9457 error handling**
-- [ ] Set up `vitest` and `@testing-library/react`
-- [ ] Set up **Playwright** for E2E testing
-- [ ] Set up **k6** for load testing
-- [ ] Set up **React Hook Form + Zod** as form handling standard
-- [ ] Set up **pnpm** as the package manager
-- [ ] Set up ESLint and Prettier
+- [x] Initialize Next.js 16 project with App Router
+- [x] Set up shadcn/ui with base theme
+- [x] Create layout with sidebar navigation, header, theme toggle
+- [x] Set up TanStack Query and Zustand
+- [x] Create **API client wrapper with RFC 9457 error handling**
+- [x] Set up `vitest` and `@testing-library/react`
+- [x] Set up **Playwright** for E2E testing
+- [x] Set up **k6** for load testing
+- [x] Set up **React Hook Form + Zod** as form handling standard
+- [x] Set up **pnpm** as the package manager
+- [x] Set up ESLint and Prettier
 
 #### 0.5 MCP Gateway Integration (Core Architecture — Stateless, July 2026 Final Spec)
-- [ ] Set up **MCP Gateway** in the backend using `Mcp-Method` + `Mcp-Name` header routing
-- [ ] Implement **OAuth 2.1/OIDC auth** with `iss` parameter validation per RFC 9207
-- [ ] Implement **OPA policy enforcement** at the gateway (filter tools by agent blast radius)
-- [ ] Implement **TTL-based caching** on tool lists (respect `ttlMs` from servers)
-- [ ] Implement **W3C Trace Context** propagation across all MCP server calls
-- [ ] Create **base MCP server template** using `mark3labs/mcp-go` for Go agent tools
-- [ ] Create **base MCP server template** in Python (FastAPI) for backend-hosted tools
-- [ ] Implement **Tasks Extension** lifecycle (`tasks/get`, `tasks/update`, `tasks/cancel`)
-- [ ] Implement **MCP Apps** support for sandboxed iframe UIs (approval forms, dashboards)
+- [x] Set up **MCP Gateway** in the backend using `Mcp-Method` + `Mcp-Name` header routing
+- [x] Implement **OAuth 2.1/OIDC auth** with `iss` parameter validation per RFC 9207
+- [x] Implement **OPA policy enforcement** at the gateway (filter tools by agent blast radius)
+- [x] Implement **TTL-based caching** on tool lists (respect `ttlMs` from servers)
+- [x] Implement **W3C Trace Context** propagation across all MCP server calls
+- [x] Create **base MCP server template** using `mark3labs/mcp-go` for Go agent tools
+- [x] Create **base MCP server template** in Python (FastAPI) for backend-hosted tools
+- [x] Implement **Tasks Extension** lifecycle (`tasks/get`, `tasks/update`, `tasks/cancel`)
+- [x] Implement **MCP Apps** support for sandboxed iframe UIs (approval forms, dashboards)
 
 #### 0.6 GitOps Workflow (P0)
-- [ ] Set up Git client library in the Go agent
-- [ ] Implement PR creation flow (branch → commit → push → PR)
-- [ ] Implement PR review status polling
+- [x] Set up Git client library in the Go agent
+- [x] Implement PR creation flow (branch → commit → push → PR)
+- [x] Implement PR review status polling
 
 #### 0.7 Plan Analyzer (P0)
-- [ ] Create validation pipeline skeleton
-- [ ] Implement semantic analysis module
-- [ ] Connect validation pipeline to approval workflow
+- [x] Create validation pipeline skeleton
+- [x] Implement semantic analysis module
+- [x] Connect validation pipeline to approval workflow
 
 #### 0.8 OpenTofu Switch (P0)
-- [ ] Install OpenTofu in Docker development environment
-- [ ] Create OpenTofu runner module in Go agent (with timeout, output streaming, signal handling)
-- [ ] Test `tofu validate` and `tofu plan` programmatic execution
+- [x] Install OpenTofu in Docker development environment
+- [x] Create OpenTofu runner module in Go agent (with timeout, output streaming, signal handling)
+- [x] Test `tofu validate` and `tofu plan` programmatic execution
 
 #### 0.9 Model Routing Configuration (P0)
-- [ ] Configure **model routing tier definitions** for all 6 tiers
-- [ ] Model tiers: GPT-5.6 Sol (high/coding), Claude Fable 5 (high/analysis), Grok 4.5 (medium), Sonnet 5 & DeepSeek V4 (medium/value), Gemini 3 Flash (low/logs)
-- [ ] Implement **fallback cascade** (primary → secondary → cross-vendor → self-hosted → template)
-- [ ] Implement **circuit breaker** per model endpoint (5 failures in 30s → OPEN → HALF-OPEN after 60s)
-- [ ] Implement **BYO-Key** architecture with Infisical vault for per-tenant LLM keys
-- [ ] Implement **semantic caching** (L1 exact-match → L2 similarity >0.95 → L3 prefix cache via Redis)
+- [x] Configure **model routing tier definitions** for all 6 tiers
+- [x] Model tiers: GPT-5.6 Sol (high/coding), Claude Fable 5 (high/analysis), Grok 4.5 (medium), Sonnet 5 & DeepSeek V4 (medium/value), Gemini 3 Flash (low/logs)
+- [x] Implement **fallback cascade** (primary → secondary → cross-vendor → self-hosted → template)
+- [x] Implement **circuit breaker** per model endpoint (5 failures in 30s → OPEN → HALF-OPEN after 60s)
+- [x] Implement **BYO-Key** architecture with Infisical vault for per-tenant LLM keys
+- [x] Implement **semantic caching** (L1 exact-match → L2 similarity >0.95 → L3 prefix cache via Redis)
 
 ### Completion Criteria
-- [ ] `make build` succeeds for all three components
-- [ ] `make test` passes (with placeholder tests)
-- [ ] `make lint` passes
-- [ ] `docker-compose up` starts all services
-- [ ] Health check endpoint returns 200
-- [ ] Frontend loads at localhost:3000
-- [ ] Go binary compiles for Windows, macOS, Linux (amd64 + arm64)
+- [x] `make build` succeeds for all three components
+- [x] `make test` passes (with placeholder tests)
+- [x] `make lint` passes
+- [x] `docker-compose up` starts all services
+- [x] Health check endpoint returns 200
+- [x] Frontend loads at localhost:3000
+- [x] Go binary compiles for Windows, macOS, Linux (amd64 + arm64)
 - [ ] GoReleaser pipeline produces signed + SBOM-attested binaries
-- [ ] Pre-commit hooks pass on all files
-- [ ] MCP Gateway responds to `tools/list` and `tools/call` requests
-- [ ] MCP Tasks lifecycle works (create → poll → cancel)
-- [ ] OAuth 2.1/OIDC issuer validation blocks unauthorized requests
-- [ ] Plan Analyzer returns results for sample input
-- [ ] SQLModel models defined with pgvector column support (HNSW index)
-- [ ] CycloneDX SBOM generated for Go agent build
+- [x] Pre-commit hooks pass on all files
+- [x] MCP Gateway responds to `tools/list` and `tools/call` requests
+- [x] MCP Tasks lifecycle works (create → poll → cancel)
+- [x] OAuth 2.1/OIDC issuer validation blocks unauthorized requests
+- [x] Plan Analyzer returns results for sample input
+- [x] SQLModel models defined with pgvector column support (HNSW index)
+- [x] CycloneDX SBOM generated for Go agent build
 - [ ] Cosign keyless signing verified on release artifact
-- [ ] Model routing fallback cascade functions end-to-end
-- [ ] Circuit breaker trips on simulated failures
+- [x] Model routing fallback cascade functions end-to-end
+- [x] Circuit breaker trips on simulated failures
+
+> **Two boxes above stay unticked, and the reason is the same for both.** "GoReleaser pipeline produces
+> signed + SBOM-attested binaries" and "Cosign keyless signing verified on release artifact" are claims
+> about a **published release**, and this branch has never cut a tag. `.github/workflows/release.yml` runs
+> `goreleaser/goreleaser-action`, Syft for a CycloneDX SBOM per artifact, and Cosign keyless signing through
+> Fulcio and Rekor — so the pipeline is written and pinned — but a workflow that has not run has produced
+> nothing to verify. Publishing a release to satisfy a checkbox would also be an irreversible act taken for
+> a record rather than for a reason.
+>
+> What IS verified: the `supply` job is green and generates the SBOM, and the agent cross-compiles for all
+> six targets (windows, darwin and linux × amd64 and arm64, confirmed by building each). Criterion 16's
+> self-verification runs before any provenance step, so a provenance failure cannot mask it. These two turn
+> green on the first tagged release and not before.
 
 ### Excluded (for this phase)
 - ❌ Any feature logic (analysis, generation, deployment)
@@ -174,130 +187,130 @@
 > | 1.11 Auth integration | verified | Real Authentik OIDC in journey step 1. The agent authenticates as a DEVICE on both factors, which `require_principal` cannot express. |
 
 #### 1.1 Agent Pairing & Connection (JSON-RPC 2.0 over WSS)
-- [ ] Implement **JSON-RPC 2.0 protocol** over WSS (structured `method`, `params`, `id`, `error` schema)
-- [ ] Implement message types: `session.connect`, `session.heartbeat`, `command.execute`, `command.result`, `command.progress`, `approval.request`, `approval.response`, `agent.error`, `agent.status`
-- [ ] Implement WSS connection manager with auto-reconnect (exponential backoff: start 1s, max 60s, jitter 0.5x)
-- [ ] Implement mTLS + JWT authentication handshake
-- [ ] Implement pairing code flow (6-char code → revocable device token, 5-min expiry)
-- [ ] Implement heartbeat mechanism (every 30s, timeout after 90s)
-- [ ] Implement command envelope protocol with `approval_id`, `policy_context`, `signature`
-- [ ] Implement operation whitelist validation (named operations only — never arbitrary shell)
-- [ ] Implement agent-side policy evaluation (defense in depth using OPA Wasm embedded)
-- [ ] Implement **command envelope schema with HMAC-SHA256 signature** for integrity
+- [x] Implement **JSON-RPC 2.0 protocol** over WSS (structured `method`, `params`, `id`, `error` schema)
+- [x] Implement message types: `session.connect`, `session.heartbeat`, `command.execute`, `command.result`, `command.progress`, `approval.request`, `approval.response`, `agent.error`, `agent.status`
+- [x] Implement WSS connection manager with auto-reconnect (exponential backoff: start 1s, max 60s, jitter 0.5x)
+- [x] Implement mTLS + JWT authentication handshake
+- [x] Implement pairing code flow (6-char code → revocable device token, 5-min expiry)
+- [x] Implement heartbeat mechanism (every 30s, timeout after 90s)
+- [x] Implement command envelope protocol with `approval_id`, `policy_context`, `signature`
+- [x] Implement operation whitelist validation (named operations only — never arbitrary shell)
+- [x] Implement agent-side policy evaluation (defense in depth using OPA Wasm embedded)
+- [x] Implement **command envelope schema with HMAC-SHA256 signature** for integrity
 
 #### 1.2 Multi-Project Workspace
-- [ ] Backend: CRUD API for projects (import from GitHub, local path)
-- [ ] Backend: Project settings (LLM budget, policies basic)
+- [x] Backend: CRUD API for projects (import from GitHub, local path)
+- [x] Backend: Project settings (LLM budget, policies basic)
 - [x] Frontend: Project list view with search, tags, favorites — `app/(shell)/projects/page.tsx`; every filter is a query parameter on `GET /projects`, asserted on the query string by `__tests__/project-workspace.test.tsx` because that is the only observable distinguishing server-side filtering from the browser-side version
 - [x] Frontend: Project detail page — `app/(shell)/projects/[projectId]/page.tsx`, the first caller `GET /projects/{id}` has ever had; `__tests__/project-workspace.test.tsx::the project detail page`
-- [ ] Frontend: Recent activity feed per project
-- [ ] Agent: Register project directory, watch for changes
+- [x] Frontend: Recent activity feed per project
+- [x] Agent: Register project directory, watch for changes
 
 #### 1.3 Codebase Analysis Engine
-- [ ] Agent: **Language detection** — tiered detection (package manager → extension → shebang → content heuristics)
-- [ ] Agent: **Dependency graph builder** — resolve imports/requires across files for cross-file RAG
-- [ ] Agent: Recursive file tree scanner (respects .gitignore + .dockerignore)
-- [ ] Agent: File size/type filters (skip binaries >1MB, node_modules, .git)
-- [ ] Agent: **Tree-sitter AST parsing** using `github.com/tree-sitter/go-tree-sitter` (official Go bindings)
-- [ ] Agent: **cAST semantic chunking** — bottom-up grouping (statements → functions → classes), constraint-based splitting, density optimization
-- [ ] Agent: **Metadata enrichment** — file path, function signature, class hierarchy, dependency references
-- [ ] Agent: Generate vector embeddings using Voyage Code 3 (API) or BGE-M3 (local) with hybrid sparse-dense (BM25 + vector) indexing
-- [ ] Agent: Store embeddings in pgvector via backend API (use **HNSW index** with tuned `ef_search`)
-- [ ] Agent: **Cold start discovery mode** — lightweight heuristic analysis first, async full indexing in background
-- [ ] Agent: **Watch mode** via fsnotify with fan-out/fan-in concurrency for incremental scanning
-- [ ] Backend: Codebase Index API (CRUD for file tree, embeddings, symbol table)
-- [ ] Backend: Implement **dependency-graph-aware incremental scanning** (re-index changed files + their dependants)
+- [x] Agent: **Language detection** — tiered detection (package manager → extension → shebang → content heuristics)
+- [x] Agent: **Dependency graph builder** — resolve imports/requires across files for cross-file RAG
+- [x] Agent: Recursive file tree scanner (respects .gitignore + .dockerignore)
+- [x] Agent: File size/type filters (skip binaries >1MB, node_modules, .git)
+- [x] Agent: **Tree-sitter AST parsing** using `github.com/tree-sitter/go-tree-sitter` (official Go bindings)
+- [x] Agent: **cAST semantic chunking** — bottom-up grouping (statements → functions → classes), constraint-based splitting, density optimization
+- [x] Agent: **Metadata enrichment** — file path, function signature, class hierarchy, dependency references
+- [x] Agent: Generate vector embeddings using Voyage Code 3 (API) or BGE-M3 (local) with hybrid sparse-dense (BM25 + vector) indexing
+- [x] Agent: Store embeddings in pgvector via backend API (use **HNSW index** with tuned `ef_search`)
+- [x] Agent: **Cold start discovery mode** — lightweight heuristic analysis first, async full indexing in background
+- [x] Agent: **Watch mode** via fsnotify with fan-out/fan-in concurrency for incremental scanning
+- [x] Backend: Codebase Index API (CRUD for file tree, embeddings, symbol table)
+- [x] Backend: Implement **dependency-graph-aware incremental scanning** (re-index changed files + their dependants)
 
 #### 1.4 Deployment Readiness Analysis
-- [ ] Backend: Scoring engine with weighted categories
-- [ ] Categories: Containerization, CI/CD, Orchestration, Env Config, Security, IaC
-- [ ] Backend: Checklist checks (Dockerfile exists, multi-stage, non-root, etc.)
-- [ ] Backend: Plain-language report generation with "why it matters"
-- [ ] Frontend: Readiness score display (0-100) with radar chart
+- [x] Backend: Scoring engine with weighted categories
+- [x] Categories: Containerization, CI/CD, Orchestration, Env Config, Security, IaC
+- [x] Backend: Checklist checks (Dockerfile exists, multi-stage, non-root, etc.)
+- [x] Backend: Plain-language report generation with "why it matters"
+- [x] Frontend: Readiness score display (0-100) with radar chart
 - [x] Frontend: Detailed category breakdown with expandable items — `features/readiness/ReadinessBreakdown.tsx`, each category expanding into its checks with the indexed path that satisfied it and FR-19's "why it matters"; `__tests__/route-pages.test.tsx::Readiness category breakdown`
-- [ ] Frontend: Actionable recommendations list
+- [x] Frontend: Actionable recommendations list
 
 #### 1.5 AI File Generation & Validation Pipeline
-- [ ] Backend: AI engine with RAG from Codebase Index (hybrid sparse-dense retrieval)
-- [ ] Backend: **6-tier model routing** with fallback cascade:
+- [x] Backend: AI engine with RAG from Codebase Index (hybrid sparse-dense retrieval)
+- [x] Backend: **6-tier model routing** with fallback cascade:
   - High: GPT-5.6 Sol (primary), Claude Fable 5 (backup) — architecture, multi-file generation
   - Medium: Grok 4.5, Claude Sonnet 5, DeepSeek V4 — Dockerfile, CI/CD, analysis
   - Low: Gemini 3 Flash — log analysis, formatting
   - Self-hosted: GLM-5.2, Qwen3-Coder-Next — air-gapped sensitive codebases
-- [ ] Backend: **Circuit breaker** per model endpoint (5 failures/30s → OPEN → 60s → HALF-OPEN)
-- [ ] Backend: **Fallback cascade**: Primary → Cross-vendor → Self-hosted → Safe Template Library
-- [ ] Backend: Structured output schemas using Pydantic v2 strict mode
-- [ ] Backend: Integration with MCP servers for tool access via **MCP Gateway**
-- [ ] Backend: Use **SSE (Server-Sent Events)** with FastAPI native `EventSourceResponse` (in-tree since 0.139.2; no `sse-starlette` dependency) for streaming LLM token responses
+- [x] Backend: **Circuit breaker** per model endpoint (5 failures/30s → OPEN → 60s → HALF-OPEN)
+- [x] Backend: **Fallback cascade**: Primary → Cross-vendor → Self-hosted → Safe Template Library
+- [x] Backend: Structured output schemas using Pydantic v2 strict mode
+- [x] Backend: Integration with MCP servers for tool access via **MCP Gateway**
+- [x] Backend: Use **SSE (Server-Sent Events)** with FastAPI native `EventSourceResponse` (in-tree since 0.139.2; no `sse-starlette` dependency) for streaming LLM token responses
   - Event types: `status`, `token`, `progress`, `validation`, `complete`, `error`
-- [ ] Backend: Implement **tiered semantic caching** with Redis:
+- [x] Backend: Implement **tiered semantic caching** with Redis:
   - L1: Exact-match prompt hash → `GET`/`SET`
   - L2: Semantic similarity (>0.95) via Redis Vector Search
   - L3: Prompt prefix cache (system prompts, docs)
-- [ ] Backend: **Safe Default Template Library** — hardcoded, verified templates for 8+ languages:
+- [x] Backend: **Safe Default Template Library** — hardcoded, verified templates for 8+ languages:
   - Node.js, Python, Go, Rust, Java/Kotlin, Ruby, PHP, .NET
   - Each: Dockerfile, K8s Deployment+Service+Ingress, GitHub Actions CI, Helm, OpenTofu
   - Used when AI fails after max 3 retries
-- [ ] Backend: **Evaluation pipeline** for AI outputs:
+- [x] Backend: **Evaluation pipeline** for AI outputs:
   - Deterministic: syntax checks, schema validation, Trivy scan
   - Rubric (LLM-as-Judge): best practice compliance, security posture, cost efficiency
-- [ ] Backend: **Cold start progressive UX** — show partial results as they become available
-- [ ] Agent: Dockerfile validation (`docker compose config`)
-- [ ] Agent: K8s manifest validation (`kubectl --dry-run=server`)
-- [ ] Agent: OpenTofu validation (`tofu validate`, `tofu plan`)
-- [ ] Agent: YAML schema validation (`yamllint` + JSON Schema)
-- [ ] Agent: Helm validation (`helm lint`, `helm template --validate`)
-- [ ] Backend: Validation-feedback loop (max 3 iterations, then safe template fallback)
-- [ ] Backend: Plan Analyzer (semantic check on generated plans)
-- [ ] Generated artifacts: Dockerfiles, docker-compose, K8s Deployments + Services
-- [ ] Generated artifacts: GitHub Actions workflows, Helm charts
-- [ ] Generated artifacts: OpenTofu configs, `.env.example`, README docs
+- [x] Backend: **Cold start progressive UX** — show partial results as they become available
+- [x] Agent: Dockerfile validation (`docker compose config`)
+- [x] Agent: K8s manifest validation (`kubectl --dry-run=server`)
+- [x] Agent: OpenTofu validation (`tofu validate`, `tofu plan`)
+- [x] Agent: YAML schema validation (`yamllint` + JSON Schema)
+- [x] Agent: Helm validation (`helm lint`, `helm template --validate`)
+- [x] Backend: Validation-feedback loop (max 3 iterations, then safe template fallback)
+- [x] Backend: Plan Analyzer (semantic check on generated plans)
+- [x] Generated artifacts: Dockerfiles, docker-compose, K8s Deployments + Services
+- [x] Generated artifacts: GitHub Actions workflows, Helm charts
+- [x] Generated artifacts: OpenTofu configs, `.env.example`, README docs
 
 #### 1.6 Change Approval Center
-- [ ] Backend: Change-set CRUD API (create, validate, approve, reject, apply)
-- [ ] Backend: Automatic timestamped backup before apply
-- [ ] Backend: Atomic all-or-nothing change application
-- [ ] Frontend: Diff preview (side-by-side and unified)
-- [ ] Frontend: Approval/reject buttons with comment field
+- [x] Backend: Change-set CRUD API (create, validate, approve, reject, apply)
+- [x] Backend: Automatic timestamped backup before apply
+- [x] Backend: Atomic all-or-nothing change application
+- [x] Frontend: Diff preview (side-by-side and unified)
+- [x] Frontend: Approval/reject buttons with comment field
 - [x] Frontend: Change history timeline per project — `features/approvals/ChangeHistoryTimeline.tsx`, with all thirteen §3.6 states explained (a test pins the set against the CHECK constraint revision `0010` added); `__tests__/codebase-and-history.test.tsx`
-- [ ] Agent: Backup-before-mutate implementation
-- [ ] Agent: Atomic file operations (transactional writes)
+- [x] Agent: Backup-before-mutate implementation
+- [x] Agent: Atomic file operations (transactional writes)
 
 #### 1.7 Policy Engine (Basic)
-- [ ] Backend: OPA integration for policy evaluation
-- [ ] Backend: Policy CRUD API
-- [ ] Backend: Pre-defined policy templates (scheduling, file restrictions)
-- [ ] Agent: Mirror policy rules locally for zero-trust enforcement
+- [x] Backend: OPA integration for policy evaluation
+- [x] Backend: Policy CRUD API
+- [x] Backend: Pre-defined policy templates (scheduling, file restrictions)
+- [x] Agent: Mirror policy rules locally for zero-trust enforcement
 - [x] Frontend: Policy list and editor UI — `features/policies/PolicyEditor.tsx` plus `app/(shell)/policies/page.tsx`, full CRUD over the new `GET /api/v1/policies`, with `opa check`'s own message rendered verbatim and a Test action reporting the decision, the query and the evaluator; `__tests__/policy-editor.test.tsx`
 - [x] Frontend: Policy violation display with explanation — `components/ui/governance-refusal.tsx`, keyed on the stable RFC 9457 `type` and asserted an exact mirror of the registry's governance subset; `__tests__/governance-refusal.test.tsx`
-- [ ] Implemented policies: "Never deploy on Fridays", "Never edit package.json", "Require approval for production"
+- [x] Implemented policies: "Never deploy on Fridays", "Never edit package.json", "Require approval for production"
 
 #### 1.8 Secret Management (Basic)
-- [ ] Backend: Integrate Infisical for encrypted secret storage
-- [ ] Backend: Secret CRUD API (per project, per environment)
-- [ ] Agent: Secret scanning during codebase analysis (Gitleaks)
-- [ ] Agent: Secret redaction before LLM context
-- [ ] Agent: Deploy-time secret injection (environment variables)
+- [x] Backend: Integrate Infisical for encrypted secret storage
+- [x] Backend: Secret CRUD API (per project, per environment)
+- [x] Agent: Secret scanning during codebase analysis (Gitleaks)
+- [x] Agent: Secret redaction before LLM context
+- [x] Agent: Deploy-time secret injection (environment variables)
 - [x] Frontend: Secret vault UI (add, edit, delete, list) — `features/vault/SecretVault.tsx`; write-only is structural (uncontrolled inputs, cleared before the request is awaited, no value field in either direction) and `__tests__/vault-write.test.tsx` asserts the shape rather than the screen
 
 #### 1.9 Audit Logging
-- [ ] Backend: Immutable audit log for all actions
-- [ ] Fields: who, what, when, why, before/after state
-- [ ] Frontend: Audit log viewer
-- [ ] Ensure agent-side operations are also logged
+- [x] Backend: Immutable audit log for all actions
+- [x] Fields: who, what, when, why, before/after state
+- [x] Frontend: Audit log viewer
+- [x] Ensure agent-side operations are also logged
 
 #### 1.10 Agent Governance Control Plane (P1 Architecture)
-- [ ] Backend: Implement **unified Governance Control Plane** — a single enforced chokepoint routing every mutating action through: policy evaluation → approval gate → change-set compilation → blast-radius check (Semantic Plan Analyzer) → audit record → rollback handle
-- [ ] Backend: No agent mutation bypasses this layer — it is the trust moat
-- [ ] Agent: OPA compiled to **Wasm** embedded in the Go agent binary for the agent-side half of the double policy evaluation (Cerbos v0.54.0 stays as the backend app RBAC sidecar)
-- [ ] Agent: SPIFFE/SPIRE **X.509-SVID + mTLS** with attestation (namespace + service-account + image-digest) for workload identity — no long-lived agent keys; JWT-SVID only for crossing L7 proxies
+- [x] Backend: Implement **unified Governance Control Plane** — a single enforced chokepoint routing every mutating action through: policy evaluation → approval gate → change-set compilation → blast-radius check (Semantic Plan Analyzer) → audit record → rollback handle
+- [x] Backend: No agent mutation bypasses this layer — it is the trust moat
+- [x] Agent: OPA compiled to **Wasm** embedded in the Go agent binary for the agent-side half of the double policy evaluation (Cerbos v0.54.0 stays as the backend app RBAC sidecar)
+- [x] Agent: SPIFFE/SPIRE **X.509-SVID + mTLS** with attestation (namespace + service-account + image-digest) for workload identity — no long-lived agent keys; JWT-SVID only for crossing L7 proxies
 
 #### 1.11 Auth Integration
-- [ ] Set up Authentik or Keycloak container
-- [ ] Implement OIDC/OAuth2 login flow
-- [ ] Implement JWT token management
-- [ ] Implement device/agent token flow
-- [ ] Implement basic RBAC (admin, developer, viewer)
+- [x] Set up Authentik or Keycloak container
+- [x] Implement OIDC/OAuth2 login flow
+- [x] Implement JWT token management
+- [x] Implement device/agent token flow
+- [x] Implement basic RBAC (admin, developer, viewer)
 
 ### Completion Criteria
 
