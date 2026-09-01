@@ -1436,7 +1436,7 @@ generation_context.assemble_prompt = _assemble_without_the_instruction
 [Q-29]
 runtime     = "python"
 property    = "backend/tests/property/test_q29_retrieval_degradation.py"
-target      = "src.ai.reranker.Reranker.rerank"
+target      = "src.core.reranker.Reranker.rerank"
 mutation    = "Let the reranker return more documents than it was given"
 description = """
 Appendix B's control is "let a reranker timeout propagate as a 500". It is unreachable from

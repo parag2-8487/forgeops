@@ -4,7 +4,7 @@
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from src.ai.reranker import Reranker
+from src.core.reranker import Reranker
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 

@@ -25,6 +25,20 @@ class EmbeddingResult(BaseModel):
     table: str
 
 
+class EmbeddingUnavailableError(RuntimeError):
+    """No real embedding could be produced.
+
+    A distinct type so a caller can decide: the L2 cache degrades to exact-match, an indexer records "no
+    vectors" as a stated outcome, and neither has to inspect a message. Raised in every case where this
+    class previously returned a fabricated vector.
+    """
+
+
+#: Values that mean "no credential". `.env.example` ships `LLM_KEY_VOYAGE=placeholder`, so a fresh clone
+#: takes this path — and must get a refusal rather than a vector that ignores its input.
+_PLACEHOLDER_CREDENTIALS: frozenset[str] = frozenset({"", "placeholder", "changeme", "change-me", "none"})
+
+
 class EmbeddingOrchestrator:
     def __init__(
         self,
@@ -42,33 +56,84 @@ class EmbeddingOrchestrator:
             return "embeddings_voyage"
         return "embeddings_local"
 
-    async def generate_embedding(self, text: str) -> EmbeddingResult:
-        """Generate embedding vector using configured backend."""
+    async def generate_embedding(self, text: str, *, client: httpx.AsyncClient | None = None) -> EmbeddingResult:
+        """Generate an embedding vector using the configured backend.
+
+        `client` is injectable for the same reason `github_import` takes one: it lets a test drive this
+        method over a fake TRANSPORT rather than monkeypatching `httpx.AsyncClient`, which raised
+        `Cannot open a client instance more than once` because the method opens its own. A transport is a
+        boundary; the collaborator stays real.
+
+        RAISES RATHER THAN FALLING BACK, and that is a correctness fix on a live path.
+
+        This method used to end with
+
+            mock_vector = [0.01 * (i % 100) for i in range(1024)]
+
+        reached on every path that was not Voyage-with-a-real-key AND on a Voyage call that answered
+        anything other than 200. That vector does not depend on `text`: two unrelated prompts embed to the
+        identical vector, so their cosine similarity is 1.0.
+
+        `main.py` only constructs this class when a real credential is present, and documents at length why
+        it refuses to enable the L2 cache otherwise — so the unconfigured case was mitigated. The
+        **configured** case was not: a Voyage outage, a rate limit, a rotated key, any non-200, and L2
+        would be fed identical vectors for every prompt. Every question would then be a near-duplicate of
+        every other question, and the cache would serve an arbitrary stored completion for any of them.
+        A returned wrong answer is worse than a raised error, and the fallback made the wrong answer the
+        failure mode of a transient outage.
+
+        So there is no fallback. A caller that cannot proceed without a vector learns that it cannot, which
+        is what `SelfHostedEmbedder` below has always done — this class is now consistent with it.
+        """
         table = self.get_target_table()
 
-        if self.backend == "voyage" and self.credential != "placeholder":
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
+        if self.backend != "voyage":
+            # `bge_m3` selects the local table (D-48) and has no local model here;
+            # `analysis.indexer.SelfHostedChunkEmbedder` is the implementation for that backend, and
+            # `build_embedder` routes to it. Naming the alternative rather than inventing a vector.
+            raise EmbeddingUnavailableError(
+                f"the {self.backend!r} backend has no implementation in this class; "
+                "the self-hosted path is analysis.indexer.SelfHostedChunkEmbedder"
+            )
+        if self.credential in _PLACEHOLDER_CREDENTIALS:
+            raise EmbeddingUnavailableError(
+                "no Voyage credential is configured, so no embedding can be produced. "
+                "There is deliberately no fallback vector: the previous one ignored its input, so "
+                "every text embedded identically."
+            )
+
+        owned = client is None
+        http = client or httpx.AsyncClient()
+        try:
+            try:
+                resp = await http.post(
                     f"{self.base_url}/embeddings",
                     headers={_AUTH_HEADER: f"{_BEARER_PREFIX}{self.credential}"},
                     json={"input": [text], "model": "voyage-code-2"},
                 )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    vector = data["data"][0]["embedding"]
-                    return EmbeddingResult(
-                        vector=vector,
-                        backend="voyage",
-                        dimensions=len(vector),
-                        table=table,
-                    )
+            except httpx.HTTPError as exc:
+                raise EmbeddingUnavailableError(
+                    f"the embedding endpoint is unreachable ({type(exc).__name__})"
+                ) from exc
+        finally:
+            if owned:
+                await http.aclose()
 
-        # Fallback / local BGE-M3 1024-dim deterministic mock vector
-        mock_vector = [0.01 * (i % 100) for i in range(1024)]
+        if resp.status_code != 200:
+            # The status, never the body: an upstream error body is attacker-influenced text on a path an
+            # operator reads.
+            raise EmbeddingUnavailableError(f"the embedding endpoint answered HTTP {resp.status_code}")
+        try:
+            vector = resp.json()["data"][0]["embedding"]
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise EmbeddingUnavailableError("the embedding response carried no vector") from exc
+        if not isinstance(vector, list) or not vector:
+            raise EmbeddingUnavailableError("the embedding response carried an empty vector")
+
         return EmbeddingResult(
-            vector=mock_vector,
-            backend=self.backend,
-            dimensions=1024,
+            vector=vector,
+            backend="voyage",
+            dimensions=len(vector),
             table=table,
         )
 

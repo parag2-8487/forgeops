@@ -38,6 +38,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import get_settings
+from ..core.reranker import VoyageReranker, rerank_or_degrade
 from ..core.rrf import reciprocal_rank_fusion
 
 #: How many chunks reach the prompt. Small on purpose: a prompt stuffed with forty chunks costs tokens on
@@ -78,6 +80,14 @@ class RetrievalContext:
     absent_reason: str = ""
     #: What ran, for the run record. Never a claim about what was configured.
     retrievers_used: tuple[str, ...] = field(default=())
+    #: True when a reranking MODEL ordered these chunks; False when the fused order was used as-is.
+    #:
+    #: Leaf 13.13's `retrieval_degraded`, stated positively. A caller cannot tell a model-ranked list from a
+    #: passthrough by looking at it, and the reranker this replaced made the two identical by construction —
+    #: it multiplied every score by 1.2, which cannot change an order.
+    reranked: bool = False
+    #: Why reranking did not happen, when it did not. Empty on the reranked path.
+    rerank_reason: str = ""
 
     @property
     def is_present(self) -> bool:
@@ -90,6 +100,10 @@ class RetrievalContext:
             "paths": [chunk.path for chunk in self.chunks],
             "retrievers": list(self.retrievers_used),
             "absent_reason": self.absent_reason,
+            # Persisted so a run's record answers "was this context model-ranked" after the request is
+            # over. `generation_runs.retrieval` is the only place that question survives.
+            "reranked": self.reranked,
+            "rerank_reason": self.rerank_reason,
         }
 
 
@@ -200,23 +214,69 @@ async def retrieve_generation_context(session: AsyncSession, *, project_id: Any,
     for path, _ in manifests:
         origin.setdefault(path, []).append("manifest")
 
+    # Leaf 13.2's rerank, applied AFTER fusion and taking the top-k from its result.
+    #
+    # This is where `src/ai/reranker.py` gains a production caller, which it did not have: the module
+    # existed, `tasks.md` 13.2 was ticked, and its `rerank` multiplied every score by 1.2 — a monotonic
+    # transform that cannot reorder anything. `rerank_or_degrade` either returns the model's order or the
+    # fused order it was given, and reports which through `degraded`.
+    #
+    # `RetrievalContext.reranked` carries that answer to `generation_runs.retrieval`, so a run's record says
+    # whether its context was model-ranked. Leaf 13.13's `retrieval_degraded` is the same fact.
+    reranker = _reranker_from_settings()
+    outcome = await rerank_or_degrade(
+        reranker,
+        cleaned,
+        {path: contents.get(path, "") for path, _ in fused if contents.get(path, "").strip()},
+        fused_order=tuple(path for path, _ in fused),
+        top_k=MAX_CONTEXT_CHUNKS,
+    )
+
     chunks: list[RetrievedChunk] = []
-    for path, _score in fused:
+    for ranked in outcome.documents:
         if len(chunks) >= MAX_CONTEXT_CHUNKS:
             break
-        content = contents.get(path, "")
+        content = contents.get(ranked.doc_id, "")
         if not content.strip():
             # An indexed path with no stored content contributes nothing and would read to a model as an
             # empty file, which is a claim about the repository rather than an absence of information.
             continue
-        chunks.append(RetrievedChunk(path=path, content=content, sources=tuple(origin.get(path, ()))))
+        chunks.append(RetrievedChunk(path=ranked.doc_id, content=content, sources=tuple(origin.get(ranked.doc_id, ()))))
 
     if not chunks:
         return RetrievalContext(
             absent_reason="the matching files hold no indexed content",
             retrievers_used=tuple(used),
         )
-    return RetrievalContext(chunks=tuple(chunks), retrievers_used=tuple(used))
+    return RetrievalContext(
+        chunks=tuple(chunks),
+        retrievers_used=tuple(used),
+        reranked=not outcome.degraded,
+        rerank_reason=outcome.reason,
+    )
+
+
+def _reranker_from_settings() -> VoyageReranker | None:
+    """The configured reranker, or `None` when there is no credential.
+
+    `None` rather than an unconfigured instance, so `rerank_or_degrade` reports "no reranker is configured"
+    rather than the endpoint's refusal — a different fact, and the one an operator can act on.
+
+    Settings are read here rather than injected because retrieval is called from a route that has a session
+    and no router state; a `Depends` for this would push a cache decision into every caller.
+    """
+    try:
+        settings = get_settings()
+    except Exception:  # noqa: BLE001 - an unconfigurable environment must degrade, not fail retrieval
+        return None
+    secret = getattr(settings, "llm_key_voyage", None)
+    credential = secret.get_secret_value() if hasattr(secret, "get_secret_value") else str(secret or "")
+    candidate = VoyageReranker(
+        credential=credential,
+        base_url=str(getattr(settings, "voyage_base_url", "https://api.voyageai.com/v1")),
+        timeout_seconds=float(getattr(settings, "outbound_http_timeout_seconds", 30.0)),
+    )
+    return candidate if candidate.configured else None
 
 
 def render_context_section(context: RetrievalContext) -> Sequence[str]:
