@@ -306,12 +306,14 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
 
     // Stage 2: scanned. The fixture has a package.json with a real dependency, so the index must have
     // files and the framework detector must have something to read.
+    //
+    // COUNTED FROM `file_tree`, one row per indexed file. `analysis_reports` carries the readiness
+    // `score`, `categories`, `inventory_hash` and `inventory` -- it has no `indexed_files` column, and
+    // querying one failed with `column "indexed_files" does not exist`. A row count is also the more
+    // direct evidence: it is what the scan wrote, not a number derived from it.
     const indexed = await eventually(
-      "an indexed codebase",
-      () =>
-        sqlScalar(
-          `SELECT indexed_files FROM analysis_reports WHERE project_id = '${printed.projectId}' ORDER BY created_at DESC LIMIT 1`,
-        ),
+      "indexed files for the project",
+      () => sqlScalar(`SELECT count(*) FROM file_tree WHERE project_id = '${printed.projectId}'`),
       { timeoutMs: 180_000 },
     );
     expect(Number(indexed ?? 0), "the printed command did not index the workspace").toBeGreaterThan(
