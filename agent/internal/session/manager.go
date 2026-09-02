@@ -278,8 +278,11 @@ type PairResult struct {
 
 // Status describes the pairing state for `agent doctor` and `agent.status` (§10.10).
 type Status struct {
-	Paired       bool
-	DeviceID     string
+	Paired   bool
+	DeviceID string
+	// ProjectID is the project the stored certificate authorises, or empty for a credential
+	// written before the field existed. A device certificate is valid for exactly one project.
+	ProjectID    string
 	StoreBackend string
 	CertNotAfter time.Time
 	// Degraded is true when credentials live in a 0600 file because no keychain was
@@ -326,6 +329,7 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 
 	status.Paired = true
 	status.DeviceID = creds.DeviceID
+	status.ProjectID = creds.ProjectID
 	if notAfter, err := leafNotAfter(creds.ClientCert); err == nil {
 		status.CertNotAfter = notAfter
 	}
@@ -806,6 +810,9 @@ func credentialsFrom(r *exchangeResponse, keyPEM []byte, sentFingerprint string)
 		// `SessionURL` is where the fallback and the empty case are decided, so there is one place
 		// that answers "which URL does this agent dial".
 		SessionWSURL: r.SessionWSURL,
+		// The project this certificate authorises. Kept so `connect` can refuse a `--project` that
+		// names a different one BEFORE it scans a tree the backend will not accept a report for.
+		ProjectID: r.ProjectID,
 	}, nil
 }
 

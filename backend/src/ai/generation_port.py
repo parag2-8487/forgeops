@@ -38,15 +38,29 @@ class RoutedArtifactModel:
         router: ModelRouter,
         tier: ModelTier,
         model: str,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> None:
         self._router = router
         self._tier = tier
         self._model = model
-        # Low rather than the 0.7 default. Generated artifacts are judged by a DETERMINISTIC gate,
-        # so sampling variety buys nothing and costs retries; it also makes the L1 cache useful,
-        # because the same request twice should produce the same answer.
+        # ZERO, not 0.1, and the previous comment is why: it already said "the same request twice
+        # should produce the same answer". At 0.1 that is false. Sampling with a non-zero temperature
+        # is still sampling — a user who submitted an identical prompt twice got a different NUMBER OF
+        # FILES and different contents, which is exactly the promise the comment was making and the
+        # value was breaking.
+        #
+        # Nothing is lost by removing it. Generated artifacts are judged by a DETERMINISTIC gate, so
+        # sampling variety cannot produce a better outcome — only a different one, and a different one
+        # costs a repair attempt when it fails. Greedy decoding also makes the L1 exact-match cache
+        # actually useful: an identical prompt becomes a cache hit rather than a fresh run that happens
+        # to disagree with the last.
+        #
+        # THIS DOES NOT MAKE GENERATION BIT-EXACT, and claiming so would be overselling it. Two things
+        # still vary: the retrieval context is part of the prompt, so re-scanning a changed tree changes
+        # the request and correctly misses the cache; and a provider may batch requests differently
+        # between calls, which perturbs floating-point reduction order. What zero removes is the
+        # variation this code chooses.
         self._temperature = temperature
         self._max_tokens = max_tokens
 

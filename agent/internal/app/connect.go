@@ -93,14 +93,47 @@ func newConnectCmd(a *App) *cobra.Command {
 			// Re-pairing would spend a second code for nothing and, worse, `pair` refuses a
 			// second exchange on a healthy agent — so a naive `connect` would fail on its second
 			// invocation, which is the invocation a user makes after a laptop reboot.
-			paired, err := alreadyPaired(ctx, manager)
+			paired, pairedProject, err := alreadyPaired(ctx, manager)
 			if err != nil {
 				return fmt.Errorf("connect: stage 1 (pair): %w", err)
 			}
 			resolvedProject := strings.TrimSpace(projectID)
 			switch {
 			case paired:
-				_, _ = fmt.Fprintf(out, "[1/3] pair   already paired; keeping the existing credential\n")
+				// A DEVICE CERTIFICATE AUTHORISES EXACTLY ONE PROJECT, so keeping the existing
+				// credential while indexing a different one cannot work. The backend refuses the
+				// scan report with
+				//
+				//     403 Forbidden You do not have permission to perform this action
+				//
+				// which is the correct answer and names neither the project nor the credential. The
+				// shortcut used to take that path silently: it saw a usable credential, said
+				// "already paired", scanned a tree, and failed two stages later on an authorisation
+				// decision the agent had all the information to predict.
+				//
+				// Refused BEFORE the scan, because a scan walks the whole tree and uploads nothing.
+				//
+				// Only when both ids are known. An empty `pairedProject` is a credential written
+				// before the field existed, and an empty `resolvedProject` means the user named no
+				// project — in neither case is there a disagreement to report, so it behaves exactly
+				// as it did before rather than refusing on a fact it does not have.
+				if resolvedProject != "" && pairedProject != "" && resolvedProject != pairedProject {
+					return fmt.Errorf(
+						"connect: stage 1 (pair): this agent is already paired to project %s, but "+
+							"--project names %s. A device certificate authorises one project, so the "+
+							"backend would refuse the scan with 403. Run `forgeops-agent pair --wipe` "+
+							"and connect again with a new code for %s, or drop --project to use the "+
+							"project this device is already paired to",
+						pairedProject, resolvedProject, resolvedProject)
+				}
+				if resolvedProject == "" {
+					// The stored credential names the project, so the user need not repeat it — the
+					// same courtesy the freshly-paired branch below extends.
+					resolvedProject = pairedProject
+				}
+				_, _ = fmt.Fprintf(out,
+					"[1/3] pair   already paired; keeping the existing credential for project %s\n",
+					pairedProject)
 			default:
 				result, perr := manager.Pair(ctx, code, resolved)
 				if perr != nil {
@@ -170,20 +203,25 @@ func newConnectCmd(a *App) *cobra.Command {
 	return cmd
 }
 
-// alreadyPaired reports whether a usable credential is already stored.
+// alreadyPaired reports whether a usable credential is already stored, and which project it is for.
 //
 // `ErrUnpaired` and `ErrNoCredentials` both mean "no", and are the expected answers on a first run.
 // `ErrCredentialsIncomplete` is NOT treated as "no": it means a token exists with no certificate
 // beside it, and pairing over the top would leave the stale half in place. It is returned so the
 // user is told to wipe.
-func alreadyPaired(ctx context.Context, manager *session.Manager) (bool, error) {
-	_, err := manager.Status(ctx)
+//
+// THE PROJECT IS RETURNED because "is a credential stored" was never the whole question. A device
+// certificate authorises one project, so a stored credential is only usable for the project it was
+// issued for, and the caller cannot judge that from a bool. Empty means a credential written before
+// the field existed.
+func alreadyPaired(ctx context.Context, manager *session.Manager) (bool, string, error) {
+	status, err := manager.Status(ctx)
 	switch {
 	case err == nil:
-		return true, nil
+		return true, status.ProjectID, nil
 	case errors.Is(err, session.ErrUnpaired), errors.Is(err, session.ErrNoCredentials):
-		return false, nil
+		return false, "", nil
 	default:
-		return false, err
+		return false, "", err
 	}
 }

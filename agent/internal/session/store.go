@@ -65,6 +65,23 @@ type Credentials struct {
 	// Empty means the backend stated none, which is what a backend older than this field does.
 	// `SessionURL` then falls back to the configured URL, so an older deployment keeps working.
 	SessionWSURL string `json:"session_ws_url,omitempty"`
+
+	// ProjectID is the project this device was issued for.
+	//
+	// WHY IT IS STORED AT ALL. A device certificate authorises exactly one project, and the backend
+	// refuses a submission for any other with a 403. Without this field the agent could not know
+	// which project it belonged to, so `connect --project <other>` took its "already paired"
+	// shortcut, scanned the wrong tree and reported
+	//
+	//     the backend refused the scan report (403): Forbidden You do not have permission to
+	//     perform this action
+	//
+	// which names neither the project nor the credential. The exchange response has always carried
+	// `project_id`; it was simply discarded.
+	//
+	// Empty means a credential written before this field existed. `connect` then cannot compare, so
+	// it proceeds exactly as it used to rather than refusing on a fact it does not have.
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // Store persists the device credential set.
@@ -166,6 +183,9 @@ type publicPart struct {
 	// knowing it grants nothing. It also belongs on this side because the keychain half is
 	// budgeted to 2560 bytes and a URL there would spend that budget for no benefit.
 	SessionWSURL string `json:"session_ws_url,omitempty"`
+	// Also not a secret: the project id is in every URL the operator already sees, and the
+	// certificate is what authorises anything, not knowledge of the identifier.
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 func split(c Credentials) (secretPart, publicPart) {
@@ -180,6 +200,7 @@ func split(c Credentials) (secretPart, publicPart) {
 			PolicyBundle:       c.PolicyBundle,
 			PolicyBundleDigest: c.PolicyBundleDigest,
 			SessionWSURL:       c.SessionWSURL,
+			ProjectID:          c.ProjectID,
 		}
 }
 
@@ -192,6 +213,7 @@ func join(s secretPart, p publicPart) Credentials {
 		ClientCert:         p.ClientCert,
 		CABundle:           p.CABundle,
 		SessionWSURL:       p.SessionWSURL,
+		ProjectID:          p.ProjectID,
 		PolicyBundle:       p.PolicyBundle,
 		PolicyBundleDigest: p.PolicyBundleDigest,
 	}
