@@ -119,6 +119,60 @@ async def main(
             print(json.dumps({"change_set_id": str(revert_of), "status": result.status}))
             return 0
 
+        # ONE CALL FOR BOTH HALVES OF A REVERT, and the reason is not tidiness.
+        #
+        # A revert produces a reverse change set that arrives `pending_approval`, and approving it is
+        # what mints the envelope and hands it to the hub. Doing those in two separate
+        # `docker compose exec` invocations means two short-lived processes, each composing its own
+        # `AgentHub`, and the reverse id has to be rediscovered in between by querying for "the newest
+        # pending_approval set" — which is a guess about which row is meant. Doing both here reads the
+        # id from the object that created it and keeps one process responsible for the whole transit.
+        if mode == "revert-and-approve":
+            async with maker() as session:  # type: AsyncSession
+                principal = await principal_for(session, user_id)
+                await chokepoint.revert(session, change_set_id=revert_of, principal=principal)
+                await session.commit()
+
+            # `Submission.change_set_id` reports the ORIGINAL for a revert, so the reverse set's id is
+            # read from the audit record that names it: `revert` writes `after_state.reverts` naming
+            # the original when it authorises the reverse set. That is an exact link rather than an
+            # ordering heuristic.
+            async with maker() as session:
+                row = (
+                    await session.execute(
+                        text(
+                            "SELECT resource_id FROM audit_events "
+                            "WHERE after_state ? 'reverts' "
+                            "AND CAST(after_state->>'reverts' AS uuid) = :original "
+                            "ORDER BY seq DESC LIMIT 1"
+                        ),
+                        {"original": revert_of},
+                    )
+                ).mappings().first()
+            if row is None:
+                raise SystemExit("the revert left no audit record naming the original")
+            reverse_id = uuid.UUID(str(row["resource_id"]))
+
+            async with maker() as session:
+                principal = await principal_for(session, user_id)
+                approved = await chokepoint.approve(
+                    session,
+                    change_set_id=reverse_id,
+                    principal=principal,
+                    comment="host-apply proof",
+                )
+                await session.commit()
+            print(
+                json.dumps(
+                    {
+                        "reverse_change_set_id": str(reverse_id),
+                        "status": approved.status,
+                        "reverted": str(revert_of),
+                    }
+                )
+            )
+            return 0
+
         if mode == "revert":
             async with maker() as session:  # type: AsyncSession
                 principal = await principal_for(session, user_id)
@@ -190,7 +244,7 @@ async def principal_for(session: AsyncSession, user_id: uuid.UUID) -> Principal:
 
 
 def mode_from(args: list[str]) -> str:
-    for candidate in ("update", "revert", "approve-only", "rollback"):
+    for candidate in ("update", "revert-and-approve", "revert", "approve-only", "rollback"):
         if candidate in args:
             return candidate
     return "create"
@@ -198,7 +252,7 @@ def mode_from(args: list[str]) -> str:
 
 def revert_target(args: list[str]) -> uuid.UUID | None:
     """The change set a revert inverts, taken as the argument after `revert`."""
-    for verb in ("revert", "approve-only"):
+    for verb in ("revert-and-approve", "revert", "approve-only"):
         if verb in args:
             return uuid.UUID(args[args.index(verb) + 1])
     return None

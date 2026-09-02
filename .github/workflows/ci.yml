@@ -1255,7 +1255,11 @@ jobs:
           docker compose --profile tools config --services | grep -qx agent-dev
       # D2's substance: build both images and start the stack for real.
       - name: Build the backend and frontend images
-        run: docker compose build backend frontend
+        # `backend-agent` NAMED EXPLICITLY even though it builds the same image as `backend`. Compose
+        # treats them as separate build targets, so omitting it left `up --wait` to build it inline
+        # and the 300-second wait expired on a build rather than on a healthcheck — a timeout that
+        # reads as an unhealthy stack when nothing was unhealthy yet.
+        run: docker compose build backend backend-agent frontend
       - name: Start the default stack and wait for health
         run: docker compose up -d --wait --wait-timeout 300
       - name: Assert every default service is healthy, not merely running

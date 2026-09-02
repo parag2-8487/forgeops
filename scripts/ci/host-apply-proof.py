@@ -261,7 +261,43 @@ def await_status(change_set_id: str, expected: str) -> None:
         if seen not in ("applying", "approved", "pending_approval"):
             break
         time.sleep(2)
-    raise Failure(f"change set {change_set_id} is {seen!r}, expected {expected!r}")
+    raise Failure(
+        f"change set {change_set_id} is {seen!r}, expected {expected!r}\n{diagnose(change_set_id)}"
+    )
+
+
+def diagnose(change_set_id: str) -> str:
+    """What a stalled change set looks like from the database, so a timeout is not a dead end.
+
+    A set stuck at `applying` has exactly three interesting causes and this separates them: the audit
+    trail says whether it was ever authorised, the item list says what it was going to do, and the
+    device row says whether the agent that should have received it still held a session. Without this
+    the failure message names a UUID and a status and nothing else.
+    """
+    lines = [f"--- diagnosis for {change_set_id} ---"]
+    for label, query in (
+        (
+            "audit",
+            "SELECT action || ' | ' || outcome FROM audit_events "
+            f"WHERE resource_id = '{change_set_id}' ORDER BY seq",
+        ),
+        (
+            "items",
+            "SELECT action || ' ' || file_path FROM change_items "
+            f"WHERE change_set_id = '{change_set_id}'",
+        ),
+        (
+            "devices",
+            "SELECT id || ' ' || status || ' last_seen=' || COALESCE(last_seen::text, 'never') "
+            "FROM agent_devices WHERE project_id = "
+            f"(SELECT project_id FROM change_sets WHERE id = '{change_set_id}')",
+        ),
+    ):
+        try:
+            lines.append(f"{label}: {sql(query) or '(none)'}")
+        except Failure as exc:  # a diagnosis must not replace the real failure with its own
+            lines.append(f"{label}: unavailable ({exc})")
+    return "\n".join(lines)
 
 
 def prove_create(seeded: dict[str, str], workspace: Path) -> None:
@@ -306,11 +342,12 @@ def prove_revert(seeded: dict[str, str], workspace: Path) -> None:
     pre_image = backups[-1].read_bytes()
 
     applied = newest_change_set(seeded["project_id"], "applied", "package.json")
-    submit(seeded, "revert", applied)
-    # A revert is itself a mutation and needs authority, so the reverse set arrives awaiting approval.
-    # `Submission.change_set_id` reports the ORIGINAL, so the reverse id is read from the table.
-    reverse = newest_change_set(seeded["project_id"], "pending_approval", None)
-    submit(seeded, "approve-only", reverse)
+    # BOTH HALVES IN ONE CALL. A revert is itself a mutation needing authority, so the reverse set
+    # arrives `pending_approval`; splitting the revert and its approval across two `exec` invocations
+    # meant rediscovering the reverse id by "newest pending_approval", which is a guess about which
+    # row is meant. The script now returns the id it created.
+    result = submit(seeded, "revert-and-approve", applied)
+    reverse = result["reverse_change_set_id"]
     await_status(reverse, "applied")
     await_status(applied, "reverted")
 
