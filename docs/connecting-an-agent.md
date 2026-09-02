@@ -33,13 +33,18 @@ ask them for the binary rather than building your own.
 
 One step, so the bare `forgeops-agent` command works from any directory afterwards.
 
-**Windows (PowerShell)** — no elevation needed. `%LOCALAPPDATA%\Programs` is already on PATH for
-your user on a default install:
+**Windows (PowerShell)** — no elevation needed, but it does have to put the directory on PATH.
+`%LOCALAPPDATA%\Programs` is **not** on PATH by default; every tool that lives there was added by
+its own installer. An earlier version of this page claimed otherwise, and the next command then
+failed with `'forgeops-agent.exe' is not recognized`.
 
 ```powershell
-New-Item -ItemType Directory -Force $env:LOCALAPPDATA\Programs\ForgeOps | Out-Null
-Move-Item -Force .\forgeops-agent.exe $env:LOCALAPPDATA\Programs\ForgeOps\
+$d = Join-Path $env:LOCALAPPDATA 'Programs\ForgeOps'; New-Item -ItemType Directory -Force $d | Out-Null; Move-Item -Force .\forgeops-agent.exe $d; $u = [Environment]::GetEnvironmentVariable('PATH','User'); if ($u -notlike ('*' + $d + '*')) { [Environment]::SetEnvironmentVariable('PATH', ($u + ';' + $d), 'User') }; $env:PATH = ($env:PATH + ';' + $d)
 ```
+
+It sets the persisted user PATH, so a shell opened tomorrow finds it, AND `$env:PATH`, so the
+command you run next in _this_ terminal does too. Running it twice appends nothing the second
+time. Only per-user state is touched — no `Machine` scope, so no administrator prompt.
 
 **macOS and Linux** — `install` sets the mode in the same step, so there is no separate `chmod` to
 forget:

@@ -205,18 +205,64 @@ export function archiveName(platform: Platform, tag: string, arch: "amd64" | "ar
  * `make build-agent` stays for developers and is deliberately not this. A user should never be told
  * to compile anything, and building from source was the first step of the old flow.
  */
+/**
+ * The Windows install step, as one line.
+ *
+ * Declared once because it is rendered for two shells: cmd.exe receives it wrapped in
+ * `powershell -NoProfile -Command`, and a second copy of the text would be a second thing to keep
+ * correct. Single quotes inside so the cmd.exe wrapper's double quotes do not need escaping.
+ */
+/**
+ * The Windows install step, as one line.
+ *
+ * NOT A SINGLE DOUBLE QUOTE IN IT, and that is the reason it is written with `Join-Path` and string
+ * concatenation rather than the shorter interpolated form. This text is rendered twice: verbatim for
+ * PowerShell, and wrapped in `powershell -NoProfile -Command "..."` for cmd.exe. Any double quote
+ * inside would need escaping for the second case, the escaping would have to survive being a
+ * TypeScript literal as well, and the first attempt at this shipped a command containing a literal
+ * `\"` that PowerShell could not parse. Removing the character removes the whole class.
+ *
+ * `Join-Path` also handles a username with a space in it, which a bare unquoted path would not.
+ */
+const WINDOWS_INSTALL =
+  "$d = Join-Path $env:LOCALAPPDATA 'Programs\\ForgeOps'; " +
+  "New-Item -ItemType Directory -Force $d | Out-Null; " +
+  "Move-Item -Force .\\forgeops-agent.exe $d; " +
+  "$u = [Environment]::GetEnvironmentVariable('PATH','User'); " +
+  "if ($u -notlike ('*' + $d + '*')) " +
+  "{ [Environment]::SetEnvironmentVariable('PATH', ($u + ';' + $d), 'User') }; " +
+  "$env:PATH = ($env:PATH + ';' + $d)";
+
 export function installOnPathCommand(platform: Platform, shell: Shell): string {
   switch (platform) {
     case "windows":
-      // `$env:LOCALAPPDATA\Programs` is on PATH for the current user on a default Windows install,
-      // so this needs no elevation and no PATH edit. cmd.exe cannot do this in one line readably,
-      // so it is given the PowerShell form to run -- which is honest about what it is.
+      // IT ADDS THE DIRECTORY TO PATH, and the previous version did not.
+      //
+      // This command used to copy the binary into `$env:LOCALAPPDATA\Programs\ForgeOps` and stop,
+      // under a comment asserting that `$env:LOCALAPPDATA\Programs` "is on PATH for the current user
+      // on a default Windows install". That is false, and a user following the screen hit it
+      // immediately: the move succeeded and the very next printed command answered
+      //
+      //     forgeops-agent.exe : The term 'forgeops-agent.exe' is not recognized as the name of a
+      //     cmdlet, function, script file, or operable program.
+      //
+      // Measured on a real Windows install: that directory is on NEITHER the process PATH nor the
+      // persisted user PATH. Every other tool living there — Ollama, VS Code, Python — is on PATH
+      // because its own installer put it there. The parent is not special.
+      //
+      // BOTH SCOPES ARE SET, deliberately. `SetEnvironmentVariable(..., "User")` persists it so future
+      // shells work, and it alone would leave the CURRENT shell still failing — which is the same
+      // "I did what it said and it did not work" experience one step later. Assigning `$env:PATH` as
+      // well means the next printed command runs in the terminal already open.
+      //
+      // The `-notlike` guard makes it idempotent: running the install twice must not append a second
+      // copy, because a PATH that grows on every run is a slow leak nobody attributes to this.
+      //
+      // No elevation: `HKCU` and a per-user directory only. cmd.exe cannot express this readably in
+      // one line, so it is handed the PowerShell form to run, which is honest about what it is.
       return shell === "cmd"
-        ? 'powershell -NoProfile -Command "New-Item -ItemType Directory -Force ' +
-            "$env:LOCALAPPDATA\\Programs\\ForgeOps | Out-Null; Move-Item -Force " +
-            '.\\forgeops-agent.exe $env:LOCALAPPDATA\\Programs\\ForgeOps\\"'
-        : "New-Item -ItemType Directory -Force $env:LOCALAPPDATA\\Programs\\ForgeOps | Out-Null; " +
-            "Move-Item -Force .\\forgeops-agent.exe $env:LOCALAPPDATA\\Programs\\ForgeOps\\";
+        ? 'powershell -NoProfile -Command "' + WINDOWS_INSTALL + '"'
+        : WINDOWS_INSTALL;
     case "macos":
     case "linux":
       // `/usr/local/bin` is on PATH everywhere and `install` sets the mode in the same step, so

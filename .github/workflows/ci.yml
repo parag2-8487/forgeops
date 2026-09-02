@@ -363,6 +363,80 @@ jobs:
           $scanHelp = & $binary scan --help 2>&1 | Out-String
           if ($scanHelp -match "--path") { throw "scan gained a --path flag; update the UI declaration" }
 
+      # THE PRINTED INSTALL COMMAND, RUN ON THE PLATFORM IT IS PRINTED FOR.
+      #
+      # THE GAP THIS CLOSES, found by a user rather than by CI. The Windows install command copied the
+      # binary into `%LOCALAPPDATA%\Programs\ForgeOps` and stopped, under a comment — and a unit test —
+      # asserting that directory is on PATH by default. It is not. So the very next printed command
+      # answered "'forgeops-agent.exe' is not recognized", one step after an install that reported
+      # success.
+      #
+      # Nothing caught it because nothing ran it. `printed-instructions` executes the install command
+      # verbatim, but it runs on a Linux runner and selects Linux in the platform picker, so the Windows
+      # branch was rendered, gated for flag correctness, unit-tested for its shape — and never executed.
+      # A command's effect on PATH is not a property any of those can observe.
+      #
+      # The command text comes from `commands.ts`, the same single source the UI renders, so this cannot
+      # drift from what a user is shown. `tsx` is enough to import it: that module has no runtime
+      # dependencies, which is why no `pnpm install` is needed here.
+      # PINNED, because the step below imports a TypeScript module directly. `--experimental-strip-types`
+      # needs Node 22.6 or later, and relying on whatever the runner image happens to ship would make
+      # this step's availability a property of the image rather than of the workflow.
+      - name: Set up Node.js (Windows, for rendering the printed command)
+        if: runner.os == 'Windows'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: The printed install command really does put the binary on PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # `..` because this job runs with working-directory `agent`.
+          $command = node --experimental-strip-types -e @'
+          import { installOnPathCommand } from "../frontend/features/agent/commands.ts";
+          process.stdout.write(installOnPathCommand("windows", "powershell"));
+          '@
+          if (-not $command) { throw 'could not render the install command' }
+          Write-Host "rendered: $command"
+
+          # A download directory holding the binary, exactly as a user has after unzipping the archive.
+          $dl = Join-Path $env:RUNNER_TEMP 'fo-download'
+          New-Item -ItemType Directory -Force $dl | Out-Null
+          # The binary the previous step built, which lands in the working directory.
+          Copy-Item './forgeops-agent.exe' (Join-Path $dl 'forgeops-agent.exe') -Force
+
+          # Run it VERBATIM from that directory, in a child shell, exactly as a user would.
+          Push-Location $dl
+          powershell -NoProfile -Command $command
+          if ($LASTEXITCODE -ne 0) { throw "the printed install command exited $LASTEXITCODE" }
+          Pop-Location
+
+          # THE ASSERTION THAT MATTERS, and the one the old unit test could not make: compose PATH the
+          # way a NEWLY OPENED shell does — Machine plus User from the registry — and resolve the bare
+          # name against it. Checking `$env:PATH` in this process would pass on the in-session
+          # assignment alone and prove nothing about tomorrow's terminal.
+          $fresh = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' +
+                   [Environment]::GetEnvironmentVariable('PATH','User')
+          $resolved = powershell -NoProfile -Command "`$env:PATH = '$fresh'; (Get-Command forgeops-agent).Source"
+          if ($LASTEXITCODE -ne 0 -or -not $resolved) {
+            throw 'the bare command does not resolve from a freshly composed PATH'
+          }
+          Write-Host "a new shell resolves it at: $resolved"
+
+          # And it is IDEMPOTENT: a second install must not append a second copy.
+          $before = ([Environment]::GetEnvironmentVariable('PATH','User')).Length
+          Copy-Item './forgeops-agent.exe' (Join-Path $dl 'forgeops-agent.exe') -Force
+          Push-Location $dl
+          powershell -NoProfile -Command $command
+          Pop-Location
+          $after = ([Environment]::GetEnvironmentVariable('PATH','User')).Length
+          if ($after -ne $before) {
+            throw "running the install twice grew the user PATH by $($after - $before) characters"
+          }
+          Write-Host 'a second install left the user PATH unchanged'
+
       - name: Cross-compile for every published target
         shell: pwsh
         env:

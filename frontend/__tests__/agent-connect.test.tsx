@@ -144,11 +144,42 @@ describe("detectPlatform", () => {
 });
 
 describe("installOnPathCommand", () => {
-  it("targets a directory already on PATH, needing no elevation on Windows", () => {
+  // THIS BLOCK USED TO ASSERT THE DEFECT. It required the command NOT to edit PATH — "no PATH edit for
+  // the user to make" — on the belief that `%LOCALAPPDATA%\Programs` is on PATH by default. It is not,
+  // on neither the process PATH nor the persisted user PATH, and a user following the screen hit it at
+  // once: the move succeeded and the next printed command answered "'forgeops-agent.exe' is not
+  // recognized". A test can pin a falsehood as firmly as a truth, which is why this one is inverted
+  // rather than deleted.
+  it("PUTS the directory on PATH, because Windows does not do it for you", () => {
     const command = installOnPathCommand("windows", "powershell");
     expect(command).toContain("LOCALAPPDATA");
-    // No elevation, and no PATH edit for the user to make.
-    expect(command).not.toMatch(/RunAs|setx PATH/i);
+    // Persisted, so a shell opened tomorrow finds it.
+    expect(command).toContain("SetEnvironmentVariable");
+    expect(command).toContain("'User'");
+    // AND the current session, or the very next printed command still fails — the same "I did what it
+    // said and it did not work" one step later.
+    expect(command).toContain("$env:PATH =");
+  });
+
+  it("appends to PATH only once, so repeating the install cannot grow it", () => {
+    // A PATH that gains an entry on every run is a slow leak nobody attributes to this command.
+    expect(installOnPathCommand("windows", "powershell")).toContain("-notlike");
+  });
+
+  it("needs no elevation: a per-user directory and the per-user PATH only", () => {
+    const command = installOnPathCommand("windows", "powershell");
+    expect(command).not.toMatch(/RunAs|Start-Process .*-Verb/i);
+    // `Machine` scope would require an administrator, and the whole point of this location is that it
+    // does not.
+    expect(command).not.toContain("'Machine'");
+  });
+
+  it("contains no double quote, so the cmd.exe wrapping needs no escaping", () => {
+    // Both shells render the same text; cmd.exe gets it inside `powershell -Command "..."`. The first
+    // attempt at the PATH edit used interpolated strings and shipped a literal \\" that PowerShell
+    // could not parse. Removing the character removes the class of bug.
+    expect(installOnPathCommand("windows", "powershell")).not.toContain('"');
+    expect(installOnPathCommand("windows", "cmd")).toContain("powershell -NoProfile -Command");
   });
 
   it("uses install(1) on POSIX so the mode is set in the same step", () => {
