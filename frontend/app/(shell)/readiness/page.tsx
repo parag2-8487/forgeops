@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
+import { GenerationPromptSuggestion } from "@/features/projects/GenerationPromptSuggestion";
 import { ProjectPicker } from "@/components/ui/project-picker";
 import { ReadinessRadarChart } from "@/features/readiness/RadarChart";
 import { ReadinessBreakdown } from "@/features/readiness/ReadinessBreakdown";
@@ -108,6 +109,17 @@ export default function ReadinessPage() {
                 </ul>
               </div>
             ) : null}
+
+            {/*
+              WHAT GENERATION CAN ACTUALLY DO ABOUT THE SCORE.
+
+              Recommendations are advice for a person; generation emits four files. Offering the
+              recommendation list as a prompt would run a model for minutes and return a Dockerfile
+              addressing none of it, leaving the score unchanged and no way to tell why. So the
+              suggestion is built from the failing CHECK IDS, filtered to the ones generation can
+              satisfy — and when none of them are, it says so instead of offering a prompt.
+            */}
+            <GenerationPromptSuggestion checks={readiness.data.checks} />
           </div>
         ) : null}
       </AsyncState>
