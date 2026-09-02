@@ -133,7 +133,15 @@ load: ## Run k6 load test (non-gating, requires k6 installed)
 # No target ever passes --profile, so the vault and tools services stay out.
 .PHONY: up down logs smoke
 
-up: init-env ## Start the default profile and wait until /health/ready answers
+# `init-ca` AS WELL AS `init-env`, because the stack now contains a service that cannot start without
+# an internal CA. `backend-agent` serves the agent's mutual-TLS port and issues its server certificate
+# from `INTERNAL_CA_CERT_PEM`/`INTERNAL_CA_KEY_PEM`; with neither set it exits 2 and says so. That is
+# the right behaviour — a listener must not invent trust material and hope nobody notices it is
+# self-signed by itself — but it made `make up` on a fresh clone start a stack that could not deliver
+# an approved change set.
+#
+# Safe to run every time: `init_ca.py` never overwrites an existing CA.
+up: init-env init-ca ## Start the default profile and wait until /health/ready answers
 	@printf '==> up: starting the default Compose profile and polling readiness\n'
 	@sh scripts/dev-up.sh
 
