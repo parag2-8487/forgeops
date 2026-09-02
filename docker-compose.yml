@@ -365,7 +365,83 @@ services:
       timeout: 5s
       retries: 10
 
-  # The ARQ worker that RUNS the work the API enqueues.
+  # ── the agent's mTLS listener ────────────────────────────────────────────
+  #
+  # THE STACK `make up` STARTS WAS UNABLE TO APPLY A CHANGE SET. This service existed only in
+  # `docker-compose.e2e.yml`, so nothing held 8443 in a development stack, and a signed apply command
+  # could only ever reach an agent running INSIDE the Compose network. A user could generate, approve,
+  # watch the audit chain record both — and no file ever landed on disk. Generation was never the
+  # problem; there was nothing listening on the port the agent must dial.
+  #
+  # WHY A SECOND LISTENER rather than a route on the API: `/api/v1/ws/agent` authenticates the peer
+  # with TWO secrets, one of which is a client certificate, and requiring a client certificate is a
+  # property of the LISTENER, not of a route. Turning it on for the port the browser uses would fail
+  # the handshake for every browser request. Terminating mTLS at a proxy and forwarding the
+  # certificate in a header is the other sanctioned arrangement, but a header is caller-supplied data
+  # unless a proxy is known to strip and rewrite it. `backend/src/agent_listener.py` carries the full
+  # argument; it is summarised here because this file is where somebody asks "why two backends?".
+  #
+  # THE SAME CONFIGURATION AS THE API, and in particular the same `INTERNAL_CA_*` pair, or it would
+  # issue its server certificate from a different CA than the one the agent is handed at pairing and
+  # every verification would fail for a correct reason.
+  backend-agent:
+    build:
+      context: ./backend
+      target: runtime
+      args:
+        GIT_COMMIT: "${GIT_COMMIT:-unknown}"
+    env_file: *service-env
+    environment:
+      # ALL THREE NAMES, because three different callers dial this listener by three different names
+      # and a TLS client checks the name it dialled against the SAN list:
+      #   `backend-agent` — an agent container over the Compose network
+      #   `localhost`     — a HOST agent binary, which is the deployment this service exists for
+      #   `127.0.0.1`     — the same host agent when a name is not wanted, and the healthcheck
+      # An IP must be a SAN `IPAddress` entry and a name a `DNSName` entry; `_subject_alternative_names`
+      # sorts them, and getting it wrong yields a handshake error that names the host and not the SAN.
+      AGENT_TLS_SERVER_NAMES: "backend-agent,localhost,127.0.0.1"
+      AGENT_TLS_PORT: "8443"
+    command: ["python", "-m", "src.agent_listener"]
+    ports:
+      # PUBLISHED, so a host agent binary can reach it at all. Bound to 127.0.0.1 exactly as the API's
+      # port is: this listener will accept any client holding a certificate from the internal CA, and
+      # that is a decision about identity, not about who may open a socket.
+      #
+      # 18443 by default, matching the shifted-port convention the rest of `.env` uses
+      # (BACKEND_PORT=18000, FRONTEND_PORT=13000) so a second checkout does not collide. Chosen BELOW
+      # 49152, which is where Windows' ephemeral range starts — a default inside it is intermittently
+      # unbindable because the OS may have already handed it to something else, which is the trap that
+      # broke the test-service ports two sessions ago.
+      #
+      # A SEPARATE NAME from `AGENT_TLS_PORT`, deliberately. `AGENT_TLS_PORT` is what the listener binds
+      # INSIDE the container and is fixed at 8443 above; this is what the HOST publishes it as. Spelling
+      # both with one name reads as a single setting and silently breaks whichever side the user did not
+      # mean — setting it to move the host port would also move the port the container listens on, and
+      # the mapping would then point at nothing.
+      - "127.0.0.1:${AGENT_TLS_HOST_PORT:-18443}:8443"
+    depends_on:
+      postgres: { condition: service_started }
+      redis: { condition: service_started }
+      opa: { condition: service_started }
+    healthcheck:
+      # Checked THROUGH mTLS, presenting the probe certificate the listener issues at start. So a green
+      # check means the chain, the server key and `CERT_REQUIRED` all work — not merely that a process
+      # holds the port. `/health` performs no dependency I/O (§4.4), so this stays liveness.
+      #
+      # A certificate is REQUIRED, not optional: a probe without one fails the handshake, which is the
+      # correct behaviour of the listener and would leave this permanently unhealthy.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import ssl,urllib.request;d='/tmp/forgeops-agent-tls';ctx=ssl.create_default_context(cafile=d+'/ca.crt');ctx.load_cert_chain(d+'/probe.crt',d+'/probe.key');urllib.request.urlopen('https://localhost:8443/health',timeout=5,context=ctx)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+
   #
   # Without this service the stack accepts work and never performs it, silently. `.env.example` sets
   # `TASK_DISPATCHER=arq`, so `POST /approvals/{id}/approve` enqueues the apply and returns 200; the

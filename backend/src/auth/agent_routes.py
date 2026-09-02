@@ -152,6 +152,27 @@ class ExchangeResponse(BaseModel):
     policy_bundle: str | None = None
     policy_bundle_digest: str | None = None
 
+    #: Where this agent's SESSION goes — which is not where it just paired.
+    #:
+    #: WHY THE RESPONSE CARRIES AN ADDRESS. Pairing and the session have different authentication
+    #: requirements and therefore different listeners: this exchange is the one unauthenticated route
+    #: (§4.4) and runs on the ordinary port, because an agent asking to be issued a certificate cannot
+    #: already present one; the session and the index submit require a client certificate AND a device
+    #: token, and requiring a certificate is a property of the listener.
+    #:
+    #: A host agent given a single url could satisfy one and never both — its session was refused with
+    #: "client certificate and bearer device token are both required" on the ordinary port, and its
+    #: pairing failed the TLS handshake on the mTLS one. Rather than ask the user to find a second url,
+    #: the backend states its own: it knows which port its agent listener is published on, and it is
+    #: already handing over the CA that verifies it in this very response.
+    #:
+    #: SAFE TO TAKE FROM THE RESPONSE, unlike a URL guessed by the agent, because by this point the
+    #: caller has spent a single-use pairing code minted inside the deployment and is being handed a
+    #: certificate signed by its CA. An attacker able to choose this value would have to already be
+    #: the backend. It is computed from a SETTING and never from a request header, for the reason
+    #: `connection_info_routes` records: a header would let any caller redirect the next agent.
+    session_ws_url: str
+
 
 class RevokeRequest(BaseModel):
     """Why the device is being revoked. Required, per NFR-14's "why"."""
@@ -269,6 +290,11 @@ async def exchange_pairing_code(
             else None
         ),
         policy_bundle_digest=credentials.policy_bundle_digest,
+        # WHERE TO DIAL, stated by the backend that just issued the certificate above rather than
+        # guessed by the agent or typed by the user. `agent_session_ws_url` is derived from settings
+        # and never from a request header — see its docstring, and
+        # `connection_info_routes` for why a header would be a credential-redirection primitive.
+        session_ws_url=request.app.state.settings.agent_session_ws_url,
     )
 
 

@@ -324,6 +324,21 @@ class CommandResultRecorder(Protocol):
 
     async def record(self, *, change_set_id: uuid.UUID, status: str, backup_manifest: Any) -> str: ...
 
+    async def record_rolled_back(self, *, change_set_id: uuid.UUID, reason: str) -> str:
+        """Finalise a change set the agent rolled back itself.
+
+        A SECOND METHOD, because the agent reports this over a different method. A completed apply
+        arrives as `command.result` with a status; an apply the agent had to undo arrives as
+        `agent.error` with code `apply-rolled-back`, because there is no result to report. Mapping
+        the second onto the first would have to invent a status string, and the two outcomes are
+        genuinely different states: `failed` may have left work behind, `rolled_back` means the
+        workspace is as it was.
+
+        The hub's `agent.error` handler only logged, so nothing reached this at all and a rolled-back
+        change set stayed `applying` for ever — the state was declared, documented and unreachable.
+        """
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class HubDeps:
@@ -572,6 +587,13 @@ class AgentHub:
                     "retryable": bool(params.get("retryable")),
                 },
             )
+            # A ROLLBACK IS AN OUTCOME, NOT JUST A LOG LINE. `apply-rolled-back` is how the agent
+            # says it applied part of a change set, could not finish, and restored the pre-image
+            # from its own backups. This branch used to log and stop, so the `applying → rolled_back`
+            # edge §3.6 declares was never traversed and such a change set stayed `applying` for
+            # ever — indistinguishable from one still in flight.
+            if str(params.get("code") or "") == "apply-rolled-back":
+                await self._finalise_rolled_back(local, params)
         elif method == "approval.request":
             # The intake that turns this into a chokepoint transit is not built yet: the
             # chokepoint's entry points are `submit`, `approve` and `revert`, none of which takes
@@ -645,6 +667,54 @@ class AgentHub:
             "cert_not_after": bundle.not_after.isoformat(),
             "renew_after": bundle.renew_after.isoformat(),
         }
+
+    async def _finalise_rolled_back(self, local: Any, params: Mapping[str, Any]) -> None:
+        """Move a change set to `rolled_back` when the agent reports it undid an apply.
+
+        Resolved through the SAME `command_id -> change_set_id` mapping the result path uses, so the
+        two cannot disagree about which change set a frame is about, and so an error naming a command
+        this backend never delivered finalises nothing.
+
+        Every failure here is logged and swallowed. A rollback report is news about work that has
+        already finished on the agent; closing a healthy socket over a bookkeeping problem would cost
+        the session that delivers the next command, which is a strictly worse outcome.
+        """
+        recorder = self._deps.results
+        command_id = str(params.get("command_id") or "")
+        if recorder is None or not command_id:
+            logger.warning(
+                "an apply-rolled-back report cannot be finalised",
+                extra={
+                    "device_id": str(local.device_id),
+                    "command_id": command_id,
+                    "reason": "no recorder is composed" if recorder is None else "no command_id",
+                },
+            )
+            return
+        change_set_id = None
+        with contextlib.suppress(Exception):
+            change_set_id = await self._deps.redis.get(_COMMAND_CHANGE_SET.format(command_id=command_id))
+        if not change_set_id:
+            logger.warning(
+                "an apply-rolled-back report arrived with no known change set",
+                extra={"command_id": command_id},
+            )
+            return
+        try:
+            final = await recorder.record_rolled_back(
+                change_set_id=uuid.UUID(str(change_set_id)),
+                reason=str(params.get("message") or "the agent rolled the apply back"),
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed finalise must not close a healthy socket
+            logger.error(
+                f"recording an apply rollback failed: {type(exc).__name__}: {exc}",
+                extra={"command_id": command_id, "change_set_id": str(change_set_id)},
+            )
+            return
+        logger.info(
+            "a rolled-back apply was finalised",
+            extra={"command_id": command_id, "change_set_id": str(change_set_id), "status": final},
+        )
 
     async def _on_result(self, local: _LocalSession, params: Mapping[str, Any]) -> None:
         """Resolve the waiting future locally, and republish for a replica that is waiting.

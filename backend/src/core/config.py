@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -132,6 +132,11 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "AGENT_CONNECT_TLS",
         "AGENT_RELEASE_TAG",
         "AGENT_DOWNLOAD_BASE_URL",
+        # The host-published port of the agent's mTLS listener, which is where a SESSION goes. The
+        # pairing exchange goes to `BACKEND_PORT` instead, because an unpaired agent has no client
+        # certificate and that listener requires one. `AGENT_TLS_PORT` is the container-internal bind
+        # port and belongs to the listener process, not here.
+        "AGENT_TLS_HOST_PORT",
         # Telemetry
         "TRACE_PROPAGATION_ENABLED",
         # Frontend
@@ -239,6 +244,16 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "NEXT_PUBLIC_SSE_TIMEOUT_MS",
     }
 )
+
+
+#: The route an agent's WebSocket session uses.
+#:
+#: Declared here because `Settings.agent_session_ws_url` builds a URL from it. `WS_AGENT_PATH` in
+#: `src/websocket/routes.py` is the route the server actually registers and is the authority;
+#: importing it here would make configuration depend on the web layer, so the value is repeated and
+#: `tests/meta` asserts the two spellings are identical. A drift here would be a URL advertised to
+#: every agent that resolves to nothing.
+AGENT_WS_PATH: Final[str] = "/api/v1/ws/agent"
 
 
 class Settings(BaseSettings):
@@ -399,6 +414,32 @@ class Settings(BaseSettings):
     #: Whether an agent should use `wss` rather than `ws`. Follows deployment, not preference.
     agent_connect_tls: bool = Field(default=False)
 
+    #: The HOST port the agent's mTLS listener is published as, which is where an agent's SESSION
+    #: goes — not where it pairs.
+    #:
+    #: WHY THESE ARE TWO DIFFERENT PORTS, and why this setting has to exist. An agent talks to this
+    #: backend over two channels with two different authentication requirements:
+    #:
+    #:   pairing exchange   `POST /api/v1/agents/pair/exchange` on `backend_port`. The one
+    #:                      unauthenticated route (§4.4). The agent has no certificate yet — it is
+    #:                      asking to be issued one — so this CANNOT be a listener that requires a
+    #:                      client certificate, or the handshake fails before the request is made.
+    #:   session and scan   `/api/v1/ws/agent` and the index submit, on THIS port. Both authenticate
+    #:                      with a client certificate AND a device token, and requiring a certificate
+    #:                      is a property of the listener, so it is a second listener
+    #:                      (`src/agent_listener.py` argues why, at length).
+    #:
+    #: A host agent could not previously complete a run because it was given ONE url for both. Pointed
+    #: at `backend_port` its session was refused with "client certificate and bearer device token are
+    #: both required"; pointed here, pairing failed the handshake. So the pairing RESPONSE now carries
+    #: this address, computed here, and the agent stores it beside the CA bundle it is issued in the
+    #: same response. The user supplies one url and the agent learns the other from the backend that
+    #: just issued its certificate.
+    #:
+    #: The default matches `.env.example`; `AGENT_TLS_HOST_PORT` in `docker-compose.yml` drives the
+    #: published mapping from the same value, so the mapping and what is advertised cannot drift.
+    agent_tls_host_port: int = Field(default=8443, ge=1, le=65_535)
+
     #: The agent release the UI offers for download, e.g. `v0.1.0`.
     #:
     #: Empty means this deployment pins none, and the UI then says so rather than linking to
@@ -527,6 +568,24 @@ class Settings(BaseSettings):
     agent_journal_drain_batch: int = Field(default=64, ge=1, le=10_000)
     agent_trivy_binary: str = Field(default="trivy")
     agent_validator_timeout_seconds: int = Field(default=120, ge=1)
+
+    @property
+    def agent_session_ws_url(self) -> str:
+        """Where an agent's authenticated session goes, as this deployment publishes it.
+
+        ONE COPY OF THE RULE. Both the pairing exchange (which tells a freshly paired agent where to
+        dial) and `GET /agents/connection-info` (which the UI renders) read it here, so a device
+        cannot be told one address while the screen shows another.
+
+        ALWAYS `wss`, with no setting to make it `ws`. This endpoint requires a client certificate,
+        which only exists inside a TLS handshake -- a `ws` session cannot present one, and the
+        backend would refuse it with "client certificate and bearer device token are both required".
+        So a plaintext spelling is not a configuration this deployment can have; `agent_connect_tls`
+        deliberately does not apply here. That is also why there is no "skip verification for local
+        development" path: the certificate IS the authentication, not a wrapper around it.
+        """
+        host = self.agent_connect_host or "localhost"
+        return f"wss://{host}:{self.agent_tls_host_port}{AGENT_WS_PATH}"
 
     @field_validator("mcp_oidc_issuers")
     @classmethod

@@ -260,6 +260,18 @@ class _ChangeSetResultRecorder:
                 backup_manifest=backup_manifest,
             )
 
+    async def record_rolled_back(self, *, change_set_id: uuid.UUID, reason: str) -> str:
+        """The same adapter for the agent's `apply-rolled-back` report.
+
+        A second method rather than a status string threaded through `record`, because the two arrive
+        by different protocol methods and land in different states — see `CommandResultRecorder`.
+        """
+        chokepoint = self._chokepoint()
+        if chokepoint is None:
+            raise RuntimeError("the governance chokepoint is not composed yet")
+        async with self._sessionmaker() as session:
+            return await chokepoint.record_apply_rolled_back(session, change_set_id=change_set_id, reason=reason)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]

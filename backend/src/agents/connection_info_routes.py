@@ -33,13 +33,15 @@ from pydantic import BaseModel, Field
 
 from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
+from ..core.config import AGENT_WS_PATH as _AGENT_WS_PATH
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
-#: The route an agent's WebSocket session uses. One definition on this side, matching
-#: `agentWebSocketPath` in the agent's own discovery, so a rendered command and a discovered URL
-#: cannot disagree about the path.
-AGENT_WS_PATH: Final[str] = "/api/v1/ws/agent"
+#: The route an agent's WebSocket session uses, re-exported from settings so this module and
+#: `Settings.agent_session_ws_url` cannot disagree about the path. `WS_AGENT_PATH` in
+#: `src/websocket/routes.py` is the route the server registers and is the authority; `tests/meta`
+#: asserts the spellings match.
+AGENT_WS_PATH: Final[str] = _AGENT_WS_PATH
 
 #: The shells the UI can render a command for, and the only ones.
 #:
@@ -64,6 +66,11 @@ class AgentConnectionInfo(BaseModel):
     download_base_url: str = Field(
         description="Where the signed per-platform archives live, or an empty string.",
     )
+    session_ws_url: str = Field(
+        description="Where a paired agent's session goes, over mutual TLS. Reported for reference "
+        "and for `doctor`; an agent receives this in its pairing response and does not need to be "
+        "told it, so it is NOT part of the command the UI prints.",
+    )
 
 
 def _connection_info(request: Request) -> AgentConnectionInfo:
@@ -75,6 +82,15 @@ def _connection_info(request: Request) -> AgentConnectionInfo:
         agent_ws_path=AGENT_WS_PATH,
         release_tag=settings.agent_release_tag,
         download_base_url=settings.agent_download_base_url,
+        # TWO DIFFERENT PORTS, and the distinction is the reason a host agent could not previously
+        # complete a run. `backend_ws_url` above is where the agent PAIRS: the one unauthenticated
+        # route, on the ordinary port, because an agent asking to be issued a certificate cannot
+        # already present one. This is where it holds its SESSION: a second listener that requires
+        # the client certificate it was just issued.
+        #
+        # Read from `Settings` rather than rebuilt here, so this and the pairing response cannot
+        # advertise different addresses.
+        session_ws_url=settings.agent_session_ws_url,
     )
 
 

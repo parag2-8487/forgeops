@@ -183,6 +183,9 @@ func reportPairing(cmd *cobra.Command, a *App) []string {
 		_, _ = fmt.Fprintf(out,
 			"  note: no OS keychain was usable, so credentials are in a 0600 file\n")
 	}
+	// Reported only once the device is known to be paired. Before that the answer is always "no
+	// CA yet", which is a restatement of being unpaired rather than a second finding.
+	issues = append(issues, reportSessionTrust(cmd, a)...)
 	return issues
 }
 
@@ -220,6 +223,61 @@ func reportCredentialStore(cmd *cobra.Command, a *App) []string {
 	}
 
 	_, _ = fmt.Fprintf(out, "%s Credential store: %s, and a device credential fits\n", glyphOK, where)
+	return nil
+}
+
+// reportSessionTrust says where the agent's session goes, what verifies the listener there, and
+// whether the two actually work — by completing a handshake, not by reading configuration.
+//
+// WHY THIS IS A SEPARATE LINE FROM PAIRING. A device can be correctly paired, hold a valid
+// certificate, and still never receive a command, because the session endpoint and the pairing
+// endpoint are different listeners on different ports. That is precisely the state a host agent was
+// in: `doctor` reported a healthy pairing and the agent sat there while change sets stayed
+// `applying`. The whole diagnostic value is in separating "who am I" from "can I get there".
+func reportSessionTrust(cmd *cobra.Command, a *App) []string {
+	out := cmd.OutOrStdout()
+
+	store, err := a.CredentialStore()
+	if err != nil {
+		// Already reported by reportCredentialStore, which runs first. Repeating it as a trust
+		// failure would name the same fact twice and imply two problems.
+		return nil
+	}
+	creds, err := store.Load(cmd.Context())
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "%s Session trust: not established — this agent is not paired\n", glyphInfo)
+		_, _ = fmt.Fprintf(out, "  the CA that verifies the backend's listener arrives at pairing\n")
+		return nil
+	}
+
+	report := session.DescribeTrust(cmd.Context(), creds, a.cfg.BackendWSSURL)
+
+	origin := "configured (AGENT_BACKEND_WSS_URL)"
+	if report.EndpointFromPairing {
+		origin = "stated by the backend at pairing"
+	}
+	if report.Endpoint != "" {
+		_, _ = fmt.Fprintf(out, "  session endpoint: %s — %s\n", report.Endpoint, origin)
+	}
+
+	if report.Err != nil {
+		_, _ = fmt.Fprintf(out, "%s Session trust: cannot verify the backend's listener\n", glyphFail)
+		_, _ = fmt.Fprintf(out, "  verifying against: %s\n", report.Source)
+		_, _ = fmt.Fprintf(out, "  %v\n", report.Err)
+		return []string{
+			"The agent cannot establish a verified session with the backend, so it will never " +
+				"receive an apply command. Check that the backend's agent listener is running " +
+				"and published (docker compose ps backend-agent), then re-run doctor",
+		}
+	}
+
+	_, _ = fmt.Fprintf(out, "%s Session trust: verified against %s\n", glyphOK, report.Source)
+	if len(report.Issuers) > 0 {
+		_, _ = fmt.Fprintf(out, "  issuer: %s\n", strings.Join(report.Issuers, ", "))
+	}
+	if !report.NotAfter.IsZero() {
+		_, _ = fmt.Fprintf(out, "  CA expires %s\n", report.NotAfter.UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 

@@ -149,27 +149,54 @@ describe("creating a project", () => {
     );
   });
 
-  it("sends the repository url when the git source is chosen", async () => {
+  it("reaches the IMPORT endpoint when the git source is chosen", async () => {
+    // THE DEFECT THIS PINS. `POST /projects/import/github` reads the repository over the real GitHub
+    // API, and this form never called it: choosing "A Git repository" posted to `POST /projects` with
+    // the URL as metadata nothing reads, and still demanded a typed local path. The backend could
+    // import and the only screen that offers to could not.
     serve([]);
     mockPost.mockResolvedValue(project());
     renderPage(<ProjectsPage />);
 
-    await userEvent.type(screen.getByLabelText("Name"), "Checkout");
-    await userEvent.type(screen.getByLabelText(/repository url/i), "https://github.com/a/b");
-    await userEvent.type(screen.getByLabelText(/working-tree path/i), "/srv/c");
+    await userEvent.type(screen.getByLabelText("Owner"), "octocat");
+    await userEvent.type(screen.getByLabelText("Repository"), "hello-world");
+    await userEvent.type(screen.getByLabelText(/app installation id/i), "12345678");
     await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith(
-        "/projects",
-        expect.objectContaining({ repo_url: "https://github.com/a/b" }),
-      ),
+      expect(mockPost).toHaveBeenCalledWith("/projects/import/github", {
+        // A NUMBER, because the endpoint declares `installation_id: int` with `extra="forbid"`, so a
+        // string is a 422 rather than a coercion.
+        installation_id: 12345678,
+        owner: "octocat",
+        repo: "hello-world",
+      }),
     );
+  });
+
+  it("asks for no local path when importing, because there is none to give", async () => {
+    // The old single rule demanded a directory the user had not cloned yet, which is why choosing
+    // GitHub could never be submitted. The import derives the name from the repository too, so
+    // asking for one here would offer a value the backend ignores.
+    serve([]);
+    renderPage(<ProjectsPage />);
+    expect(screen.queryByLabelText(/working-tree path/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+  });
+
+  it("states plainly that an import still needs a local checkout to scan", async () => {
+    // The scan is a local directory walk. An import records the repository and clones nothing, so a
+    // user who is not told this has a project that can never be scanned and no way to know why.
+    serve([]);
+    renderPage(<ProjectsPage />);
+    expect(screen.getByText(/an agent still needs a local checkout to scan/i)).toBeInTheDocument();
   });
 
   it("explains why the path is typed rather than chosen with a file picker", async () => {
     serve([]);
     renderPage(<ProjectsPage />);
+    // Only on the local branch now, which is the only branch that has a path at all.
+    await userEvent.click(screen.getByLabelText(/directory on the machine/i));
     // The constraint is real and stated: a browser cannot report a directory's absolute path, so
     // there is no control that could fill this in. Leaving it unexplained makes the form look lazy.
     expect(screen.getByText(/a browser cannot report a directory/i)).toBeInTheDocument();
@@ -181,6 +208,7 @@ describe("creating a project", () => {
   it("will not submit without both required fields", async () => {
     serve([]);
     renderPage(<ProjectsPage />);
+    await userEvent.click(screen.getByLabelText(/directory on the machine/i));
     const submit = screen.getByRole("button", { name: /create project/i });
     expect(submit).toBeDisabled();
 
@@ -189,6 +217,54 @@ describe("creating a project", () => {
 
     await userEvent.type(screen.getByLabelText(/working-tree path/i), "/srv/x");
     expect(submit).toBeEnabled();
+  });
+
+  it("will not submit an import without all three of its fields", async () => {
+    serve([]);
+    renderPage(<ProjectsPage />);
+    const submit = screen.getByRole("button", { name: /create project/i });
+    expect(submit).toBeDisabled();
+
+    await userEvent.type(screen.getByLabelText("Owner"), "octocat");
+    await userEvent.type(screen.getByLabelText("Repository"), "hello-world");
+    expect(submit).toBeDisabled();
+
+    // A NON-NUMERIC installation id must stay disabled rather than be sent and 422'd: `Number("abc")`
+    // is NaN, which would serialise as null and produce a validation error about the wrong field.
+    await userEvent.type(screen.getByLabelText(/app installation id/i), "abc");
+    expect(submit).toBeDisabled();
+
+    await userEvent.clear(screen.getByLabelText(/app installation id/i));
+    await userEvent.type(screen.getByLabelText(/app installation id/i), "42");
+    expect(submit).toBeEnabled();
+  });
+
+  it("names the two settings to configure instead of surfacing a bare 503", async () => {
+    // `GitHubAppNotConfiguredError` maps to this type, and it is the state of EVERY fresh install:
+    // both settings ship unset. A raw 503 reads as "the server is broken" when the answer is two
+    // environment variables, and it should point at the path that needs no credentials.
+    serve([]);
+    const { ApiProblemError } = await import("@/lib/api");
+    mockPost.mockRejectedValue(
+      new ApiProblemError({
+        type: "repository-import-unconfigured",
+        title: "Repository import is not configured",
+        status: 503,
+        detail: "GITHUB_APP_ID is not set",
+      }),
+    );
+    renderPage(<ProjectsPage />);
+
+    await userEvent.type(screen.getByLabelText("Owner"), "octocat");
+    await userEvent.type(screen.getByLabelText("Repository"), "hello-world");
+    await userEvent.type(screen.getByLabelText(/app installation id/i), "1");
+    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/GITHUB_APP_ID/);
+    expect(alert).toHaveTextContent(/GITHUB_APP_PRIVATE_KEY/);
+    expect(alert).toHaveTextContent(/directory on the machine the agent runs on/i);
+    expect(screen.queryByText(/^Created\./)).not.toBeInTheDocument();
   });
 
   it("renders a refusal from the server rather than claiming success", async () => {
@@ -204,6 +280,7 @@ describe("creating a project", () => {
     );
     renderPage(<ProjectsPage />);
 
+    await userEvent.click(screen.getByLabelText(/directory on the machine/i));
     await userEvent.type(screen.getByLabelText("Name"), "X");
     await userEvent.type(screen.getByLabelText(/working-tree path/i), "/x");
     await userEvent.click(screen.getByRole("button", { name: /create project/i }));

@@ -294,6 +294,10 @@ class GovernanceAction(StrEnum):
     #: "who stopped this and why" is the question asked after an incident.
     CHANGE_SET_REJECTED = "change_set_rejected"
     #: A revert was authorised; the reverse change set is named in `after_state`.
+    #: The agent applied part of a change set, could not finish, and restored the pre-image from its
+    #: own backups. Distinct from a refusal (nothing was attempted) and from `failed` (something may
+    #: remain). §3.6 declares the `applying -> rolled_back` edge and nothing traversed it.
+    CHANGE_SET_ROLLED_BACK = "change_set_rolled_back"
     CHANGE_SET_REVERT_AUTHORISED = "change_set_revert_authorised"
 
 
@@ -1636,6 +1640,72 @@ class GovernanceChokepoint:
             del reverted
         await session.commit()
         return final
+
+    async def record_apply_rolled_back(self, session: AsyncSession, *, change_set_id: uuid.UUID, reason: str) -> str:
+        """Move a change set `applying → rolled_back` on the agent's own rollback report (§3.6).
+
+        THE EDGE EXISTED AND NOTHING TRAVERSED IT. `CHANGE_SET_TRANSITIONS` has declared
+        `("applying", "rolled_back")` since revision 0004, and `rolled_back` has been in
+        `CHANGE_SET_STATUSES` just as long — but the only writer of a terminal state was
+        `record_command_result`, which sets `applied` or `failed`. An agent that rolled an apply back
+        reports it as `agent.error` with code `apply-rolled-back`, and the hub's handler for that
+        method only logged. So the state was unreachable in practice: a change set the agent had
+        undone stayed `applying` for ever, indistinguishable from one still in flight, and the
+        distinction the documentation draws between a deliberate `reverted` and an aborted
+        `rolled_back` could not be observed anywhere.
+
+        WHY IT IS A DIFFERENT STATE FROM `failed`. `failed` means the operation ran and did not
+        succeed; the workspace may hold whatever it managed to do. `rolled_back` means the agent
+        restored the pre-image from its backups, so the workspace is as it was. An operator deciding
+        whether to retry or to inspect needs those apart, and `approvals/routes.py` already says so.
+
+        Guarded on `status = 'applying'` exactly as the sibling transition is, because delivery is
+        at-least-once and only the first report should move anything. A second one answers
+        `ignored`.
+
+        NO ROLLBACK MANIFEST IS STORED. The agent has already consumed its own backups to restore
+        the tree, and recording a manifest of backups that no longer exist would invite a revert
+        that tried to restore from them.
+        """
+        result = await session.execute(
+            text(
+                "UPDATE change_sets SET status = 'rolled_back' "
+                "WHERE id = :id AND status = 'applying' "
+                "RETURNING project_id, tenant_id"
+            ),
+            {"id": change_set_id},
+        )
+        row = result.mappings().first()
+        if row is None:
+            await session.commit()
+            return "ignored"
+
+        # Through `_append_audit`, the module's ONE audit call site, so "exactly one record per
+        # transit" stays a property a reader can verify by counting calls to it.
+        #
+        # ATTRIBUTED TO THE PROJECT AND TENANT of the change set, taken from the row this transition
+        # just moved. Without them the record exists but is invisible to every project-scoped query —
+        # which is indistinguishable from not having written it, and was how the first version of
+        # this failed its own test.
+        await self._append_audit(
+            session,
+            principal=None,
+            admitted=None,
+            action=GovernanceAction.CHANGE_SET_ROLLED_BACK,
+            # `failed`, from the audit vocabulary's closed set. The OUTCOME is that the operation did
+            # not succeed; the STATE it landed in is `rolled_back`, and that is carried in
+            # `after_state`. Widening the outcome set to hold a state name would blur the two.
+            outcome="failed",
+            resource_kind="change_set",
+            resource_id=str(change_set_id),
+            reason=reason,
+            before_state={"status": "applying"},
+            after_state={"status": "rolled_back"},
+            project_id=row["project_id"],
+            tenant_id=row["tenant_id"],
+        )
+        await session.commit()
+        return "rolled_back"
 
     async def _apply_entries(self, session: AsyncSession, change_set_id: uuid.UUID) -> list[dict[str, Any]]:
         """Build `changeset.apply`'s `entries`, which the ENVELOPE has to carry.

@@ -278,7 +278,23 @@ func (m *Manager) runOnce(ctx context.Context) error {
 		return fmt.Errorf("session: client TLS: %w", err)
 	}
 
-	socketURL, err := socketURL(m.backendURL)
+	// THE ENDPOINT THE BACKEND STATED AT PAIRING, not the URL used to pair.
+	//
+	// Those are two different listeners on two different ports: pairing is the one unauthenticated
+	// route and cannot require a client certificate, because an agent asking to be issued one has
+	// none yet; this session requires both a certificate and a device token. An agent that dialled
+	// the pairing port here was refused with "client certificate and bearer device token are both
+	// required" — which is the correct answer, and was the reason a host agent could pair and then
+	// never receive an apply command.
+	//
+	// `SessionURL` falls back to the configured URL for a backend that states none. See its
+	// docstring for why this address may be taken from the pairing response when a guessed one
+	// may not be.
+	endpoint, err := SessionURL(creds.SessionWSURL, m.backendURL)
+	if err != nil {
+		return err
+	}
+	socketURL, err := socketURL(endpoint)
 	if err != nil {
 		return err
 	}

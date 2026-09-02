@@ -66,3 +66,20 @@ ollama
 # It costs no second download. It shares the `ollamamodels` volume and waits for `ollama` to be
 # healthy, so the weights are already present and its own `pull` is a no-op.
 ollama-secondary
+# The agent's mTLS listener, which is where a signed apply command is DELIVERED.
+#
+# A TWELFTH service, and the same class of omission as `worker` above with a larger consequence.
+# `/api/v1/ws/agent` authenticates the peer with two secrets, one of which is a client certificate,
+# and requiring a client certificate is a property of the LISTENER rather than of a route - so it
+# cannot be turned on for the port the browser uses, and it needs a second listener.
+# `backend/src/agent_listener.py` carries the full argument.
+#
+# That listener existed only in `docker-compose.e2e.yml`. So `make up` produced a stack with NOTHING
+# holding 8443, and onboarding step 8 was impossible: a user could generate, approve, watch the audit
+# chain record both transits, and no file would ever land on disk, because the command had nowhere to
+# be delivered. An agent inside the Compose network could receive one; the supported deployment - a
+# host binary on the user's own machine - could not.
+#
+# Unprofiled, and its host port published, for the reason `worker` is unprofiled: a stack that accepts
+# an approval it can never carry out is not a working default.
+backend-agent

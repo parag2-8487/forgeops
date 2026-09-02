@@ -51,13 +51,19 @@
             "description": "The agent release the UI should offer for download, or an empty string when this deployment pins none.",
             "title": "Release Tag",
             "type": "string"
+          },
+          "session_ws_url": {
+            "description": "Where a paired agent's session goes, over mutual TLS. Reported for reference and for `doctor`; an agent receives this in its pairing response and does not need to be told it, so it is NOT part of the command the UI prints.",
+            "title": "Session Ws Url",
+            "type": "string"
           }
         },
         "required": [
           "backend_ws_url",
           "agent_ws_path",
           "release_tag",
-          "download_base_url"
+          "download_base_url",
+          "session_ws_url"
         ],
         "title": "AgentConnectionInfo",
         "type": "object"
@@ -1381,6 +1387,10 @@
           "renew_after": {
             "title": "Renew After",
             "type": "string"
+          },
+          "session_ws_url": {
+            "title": "Session Ws Url",
+            "type": "string"
           }
         },
         "required": [
@@ -1394,7 +1404,8 @@
           "cert_serial",
           "cert_fingerprint",
           "cert_not_after",
-          "renew_after"
+          "renew_after",
+          "session_ws_url"
         ],
         "title": "ExchangeResponse",
         "type": "object"
@@ -4655,6 +4666,59 @@
           }
         },
         "summary": "Create Policy",
+        "tags": [
+          "policies"
+        ]
+      }
+    },
+    "/api/v1/policies/active-bundle": {
+      "get": {
+        "description": "Report the active bundle's digest, or `null` when nothing is published.\n\nWHY THIS EXISTS. The Onboarding screen showed \"Not checked\" against *publish the policy bundle*\nbecause no read route could report it \u2014 and that reads as \"not working\" rather than \"nobody\nlooked\". It is a one-row query the chokepoint was already making on every submission\n(`_active_bundle_digest`), so the step was permanently unverifiable for want of an endpoint that\nalready had its SQL written.\n\nIT MATTERS MORE THAN A TICK. Pairing pins a device to the project's active digest, and the\nchokepoint refuses every submission whose device pin differs from it. So \"nothing is published\"\nis the cause of a `policy-bundle-stale` refusal an operator would otherwise have to infer from a\nrejected change set.\n\nTHE SAME PREDICATE THE CHOKEPOINT USES, including `project_id IS NULL`: an installation-wide\nbundle is active for a project that has none of its own, and answering `null` here while the\nchokepoint saw one would make this endpoint a second, disagreeing opinion.",
+        "operationId": "get_active_bundle_api_v1_policies_active_bundle_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Active Bundle Api V1 Policies Active Bundle Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Which policy bundle is active for a project",
         "tags": [
           "policies"
         ]

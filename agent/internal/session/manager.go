@@ -510,6 +510,19 @@ type exchangeResponse struct {
 	// from "published and empty".
 	PolicyBundle       *string `json:"policy_bundle"`
 	PolicyBundleDigest *string `json:"policy_bundle_digest"`
+	// SessionWSURL is where this device holds its session, which is NOT the URL the exchange was
+	// sent to. The exchange is the one unauthenticated route and runs on the ordinary port,
+	// because an agent asking to be issued a certificate cannot already present one; the session
+	// requires that certificate, and requiring one is a property of the listener, so it is a
+	// second listener on a second port.
+	//
+	// TAKEN FROM THE RESPONSE rather than configured, and that is sound here specifically. The
+	// agent has just spent a single-use pairing code minted inside the deployment and is being
+	// handed a certificate and a CA bundle by the peer that answered; an attacker who could
+	// choose this value would already have to be that peer. Contrast `DiscoverBackendURL`, which
+	// refuses any non-loopback value it was not explicitly given — there the agent would be
+	// guessing, and a guess sends a device token to whatever answers.
+	SessionWSURL string `json:"session_ws_url"`
 }
 
 // problemDocument is the RFC 9457 body the backend returns on every failure path.
@@ -789,6 +802,10 @@ func credentialsFrom(r *exchangeResponse, keyPEM []byte, sentFingerprint string)
 		CABundle:           caPEM,
 		PolicyBundle:       bundle,
 		PolicyBundleDigest: bundleDigest,
+		// Stored exactly as the backend stated it, and NOT validated into a different shape here:
+		// `SessionURL` is where the fallback and the empty case are decided, so there is one place
+		// that answers "which URL does this agent dial".
+		SessionWSURL: r.SessionWSURL,
 	}, nil
 }
 
@@ -807,6 +824,74 @@ func decodeCredentialBytes(value, field string) ([]byte, error) {
 			"session: %s is %d bytes; expected %d", field, len(decoded), credentialByteLength)
 	}
 	return decoded, nil
+}
+
+// SessionURL reports where this agent must hold its authenticated session.
+//
+// WHY THIS IS NOT SIMPLY THE CONFIGURED URL. An agent talks to the backend over two channels with
+// two different authentication requirements, and therefore two different listeners:
+//
+//	pairing exchange   the ordinary port. The one unauthenticated route (§4.4) — an agent asking
+//	                   to be ISSUED a certificate cannot already present one, so this listener
+//	                   cannot be one that requires a client certificate.
+//	session and scan   a second listener that requires the client certificate AND a device token.
+//	                   Requiring a certificate is a property of the listener, not of a route.
+//
+// Driving both from one configured value could satisfy either and never both: pointed at the
+// ordinary port the session was refused with "client certificate and bearer device token are both
+// required", and pointed at the mTLS port the pairing exchange failed the TLS handshake. That is
+// exactly why a host agent could pair and then never receive an apply command.
+//
+// THE PRECEDENCE, and why it is decided by SCHEME rather than by a bare preference:
+//
+//  1. A configured `wss://` URL wins. Only a TLS endpoint can carry a client certificate, so a
+//     `wss` value is unambiguously somebody naming this agent's SESSION endpoint on purpose — and
+//     an explicit value from a human or an operator's deployment must not be silently overridden.
+//     This is what keeps a containerised agent working: it is configured with
+//     `wss://backend-agent:8443/...`, reachable only over the Compose network, while the backend
+//     advertises the address a HOST agent needs. One deployment genuinely has two audiences and no
+//     single advertised address serves both, so the side that knows which audience it is decides.
+//  2. Otherwise the endpoint the backend stated at pairing. This is the host case: the user
+//     supplied the ordinary port because that is where pairing happens, and the backend replied
+//     with its mTLS listener's address next to the CA that verifies it.
+//  3. Otherwise the configured URL whatever its scheme, so a backend older than the field keeps
+//     working. If that value is plaintext the session will be refused, and `DescribeTrust` says so
+//     in those words rather than leaving a silent failure.
+//  4. Otherwise refuse. Never derive, never guess.
+//
+// A DERIVED VALUE IS NEVER PRODUCED — not "the configured host with 8443 substituted", not a port
+// scan. Every address this can return was named by a human or by the backend that issued the
+// certificate. See `Credentials.SessionWSURL` for why the pairing response is a sound source when a
+// guess is not.
+func SessionURL(stored, configured string) (string, error) {
+	cfg := strings.TrimSpace(configured)
+	if isTLSWebSocket(cfg) {
+		return cfg, nil
+	}
+	if s := strings.TrimSpace(stored); s != "" {
+		return s, nil
+	}
+	if cfg != "" {
+		return cfg, nil
+	}
+	return "", fmt.Errorf(
+		"%w: this device was paired by a backend that did not state its session endpoint, and no "+
+			"AGENT_BACKEND_WSS_URL is configured either. Set AGENT_BACKEND_WSS_URL to the agent "+
+			"listener's address, or re-pair against a backend that reports it",
+		connection.ErrDisabled)
+}
+
+// isTLSWebSocket reports whether a configured value names an endpoint that could carry a client
+// certificate. Parsed rather than prefix-matched so `wsseverywhere://` is not mistaken for one.
+func isTLSWebSocket(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "wss" || parsed.Scheme == "https"
 }
 
 // HTTPOrigin turns the configured backend WSS URL into the HTTP origin of the same backend.

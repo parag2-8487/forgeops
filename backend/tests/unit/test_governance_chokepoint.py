@@ -317,6 +317,18 @@ class TestTheConstants:
             # do reviewers refuse" unanswerable.
             "change_set_rejected",
             "change_set_revert_authorised",
+            # Added with `record_apply_rolled_back`. Same shape of gap as `change_set_rejected`
+            # above: `rolled_back` has been in `CHANGE_SET_STATUSES` and its `applying -> rolled_back`
+            # edge in `CHANGE_SET_TRANSITIONS` since revision 0004, and nothing traversed it. The only
+            # writer of a terminal state set `applied` or `failed`, and the agent reports a rollback
+            # over a different protocol method (`agent.error`, code `apply-rolled-back`) whose handler
+            # merely logged. So a change set the agent had UNDONE stayed `applying` for ever.
+            #
+            # Its own action rather than an outcome on a shared one, because it answers a different
+            # question from `failed`: `failed` may have left work behind, `rolled_back` means the
+            # workspace is as it was, and an operator deciding whether to retry or to inspect needs
+            # those apart.
+            "change_set_rolled_back",
         }
 
     def test_a_generated_nonce_is_one_hundred_and_twenty_eight_bits_of_hex(self) -> None:

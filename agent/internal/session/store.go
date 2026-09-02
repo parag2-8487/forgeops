@@ -51,6 +51,20 @@ type Credentials struct {
 	// refuses to store.
 	PolicyBundle       []byte `json:"policy_bundle,omitempty"`
 	PolicyBundleDigest string `json:"policy_bundle_digest,omitempty"`
+
+	// SessionWSURL is where this device holds its authenticated session, as stated by the
+	// backend that issued the certificate above.
+	//
+	// WHY IT IS STORED WITH THE CREDENTIAL rather than read from configuration. It is pinned by
+	// the same single-use exchange that issues the certificate and the CA bundle, and it is only
+	// meaningful together with them: this URL names a listener that requires THIS certificate and
+	// is verified against THAT CA. Keeping the three together means an agent cannot be pointed at
+	// a listener it holds no certificate for, and re-pairing against a different deployment
+	// replaces all three at once.
+	//
+	// Empty means the backend stated none, which is what a backend older than this field does.
+	// `SessionURL` then falls back to the configured URL, so an older deployment keeps working.
+	SessionWSURL string `json:"session_ws_url,omitempty"`
 }
 
 // Store persists the device credential set.
@@ -148,6 +162,10 @@ type publicPart struct {
 	CABundle           []byte `json:"ca_bundle"`
 	PolicyBundle       []byte `json:"policy_bundle,omitempty"`
 	PolicyBundleDigest string `json:"policy_bundle_digest,omitempty"`
+	// An address, not a secret: it names a listener that demands a client certificate, so
+	// knowing it grants nothing. It also belongs on this side because the keychain half is
+	// budgeted to 2560 bytes and a URL there would spend that budget for no benefit.
+	SessionWSURL string `json:"session_ws_url,omitempty"`
 }
 
 func split(c Credentials) (secretPart, publicPart) {
@@ -161,6 +179,7 @@ func split(c Credentials) (secretPart, publicPart) {
 			CABundle:           c.CABundle,
 			PolicyBundle:       c.PolicyBundle,
 			PolicyBundleDigest: c.PolicyBundleDigest,
+			SessionWSURL:       c.SessionWSURL,
 		}
 }
 
@@ -172,6 +191,7 @@ func join(s secretPart, p publicPart) Credentials {
 		ClientKey:          s.ClientKey,
 		ClientCert:         p.ClientCert,
 		CABundle:           p.CABundle,
+		SessionWSURL:       p.SessionWSURL,
 		PolicyBundle:       p.PolicyBundle,
 		PolicyBundleDigest: p.PolicyBundleDigest,
 	}

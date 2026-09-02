@@ -675,6 +675,9 @@ describe("the onboarding path", () => {
     projects = PROJECTS.projects,
     devices = [] as (typeof DEVICE)[],
     indexedFiles = 0,
+    // `null` is the honest default: a fresh install has published nothing, and that is the state the
+    // bundle step exists to warn about.
+    activeDigest = null as string | null,
   } = {}) {
     mockGet.mockImplementation((raw: unknown) => {
       const path = String(raw ?? "");
@@ -682,6 +685,8 @@ describe("the onboarding path", () => {
         return Promise.resolve({ projects, next_cursor: null });
       if (path.startsWith("/agents/devices?"))
         return Promise.resolve({ devices, next_cursor: null });
+      if (path.startsWith("/policies/active-bundle"))
+        return Promise.resolve({ digest: activeDigest, published_at: null });
       if (path.includes("/analysis/codebase/")) {
         return Promise.resolve({
           indexed_files: indexedFiles,
@@ -745,23 +750,42 @@ describe("the onboarding path", () => {
     expect(screen.getByTestId("onboarding-step-4")).toHaveTextContent("141 file(s)");
   });
 
-  it("REFUSES to tick the bundle step, because nothing reports it", async () => {
-    serve({ devices: [DEVICE], indexedFiles: 141 });
+  it("TICKS the bundle step from a real read route rather than disclaiming it", async () => {
+    // THE CHANGE. This step was permanently "Not checked" for want of an endpoint, and it is the one
+    // easiest to skip and hardest to diagnose: the chokepoint refuses every submission from a device
+    // pinned to a different digest. So it got the endpoint the chokepoint's own query already implied.
+    serve({ devices: [DEVICE], indexedFiles: 141, activeDigest: "sha256:abc123def456abc7890" });
     renderPage(<OnboardingPage />);
-    // THE ASSERTION THIS SCREEN EXISTS FOR. There is no read route for "does this tenant have an active
-    // bundle", so a tick here would be a claim nothing checked — exactly the thing removed from every
-    // other screen in this pass.
-    expect(await screen.findByTestId("step-5-state")).toHaveTextContent("Not checked");
-    expect(screen.getByText(/no tick is shown for something nothing checked/i)).toBeInTheDocument();
+    // Waited for, not read once: the badge starts at "Checking…" by design, and asserting before the
+    // query settles would test the loading state while claiming to test the result.
+    await waitFor(() => expect(screen.getByTestId("step-5-state")).toHaveTextContent("Done"));
+    expect(screen.getByTestId("onboarding-step-5")).toHaveTextContent(
+      /a device paired now is pinned/i,
+    );
   });
 
-  it("names which steps are checked against an endpoint and which are not", async () => {
-    serve({ devices: [DEVICE] });
+  it("says Not yet on the bundle step when nothing is published", async () => {
+    // A REAL NEGATIVE, not a shrug, and distinguishable from "nothing here reports this" — which is
+    // the whole point of separating the two.
+    serve({ devices: [DEVICE], indexedFiles: 141, activeDigest: null });
     renderPage(<OnboardingPage />);
-    // Four checked, four declared unknown. Saying which is which is what makes the ticks trustworthy.
+    await waitFor(() => expect(screen.getByTestId("step-5-state")).toHaveTextContent("Not yet"));
+  });
+
+  it("distinguishes an action from something it has no read route for", async () => {
+    // "Not checked" used to cover both, and read as "not working" in both. A user who had done
+    // everything right saw four grey labels and concluded the product was broken.
+    serve({ devices: [DEVICE], activeDigest: "sha256:abc123def456abc7890" });
+    renderPage(<OnboardingPage />);
+    // Five steps are now checked against an endpoint, the bundle step among them.
     const checked = await screen.findAllByText(/^Checked against/i);
-    expect(checked).toHaveLength(4);
-    expect(screen.getAllByText("Not checked")).toHaveLength(4);
+    expect(checked).toHaveLength(5);
+    // Generate and approve are things you DO; no resting state would mean "done".
+    expect(screen.getAllByText("Your move")).toHaveLength(2);
+    // The applied queue is observable, just not from here. A different statement, said differently.
+    expect(screen.getAllByText("Not reported here")).toHaveLength(1);
+    // And the retired wording is gone, so neither meaning can quietly come back.
+    expect(screen.queryByText("Not checked")).not.toBeInTheDocument();
   });
 
   it("carries the state as a word rather than only as a colour", async () => {
@@ -770,7 +794,7 @@ describe("the onboarding path", () => {
     // A tick a screen reader cannot read is not a status.
     for (const n of [1, 2, 3, 4]) {
       expect((await screen.findByTestId(`step-${n}-state`)).textContent).toMatch(
-        /Done|Not yet|Not checked/,
+        /Done|Not yet|Checking|Your move|Not reported here/,
       );
     }
   });

@@ -48,8 +48,23 @@ interface DevicePage {
   }[];
 }
 
-/** Whether a step's precondition is satisfied, or unknown because nothing can report it. */
-type StepState = "done" | "todo" | "unknown";
+/**
+ * What this screen can say about a step. The cases are deliberately distinct.
+ *
+ * WHY "Not checked" WAS REPLACED. One label covered three unrelated situations — a check still in
+ * flight, a step that is an ACTION with no resting state, and a step nothing here has a read route
+ * for — and it read as "not working" in all of them. That is worse than saying nothing: a user who
+ * has done everything right sees four grey labels and concludes the product is broken. The
+ * discipline behind it was right (never a tick for something nothing checked) and is kept; only the
+ * wording that collapsed three meanings into one is gone.
+ *
+ *   done      a real check answered yes
+ *   todo      a real check answered no
+ *   checking  a real check is in flight
+ *   action    something you DO; there is no resting state that would mean "done"
+ *   no-route  observable in principle, but this screen has no endpoint that reports it
+ */
+type StepState = "done" | "todo" | "checking" | "action" | "no-route";
 
 export default function OnboardingPage() {
   const [projectId, setProjectId] = useState("");
@@ -72,6 +87,21 @@ export default function OnboardingPage() {
     enabled: projectId !== "",
     retry: false,
   });
+
+  // The endpoint applies the SAME predicate the chokepoint does, including an installation-wide
+  // bundle standing in for a project that has none of its own — so this screen and the refusal a
+  // user would otherwise hit cannot disagree about whether anything is published.
+  const bundle = useQuery({
+    queryKey: ["policies", "active-bundle", projectId],
+    queryFn: () =>
+      api.get<{ digest: string | null; published_at: string | null }>(
+        projectId === ""
+          ? "/policies/active-bundle"
+          : `/policies/active-bundle?project_id=${projectId}`,
+      ),
+    retry: false,
+  });
+  const activeDigest = bundle.data?.digest ?? null;
 
   const hasProject = (projects.data?.projects.length ?? 0) > 0;
   const devicesForProject =
@@ -165,7 +195,7 @@ export default function OnboardingPage() {
           n={4}
           title="Scan the codebase"
           state={
-            projectId === "" ? "todo" : index.isPending ? "unknown" : indexed ? "done" : "todo"
+            projectId === "" ? "todo" : index.isPending ? "checking" : indexed ? "done" : "todo"
           }
           observedBy="GET /api/v1/analysis/codebase/{id}/status"
           done={
@@ -181,52 +211,56 @@ export default function OnboardingPage() {
         <Step
           n={5}
           title="Publish the policy bundle"
-          // Deliberately `unknown`, always. There is no read route for "does this tenant have an
-          // active bundle", so a tick here would be a claim nothing checked — which is precisely the
-          // kind of thing this whole pass removed from other screens.
-          state="unknown"
-          observedBy={null}
-          done=""
+          // NOW CHECKED, rather than disclaimed. This was permanently unreportable for want of a read
+          // route, and it is the step easiest to skip and hardest to diagnose — so it is the one worth
+          // an endpoint. `GET /policies/active-bundle` is the one-row query the chokepoint was already
+          // making on every submission: the digest existed and nothing exposed it.
+          state={bundle.isPending ? "checking" : activeDigest ? "done" : "todo"}
+          observedBy="GET /api/v1/policies/active-bundle"
+          done={
+            activeDigest
+              ? `Active bundle ${activeDigest.slice(0, 19)}… — a device paired now is pinned to this digest.`
+              : ""
+          }
           todo="THE STEP THAT IS EASIEST TO SKIP AND HARDEST TO DIAGNOSE. The chokepoint refuses a change-set submission from any agent not pinned to the tenant's current bundle digest, so an unpublished tenant fails at step 7 with a stale-bundle error that says nothing about bundles. Publish once now, and again after every policy change you want enforced."
           href="/policies"
           hrefLabel="Publish the bundle"
-          unknownNote="This screen cannot tell you whether a bundle is published: there is no read route that reports it, and no tick is shown for something nothing checked. The publish control reports the digest it activated."
         />
 
         <Step
           n={6}
           title="Generate an artifact"
-          state="unknown"
+          state="action"
           observedBy={null}
           done=""
           todo="Streams a real run over the six §7.4 event types. Artifacts that pass the deterministic validation gate are submitted to the chokepoint as a change set rather than written anywhere directly — so a successful generation ends with something to review, not with files on disk."
           href="/generation"
           hrefLabel="Open the generator"
-          unknownNote="An action rather than a state. Generation runs are not counted here; the project's change history shows what a run produced."
+          unknownNote="Nothing here to tick: a generation is something you run, not a state to rest in. What a run produced appears in the project's change history."
         />
 
         <Step
           n={7}
           title="Approve the change set"
-          state="unknown"
+          state="action"
           observedBy={null}
           done=""
           todo="The gate holds what step 6 submitted. Approving mints authority and hands the agent a signed command; rejecting writes the refusal to the audit chain. Either way the decision is attributed to your authenticated identity — there is no field for the approver."
           href="/approvals"
           hrefLabel="Open the approval centre"
-          unknownNote="An action rather than a state. The Awaiting decision queue is empty until step 6 produces something."
+          unknownNote="Nothing here to tick: approving is a decision you make. The Awaiting decision queue stays empty until step 6 produces something to decide on."
         />
 
         <Step
           n={8}
           title="The agent applies it"
-          state="unknown"
+          state="no-route"
           observedBy={null}
           done=""
           todo="Nothing to do here — the agent paired in step 3 receives the signed command and writes the files, taking a timestamped backup first. If the write fails partway it restores from that backup and reports `rolled_back`, which is a different state from a deliberate `reverted`."
           href={projectId === "" ? "/approvals" : `/projects/${projectId}`}
           hrefLabel="Watch the change history"
-          unknownNote="Observed through the project's change history rather than here: the status moves applying → applied, or apply_failed → rolled_back."
+          unknownNote="Reported by the project's change history rather than by this screen, which has no read route for the queue and does not guess. A change set moves applying → applied when the agent finishes, → rolled_back when it had to undo a partial write, and → reverted only when somebody deliberately reverses an applied one."
         />
       </ol>
 
@@ -279,7 +313,13 @@ function Step({
   hrefLabel: string;
   unknownNote?: string;
 }) {
-  const badge = state === "done" ? "Done" : state === "todo" ? "Not yet" : "Not checked";
+  const badge = {
+    done: "Done",
+    todo: "Not yet",
+    checking: "Checking…",
+    action: "Your move",
+    "no-route": "Not reported here",
+  }[state];
 
   return (
     <li
@@ -296,8 +336,10 @@ function Step({
           className={
             state === "done"
               ? "text-xs font-medium text-emerald-600"
-              : state === "todo"
-                ? "text-xs font-medium text-amber-600"
+              : state === "todo" || state === "action"
+                ? // Amber for both: each is something the user still has to do. The difference is
+                  // whether a check confirmed it, and the badge word carries that.
+                  "text-xs font-medium text-amber-600"
                 : "text-xs font-medium text-muted-foreground"
           }
         >
@@ -307,7 +349,7 @@ function Step({
 
       <p className="mt-2 text-sm text-muted-foreground">{state === "done" ? done : todo}</p>
 
-      {state === "unknown" && unknownNote ? (
+      {(state === "action" || state === "no-route") && unknownNote ? (
         <p className="mt-1 text-xs text-muted-foreground">{unknownNote}</p>
       ) : null}
 

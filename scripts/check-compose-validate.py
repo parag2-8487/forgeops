@@ -85,7 +85,12 @@ OPTIONAL_SERVICE_PROFILES = {"infisical": "vault", "agent-dev": "tools"}
 #: Services built from a local context rather than pulled by digest. `worker` builds from ./backend,
 #: the same image the API runs: a worker whose code differs from the API's is a class of bug worth
 #: designing out, and it is why this is a build rather than a second pinned image.
-BUILD_SERVICES = {"backend", "frontend", "worker"}
+#:
+#: `backend-agent` is the same image again for a stronger version of the same reason. It is a SECOND
+#: LISTENER over the identical application, and it must see the identical configuration — in
+#: particular the same `INTERNAL_CA_*` pair, or it would issue its server certificate from a different
+#: CA than the one the agent is handed at pairing, and every verification would fail correctly.
+BUILD_SERVICES = {"backend", "backend-agent", "frontend", "worker"}
 #: Derived, so a new default service is covered without editing a second list.
 IMAGE_SERVICES = DEFAULT_SERVICES - BUILD_SERVICES
 #: Every default service must declare a healthcheck. This was previously

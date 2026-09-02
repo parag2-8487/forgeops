@@ -39,18 +39,39 @@ func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
 	if err != nil {
 		return nil, err
 	}
-	// `session.HTTPOrigin` derives the HTTP origin from the SAME configured URL the session dials,
-	// so an agent cannot pair with one backend and upload its index to another.
-	origin, err := session.HTTPOrigin(a.cfg.BackendWSSURL)
-	if err != nil {
-		return nil, fmt.Errorf("agent: backend origin: %w", err)
-	}
 	// The credential store is opened here rather than passed in, because `forgeops-agent scan`
 	// has no session to take one from. `session.NewStore` is idempotent — it opens the same
 	// on-disk store `Session` uses, so the two cannot read different credentials.
+	//
+	// OPENED BEFORE THE ORIGIN IS DERIVED, because the origin now comes out of the credential.
 	store, err := session.NewStore(a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
 	if err != nil {
 		return nil, fmt.Errorf("agent: credential store: %w", err)
+	}
+	// THE SAME ENDPOINT THE SESSION DIALS, derived from the address the backend stated when it
+	// issued this device's certificate — so an agent cannot pair with one backend and upload its
+	// index to another, and cannot upload to a listener it holds no certificate for.
+	//
+	// The submit and the session must agree here or one of them is talking to the wrong listener:
+	// the mTLS port demands the device certificate, and the pairing port does not offer to read
+	// one. Reading it from the stored credential rather than from configuration is what makes them
+	// agree by construction.
+	//
+	// A load failure is NOT fatal to construction. `forgeops-agent scan` on an unpaired agent must
+	// still reach the submit and fail there with a message about pairing, rather than fail while
+	// being built with a message about a store. So an unreadable credential falls through to the
+	// configured URL and the submit reports the real problem.
+	stored := ""
+	if creds, loadErr := store.Load(context.Background()); loadErr == nil {
+		stored = creds.SessionWSURL
+	}
+	endpoint, err := session.SessionURL(stored, a.cfg.BackendWSSURL)
+	if err != nil {
+		return nil, fmt.Errorf("agent: backend origin: %w", err)
+	}
+	origin, err := session.HTTPOrigin(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("agent: backend origin: %w", err)
 	}
 	// The bearer credential is read at CALL time rather than captured here. A device token is
 	// rotated on renewal, and a value captured at assembly would keep being sent after it stopped

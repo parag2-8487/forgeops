@@ -127,6 +127,15 @@ services:
       AGENT_TLS_SERVER_NAMES: "backend-agent,localhost,127.0.0.1"
       AGENT_TLS_PORT: "8443"
     command: ["python", "-m", "src.agent_listener"]
+    ports:
+      # PUBLISHED SO A HOST AGENT CAN REACH IT. Without this the listener is reachable only from
+      # inside the Compose network, so a signed apply command could only ever be delivered to a
+      # containerised agent — and `host-apply.spec.ts`, which drives the released binary as a host
+      # process exactly as a user does, had nothing to dial.
+      #
+      # Same default and same 127.0.0.1 binding as `docker-compose.yml`, so the two stacks do not
+      # disagree about where this listener is.
+      - "127.0.0.1:${AGENT_TLS_HOST_PORT:-18443}:8443"
     depends_on:
       postgres: { condition: service_started }
       redis: { condition: service_started }

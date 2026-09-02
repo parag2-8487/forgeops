@@ -845,3 +845,108 @@ class TestTheSequenceAndNonceAreAllocatedPerEnvelope:
         assert [command.envelope["seq"] for _, command in sink.sent] == [1, 2, 3]
         nonces = {command.envelope["nonce"] for _, command in sink.sent}
         assert len(nonces) == 3, "a repeated nonce would be a replay the agent must reject"
+
+
+class TestTheRollbackReport:
+    """`applying -> rolled_back`, an edge the state machine declared and nothing traversed.
+
+    THE DEFECT THESE PIN. `rolled_back` has been in `CHANGE_SET_STATUSES` and its edge in
+    `CHANGE_SET_TRANSITIONS` since revision 0004, and `approvals/routes.py` documents that it means
+    something different from a deliberate `reverted`. But the only writer of a terminal state was
+    `record_command_result`, which sets `applied` or `failed`, and the hub's `agent.error` branch —
+    where `apply-rolled-back` arrives — only logged. So a change set the agent had undone stayed
+    `applying` for ever, indistinguishable from one still in flight.
+    """
+
+    async def test_a_rollback_report_moves_the_change_set_and_audits_it(
+        self, sessions: async_sessionmaker[AsyncSession], sink: RecordingSink, redis_client: Any
+    ) -> None:
+        policy = ScriptedPolicy(decision=allow())
+        chokepoint = build_chokepoint(policy=policy, sink=sink, redis_client=redis_client)
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            result = await chokepoint.submit(
+                session,
+                MutationRequest(project_id=fixture.project_id, items=one_create(), reason="add a compose file"),
+                principal=fixture.principal,
+            )
+            assert result.status == "applying"
+
+            final = await chokepoint.record_apply_rolled_back(
+                session,
+                change_set_id=result.change_set_id,
+                reason="the second write failed and the pre-image was restored",
+            )
+            assert final == "rolled_back"
+
+            rows = await change_sets(session, fixture.project_id)
+            statuses = {row["id"]: row["status"] for row in rows}
+            assert statuses[result.change_set_id] == "rolled_back"
+
+            audit = await audit_rows(session, fixture.project_id)
+            actions = [row["action"] for row in audit]
+            assert str(GovernanceAction.CHANGE_SET_ROLLED_BACK) in actions, (
+                "a rollback is a governance outcome and must leave a record, not only a log line"
+            )
+            rollback_row = next(row for row in audit if row["action"] == str(GovernanceAction.CHANGE_SET_ROLLED_BACK))
+            # `failed` comes from the audit vocabulary's closed set; the STATE is carried separately.
+            # Asserting both keeps the two from being conflated by a later edit. `after_state` is read
+            # with its own query because `audit_rows` does not select it.
+            assert rollback_row["outcome"] == "failed"
+            after = await session.execute(
+                text("SELECT after_state FROM audit_events WHERE seq = :seq"),
+                {"seq": rollback_row["seq"]},
+            )
+            assert after.scalar_one()["status"] == "rolled_back"
+
+    async def test_a_second_report_is_ignored_rather_than_moving_a_finished_set(
+        self, sessions: async_sessionmaker[AsyncSession], sink: RecordingSink, redis_client: Any
+    ) -> None:
+        """Delivery is at-least-once, so this WILL arrive twice and only the first may move anything."""
+        policy = ScriptedPolicy(decision=allow())
+        chokepoint = build_chokepoint(policy=policy, sink=sink, redis_client=redis_client)
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            result = await chokepoint.submit(
+                session,
+                MutationRequest(project_id=fixture.project_id, items=one_create(), reason="add a compose file"),
+                principal=fixture.principal,
+            )
+            first = await chokepoint.record_apply_rolled_back(
+                session, change_set_id=result.change_set_id, reason="rolled back"
+            )
+            second = await chokepoint.record_apply_rolled_back(
+                session, change_set_id=result.change_set_id, reason="rolled back again"
+            )
+            assert (first, second) == ("rolled_back", "ignored")
+
+            audit = await audit_rows(session, fixture.project_id)
+            rollbacks = [row for row in audit if row["action"] == str(GovernanceAction.CHANGE_SET_ROLLED_BACK)]
+            assert len(rollbacks) == 1, "exactly one record per transit: a redelivered report must not append a second"
+
+    async def test_a_report_for_a_set_that_never_started_applying_moves_nothing(
+        self, sessions: async_sessionmaker[AsyncSession], sink: RecordingSink, redis_client: Any
+    ) -> None:
+        """The transition is guarded on `applying`, which is the only state §3.6 allows it from.
+
+        A set awaiting a human must not be moved to a terminal state by an agent frame naming it.
+        """
+        policy = ScriptedPolicy(decision=require_approval())
+        chokepoint = build_chokepoint(policy=policy, sink=sink, redis_client=redis_client)
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            result = await chokepoint.submit(
+                session,
+                MutationRequest(project_id=fixture.project_id, items=one_create(), reason="needs a human"),
+                principal=fixture.principal,
+            )
+            assert result.status == "pending_approval"
+
+            outcome = await chokepoint.record_apply_rolled_back(
+                session, change_set_id=result.change_set_id, reason="not applying at all"
+            )
+            assert outcome == "ignored"
+
+            rows = await change_sets(session, fixture.project_id)
+            statuses = {row["id"]: row["status"] for row in rows}
+            assert statuses[result.change_set_id] == "pending_approval"

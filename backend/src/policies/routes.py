@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy import select, tuple_
+from sqlalchemy import select, text, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.dependencies import require_principal
 from src.auth.principal import Principal
@@ -117,6 +117,51 @@ async def publish_bundle(
     bundle = await service.build(project_id=project_id)
     await service.publish(bundle, actor=actor)
     return {"digest": bundle.digest, "status": "publishing"}
+
+
+@router.get("/active-bundle", summary="Which policy bundle is active for a project")
+async def get_active_bundle(
+    project_id: uuid.UUID | None = None,
+    session: AsyncSession = Depends(get_session),
+    actor: Any = Depends(require_principal),
+) -> dict[str, Any]:
+    """Report the active bundle's digest, or `null` when nothing is published.
+
+    WHY THIS EXISTS. The Onboarding screen showed "Not checked" against *publish the policy bundle*
+    because no read route could report it — and that reads as "not working" rather than "nobody
+    looked". It is a one-row query the chokepoint was already making on every submission
+    (`_active_bundle_digest`), so the step was permanently unverifiable for want of an endpoint that
+    already had its SQL written.
+
+    IT MATTERS MORE THAN A TICK. Pairing pins a device to the project's active digest, and the
+    chokepoint refuses every submission whose device pin differs from it. So "nothing is published"
+    is the cause of a `policy-bundle-stale` refusal an operator would otherwise have to infer from a
+    rejected change set.
+
+    THE SAME PREDICATE THE CHOKEPOINT USES, including `project_id IS NULL`: an installation-wide
+    bundle is active for a project that has none of its own, and answering `null` here while the
+    chokepoint saw one would make this endpoint a second, disagreeing opinion.
+    """
+    row = (
+        (
+            await session.execute(
+                text(
+                    "SELECT digest, created_at FROM policy_bundles "
+                    "WHERE active AND (project_id = :project OR project_id IS NULL) "
+                    "ORDER BY project_id NULLS LAST, created_at DESC LIMIT 1"
+                ),
+                {"project": project_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return {"digest": None, "published_at": None}
+    return {
+        "digest": row["digest"],
+        "published_at": row["created_at"].isoformat() if row["created_at"] else None,
+    }
 
 
 @router.get("/templates", response_model=list[PolicyTemplateRead])
