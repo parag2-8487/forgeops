@@ -1267,23 +1267,26 @@ jobs:
       # `INTERNAL_CA_CERT_PEM`/`INTERNAL_CA_KEY_PEM`. With neither set it exits 2 and says so, which
       # is correct: a listener must not invent its own trust material. And the CA cannot be committed
       # — a private key in a repository is a private key everybody has — so it is the single value a
-      # fresh clone has to generate rather than read.
+      # fresh clone has to generate rather than read. `make up` does this by depending on `init-ca`.
       #
-      # EXPORTED TO THE ENVIRONMENT, NOT WRITTEN TO `.env`, which keeps this job's stated invariant
-      # exactly true: no `.env` is created, and every other value still comes from the committed
-      # defaults. Compose reads the shell environment for interpolation, so `env_file` still supplies
-      # the rest. `make up` does the equivalent for a developer by depending on `init-ca`.
+      # WRITTEN TO `.env`, AND ONLY THESE TWO LINES. An earlier attempt exported them to `$GITHUB_ENV`
+      # to avoid creating a `.env` at all, and the container still exited 2: the shell environment is
+      # used for `${VAR}` interpolation in the compose FILE, while `backend-agent` takes its
+      # environment from `env_file`, where `.env.example` supplies both keys EMPTY. So the empty value
+      # won and the export achieved nothing.
+      #
+      # The `test ! -e .env` above still does its job, and it is the assertion that matters: it proves
+      # the REPOSITORY ships no `.env`. Generating one is what a fresh clone does — it is the
+      # documented first step — and every other value in it still comes from the committed defaults.
       - name: Generate the development CA the mTLS listener requires
         run: |
-          # Run INSIDE the built backend image: the script refuses outside it, because it imports the
-          # same `src.auth.ca` the listener uses rather than reimplementing certificate generation.
           docker compose run --rm --no-deps -T \
             -v "${PWD}/scripts:/scripts:ro" \
-            --entrypoint python backend /scripts/ci/print-development-ca.py > "${RUNNER_TEMP}/ca.env"
-          # Names and lengths only, never the material.
-          awk -F= '{ printf "%s: %d chars\n", $1, length($0) }' "${RUNNER_TEMP}/ca.env"
-          cat "${RUNNER_TEMP}/ca.env" >> "$GITHUB_ENV"
-          test ! -e .env
+            --entrypoint python backend /scripts/ci/print-development-ca.py > .env
+          # Names and lengths only, never the material. Proof that both keys are present and that each
+          # is a single escaped line, which is what `env_file` requires.
+          awk -F= '{ printf "%s: %d chars\n", $1, length($0) }' .env
+          test "$(grep -c '^INTERNAL_CA_' .env)" -eq 2
 
       - name: Start the default stack and wait for health
         run: docker compose up -d --wait --wait-timeout 300
