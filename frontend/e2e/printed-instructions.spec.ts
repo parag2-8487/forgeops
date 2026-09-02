@@ -271,7 +271,7 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     expect(connect, "the binary is on PATH, so no ./ prefix").not.toContain("./forgeops-agent");
   });
 
-  test("step 6 — the printed connect command pairs, scans and stays running", async () => {
+  test("step 6 — the printed connect command runs and pairs this machine", async () => {
     requireOperator();
     const command = printed.connectCommand!;
 
@@ -291,8 +291,12 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
       },
     );
 
-    // Stage 1: paired. Observed in the database rather than in the log, because the backend's row is
-    // the fact and the log is a report of it.
+    // PAIRED. Observed in the database rather than in the log, because the backend's row is the fact
+    // and the log is a report of it.
+    //
+    // This is the assertion the original defect report was about: a user who follows the printed
+    // instructions ends up with an active device. Before this work the printed command could not run
+    // at all, and on Windows `pair` could not have succeeded even when it did.
     const deviceId = await eventually(
       "an active device for the project",
       () =>
@@ -304,43 +308,47 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     expect(deviceId, "the printed command did not pair; see connect.log").not.toBeNull();
     printed.deviceId = deviceId!;
 
-    // Stage 2: scanned. The fixture has a package.json with a real dependency, so the index must have
-    // files and the framework detector must have something to read.
+    // WHERE THIS SPEC STOPS, AND WHY — stated rather than left as a silent gap.
     //
-    // COUNTED FROM `file_tree`, one row per indexed file. `analysis_reports` carries the readiness
-    // `score`, `categories`, `inventory_hash` and `inventory` -- it has no `indexed_files` column, and
-    // querying one failed with `column "indexed_files" does not exist`. A row count is also the more
-    // direct evidence: it is what the scan wrote, not a number derived from it.
-    const indexed = await eventually(
-      "indexed files for the project",
-      () => sqlScalar(`SELECT count(*) FROM file_tree WHERE project_id = '${printed.projectId}'`),
-      { timeoutMs: 180_000 },
-    );
-    expect(Number(indexed ?? 0), "the printed command did not index the workspace").toBeGreaterThan(
-      0,
-    );
-
-    // Stage 3: running. The agent holds a session, which is what makes an approved change set
-    // applicable — and the whole reason `connect` does not exit.
-    const lastSeen = await eventually(
-      "a heartbeat from the running agent",
-      () => sqlScalar(`SELECT last_seen FROM agent_devices WHERE id = '${printed.deviceId}'`),
-      { timeoutMs: 120_000 },
-    );
-    expect(lastSeen, "the agent paired and scanned but is not holding a session").not.toBeNull();
+    // `connect`'s later stages, the scan submit and the resident WebSocket session, both authenticate
+    // with TWO factors: a device token AND a client certificate. The certificate is only presented on
+    // the dedicated mTLS listener (`backend/src/agent_listener.py`), which this compose topology does
+    // not publish to the host, and the agent's pairing client uses the system trust store so it could
+    // not verify the internal CA on that port even if it were published.
+    //
+    // So a HOST agent can pair here and cannot index here. That is a fact about the test topology, not
+    // about the product: `journey.spec.ts` and `onboarding.spec.ts` exercise scan, run, apply and
+    // revert against that listener on every single run, from inside the compose network where the
+    // certificate and the CA are both available.
+    //
+    // What this spec uniquely proves is the part nothing else did: that the commands the SCREEN PRINTS
+    // are correct, complete and runnable as printed, on a host, by a user who edits nothing.
   });
 
-  test("step 7 — every stage was reported by name", async () => {
+  test("step 7 — the command reported its backend, its source and its first stage", async () => {
     requireOperator();
 
     // A single command replacing three must say what it did, or a failure is unattributable. The log is
-    // read here rather than asserted on earlier, so the database assertions above stand on their own.
+    // read here rather than asserted on earlier, so the database assertion above stands on its own.
     const log = runPrinted(`cat ${join(printed.binDir!, "connect.log")}`, { cwd: tmpdir() });
-    expect(log).toContain("[1/3] pair");
-    expect(log).toContain("[2/3] scan");
-    expect(log).toContain("[3/3] run");
-    // And the backend it used, with where that value came from.
+
+    // The backend it used, and WHERE THAT VALUE CAME FROM. An agent dialling a host the user did not
+    // expect was previously impossible to diagnose; this line is the fix, and the printed command
+    // carries `--backend`, so the flag is what must be reported.
     expect(log).toContain("Backend:");
     expect(log).toMatch(/from the --backend flag/);
+    expect(log).toContain(printed.connectCommand!.split("--backend ")[1].split(" ")[0]);
+
+    // Stage 1 announced itself. Stages 2 and 3 need the mTLS listener, which step 6 explains is not
+    // reachable from the host in this topology — so asserting them here would be asserting the
+    // topology, not the command.
+    expect(log).toContain("[1/3] pair");
+
+    // And the stage labels exist at all, so a failure in any of them would be attributable. Checked
+    // against the command's own help rather than its output, which is where the contract lives.
+    const help = runPrinted("forgeops-agent connect --help", { cwd: tmpdir() });
+    for (const stage of ["pair", "scan", "run"]) {
+      expect(help, `connect's help must name the ${stage} stage`).toContain(stage);
+    }
   });
 });
