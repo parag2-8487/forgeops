@@ -63,6 +63,22 @@ export interface AgentConnectPanelProps {
   code?: string;
   /** The project to index. Optional: `connect` defaults to the project the code was minted for. */
   projectId?: string;
+  /**
+   * The project's recorded working-tree path, rendered as `--workspace`.
+   *
+   * WHY IT HAS TO BE PRINTED. `AGENT_WORKSPACE_ROOT` is what every path in a change set is resolved
+   * against, so it decides where files are WRITTEN, not merely what is indexed. Unset, the agent falls
+   * back to its current working directory — so a user who ran the printed command from their Downloads
+   * folder indexed that folder, and an approved change set would have written into it. Printing the
+   * path the user themselves typed on the create form keeps the human in the loop: the backend states
+   * a value it was given, and the person who typed it is the person who runs the command.
+   *
+   * NOT sent to a running agent over the wire, and that distinction is the whole safety argument. If
+   * the backend could dictate a workspace root to a live agent, anyone able to create a project could
+   * direct that agent's writes anywhere on the machine. A string in a command a human copies is a
+   * different thing from an instruction a daemon obeys.
+   */
+  workspacePath?: string;
   /** Override platform detection. Used by tests, and by the picker below. */
   platform?: Platform;
 }
@@ -90,7 +106,12 @@ function usePlatform(override?: Platform): Platform {
   return override ?? detected;
 }
 
-export function AgentConnectPanel({ code, projectId, platform }: AgentConnectPanelProps) {
+export function AgentConnectPanel({
+  code,
+  projectId,
+  workspacePath,
+  platform,
+}: AgentConnectPanelProps) {
   const info = useConnectionInfo();
   const detected = usePlatform(platform);
   const [picked, setPicked] = useState<Platform | undefined>(undefined);
@@ -109,6 +130,11 @@ export function AgentConnectPanel({ code, projectId, platform }: AgentConnectPan
       code: code ?? "<paste the code above>",
       backend: info.data?.backend_ws_url || "<loading>",
       ...(projectId === undefined ? {} : { project: projectId }),
+      // Omitted rather than rendered empty when the project records no path: a `--workspace ""` would
+      // be a command that fails on a quoting error rather than one that says what is missing.
+      ...(workspacePath === undefined || workspacePath.trim() === ""
+        ? {}
+        : { workspace: workspacePath }),
     },
   });
 

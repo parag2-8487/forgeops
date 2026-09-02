@@ -103,6 +103,11 @@ export default function OnboardingPage() {
   });
   const activeDigest = bundle.data?.digest ?? null;
 
+  // The chosen project's recorded working-tree path, so the printed `connect` command can carry
+  // `--workspace`. Without it the agent falls back to its current working directory, which decides
+  // where an applied change set WRITES — not merely what is indexed.
+  const selectedPath = projects.data?.projects?.find((p) => p.id === projectId)?.path;
+
   const hasProject = (projects.data?.projects.length ?? 0) > 0;
   const devicesForProject =
     projectId === "" ? [] : (devices.data?.devices ?? []).filter((d) => d.project_id === projectId);
@@ -275,7 +280,9 @@ export default function OnboardingPage() {
        * Rendered on THIS page rather than only on /pairing, so this screen alone takes a user from
        * nothing to a paired, scanning agent — which is what `printed-instructions.spec.ts` follows
        * literally, executing what it reads out of the DOM. */}
-      {projectId === "" ? null : <AgentConnectPanel projectId={projectId} />}
+      {projectId === "" ? null : (
+        <AgentConnectPanel projectId={projectId} workspacePath={selectedPath} />
+      )}
       <aside className="rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
         <p className="font-medium text-foreground">Why a missing step is reported as a step.</p>
         <p className="mt-2">

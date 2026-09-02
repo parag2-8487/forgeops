@@ -9,6 +9,7 @@ import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { ProjectPicker } from "@/components/ui/project-picker";
 import { useCapability } from "@/hooks/use-role";
 import { AgentConnectPanel } from "@/features/agent/AgentConnectPanel";
+import type { ProjectPage } from "@/features/projects/types";
 import { CodeCountdown } from "@/features/agent/CodeCountdown";
 
 /**
@@ -60,6 +61,14 @@ const STATUS_MEANING: Record<DeviceRead["status"], string> = {
   revoked: "Revoked. Its certificate and tokens are no longer accepted.",
   abandoned: "Its pairing code expired before it was exchanged.",
 };
+
+/**
+ * The page size `ProjectPicker` fetches with.
+ *
+ * Declared here so the query below shares the picker's cache entry exactly. A different number is a
+ * different key, which would mean a second request and two lists that could disagree.
+ */
+const PICKER_PAGE_SIZE = 100;
 
 export default function PairingPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -262,6 +271,21 @@ export default function PairingPage() {
 function MintPairingCode() {
   const queryClient = useQueryClient();
   const [projectId, setProjectId] = useState("");
+
+  // The chosen project's recorded working-tree path, so the printed `connect` command can carry
+  // `--workspace`. Unset, the agent falls back to its current working directory — which is what every
+  // path in a change set is resolved against, so it decides where an applied change WRITES rather than
+  // merely what is indexed.
+  //
+  // THE SAME QUERY KEY `ProjectPicker` USES, so React Query serves both from one cache entry and this
+  // costs no extra request. Duplicating the key with a different page size would silently double the
+  // fetch and could disagree about which projects exist.
+  const projects = useQuery({
+    queryKey: queryKeys.projects.list(PICKER_PAGE_SIZE),
+    queryFn: () => api.get<ProjectPage>(`/projects?limit=${PICKER_PAGE_SIZE}`),
+    retry: false,
+  });
+  const selectedProjectPath = projects.data?.projects?.find((p) => p.id === projectId)?.path;
   const [issued, setIssued] = useState<PairingCode | null>(null);
   const { allowed, reason } = useCapability("mint_pairing_code");
 
@@ -351,7 +375,11 @@ function MintPairingCode() {
        * Rendered whether or not a code exists: a user can download the binary and put it on PATH
        * before minting, which is what makes the five-minute window comfortable instead of a race.
        * That ordering is the actual fix for code expiry — the countdown only tells you about it. */}
-      <AgentConnectPanel code={issued?.code} projectId={projectId === "" ? undefined : projectId} />
+      <AgentConnectPanel
+        code={issued?.code}
+        projectId={projectId === "" ? undefined : projectId}
+        workspacePath={selectedProjectPath}
+      />
 
       <GovernanceRefusal error={mint.error} action="mint a pairing code" />
     </section>

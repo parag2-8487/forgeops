@@ -330,6 +330,27 @@ function renderPanel(props: Parameters<typeof AgentConnectPanel>[0]) {
 }
 
 describe("AgentConnectPanel", () => {
+  it("prints --workspace, because an unset workspace decides where files are WRITTEN", async () => {
+    // THE DEFECT THIS PINS. The panel printed `connect --code --backend --project` and nothing else, so
+    // `AGENT_WORKSPACE_ROOT` stayed unset and the agent fell back to its current working directory. A
+    // user who ran the printed command from their Downloads folder indexed that folder — and every path
+    // in a change set is resolved against that root, so an approved change would have written there
+    // too. It is the write-confinement boundary, not a convenience.
+    renderPanel({ code: "ABC123", projectId: "p-1", workspacePath: "C:\\Projects\\DEMO project" });
+    const command = (await screen.findByTestId("connect-command")).textContent ?? "";
+    expect(command).toContain("--workspace");
+    // QUOTED, because the path has a space in it and an unquoted one would parse as two arguments.
+    expect(command).toContain('--workspace "C:\\Projects\\DEMO project"');
+  });
+
+  it("omits --workspace rather than printing an empty one", async () => {
+    // A project with no recorded path must not yield `--workspace ""`, which would be a command that
+    // fails on a quoting error instead of one that simply does not set the flag.
+    renderPanel({ code: "ABC123", projectId: "p-1" });
+    const command = (await screen.findByTestId("connect-command")).textContent ?? "";
+    expect(command).not.toContain("--workspace");
+  });
+
   beforeEach(() => {
     mockGet.mockReset();
     mockGet.mockResolvedValue({
