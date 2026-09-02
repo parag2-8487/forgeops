@@ -284,7 +284,16 @@ def diagnose(change_set_id: str) -> str:
         (
             "items",
             "SELECT action || ' ' || file_path FROM change_items "
-            f"WHERE change_set_id = '{change_set_id}'",
+            f"WHERE change_set_id = '{change_set_id}' ORDER BY file_path",
+        ),
+        (
+            # EVERY set on the project, because the most likely cause of "finalised but still
+            # `applying`" is that the id being polled is not the id the hub moved. Seeing them all
+            # side by side answers that in one line instead of another run.
+            "all sets",
+            "SELECT id || '=' || status FROM change_sets WHERE project_id = "
+            f"(SELECT project_id FROM change_sets WHERE id = '{change_set_id}') "
+            "ORDER BY created_at",
         ),
         (
             "devices",
@@ -294,9 +303,22 @@ def diagnose(change_set_id: str) -> str:
         ),
     ):
         try:
-            lines.append(f"{label}: {sql(query) or '(none)'}")
+            answer = sql(query) or "(none)"
         except Failure as exc:  # a diagnosis must not replace the real failure with its own
-            lines.append(f"{label}: unavailable ({exc})")
+            answer = f"unavailable ({exc})"
+        # Flattened onto one line per label: a multi-row answer split across lines is easy to lose in
+        # a CI log, and losing half the evidence is how the first attempt at this cost a run.
+        lines.append(f"{label}: {answer.replace(chr(10), ' / ')}")
+
+    # The command → change-set mapping the hub uses to decide WHICH set a report is about. If this is
+    # missing the report cannot be attributed, and the hub says so rather than guessing.
+    try:
+        keys = run(
+            COMPOSE + ["exec", "-T", "redis", "redis-cli", "--scan", "--pattern", "forgeops:cmdchangeset:*"]
+        )
+        lines.append(f"command mappings: {(keys.stdout or '').strip().replace(chr(10), ' / ') or '(none)'}")
+    except Exception as exc:  # noqa: BLE001 - diagnostics are best-effort by definition
+        lines.append(f"command mappings: unavailable ({type(exc).__name__})")
     return "\n".join(lines)
 
 

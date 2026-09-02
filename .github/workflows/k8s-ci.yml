@@ -3,7 +3,7 @@ name: Kubernetes & SPIRE CI
 on:
   workflow_dispatch:
   push:
-    branches: [phase-1-implementation, main]
+    branches: [phase-1-implementation, phase-1-02, main]
   pull_request:
     branches: [main]
 
