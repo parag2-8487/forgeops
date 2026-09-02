@@ -194,6 +194,10 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     execFileSync("go", ["build", "-o", join(printed.binDir, "forgeops-agent"), "./cmd/agent"], {
       cwd: join(REPO_ROOT, "agent"),
       stdio: "inherit",
+      // Bounded like every other synchronous spawn here. `inherit` means Node holds no pipe to wait
+      // on, so this one was never the hang — but an unbounded blocking call cannot be timed out by
+      // Playwright at all, so none of them is left unbounded.
+      timeout: 600_000,
       env: { ...process.env, CGO_ENABLED: "0" },
     });
 
@@ -282,11 +286,32 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
     // foreground run would hang this spec forever, which is the correct behaviour for the command and
     // the wrong behaviour for a test.
     const logPath = join(printed.binDir!, "connect.log");
+
+    // FULLY DETACHED, AND THE REASON IS A REAL HANG THIS CAUSED.
+    //
+    // `connect` is resident by design — it holds the session open so an approved change set can be
+    // applied. It only became resident once this branch made stage 3 succeed; before that the session
+    // was refused on the pairing port and the process exited, which is why the naive spawn below used
+    // to work and then started hanging for over an hour.
+    //
+    // `execFileSync` is SYNCHRONOUS, so it blocks Node's event loop, and Playwright's per-test timeout
+    // is enforced on that loop. A blocking spawn therefore cannot be timed out by the test framework:
+    // the only thing that stops it is the JOB timeout, 140 minutes later, with no useful output. That
+    // is the worst possible failure shape, so it is removed three ways at once rather than one:
+    //
+    //   setsid          a new session, so the child is not in this shell's process group and holds no
+    //                   controlling terminal
+    //   < /dev/null     stdin is not inherited, so the resident agent cannot hold the parent's
+    //   stdio: ignore   Node creates NO pipes, so there is nothing for it to wait on for EOF
+    //   timeout         a hard bound, so any future variant of this fails in a minute with a message
+    //                   instead of consuming the whole job
     execFileSync(
       "bash",
-      ["-lc", `cd ${printed.workspace} && nohup ${command} > ${logPath} 2>&1 &`],
+      ["-lc", `cd ${printed.workspace} && setsid nohup ${command} > ${logPath} 2>&1 < /dev/null &`],
       {
         encoding: "utf8",
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: 60_000,
         env: { ...process.env, AGENT_WORKSPACE_ROOT: printed.workspace! },
       },
     );
