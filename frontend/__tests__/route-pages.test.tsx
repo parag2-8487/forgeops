@@ -1056,7 +1056,18 @@ describe("Readiness category breakdown", () => {
       passed: false,
       points: 0,
       max_points: 10,
-      evidence: "no USER directive found in Dockerfile",
+      // A FAILURE'S EVIDENCE LIVES IN `found` NOW, and the other four fields are what make it
+      // actionable. Every call site used to pass `evidence = <path> if passed else ""`, so a failing
+      // check rendered "Evidence:" followed by nothing — the one outcome that needs explaining, and the
+      // reason a reader who did not already know the answer had nowhere to go.
+      evidence: "Dockerfile",
+      found: "Dockerfile declares no USER, so the image runs as root",
+      looked_for: "a USER instruction naming a non-root account",
+      looked_in: "the USER instructions of the Dockerfile that was found",
+      remedy: "Create an unprivileged account and switch to it before the entrypoint.",
+      remedy_path: "Dockerfile",
+      line: 4,
+      generatable: true,
       why_it_matters: "A container running as root turns a process compromise into a host one.",
     },
   ];
@@ -1206,7 +1217,15 @@ describe("Readiness category breakdown", () => {
     // The word, not the colour: a red dot is unavailable to a colour-blind reader and to a screen
     // reader alike.
     expect(failing).toHaveTextContent("Fail");
-    expect(failing).toHaveTextContent("no USER directive found in Dockerfile");
+    // WHAT WAS THERE INSTEAD, naming the file and the missing property.
+    expect(failing).toHaveTextContent("Dockerfile declares no USER, so the image runs as root");
+    // Where it looked, so "not found" is a falsifiable claim rather than an assertion.
+    expect(failing).toHaveTextContent("the USER instructions of the Dockerfile");
+    // The concrete change, and the file to put it in.
+    expect(failing).toHaveTextContent("Create an unprivileged account");
+    expect(failing).toHaveTextContent("Fix in Dockerfile");
+    // The line, because a property that has one must say so.
+    expect(failing).toHaveTextContent("line 4");
     expect(failing).toHaveTextContent(/turns a process compromise into a host one/i);
     expect(failing).toHaveTextContent("0 of 10 points");
   });

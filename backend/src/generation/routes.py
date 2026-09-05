@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -290,19 +290,21 @@ async def create_generation_run(
                 yield withheld.encode("utf-8")
             return
 
+        # THE PRE-IMAGES, loaded before the submit because that is where the session lives.
+        #
+        # An `update` needs the exact bytes on disk, and this endpoint has never read the working tree.
+        # `_editable_preimages` is what makes the difference between claiming a pre-image and having
+        # one, and it deliberately returns FEWER paths than exist.
+        preimages = await _editable_preimages(
+            session, project_id=body.project_id, paths=[f.path for f in outcome.files]
+        )
+
         try:
             submission = await chokepoint.submit(
                 session,
                 MutationRequest(
                     project_id=body.project_id,
-                    items=tuple(
-                        # Every artifact is a `create`. `update` would require the pre-image the
-                        # agent verifies against, and this endpoint has not read the working tree —
-                        # claiming an `old_content` it never saw is precisely the stale-apply hazard
-                        # `change_items.old_hash` exists to catch.
-                        ChangeItemRequest(file_path=f.path, action="create", new_content=f.content)
-                        for f in outcome.files
-                    ),
+                    items=tuple(_change_item_for(f.path, f.content, preimages) for f in outcome.files),
                     reason=f"generated from prompt: {body.prompt[:180]}",
                     origin="generation",
                     generation_run_id=run_id,
@@ -504,4 +506,74 @@ async def _record_compiled_prompt(session: AsyncSession, *, run_id: uuid.UUID, c
             "addressed": json.dumps(list(compiled.addressed_checks)),
             "deferred": json.dumps(list(compiled.deferred_checks)),
         },
+    )
+
+
+async def _editable_preimages(session: AsyncSession, *, project_id: uuid.UUID, paths: Sequence[str]) -> dict[str, str]:
+    """The indexed content of each path whose stored text is byte-identical to the file on disk.
+
+    WHY THIS RETURNS FEWER PATHS THAN EXIST, AND WHY THAT IS THE POINT
+
+    An `update` carries `old_content`, whose SHA-256 becomes `change_items.old_hash`, and the agent
+    recomputes the hash of the file it is about to write and aborts the whole set if it disagrees. So a
+    wrong pre-image does not corrupt anything — it makes the apply impossible. Getting it right is
+    therefore not a nicety; it is the difference between an edit that can land and one that always
+    refuses.
+
+    `file_contents` stores REDACTED text (§6.3, §7.11), and `file_tree.content_hash` is the hash OF THE
+    REDACTED TEXT — the agent redacts before it hashes. So the server holds no hash of the real file and
+    cannot manufacture one. That is the correct design: unredacted content must not leave the machine.
+
+    The consequence is precise rather than fatal. When a file had ZERO redactions the redactor returned
+    its input unchanged, so the stored text and the bytes on disk are the same bytes, and hashing the
+    stored text yields exactly what the agent will compute. When a file had one or more redactions the
+    stored text differs from disk by construction, the true bytes are unknown here, and no `update` may
+    be offered for it — the change set says so instead, and the file is created-or-refused rather than
+    silently mangled.
+
+    In practice the excluded set is small and its exclusion is honest: a Dockerfile or a manifest with a
+    credential in it is a file whose readiness report already has something worse to say.
+    """
+    if not paths:
+        return {}
+    rows = (
+        await session.execute(
+            text(
+                "SELECT f.path, c.content FROM file_contents c JOIN file_tree f ON f.id = c.file_id "
+                "WHERE f.project_id = :p AND c.redaction_count = 0"
+            ),
+            {"p": project_id},
+        )
+    ).all()
+    wanted = {path.replace("\\", "/").lower() for path in paths}
+    return {
+        str(row[0]).replace("\\", "/"): str(row[1]) for row in rows if str(row[0]).replace("\\", "/").lower() in wanted
+    }
+
+
+def _change_item_for(path: str, content: str, preimages: Mapping[str, str]) -> ChangeItemRequest:
+    """An update when the pre-image is known, a create otherwise.
+
+    THE CASE THIS FIXES. Every generated artifact used to be a `create`, and
+    `agent/internal/executor/internal/mutate/apply.go` refuses a create whose target already exists —
+    correctly, since a create asserts absence. So a project with a half-correct Dockerfile could be
+    given a better one and could never apply it: the change set reached the agent, the agent refused the
+    whole set with a conflict, and the change set ended `rolled_back`. That is the common case and the
+    one where help is most valuable.
+
+    An update carries the pre-image the agent verifies against, so the same change set now lands — and
+    still refuses if the file moved on disk after compilation, which is the protection `old_hash` exists
+    for and which a create could never express.
+    """
+    normalised = path.replace("\\", "/")
+    existing = preimages.get(normalised)
+    if existing is None:
+        # Either the file does not exist, or its stored text is not the bytes on disk. Both mean no
+        # honest pre-image is available, and a create is the only thing that can be claimed.
+        return ChangeItemRequest(file_path=path, action="create", new_content=content)
+    return ChangeItemRequest(
+        file_path=path,
+        action="update",
+        old_content=existing,
+        new_content=content,
     )

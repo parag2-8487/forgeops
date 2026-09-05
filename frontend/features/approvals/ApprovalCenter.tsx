@@ -199,6 +199,71 @@ const ROW_STYLE: Record<DiffRow["kind"], string> = {
   removed: "bg-destructive/10",
 };
 
+/**
+ * Lines of unchanged context kept either side of a change.
+ *
+ * Three is what `diff -u` uses and what reviewers are calibrated to read. Fewer makes a change hard to
+ * place in the file; more merges neighbouring edits into one block and loses the shape of what changed.
+ */
+export const CONTEXT_LINES = 3;
+
+/** A run of changes with its context, addressed the way a patch header addresses one. */
+export interface DiffHunk {
+  /** `@@ -a,b +c,d @@`, so somebody used to reading patches can read the position directly. */
+  header: string;
+  rows: DiffRow[];
+}
+
+/**
+ * Group a diff into hunks, keeping `CONTEXT_LINES` around each change and dropping the rest.
+ *
+ * WHY THIS WAS MISSING AND WHY IT MATTERS. `diffLines` produced a correct row-by-row diff of the WHOLE
+ * file, and the viewer rendered all of it. For a one-line fix to a forty-line Dockerfile that is
+ * thirty-nine rows of unchanged context around the one row that matters, and the reviewer has to find it.
+ * A review surface that makes the change hard to locate is not doing the job the approval depends on.
+ *
+ * Hunks also give the reviewer something the flat list could not: a COUNT of distinct edits. "This change
+ * set touches three places in this file" is a different fact from "this file changed", and it is the fact
+ * that tells somebody whether they are looking at a targeted patch or a rewrite.
+ *
+ * A file with no changes yields no hunks, which the caller renders as "identical" rather than as an empty
+ * table.
+ */
+export function hunksOf(rows: DiffRow[]): DiffHunk[] {
+  const changed = rows
+    .map((row, index) => (row.kind === "context" ? -1 : index))
+    .filter((index) => index >= 0);
+  if (changed.length === 0) return [];
+
+  const ranges: Array<[number, number]> = [];
+  let start = Math.max(0, changed[0] - CONTEXT_LINES);
+  let end = Math.min(rows.length - 1, changed[0] + CONTEXT_LINES);
+  for (const index of changed.slice(1)) {
+    if (index - CONTEXT_LINES <= end + 1) {
+      // Overlapping context belongs to ONE hunk. Splitting would print the same context lines twice and
+      // imply the two edits are further apart than they are.
+      end = Math.min(rows.length - 1, index + CONTEXT_LINES);
+    } else {
+      ranges.push([start, end]);
+      start = Math.max(0, index - CONTEXT_LINES);
+      end = Math.min(rows.length - 1, index + CONTEXT_LINES);
+    }
+  }
+  ranges.push([start, end]);
+
+  return ranges.map(([from, to]) => {
+    const slice = rows.slice(from, to + 1);
+    const oldLines = slice.filter((row) => row.oldLine !== null);
+    const newLines = slice.filter((row) => row.newLine !== null);
+    const oldStart = oldLines.length > 0 ? (oldLines[0].oldLine as number) : 0;
+    const newStart = newLines.length > 0 ? (newLines[0].newLine as number) : 0;
+    return {
+      header: `@@ -${oldStart},${oldLines.length} +${newStart},${newLines.length} @@`,
+      rows: slice,
+    };
+  });
+}
+
 const ROW_SIGIL: Record<DiffRow["kind"], string> = { context: " ", added: "+", removed: "-" };
 
 function UnifiedDiff({ rows }: { rows: DiffRow[] }) {
@@ -278,16 +343,59 @@ function ItemDiff({ item, mode }: { item: ChangeItemRead; mode: ViewMode }) {
     () => diffLines(item.old_content ?? "", item.new_content ?? ""),
     [item.old_content, item.new_content],
   );
+  const hunks = useMemo(() => hunksOf(rows), [rows]);
+  const added = useMemo(() => rows.filter((row) => row.kind === "added").length, [rows]);
+  const removed = useMemo(() => rows.filter((row) => row.kind === "removed").length, [rows]);
 
   return (
     <section className="rounded-md border border-border" aria-label={`Diff for ${item.file_path}`}>
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-3 py-2">
         <code className="text-sm font-semibold">{item.file_path}</code>
-        <span className="text-xs uppercase tracking-wide text-muted-foreground">{item.action}</span>
+        <span className="flex items-baseline gap-3 text-xs">
+          {/*
+            THE SHAPE OF THE EDIT, before any of its content.
+
+            "three places changed, four lines added, one removed" is the fact that tells a reviewer
+            whether they are looking at a targeted patch or a rewrite, and it was not available at all
+            while the viewer rendered one flat list of every line in the file.
+          */}
+          <span className="text-emerald-600" data-testid={`added-count-${item.file_path}`}>
+            +{added}
+          </span>
+          <span className="text-destructive" data-testid={`removed-count-${item.file_path}`}>
+            −{removed}
+          </span>
+          {hunks.length > 0 ? (
+            <span className="text-muted-foreground">
+              {hunks.length} {hunks.length === 1 ? "hunk" : "hunks"}
+            </span>
+          ) : null}
+          <span className="uppercase tracking-wide text-muted-foreground">{item.action}</span>
+        </span>
       </header>
-      <div className="overflow-x-auto">
-        {mode === "unified" ? <UnifiedDiff rows={rows} /> : <SplitDiff rows={rows} />}
-      </div>
+      {hunks.length === 0 ? (
+        <p className="px-3 py-2 text-xs text-muted-foreground">
+          The recorded before and after are identical, so this item changes nothing. That is worth
+          seeing rather than rendering an empty table.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          {hunks.map((hunk) => (
+            <div key={hunk.header} data-testid="diff-hunk">
+              {/* The patch header, so somebody used to reading diffs can place the change immediately
+                  and so each hunk is addressable in a review conversation. */}
+              <p className="bg-muted/50 px-3 py-1 font-mono text-xs text-muted-foreground">
+                {hunk.header}
+              </p>
+              {mode === "unified" ? (
+                <UnifiedDiff rows={hunk.rows} />
+              ) : (
+                <SplitDiff rows={hunk.rows} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {/* The hash the backend recorded, shown rather than recomputed here. §12.6 step 10 verifies
           the file on disk against this value; a hash computed in the browser would only be checking
           the browser against itself. */}
