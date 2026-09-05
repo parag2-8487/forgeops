@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
 from ..core.db import get_session
+from ..core.errors import forbidden_problem
 from ..core.index_evidence import load_index_evidence
 from ..core.readiness import ReadinessEngine
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
@@ -576,4 +577,91 @@ def _change_item_for(path: str, content: str, preimages: Mapping[str, str]) -> C
         action="update",
         old_content=existing,
         new_content=content,
+    )
+
+
+class GenerationRunResponse(BaseModel):
+    """One generation run, including the exact instruction the model was given.
+
+    WHY THE PROMPT BELONGS ON THE RECORD AND NOT ONLY IN A LOG. The row recorded the tier, the endpoint,
+    the token counts, the retrieval record and the outcome — everything except what the model was asked
+    to do. So when a run wrote a file to the wrong path there was no way to tell whether the model had
+    disobeyed a correct instruction or obeyed a bad one, and those two faults have opposite fixes. The
+    column was added with the compiler and nothing read it, which is the dead-column shape this codebase
+    keeps producing; this route is the reader that makes it evidence rather than storage.
+
+    `compiled_prompt` is None for a run made before the compiler existed, or for a request with no
+    readiness findings behind it. That reads as "not recorded", which is true. An empty string would read
+    as "the model was sent nothing", which is a different and false claim.
+    """
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    status: str
+    tier: str | None = None
+    endpoint_id: str | None = None
+    served_from: str | None = None
+    iterations_used: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    #: The exact text sent to the provider.
+    compiled_prompt: str | None = None
+    #: What the compiler estimated, beside the budget it was held to. Both are carried because a prompt
+    #: that dropped a section is only explicable next to the limit that forced the drop.
+    prompt_token_estimate: int | None = None
+    prompt_token_budget: int | None = None
+    #: The failing checks this run set out to fix, and the ones the budget could not hold. A user looking
+    #: at an unchanged score needs to know a check was deferred rather than attempted and failed.
+    addressed_checks: list[str] = Field(default_factory=list)
+    deferred_checks: list[str] = Field(default_factory=list)
+
+
+@router.get("/runs/{run_id}", summary="Read one generation run and the prompt it was given")
+async def read_generation_run(
+    run_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GenerationRunResponse:
+    """Return one run, including the instruction the model received.
+
+    A MISSING RUN AND ANOTHER TENANT'S RUN ANSWER IDENTICALLY, with the same non-disclosing 403 the other
+    read routes use. Distinguishing them would turn this into an enumeration oracle for run ids, exactly
+    as it would for project ids.
+    """
+    row = (
+        (
+            await session.execute(
+                text(
+                    "SELECT id, project_id, tenant_id, status, tier, endpoint_id, served_from, "
+                    "iterations_used, prompt_tokens, completion_tokens, compiled_prompt, "
+                    "prompt_token_estimate, prompt_token_budget, addressed_checks, deferred_checks "
+                    "FROM generation_runs WHERE id = :id"
+                ),
+                {"id": run_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None or row["tenant_id"] != principal.tenant_id:
+        raise forbidden_problem()
+
+    return GenerationRunResponse(
+        id=row["id"],
+        project_id=row["project_id"],
+        status=str(row["status"]),
+        tier=row["tier"],
+        endpoint_id=row["endpoint_id"],
+        served_from=row["served_from"],
+        iterations_used=int(row["iterations_used"] or 0),
+        prompt_tokens=int(row["prompt_tokens"] or 0),
+        completion_tokens=int(row["completion_tokens"] or 0),
+        compiled_prompt=row["compiled_prompt"],
+        prompt_token_estimate=row["prompt_token_estimate"],
+        prompt_token_budget=row["prompt_token_budget"],
+        # `or []` because a run with no addressed checks and a run made before the column existed are
+        # both empty here, and neither is evidence about the other.
+        addressed_checks=list(row["addressed_checks"] or []),
+        deferred_checks=list(row["deferred_checks"] or []),
     )

@@ -6,6 +6,7 @@ import { api, ApiProblemError } from "@/lib/api";
 import { isSseEvent, isTerminalSseEvent, type SseEvent } from "@/lib/api/sse-events";
 import { readSSEResponse } from "@/lib/sse-reader";
 import { Button } from "@/components/ui/button";
+import { CompiledPromptPanel } from "./CompiledPromptPanel";
 
 /**
  * The artifact generator (design.md §7.4, §11.5.5, §12.6 step 6).
@@ -185,9 +186,15 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
       </Button>
 
       {runId ? (
-        <p className="text-sm text-muted-foreground">
-          Run <code data-testid="run-id">{runId}</code>
-        </p>
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Run <code data-testid="run-id">{runId}</code>
+          </p>
+          {/* The instruction is offered NEXT TO the run, not on a separate screen. A user judging an
+              artifact that landed in the wrong place needs the prompt in the same glance, or they cannot
+              tell a prompt defect from a model defect. */}
+          <CompiledPromptPanel runId={runId} />
+        </div>
       ) : null}
 
       {seen.length > 0 ? (
