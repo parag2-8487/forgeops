@@ -24,7 +24,6 @@ import uuid
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from src.analysis.indexer import (
     ScanFrameworkIn,
     ScanInventoryIn,

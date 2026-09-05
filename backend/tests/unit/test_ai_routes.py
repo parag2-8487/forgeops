@@ -417,8 +417,9 @@ class TestTiersEndpoint:
         inspects — and the live 401 is asserted against the real composed app in
         `tests/integration/test_ai_tiers_user_read.py::test_an_anonymous_caller_is_still_refused`.
         """
+        from src.ai.routes import read_router
+        from src.ai.routes import router as completion_router
         from src.auth.dependencies import require_mcp_principal, require_principal
-        from src.ai.routes import read_router, router as completion_router
 
         def _deps(target) -> set[object]:
             return {

@@ -37,6 +37,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel, Field
 
+from .dependency_manifest import ECOSYSTEM_FILES, reconcile
 from .index_evidence import IndexEvidence
 from .manifest_facts import (
     ItemAudit,
@@ -995,6 +996,106 @@ class ReadinessEngine:
                 ),
             )
         )
+
+        # ─── Dependency manifest (ADD1) ──────────────────────────────────────
+        #
+        # `dependency_lockfile_present` above asks whether a lockfile EXISTS. These ask whether the
+        # manifest and the code AGREE, which is stronger: a repository can hold a manifest, a lockfile,
+        # and a build that only works on the machine where somebody installed the missing package by
+        # hand. `file_dependencies` has recorded the import graph since revision `0003` and the score
+        # never read it, so that failure was invisible.
+        #
+        # Scored per ECOSYSTEM the scan detected, and only for ecosystems this can parse. An ecosystem
+        # it cannot read produces no check rather than a passing one — "I cannot judge this" and
+        # "this is fine" are different answers.
+        for ecosystem in sorted(ECOSYSTEM_FILES):
+            facts = reconcile(
+                ecosystem=ecosystem,
+                paths=paths,
+                contents=evidence.contents,
+                specifiers=evidence.dependency_specifiers,
+            )
+            # Nothing of this ecosystem in the repository at all: no manifest, no imports. Emitting a
+            # failure would fault a Python project for having no Cargo.toml.
+            if facts is None or (not facts.imported and not facts.declared):
+                continue
+
+            checks.append(
+                self._check(
+                    "dependency_manifest_present",
+                    "env_config",
+                    bool(facts.manifest_path),
+                    20,
+                    facts.manifest_path,
+                    "Undeclared dependencies exist only in whatever was installed on the machine the "
+                    "build last worked on.",
+                    found=(
+                        f"the scan found {ecosystem} imports and no manifest declaring them"
+                        if not facts.manifest_path
+                        else ""
+                    ),
+                )
+            )
+            if not facts.manifest_path:
+                # Without declarations the three comparisons below have nothing to compare against, and
+                # the check above already reports the absence.
+                continue
+
+            # THE NAMES, not a count. "dependencies are undeclared" sends a reader to read the whole
+            # manifest; naming `requests` sends them to one line.
+            shown_undeclared = ", ".join(facts.undeclared[:8])
+            checks.append(
+                self._check(
+                    "every_imported_package_is_declared",
+                    "env_config",
+                    not facts.undeclared,
+                    25,
+                    facts.manifest_path,
+                    "An undeclared import is a build that already fails on any clean checkout.",
+                    found=(
+                        f"{facts.manifest_path} does not declare "
+                        f"{len(facts.undeclared)} imported package(s): {shown_undeclared}"
+                        f"{'…' if len(facts.undeclared) > 8 else ''}"
+                        if facts.undeclared
+                        else ""
+                    ),
+                )
+            )
+            shown_unused = ", ".join(facts.unused[:8])
+            checks.append(
+                self._check(
+                    "no_unused_declared_packages",
+                    "env_config",
+                    not facts.unused,
+                    10,
+                    facts.manifest_path,
+                    "An unused dependency is install time, image size and attack surface bought for nothing.",
+                    found=(
+                        f"{facts.manifest_path} declares {len(facts.unused)} package(s) nothing "
+                        f"imports: {shown_unused}{'…' if len(facts.unused) > 8 else ''}"
+                        if facts.unused
+                        else ""
+                    ),
+                )
+            )
+            shown_unpinned = ", ".join(facts.unpinned[:8])
+            checks.append(
+                self._check(
+                    "declared_versions_are_pinned",
+                    "env_config",
+                    not facts.unpinned,
+                    15,
+                    facts.lockfile_path or facts.manifest_path,
+                    "A floating constraint means two builds of identical source can install different code.",
+                    found=(
+                        f"{facts.manifest_path} leaves {len(facts.unpinned)} package(s) unpinned with "
+                        f"no lockfile to pin them: {shown_unpinned}"
+                        f"{'…' if len(facts.unpinned) > 8 else ''}"
+                        if facts.unpinned
+                        else ""
+                    ),
+                )
+            )
 
         # ─── Cross-category consistency ──────────────────────────────────────
         #

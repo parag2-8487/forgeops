@@ -71,6 +71,7 @@ KNOWN_ARTIFACT_KINDS: Final[frozenset[str]] = frozenset(
         "lint_config",
         "security_policy",
         "secret_scanner_config",
+        "dependency_manifest",
     }
 )
 
@@ -103,6 +104,7 @@ GENERATED_ARTIFACT_KINDS: Final[frozenset[str]] = frozenset(
         "lint_config",
         "security_policy",
         "secret_scanner_config",
+        "dependency_manifest",
     }
 )
 
@@ -757,5 +759,98 @@ CHECK_EXPLANATIONS: Final[dict[str, CheckExplanation]] = {
             ),
         ),
         artifact="env_example",
+    ),
+    # ─── Dependency manifest ─────────────────────────────────────────────────
+    #
+    # `dependency_lockfile_present` asks whether a lockfile exists. These ask whether the manifest and
+    # the code AGREE, which is a different and stronger question: a repository can hold a manifest, a
+    # lockfile and a build that only works on the machine where somebody installed the missing package
+    # by hand.
+    "dependency_manifest_present": CheckExplanation(
+        looked_for="a dependency manifest for every ecosystem the scan detected",
+        looked_in=("pyproject.toml, requirements.txt, package.json, go.mod, Cargo.toml, Gemfile, composer.json"),
+        remedy=(
+            "Declare the project's dependencies in the file its ecosystem expects. Until they are "
+            "declared, the set of packages the build needs exists only in whatever was installed on "
+            "the machine it last worked on."
+        ),
+        remedy_path="(depends on ecosystem: requirements.txt, package.json, go.mod)",
+        artifact="dependency_manifest",
+        fixability=Fixability(
+            generatable=True,
+            partial_offer=(
+                "the manifest can be written from the packages the code actually imports, with each "
+                "version taken from a lockfile where one exists and marked unresolved where none does"
+            ),
+        ),
+    ),
+    "every_imported_package_is_declared": CheckExplanation(
+        looked_for="every third-party package the code imports to be named by a manifest",
+        looked_in="the resolved import graph from the scan, against the declarations in the manifest",
+        remedy=(
+            "Add the named packages to the manifest with the version you are actually running, then "
+            "re-resolve the lockfile.\n\n"
+            "An undeclared import is a build that is ALREADY BROKEN everywhere except the machine "
+            "where the package happens to be installed. It passes locally, passes review, and fails "
+            "on a clean checkout — which is usually CI, or a new colleague, or a production image."
+        ),
+        remedy_path="(the ecosystem's manifest)",
+        artifact="dependency_manifest",
+        fixability=Fixability(
+            generatable=True,
+            partial_offer=(
+                "the missing names can be added, because the imports are known; the version to pin has "
+                "to come from a lockfile or from the environment where the code currently runs"
+            ),
+        ),
+    ),
+    "no_unused_declared_packages": CheckExplanation(
+        looked_for="every declared package to be imported somewhere in the code",
+        looked_in="the manifest's declarations, against the resolved import graph from the scan",
+        remedy=(
+            "Remove the named packages, or explain why they are needed at runtime without being "
+            "imported — a database driver loaded by name is a real example.\n\n"
+            "An unused dependency is install time, image size and attack surface bought for nothing. "
+            "It is usually the residue of a removed feature, and it is the kind of thing that only "
+            "gets found deliberately."
+        ),
+        remedy_path="(the ecosystem's manifest)",
+        artifact="dependency_manifest",
+        fixability=Fixability(
+            generatable=False,
+            blocked_because=(
+                "removing a dependency is a judgement, not a derivation. A package can be required at "
+                "runtime without appearing in any import — loaded by name, registered as a plugin, or "
+                "pulled in by a framework — and a scan cannot see that. Deleting one automatically "
+                "could break a working service in a way that only shows up under load."
+            ),
+            partial_offer="the list of packages nothing imports, so a human can decide each one",
+        ),
+    ),
+    "declared_versions_are_pinned": CheckExplanation(
+        looked_for="every declared dependency to be pinned exactly, or a lockfile to pin it",
+        looked_in="the version constraint beside each declaration in the manifest",
+        remedy=(
+            "Either commit a lockfile, which pins the whole resolved tree, or replace each floating "
+            "constraint with the exact version you tested.\n\n"
+            "A constraint like `>=1.0` means two builds of identical source can install different "
+            "code, so a bug cannot be reproduced and a security fix cannot be proven applied. A "
+            "declaration with no constraint at all is the same problem without the intent."
+        ),
+        remedy_path="(the ecosystem's manifest, or its lockfile)",
+        artifact="dependency_manifest",
+        fixability=Fixability(
+            generatable=False,
+            blocked_because=(
+                "the exact version is whatever the package manager resolved in the environment that "
+                "works, and nothing in the repository records it. Writing a version this never "
+                "observed would be a fabricated pin — worse than a floating one, because it looks "
+                "authoritative."
+            ),
+            partial_offer=(
+                "the list of unpinned packages and the command that produces a lockfile for the "
+                "detected package manager"
+            ),
+        ),
     ),
 }

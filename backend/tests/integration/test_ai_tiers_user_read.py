@@ -25,10 +25,10 @@ import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
-
 from src.auth.dependencies import require_mcp_principal, require_principal
 from src.auth.models import UserRole
 from src.auth.principal import Principal
+
 
 @pytest_asyncio.fixture
 async def app_no_auth(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:

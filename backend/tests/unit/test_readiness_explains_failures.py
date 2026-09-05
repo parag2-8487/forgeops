@@ -86,6 +86,25 @@ CROSS_CATEGORY_MISMATCH = IndexEvidence(
 )
 
 
+#: A repository whose manifest and code disagree, so the four dependency checks are all emitted.
+#:
+#: They are scored PER ECOSYSTEM the scan actually found, which needs both a manifest and an import
+#: graph — a Python project must not be told it is missing a `package.json`. That makes them
+#: unreachable from a fixture with no dependency rows, which is why this one exists.
+DEPENDENCY_MISMATCH = IndexEvidence(
+    paths=("requirements.txt", "src/main.py"),
+    contents={"requirements.txt": "fastapi==0.115.0\nuvicorn\nboto3>=1.0\n"},
+    dependency_specifiers=(
+        ("src/main.py", "fastapi", False),
+        # Imported and declared by nothing: the build already fails on a clean checkout.
+        ("src/main.py", "requests", False),
+        ("src/main.py", "uvicorn", False),
+        # Standard library, and not a dependency.
+        ("src/main.py", "os", False),
+    ),
+)
+
+
 def _all_checks() -> list:
     return ReadinessEngine().evaluate(HALF_CORRECT).checks
 
@@ -108,6 +127,11 @@ def test_every_check_id_has_an_explanation() -> None:
     # assertion, and it still catches an explanation for a check nothing emits at all.
     reachable = set(ids)
     reachable |= {c.id for c in ReadinessEngine().evaluate(CROSS_CATEGORY_MISMATCH).checks}
+    # The dependency checks are emitted only for an ecosystem the scan actually found, which needs a
+    # manifest AND an import graph. A repository with neither has nothing to reconcile, so a fixture
+    # without dependency rows cannot reach them — and a Python project must not be judged for having no
+    # package.json, which is why they are per-ecosystem rather than unconditional.
+    reachable |= {c.id for c in ReadinessEngine().evaluate(DEPENDENCY_MISMATCH).checks}
     unused = sorted(set(CHECK_EXPLANATIONS) - reachable)
     assert not unused, (
         f"these explanations describe checks nothing emits: {unused}. An explanation for a check that "

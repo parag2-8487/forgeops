@@ -61,6 +61,19 @@ CONTENT_PATTERNS: Final[tuple[str, ...]] = (
     "%.env.sample",
     "%.env.template",
     "%example.env",
+    # Dependency manifests. The reconciliation reads the DECLARATIONS out of these, so a path alone
+    # cannot answer it — "package.json exists" and "package.json declares express" are different facts
+    # and only the second can be compared against what the code imports.
+    #
+    # Lockfiles are deliberately NOT here. They are large, and the only question asked of them is
+    # whether one exists, which a path answers.
+    "%requirements.txt",
+    "%pyproject.toml",
+    "%package.json",
+    "%go.mod",
+    "%cargo.toml",
+    "%gemfile",
+    "%composer.json",
 )
 
 
@@ -92,6 +105,21 @@ class IndexEvidence(BaseModel):
     #: point of the redaction is that the value did not survive. A count and a path are enough to send an
     #: operator to the line.
     redaction_counts: Mapping[str, int] = Field(default_factory=dict)
+    #: `(source_path, raw_specifier, resolved)` from `file_dependencies`, for the reconciliation.
+    #:
+    #: This is what makes "the code imports a package no manifest declares" checkable. The rows have
+    #: existed since revision `0003` and the score never read them, so a build that worked only on the
+    #: machine where somebody had pip-installed the missing package was invisible to the report.
+    #:
+    #: `resolved` is the load-bearing member: True means the import pointed at another file in this
+    #: repository and is therefore not a dependency at all. Without it every relative import would be
+    #: reported as a missing package.
+    #:
+    #: THE SOURCE PATH IS CARRIED rather than the row's `kind`, and that is not cosmetic. Without it every
+    #: unresolved specifier is offered to every ecosystem, and `fastapi` is a perfectly valid npm package
+    #: name — so a pure Python project was reported as having undeclared Node dependencies. The importing
+    #: file's extension is the only thing that says which ecosystem an import belongs to.
+    dependency_specifiers: tuple[tuple[str, str, bool], ...] = ()
 
     model_config = {"frozen": True}
 
@@ -135,4 +163,26 @@ async def load_index_evidence(session: AsyncSession, *, project_id: uuid.UUID) -
     )
     redaction_counts = {str(row[0]).replace("\\", "/"): int(row[1]) for row in redaction_rows}
 
-    return IndexEvidence(paths=tuple(paths), contents=contents, redaction_counts=redaction_counts)
+    # A FOURTH statement, for the dependency graph.
+    #
+    # JOINED TO `file_tree` FOR THE PATH, not merely to scope by project. The importing file's extension
+    # is what says which ecosystem an import belongs to, and without it every unresolved specifier is
+    # offered to every ecosystem — `fastapi` is a legal npm package name, so a pure Python project was
+    # reported as having undeclared Node dependencies. No content is carried; the path, the specifier and
+    # the resolved flag are all the reconciliation needs.
+    dependency_rows = await session.execute(
+        text(
+            "SELECT f.path, d.raw_specifier, d.resolved FROM file_dependencies d "
+            "JOIN file_tree f ON f.id = d.from_file_id "
+            "WHERE d.project_id = :project_id ORDER BY f.path, d.raw_specifier"
+        ),
+        {"project_id": project_id},
+    )
+    specifiers = tuple((str(row[0]), str(row[1]), bool(row[2])) for row in dependency_rows)
+
+    return IndexEvidence(
+        paths=tuple(paths),
+        contents=contents,
+        redaction_counts=redaction_counts,
+        dependency_specifiers=specifiers,
+    )
