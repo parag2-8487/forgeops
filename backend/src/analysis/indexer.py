@@ -523,6 +523,18 @@ async def persist_scan_report(
         project_id=project_id,
         tenant_id=tenant_id,
         inventory_hash=report.inventory_hash,
+        # THE ARGUMENT THAT WAS NEVER PASSED. `_record_analysis_report` has accepted an `inventory`
+        # since revision 0015 and its docstring says "The INVENTORY is persisted here too … and that is
+        # FR-11" — and this, its only call site, omitted it, so the parameter defaulted to `None` and
+        # every row in `analysis_reports` was written with `inventory = {}`.
+        #
+        # Verified against the live database before the fix: every report, for every project, length 2.
+        # The agent computed the languages, frameworks, entry points, manifests, config files and
+        # package managers on every scan, sent them, had them validated by `ScanInventoryIn` — and they
+        # survived only as an input to the hash. The hash proves two scans agreed; it cannot say what
+        # they agreed about, so nothing could show an operator what was detected or put it in a
+        # generation prompt.
+        inventory=report.inventory,
     )
 
     return IndexResult(
