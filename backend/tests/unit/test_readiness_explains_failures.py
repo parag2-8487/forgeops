@@ -43,10 +43,9 @@ HALF_CORRECT = IndexEvidence(
         "id_rsa",
     ),
     contents={
-        "dockerfile": "FROM python:3\nCOPY . .\nCMD [\"python\", \"app.py\"]\n",
+        "dockerfile": 'FROM python:3\nCOPY . .\nCMD ["python", "app.py"]\n',
         ".github/workflows/ci.yml": (
-            "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n"
-            "      - uses: actions/checkout@v4\n"
+            "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
         ),
         "k8s/deployment.yaml": (
             "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n"
@@ -323,38 +322,68 @@ class TestGeneratabilityIsDerivedNotAsserted:
                     "KNOWN_ARTIFACT_KINDS - a typo here reads as 'nothing can fix this'"
                 )
 
-    def test_the_emitted_kinds_match_the_generation_schemas(self) -> None:
-        """`GENERATED_ARTIFACT_KINDS` must equal what the generator's models actually declare.
+    def test_the_validated_kinds_match_the_checker_dispatch(self) -> None:
+        """The kinds that claim an executable validator must be ones `checker_for` really dispatches.
 
-        Read off the schemas rather than restated, so adding an artifact model without listing it here -
-        or listing one that does not exist - fails instead of drifting.
+        THIS REPLACES A TEST TIED TO `generation/schemas.py`, which turned out to be dead on the runtime
+        path: `DockerfileArtifact` and `KubernetesManifestArtifact` are referenced only by `renderers.py`
+        and one unit test. Deriving the emittable set from them understated the generator by nine kinds,
+        because the real pipeline returns `{path: content}` for ANY path the model marks — the limit was
+        `parse_artifacts`' hard-coded required set, not the model and not the validators.
+
+        `artifact_checks.checker_for` is the honest source for the validated subset, so it is asserted
+        against directly rather than restated here.
         """
-        from src.generation.schemas import DockerfileArtifact, KubernetesManifestArtifact
+        from src.generation.artifact_checks import checker_for
 
-        declared = {
-            DockerfileArtifact.model_fields["kind"].default,
-            KubernetesManifestArtifact.model_fields["kind"].default,
+        representative = {
+            "dockerfile": "Dockerfile",
+            "compose": "docker-compose.yml",
+            "helm": "charts/app/Chart.yaml",
+            "github_workflow": ".github/workflows/ci.yml",
+            "k8s": "k8s/deployment.yaml",
+            "opentofu": "terraform/main.tf",
         }
-        assert declared == set(GENERATED_ARTIFACT_KINDS), (
-            f"the generator declares {sorted(declared)} and the readiness table believes "
-            f"{sorted(GENERATED_ARTIFACT_KINDS)}; one of the two has moved"
-        )
+        for kind, path in representative.items():
+            assert checker_for(path) is not None, (
+                f"{kind} is claimed to be checked by a tool, and checker_for({path!r}) returns nothing"
+            )
+            assert kind in GENERATED_ARTIFACT_KINDS
 
-    def test_a_generator_gap_is_named_as_a_generator_gap(self) -> None:
-        """Two different reasons for 'cannot' must not collapse into one sentence.
+        # A kind with no executable validator is still emittable, and must not claim one. The readiness
+        # checks are its whole criterion, which the prompt states rather than implying a tool exists.
+        assert checker_for(".env.example") is None
+        assert "env_example" in GENERATED_ARTIFACT_KINDS
 
-        Telling a user a `.env.example` is impossible would be false; telling them the generator does not
-        write one yet is true and points at the right thing.
+    def test_a_generator_gap_would_be_named_as_a_generator_gap(self) -> None:
+        """The derivation, exercised directly rather than through a check that has since moved.
+
+        Every artifact a live check names is now emittable, which is the point of the work that widened
+        the set — so no current check sits in the "generatable in principle, not emitted yet" state. The
+        mechanism still has to be right for the next kind somebody adds, and the two reasons for "cannot"
+        must stay apart: telling a user a `.env.example` is impossible would be false, while telling them
+        the generator does not write one yet is true and points at the right thing.
         """
-        checks = {c.id: c for c in ReadinessEngine().evaluate(HALF_CORRECT).checks}
-        workflow_gap = checks["ci_pipeline_present"]
-        assert not workflow_gap.generatable
-        assert "does not emit yet" in workflow_gap.blocked_because
-        assert "gap in the generator" in workflow_gap.blocked_because
+        from src.core.readiness import _blocked_reason
+        from src.core.readiness_findings import CheckExplanation, Fixability
 
-        permanent = checks["automated_tests_present"]
-        assert not permanent.generatable
-        assert "does not emit yet" not in permanent.blocked_because, (
+        not_yet_emitted = CheckExplanation(
+            looked_for="x",
+            looked_in="y",
+            remedy="z",
+            remedy_path="p",
+            fixability=Fixability(generatable=True),
+            artifact="a_kind_the_generator_does_not_emit",
+        )
+        assert not not_yet_emitted.generatable_today
+        reason = _blocked_reason(not_yet_emitted)
+        assert "does not emit yet" in reason
+        assert "gap in the generator" in reason
+
+        never = CHECK_EXPLANATIONS["automated_tests_present"]
+        assert not never.fixability.generatable
+        permanent = _blocked_reason(never)
+        assert "does not emit yet" not in permanent, (
             "a test cannot be generated for a reason that has nothing to do with which artifact kinds "
             "the generator emits, and saying otherwise would promise it later"
         )

@@ -25,6 +25,11 @@ async def main() -> None:
     async with app.router.lifespan_context(app):
         async with app.state.sessionmaker() as session:
             evidence = await load_index_evidence(session, project_id=project_id)
+            project_name = (
+                await session.execute(
+                    text("SELECT name FROM projects WHERE id = :p"), {"p": project_id}
+                )
+            ).scalar_one_or_none() or ""
             inventory = (
                 await session.execute(
                     text(
@@ -41,6 +46,7 @@ async def main() -> None:
         paths=evidence.paths,
         contents=evidence.contents,
         inventory=inventory,
+        project_name=str(project_name),
     )
     print("=" * 78)
     print(compiled.text)

@@ -42,12 +42,14 @@ from .iac_renderers import (
     opentofu_main_tf,
 )
 from .model_prompt import (
+    REQUIRED_ARTIFACTS,
     ArtifactParseError,
     build_generation_prompt,
     facts_from_project,
     parse_artifacts,
 )
 from .models import MAX_GENERATION_ITERATIONS
+from .prompt_compiler import CompiledPrompt
 from .retrieval import RetrievalContext, render_context_section
 
 
@@ -308,6 +310,7 @@ class GenerationService:
         outcome: GenerationOutcome | None = None,
         project: Mapping[str, Any] | None = None,
         retrieval: RetrievalContext | None = None,
+        compiled: CompiledPrompt | None = None,
     ) -> AsyncGenerator[str]:
         """Yield §7.4 frames for one generation run.
 
@@ -337,6 +340,7 @@ class GenerationService:
                 outcome=outcome,
                 report=report,
                 retrieval=retrieval,
+                compiled=compiled,
             ):
                 yield frame
             if report.succeeded:
@@ -366,6 +370,7 @@ class GenerationService:
         outcome: GenerationOutcome | None,
         report: _ModelReport,
         retrieval: RetrievalContext | None = None,
+        compiled: CompiledPrompt | None = None,
     ) -> AsyncGenerator[str]:
         """Route through the cascade, streaming real deltas, up to `max_attempts` times.
 
@@ -391,17 +396,39 @@ class GenerationService:
                 },
             )
 
-            model_prompt = build_generation_prompt(
-                operator_prompt=prompt,
-                facts=facts,
-                previous_findings=findings,
-                attempt=attempt,
-                # FR-13. Rendered per attempt from the SAME retrieval, so the repair loop keeps the
-                # grounding it started with rather than searching again for rows that cannot have
-                # changed between attempts. `render_context_section` returns an empty tuple when there
-                # is nothing to say, so an unscanned project gets no heading rather than an empty one.
-                context_lines=render_context_section(retrieval) if retrieval is not None else (),
-            )
+            # THE COMPILED INSTRUCTION WINS when one was built. It already carries the facts, the
+            # per-path create-or-modify decision, the acceptance criteria and the prohibitions, all
+            # derived from the index — so wrapping it in the older template would restate some of it
+            # and contradict the rest.
+            #
+            # `build_generation_prompt` remains the path for a free-text prompt with no readiness
+            # findings behind it, which is still a legitimate request.
+            if compiled is not None:
+                model_prompt = compiled.text
+                if findings:
+                    # THE VALIDATOR'S OWN WORDS, fed back verbatim. A repair attempt that is told only
+                    # "it failed" has to guess what to change, and guessing is what produced the
+                    # failure. The findings are appended rather than merged into the instruction so the
+                    # model can see which of its own output is being objected to.
+                    model_prompt = (
+                        model_prompt
+                        + "\n## 6. WHAT THE VALIDATORS SAID ABOUT YOUR PREVIOUS ATTEMPT\n\n"
+                        + "Your last output was rejected. Fix exactly these and change nothing else:\n\n"
+                        + "\n".join(f"  - {finding}" for finding in findings)
+                        + "\n"
+                    )
+            else:
+                model_prompt = build_generation_prompt(
+                    operator_prompt=prompt,
+                    facts=facts,
+                    previous_findings=findings,
+                    attempt=attempt,
+                    # FR-13. Rendered per attempt from the SAME retrieval, so the repair loop keeps the
+                    # grounding it started with rather than searching again for rows that cannot have
+                    # changed between attempts. `render_context_section` returns an empty tuple when there
+                    # is nothing to say, so an unscanned project gets no heading rather than an empty one.
+                    context_lines=render_context_section(retrieval) if retrieval is not None else (),
+                )
             # D-44: the cache key AND the L2 vector are computed over this value, and it is the
             # only thing handed to the provider. Redacting here rather than inside the port keeps
             # the guarantee at the boundary where raw operator text last exists.
@@ -470,7 +497,28 @@ class GenerationService:
                     )
 
             try:
-                parsed = parse_artifacts(result.content)
+                # REQUIRED = WHAT THIS RUN ASKED FOR, not a fixed list of four paths.
+                #
+                # `parse_artifacts` defaulted to `REQUIRED_ARTIFACTS` — Dockerfile plus three
+                # Kubernetes manifests — so a run asked for a CI workflow failed the parse for missing a
+                # Dockerfile nobody had requested, and a run asked only to fix a `USER` directive failed
+                # for missing an ingress. That default is why the product could produce four kinds of
+                # file and no others: the parser, not the model and not the validators, was the limit.
+                #
+                # The validators were never the constraint. `artifact_checks.checker_for` already
+                # dispatches on path for Dockerfile, compose, Chart.yaml, `.github/workflows/`, `k8s/`
+                # and `*.tf`, and returns None for a kind it has no opinion about rather than refusing
+                # it.
+                #
+                # Falls back to the old default when no plan was compiled, so an operator typing a free
+                # prompt still gets the previous contract rather than a run that requires nothing and
+                # therefore accepts an empty answer.
+                required = (
+                    tuple(compiled.write_targets)
+                    if compiled is not None and compiled.write_targets
+                    else REQUIRED_ARTIFACTS
+                )
+                parsed = parse_artifacts(result.content, required=required)
             except ArtifactParseError as exc:
                 findings = (str(exc),)
                 continue

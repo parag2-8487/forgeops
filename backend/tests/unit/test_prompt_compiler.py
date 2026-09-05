@@ -300,3 +300,71 @@ class TestItAsksOnlyForWhatIsNeeded:
         joined = " ".join(compiled.unaddressable)
         assert "dependency_lockfile_present" in joined
         assert "resolving against a live registry" in joined
+
+
+class TestNoPathIsEverAPlaceholder:
+    """A path the model cannot act on is worse than an artifact it was not asked for.
+
+    The findings table carries one placeholder — `charts/<name>/Chart.yaml` — because the table is
+    repository-independent and cannot know the name. Reaching a model verbatim, the model would either
+    invent a name or write the angle brackets into somebody's tree.
+    """
+
+    def test_the_chart_directory_is_resolved_from_the_project_name(self) -> None:
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, project_name="My Service 2!")
+        assert "charts/my-service-2/Chart.yaml" in compiled.write_targets
+        assert "<name>" not in compiled.text
+
+    def test_no_write_target_contains_a_placeholder_or_a_parenthetical(self) -> None:
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, project_name="edge")
+        for target in compiled.write_targets:
+            assert "<" not in target, f"{target!r} carries a placeholder the model cannot resolve"
+            assert "(" not in target, f"{target!r} is a convention rather than a path"
+
+    def test_an_unresolvable_path_is_reported_rather_than_guessed(self) -> None:
+        """With no project name the chart directory cannot be known, and must not be invented."""
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, project_name="")
+        assert not any("Chart.yaml" in target for target in compiled.write_targets)
+        assert any("helm_chart_present" in entry for entry in compiled.unaddressable)
+        joined = " ".join(compiled.unaddressable)
+        assert "no location this scan can determine" in joined
+
+    def test_the_lint_config_path_follows_the_detected_language(self) -> None:
+        """Derived from the scan, not from a default: a Go project must not be asked for ruff.toml."""
+        python = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, project_name="p")
+        assert "ruff.toml" in python.write_targets
+
+        go = _compile(GO_SERVICE, GO_INVENTORY, project_name="p")
+        assert ".golangci.yml" in go.write_targets
+        assert "ruff.toml" not in go.write_targets
+
+
+class TestItCoversEveryArtifactTheScoreMeasures:
+    """The generator could produce four kinds of file. The parser was the reason, not the model."""
+
+    def test_a_bare_repository_is_asked_for_every_generatable_kind(self) -> None:
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, project_name="edge")
+        targets = " ".join(compiled.write_targets)
+        for expected in (
+            "Dockerfile",
+            ".dockerignore",
+            "k8s/deployment.yaml",
+            "docker-compose.yml",
+            "Chart.yaml",
+            ".github/workflows/ci.yml",
+            ".env.example",
+            "terraform/",
+            "SECURITY.md",
+            ".gitleaks.toml",
+            "ruff.toml",
+        ):
+            assert expected in targets, (
+                f"{expected} was not requested; before the required-set fix the generator could only "
+                "ever be asked for a Dockerfile and three Kubernetes manifests"
+            )
+
+    def test_the_ci_workflow_is_no_longer_reported_as_impossible(self) -> None:
+        """It was listed as a generator gap. It is not one any more, and the prompt must not say so."""
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, project_name="edge")
+        assert "ci_pipeline_present" in compiled.addressed_checks
+        assert not any("ci_pipeline_present" in entry for entry in compiled.unaddressable)

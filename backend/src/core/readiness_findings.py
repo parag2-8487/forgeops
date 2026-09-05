@@ -74,11 +74,37 @@ KNOWN_ARTIFACT_KINDS: Final[frozenset[str]] = frozenset(
     }
 )
 
-#: The kinds the generator emits today, mirroring `generation/schemas.py`.
+#: The kinds the generator can emit.
 #:
-#: `test_the_emitted_kinds_match_the_generation_schemas` keeps this honest: it reads the `Literal`
-#: values off the artifact models, so adding a schema without adding it here — or the reverse — fails.
-GENERATED_ARTIFACT_KINDS: Final[frozenset[str]] = frozenset({"dockerfile", "k8s"})
+#: WHAT USED TO LIMIT THIS, AND WHY IT WAS NOT THE MODEL. `parse_artifacts` defaulted to
+#: `REQUIRED_ARTIFACTS` — a Dockerfile and three Kubernetes manifests — so a run asked for a CI workflow
+#: failed the parse for missing a Dockerfile nobody had requested. The PARSER was the constraint, not the
+#: model and not the validators: the model already returns `{path: content}` for any path, and
+#: `artifact_checks.checker_for` already dispatches on path for six kinds and returns None for a kind it
+#: has no opinion about rather than refusing it.
+#:
+#: With the required set now derived from what each run actually asked for, every kind below is
+#: reachable. Six of them are additionally checked by an executable validator; the rest are judged by
+#: the readiness checks alone, which `ARTIFACT_VALIDATORS` states explicitly rather than implying a tool
+#: exists.
+#:
+#: `test_the_validated_kinds_match_the_checker_dispatch` ties the six to `checker_for`, so adding a
+#: validator without listing it — or listing one that does not exist — fails.
+GENERATED_ARTIFACT_KINDS: Final[frozenset[str]] = frozenset(
+    {
+        "dockerfile",
+        "dockerignore",
+        "k8s",
+        "helm",
+        "compose",
+        "github_workflow",
+        "env_example",
+        "opentofu",
+        "lint_config",
+        "security_policy",
+        "secret_scanner_config",
+    }
+)
 
 
 class Fixability(BaseModel):

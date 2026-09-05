@@ -69,6 +69,70 @@ ARTIFACT_VALIDATORS: Final[Mapping[str, str]] = {
 MAX_QUOTED_LINES: Final = 120
 
 
+#: Where each ecosystem puts a linter configuration, keyed by the language the scan detected.
+#:
+#: The findings table gives a CONVENTION for these — "(depends on language: ruff.toml,
+#: eslint.config.mjs, .golangci.yml)" — because the table is repository-independent and cannot know
+#: which applies. Resolving it needs a fact, and the fact is in the inventory, so it is resolved here
+#: rather than left as a parenthetical the model would have to interpret.
+#:
+#: A language not listed produces NO instruction rather than a guessed filename. That is the difference
+#: between deriving and inventing: an unlisted ecosystem is a gap in this table, and writing
+#: `lint.config` into somebody's repository because nothing better was known is exactly the fabrication
+#: the prohibitions forbid.
+LINT_CONFIG_BY_LANGUAGE: Final[Mapping[str, str]] = {
+    "python": "ruff.toml",
+    "javascript": "eslint.config.mjs",
+    "typescript": "eslint.config.mjs",
+    "go": ".golangci.yml",
+    "rust": "rustfmt.toml",
+    "ruby": ".rubocop.yml",
+    "php": ".php-cs-fixer.php",
+}
+
+
+def _slugify(name: str) -> str:
+    """A DNS-label-safe form of the project name, or "" when nothing usable remains.
+
+    Empty rather than a fallback like "app": a chart directory named after a default is named after
+    nothing, and the caller reads "" as "this path cannot be resolved" and says so in the prompt.
+    """
+    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip()).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug[:63]
+
+
+def _resolve_target(artifact: str, remedy_path: str, languages: Sequence[str], project_slug: str = "") -> str:
+    """Turn a remedy path into a concrete file, or return "" when it cannot be known.
+
+    A remedy path containing a parenthesis is a CONVENTION rather than a location, and one containing
+    `<…>` carries a PLACEHOLDER the table cannot fill. Both need a fact from this repository, and the
+    facts come from the scan: the detected languages resolve a linter configuration, and the project's own
+    name resolves a chart directory.
+
+    Returning "" is deliberate for anything unresolvable. The artifact is then not requested and the
+    reason appears in the prompt's "cannot address" section. Naming a plausible file instead would put a
+    fabricated path into an instruction — and `charts/<name>/Chart.yaml` reaching a model verbatim is
+    exactly that, because the model would either invent a name or write the angle brackets into the tree.
+    """
+    if remedy_path and "(" not in remedy_path and "<" not in remedy_path:
+        return remedy_path.split(",")[0].strip()
+
+    if artifact == "lint_config":
+        for language in languages:
+            resolved = LINT_CONFIG_BY_LANGUAGE.get(language.lower())
+            if resolved:
+                return resolved
+
+    if "<name>" in remedy_path and project_slug:
+        # Slugified rather than used raw: a chart directory becomes part of a Helm release name, which
+        # Kubernetes requires to be a DNS label.
+        return remedy_path.split(",")[0].strip().replace("<name>", project_slug)
+
+    return ""
+
+
 class ArtifactInstruction(BaseModel):
     """One file the model must produce or edit, and everything it needs to know about it."""
 
@@ -259,6 +323,7 @@ def compile_prompt(
     inventory: Mapping[str, Any],
     selected_check_ids: Sequence[str] | None = None,
     token_budget: int = 24_000,
+    project_name: str = "",
 ) -> CompiledPrompt:
     """Build the instruction for the failing checks a generated artifact can satisfy.
 
@@ -267,6 +332,7 @@ def compile_prompt(
     told to write one.
     """
     indexed = {p.replace("\\", "/") for p in paths}
+    project_slug = _slugify(project_name)
     lowered = {p.lower(): p for p in indexed}
 
     failing = [c for c in checks if not c.passed]
@@ -291,9 +357,17 @@ def compile_prompt(
         # The path comes from the check's own remedy_path, which is the table's statement of where this
         # ecosystem puts the file. A path containing a parenthetical is a convention rather than a
         # location and is resolved against the repository instead of used literally.
-        candidates = [c.remedy_path for c in group if c.remedy_path and "(" not in c.remedy_path]
-        target = candidates[0].split(",")[0].strip() if candidates else ""
+        languages = [str(v) for v in (inventory.get("languages") or [])]
+        resolved = [path for c in group if (path := _resolve_target(artifact, c.remedy_path, languages, project_slug))]
+        target = resolved[0] if resolved else ""
         if not target:
+            # No concrete path could be derived, so no instruction is written. The failing checks are
+            # reported as unaddressable with their reason rather than being silently dropped.
+            unaddressable.extend(
+                f"{c.id}: the file that would fix this has no location this scan can determine "
+                f"(convention: {c.remedy_path or 'none stated'})"
+                for c in group
+            )
             continue
 
         existing = lowered.get(target.lower())

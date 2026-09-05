@@ -1495,6 +1495,21 @@
             "minLength": 1,
             "title": "Prompt",
             "type": "string"
+          },
+          "target_checks": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Checks"
           }
         },
         "required": [
@@ -2147,6 +2162,11 @@
       "ReadinessCheckResponse": {
         "description": "One checklist item, with the indexed path that satisfied it.\n\n\u00c2\u00a71.4 asks for \"checklist checks\" and a report that says \"why it matters\"; this is that, on the\nwire. `evidence` is what makes a score auditable \u00e2\u20ac\u201d a category at 40 with no evidence anywhere is\nindistinguishable from a bug in the scorer.",
         "properties": {
+          "blocked_because": {
+            "default": "",
+            "title": "Blocked Because",
+            "type": "string"
+          },
           "category": {
             "title": "Category",
             "type": "string"
@@ -2155,13 +2175,49 @@
             "title": "Evidence",
             "type": "string"
           },
+          "found": {
+            "default": "",
+            "title": "Found",
+            "type": "string"
+          },
+          "generatable": {
+            "default": false,
+            "title": "Generatable",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "looked_for": {
+            "default": "",
+            "title": "Looked For",
+            "type": "string"
+          },
+          "looked_in": {
+            "default": "",
+            "title": "Looked In",
             "type": "string"
           },
           "max_points": {
             "title": "Max Points",
             "type": "integer"
+          },
+          "partial_offer": {
+            "default": "",
+            "title": "Partial Offer",
+            "type": "string"
           },
           "passed": {
             "title": "Passed",
@@ -2170,6 +2226,16 @@
           "points": {
             "title": "Points",
             "type": "integer"
+          },
+          "remedy": {
+            "default": "",
+            "title": "Remedy",
+            "type": "string"
+          },
+          "remedy_path": {
+            "default": "",
+            "title": "Remedy Path",
+            "type": "string"
           },
           "why_it_matters": {
             "title": "Why It Matters",

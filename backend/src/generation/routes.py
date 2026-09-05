@@ -39,8 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
 from ..core.db import get_session
+from ..core.index_evidence import load_index_evidence
+from ..core.readiness import ReadinessEngine
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from ..governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, MutationRequest
+from .prompt_compiler import CompiledPrompt, compile_prompt
 from .retrieval import retrieve_generation_context
 from .service import GenerationOutcome, GenerationService
 
@@ -76,6 +79,18 @@ class GenerationRequest(BaseModel):
     #: not defaulted here: `approval.rego` answers `require_approval` when the member is absent, so
     #: an omitted environment means a human reviews it rather than it auto-approving (finding 68).
     environment: str | None = Field(default=None, max_length=32)
+    #: The failing readiness checks this run should address, or `None` for every one that a generated
+    #: artifact can satisfy.
+    #:
+    #: PRD FR-89's shape: a user reads the readiness report, picks the findings they want acted on, and
+    #: gets a change set that addresses those and nothing else. Without it a run either fixes everything
+    #: it can — a large change set to review for one small complaint — or the user rewrites the whole
+    #: prompt by hand and loses the compiled facts.
+    #:
+    #: Not validated against the check table here. An id that matches no failing check simply selects
+    #: nothing, which is the same outcome as asking for a check that already passes; rejecting the
+    #: request would make a stale browser tab an error rather than a no-op.
+    target_checks: list[str] | None = Field(default=None, max_length=64)
 
 
 def _service(request: Request) -> GenerationService:
@@ -234,8 +249,32 @@ async def create_generation_run(
         # revision `0006` and was never written.
         outcome.retrieval = retrieval.as_record()
 
+        # THE COMPILED INSTRUCTION. Built here for the same reason the project row and the retrieval are
+        # loaded here: this is where the session lives, and `service.py` takes facts rather than a
+        # database handle.
+        #
+        # It replaces "here is a sentence, work the rest out" with a statement of every fact the index
+        # holds, a per-path create-or-modify decision, the validator each file will face, and the
+        # prohibitions that describe how generated infrastructure goes wrong. A model asked for "a
+        # Dockerfile" with no facts has to guess the language, the entry point and the port, and a guess
+        # that reads plausibly is indistinguishable from a fact until it fails.
+        compiled = await _compile_generation_plan(
+            session,
+            project_id=body.project_id,
+            selected_check_ids=body.target_checks,
+        )
+        # Persisted BEFORE the stream, not after. A run that crashes mid-generation is exactly the run
+        # somebody needs the prompt for, and a prompt written at the end would be missing from every
+        # failure.
+        await _record_compiled_prompt(session, run_id=run_id, compiled=compiled)
+
         async for frame in service.stream_generation(
-            body.project_id, body.prompt, outcome=outcome, project=project_row, retrieval=retrieval
+            body.project_id,
+            body.prompt,
+            outcome=outcome,
+            project=project_row,
+            retrieval=retrieval,
+            compiled=compiled,
         ):
             if _is_terminal(frame):
                 withheld = frame
@@ -397,3 +436,72 @@ async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: Gene
         },
     )
     await session.commit()
+
+
+async def _compile_generation_plan(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    selected_check_ids: list[str] | None,
+) -> CompiledPrompt | None:
+    """Build the instruction from this project's own index and its failing checks.
+
+    Returns None when the project has never been scanned. That is deliberate rather than a fallback to a
+    generic prompt: with no index there are no facts, and a prompt built from no facts is exactly the
+    template-with-substitutions this compiler exists to replace. The service then uses the older
+    free-text path, which is honest about having nothing to ground itself in.
+    """
+    evidence = await load_index_evidence(session, project_id=project_id)
+    if not evidence.paths:
+        return None
+    inventory = (
+        await session.execute(
+            text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
+            {"p": project_id},
+        )
+    ).scalar_one_or_none() or {}
+    # The project's own name, which is the fact that fills the one placeholder the findings table
+    # carries: a chart directory. Without it `charts/<name>/Chart.yaml` would reach the model verbatim
+    # and the model would either invent a name or write the angle brackets into the tree.
+    project_name = (
+        await session.execute(text("SELECT name FROM projects WHERE id = :p"), {"p": project_id})
+    ).scalar_one_or_none() or ""
+    report = ReadinessEngine().evaluate(evidence)
+    return compile_prompt(
+        checks=report.checks,
+        paths=evidence.paths,
+        contents=evidence.contents,
+        inventory=inventory,
+        selected_check_ids=selected_check_ids,
+        project_name=str(project_name),
+    )
+
+
+async def _record_compiled_prompt(session: AsyncSession, *, run_id: uuid.UUID, compiled: CompiledPrompt | None) -> None:
+    """Store the exact text the model was sent, so a run can be judged rather than guessed at.
+
+    A run used to be judged only by its output. When one produced a file in the wrong place there was no
+    way to tell whether the model had disobeyed a correct instruction or obeyed a bad one, and those two
+    faults have opposite fixes.
+
+    Nothing is written when no plan was compiled: `NULL` reads as "not recorded", which is true, and an
+    empty string would read as "the model was sent nothing", which is not.
+    """
+    if compiled is None:
+        return
+    await session.execute(
+        text(
+            "UPDATE generation_runs SET compiled_prompt = :text, "
+            "prompt_token_estimate = :estimate, prompt_token_budget = :budget, "
+            "addressed_checks = CAST(:addressed AS jsonb), "
+            "deferred_checks = CAST(:deferred AS jsonb) WHERE id = :id"
+        ),
+        {
+            "id": run_id,
+            "text": compiled.text,
+            "estimate": compiled.token_estimate,
+            "budget": compiled.token_budget,
+            "addressed": json.dumps(list(compiled.addressed_checks)),
+            "deferred": json.dumps(list(compiled.deferred_checks)),
+        },
+    )
