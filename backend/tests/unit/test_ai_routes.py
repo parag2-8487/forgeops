@@ -25,7 +25,7 @@ from src.ai.rate_limit.redis_bucket import (
     RateLimitServiceError,
     RedisTokenBucketLimiter,
 )
-from src.ai.routes import AIDeps, router
+from src.ai.routes import AIDeps, read_router, router
 from src.ai.routing.breaker import CircuitBreaker
 from src.ai.routing.endpoints import (
     EndpointAvailability,
@@ -260,7 +260,21 @@ def app(ai_deps: AIDeps) -> FastAPI:
     # handler uses, not a second one: a token the handler accepts must be a token the
     # dependency accepts, and two verifiers in one app is how those diverge.
     app.state.token_verifier = ai_deps.verifier
+    # `require_principal` reads `app.state.app_token_verifier`, a DIFFERENT state key from the one
+    # `require_mcp_principal` reads - the two audiences are verified separately by design (§11.2). Since
+    # `GET /tiers` moved to the user-authenticated router, an app that composed only the gateway verifier
+    # answered 500 where it should answer 401: an uncomposed verifier is a deployment error, not a fact
+    # about the caller, so the dependency raises rather than refusing.
+    #
+    # Pointed at the SAME verifier for the reason the comment above gives: two verifiers in one app is
+    # how the dependency's answer and the handler's answer diverge.
+    app.state.app_token_verifier = ai_deps.verifier
     app.include_router(router)
+    # THE SECOND ROUTER. `GET /tiers` moved off the completion router when it turned out a browser
+    # session token could never satisfy the gateway-audience dependency the completion surface carries,
+    # so the Models screen reported "Not authenticated to read model tiers" to a signed-in user for ever.
+    # Both routers share the prefix, so the paths are unchanged; a test app has to mount both.
+    app.include_router(read_router)
     return app
 
 
@@ -280,7 +294,7 @@ def authed_client(app: FastAPI) -> TestClient:
     """
     import uuid as _uuid
 
-    from src.auth.dependencies import require_mcp_principal
+    from src.auth.dependencies import require_mcp_principal, require_principal
     from src.auth.models import UserRole
     from src.auth.principal import Principal
 
@@ -291,6 +305,11 @@ def authed_client(app: FastAPI) -> TestClient:
         role=UserRole.DEVELOPER,
     )
     app.dependency_overrides[require_mcp_principal] = lambda: principal
+    # `GET /tiers` now sits on `read_router`, which requires a USER principal rather than the gateway
+    # audience - a browser session token could never satisfy the latter, which is why the Models screen
+    # reported "Not authenticated to read model tiers" to a correctly signed-in user. Overridden here for
+    # the same reason the other one is: this file tests the tier handler, not the auth stack.
+    app.dependency_overrides[require_principal] = lambda: principal
     return TestClient(app)
 
 
@@ -381,15 +400,56 @@ class TestTiersEndpoint:
         assert high_analysis["primary_protocol"] == "anthropic_native"
         assert high_analysis["available"] is False
 
-    def test_tiers_requires_auth(self, client: TestClient):
-        """The Phase 0 assertion, deliberately reversed (§4.4).
+    def test_tiers_requires_a_principal(self, client: TestClient):
+        """Deny-by-default on the tier read, asserted where this file can assert it honestly.
 
-        `client` carries no principal override, so this exercises the router-level
-        `require_mcp_principal` dependency on the real router — the same object
-        `scripts/check-route-auth.py` inspects statically.
+        THIS USED TO CALL THE ROUTE AND EXPECT 401. It cannot any more, and the reason is worth stating:
+        `GET /tiers` moved off the completion router onto one that requires a USER principal, because the
+        gateway-audience dependency it used to inherit can never be satisfied by a browser session token
+        — the Models screen reported "Not authenticated to read model tiers" to a correctly signed-in
+        user, permanently.
+
+        `require_principal` resolves against `app.state.app_token_verifier`, and this file's app is built
+        around an `OidcTokenVerifier` that has no `verify_principal`. Composing a stand-in that answered
+        401 would be a test double on the auth path proving only that the double works.
+
+        So the dependency is asserted STRUCTURALLY here — the same object `scripts/check-route-auth.py`
+        inspects — and the live 401 is asserted against the real composed app in
+        `tests/integration/test_ai_tiers_user_read.py::test_an_anonymous_caller_is_still_refused`.
         """
-        resp = client.get("/api/v1/ai/tiers")
-        assert resp.status_code == 401
+        from src.auth.dependencies import require_mcp_principal, require_principal
+        from src.ai.routes import read_router, router as completion_router
+
+        def _deps(target) -> set[object]:
+            return {
+                call
+                for dep in target.dependencies
+                if (call := getattr(dep, "dependency", None)) is not None
+            }
+
+        # Asserted on the ROUTERS rather than on a test app's route table, because that is where the
+        # dependency is attached and it is the same object `scripts/check-route-auth.py` inspects.
+        assert require_principal in _deps(read_router), (
+            "the router carrying GET /api/v1/ai/tiers must require a principal; it is a user-facing "
+            "read and deny-by-default is attached at the router"
+        )
+        assert require_mcp_principal not in _deps(read_router), (
+            "the tier read must NOT carry the gateway-audience dependency; that is the defect this "
+            "split fixed, and a browser session token can never satisfy it"
+        )
+        # And the completion surface kept its stricter contract, which is the half a careless fix breaks.
+        assert require_mcp_principal in _deps(completion_router)
+        # `/tiers` lives on the read router and nowhere else, so the split is real rather than additive.
+        # An APIRouter stores the PREFIXED path, so the comparison is on the suffix.
+        tier_paths = [
+            r.path for r in read_router.routes if getattr(r, "path", "").endswith("/tiers")
+        ]
+        assert tier_paths == ["/api/v1/ai/tiers"], (
+            f"expected exactly one tier route on the read router, got {tier_paths}"
+        )
+        assert not [
+            r for r in completion_router.routes if getattr(r, "path", "").endswith("/tiers")
+        ], "the tier read must have MOVED off the completion router, not been duplicated onto both"
 
 
 # ---------------------------------------------------------------------------

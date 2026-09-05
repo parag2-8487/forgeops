@@ -3859,6 +3859,52 @@
         ]
       }
     },
+    "/api/v1/approvals/{change_set_id}/deliver": {
+      "post": {
+        "description": "Send an already-approved change set that never reached an agent.\n\nWHY THIS ROUTE HAS TO EXIST. `sink.send_command` raises `device-not-connected` and does not queue,\nand `_deliver` runs AFTER the approval has been committed. So approving with no agent connected\nproduced a durable, correct approval and a change set that no later action could apply: the\n`(\"approved\", \"applying\")` edge was declared and documented as retryable, and its only traversal\nlived inside `approve`, in the transaction whose send had just failed.\n\nThat is not a rare race. The onboarding order invites it \u2014 a user can reach the approvals screen\nbefore ever starting the agent, approve, and be told by the UI that the change set \"moved since it\nwas displayed\", which was false twice over: nothing moved, and the approval had in fact succeeded.\n\nNO SECOND APPROVAL IS TAKEN. This carries no body for that reason: there is no decision to record\nand no comment to attach. The original approval is the authority; this only re-attempts the send,\nand re-runs admission and policy first so a device revoked in the meantime cannot be handed work.",
+        "operationId": "deliver_change_set_api_v1_approvals__change_set_id__deliver_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Deliver Change Set Api V1 Approvals  Change Set Id  Deliver Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deliver an approved change set to the agent",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
     "/api/v1/approvals/{change_set_id}/reject": {
       "post": {
         "description": "Refuse a pending change set: \u00a73.6's `pending_approval \u2192 rejected` edge.\n\nNothing is minted and nothing is delivered, because there is nothing to apply. The refusal is\nstill a governance event with a row and an audit record \u2014 under the old dictionary it was\nneither.",

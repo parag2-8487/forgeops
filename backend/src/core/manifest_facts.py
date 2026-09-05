@@ -32,6 +32,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Final
 
 import yaml
+from pydantic import BaseModel
 
 #: `kind` values whose pod template a resource or probe check applies to. A `ConfigMap` has no container,
 #: so scoring it for missing limits would make every repository fail a check it cannot pass.
@@ -396,3 +397,241 @@ def dockerfile_base_pinned(body: str) -> bool:
 
 def basename(path: str) -> str:
     return posixpath.basename(path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Counting audits
+#
+# The `(passed, evidence)` functions above short-circuit on the FIRST offender, which is the right
+# shape for a yes/no answer and the wrong shape for two things a reader needs:
+#
+#   * a PROPORTION. Points were all-or-nothing, so a manifest with four correct containers and one
+#     without limits scored exactly what five wrong ones scored. A user fixing four of five saw the
+#     number not move, which teaches that the score does not respond to work.
+#   * a NAMED PROPERTY. "the offending path" says which file; it does not say which container, which
+#     of requests or limits, or which of cpu or memory. That is the difference between a report a
+#     reader can act on and one they have to reverse-engineer.
+#
+# These return both, and never guess: `examined == 0` means there was nothing to judge, which is a
+# different answer from "everything passed" and is reported as such.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class ItemAudit(BaseModel):
+    """How many things a check examined, how many satisfied it, and what the first failure was.
+
+    `detail` is written for a reader who does not already know the answer: it names the file, the item
+    within it, and the specific property that was absent.
+    """
+
+    #: Total items considered. Zero means there was nothing of this kind to judge.
+    examined: int = 0
+    #: How many of them satisfied the property.
+    satisfied: int = 0
+    #: The path holding the first item that did not.
+    offender_path: str = ""
+    #: A sentence naming the file, the item and the missing property.
+    detail: str = ""
+    #: The 1-based line the offending item begins on, when it could be located in the body. `None`
+    #: when the body was not available or the item could not be tied to a line — an invented line
+    #: number is worse than none, because it sends a reader to the wrong place confidently.
+    line: int | None = None
+
+    model_config = {"frozen": True}
+
+    @property
+    def passed(self) -> bool:
+        """True only when something was examined and all of it satisfied the property.
+
+        `examined == 0` is False, deliberately: a repository with no containers has not demonstrated
+        that its containers are bounded, and the vacuous truth would score it as though it had.
+        """
+        return self.examined > 0 and self.satisfied == self.examined
+
+
+def _line_of(body: str, needle: str) -> int | None:
+    """The 1-based line where `needle` first appears, or None.
+
+    Used to point a reader at a container by its `name:` entry. Returns None rather than 0 or 1 when
+    the text is not found, because a caller must be able to tell "line 1" from "unknown".
+    """
+    if not needle:
+        return None
+    for number, text in enumerate(body.splitlines(), start=1):
+        if needle in text:
+            return number
+    return None
+
+
+def _container_name(container: Mapping[str, Any], index: int) -> str:
+    name = container.get("name")
+    return str(name) if isinstance(name, str) and name else f"container[{index}]"
+
+
+def kubernetes_resource_limits_audit(paths: Iterable[str], contents: Mapping[str, str]) -> ItemAudit:
+    """Count containers that bound both cpu and memory, in both requests and limits."""
+    examined = 0
+    satisfied = 0
+    offender_path = ""
+    detail = ""
+    line: int | None = None
+
+    for path, body in _yaml_bodies(paths, contents):
+        for document in _documents(body):
+            for pod_spec in _pod_specs(document):
+                for index, container in enumerate(_containers(pod_spec)):
+                    examined += 1
+                    name = _container_name(container, index)
+                    resources = container.get("resources")
+                    missing: list[str] = []
+                    if not isinstance(resources, Mapping):
+                        missing.append("no resources block at all")
+                    else:
+                        for section in ("requests", "limits"):
+                            block = resources.get(section)
+                            if not isinstance(block, Mapping):
+                                missing.append(f"no {section}")
+                                continue
+                            for key in REQUIRED_RESOURCE_KEYS:
+                                if key not in block:
+                                    missing.append(f"no {section}.{key}")
+                    if missing:
+                        if not offender_path:
+                            offender_path = path
+                            detail = f"container {name!r} in {path} declares " + ", ".join(missing)
+                            line = _line_of(body, f"name: {name}")
+                    else:
+                        satisfied += 1
+
+    return ItemAudit(
+        examined=examined,
+        satisfied=satisfied,
+        offender_path=offender_path,
+        detail=detail,
+        line=line,
+    )
+
+
+def kubernetes_probes_audit(paths: Iterable[str], contents: Mapping[str, str]) -> ItemAudit:
+    """Count long-running containers declaring both a liveness and a readiness probe.
+
+    `Job` and `CronJob` are excluded for the reason `kubernetes_probes` gives: a container meant to
+    finish does not need a liveness probe, and demanding one would mark a correct manifest wrong.
+    """
+    examined = 0
+    satisfied = 0
+    offender_path = ""
+    detail = ""
+    line: int | None = None
+
+    for path, body in _yaml_bodies(paths, contents):
+        for document in _documents(body):
+            if str(document.get("kind") or "") in {"Job", "CronJob"}:
+                continue
+            for pod_spec in _pod_specs(document):
+                init = pod_spec.get("initContainers") or []
+                for index, container in enumerate(_containers(pod_spec)):
+                    if container in init:
+                        continue
+                    examined += 1
+                    name = _container_name(container, index)
+                    missing = [p for p in LIVENESS_PROBES if not isinstance(container.get(p), Mapping)]
+                    if missing:
+                        if not offender_path:
+                            offender_path = path
+                            detail = f"container {name!r} in {path} declares no " + " and no ".join(missing)
+                            line = _line_of(body, f"name: {name}")
+                    else:
+                        satisfied += 1
+
+    return ItemAudit(
+        examined=examined,
+        satisfied=satisfied,
+        offender_path=offender_path,
+        detail=detail,
+        line=line,
+    )
+
+
+def kubernetes_image_tags_audit(paths: Iterable[str], contents: Mapping[str, str]) -> ItemAudit:
+    """Count container images that name an immutable reference rather than a floating one."""
+    examined = 0
+    satisfied = 0
+    offender_path = ""
+    detail = ""
+    line: int | None = None
+
+    for path, body in _yaml_bodies(paths, contents):
+        for document in _documents(body):
+            for pod_spec in _pod_specs(document):
+                for index, container in enumerate(_containers(pod_spec)):
+                    image = container.get("image")
+                    if not isinstance(image, str) or not image:
+                        continue
+                    examined += 1
+                    name = _container_name(container, index)
+                    reference = image.rsplit("/", 1)[-1]
+                    if "@sha256:" in image:
+                        satisfied += 1
+                        continue
+                    if ":" not in reference:
+                        problem = f"image {image!r} carries no tag, so it resolves to latest"
+                    elif reference.rsplit(":", 1)[-1] == "latest":
+                        problem = f"image {image!r} uses the latest tag"
+                    else:
+                        satisfied += 1
+                        continue
+                    if not offender_path:
+                        offender_path = path
+                        detail = f"container {name!r} in {path}: {problem}"
+                        line = _line_of(body, f"image: {image}")
+
+    return ItemAudit(
+        examined=examined,
+        satisfied=satisfied,
+        offender_path=offender_path,
+        detail=detail,
+        line=line,
+    )
+
+
+def pipeline_actions_pinned_audit(paths: Iterable[str], contents: Mapping[str, str]) -> ItemAudit:
+    """Count `uses:` references pinned to a full commit SHA.
+
+    Names the ACTION and the line, which is what the recommendation needed: "a tag is mutable" states
+    a principle, and a reader still has to find which action in which file on which line.
+    """
+    examined = 0
+    satisfied = 0
+    offender_path = ""
+    detail = ""
+    line: int | None = None
+
+    for path, document in _workflow_documents(paths, contents):
+        body = contents.get(path.lower(), "") or contents.get(path, "")
+        for _job_name, job in _jobs(document):
+            for step in _steps(job):
+                uses = step.get("uses")
+                if not isinstance(uses, str) or not uses:
+                    continue
+                examined += 1
+                reference = uses.rsplit("@", 1)[-1] if "@" in uses else ""
+                if len(reference) == 40 and all(c in "0123456789abcdef" for c in reference.lower()):
+                    satisfied += 1
+                    continue
+                if not offender_path:
+                    offender_path = path
+                    shown = reference or "no reference at all"
+                    detail = (
+                        f"{path} uses {uses.rsplit('@', 1)[0]!r} at {shown!r}, which is a moving "
+                        "pointer rather than a commit"
+                    )
+                    line = _line_of(body, uses)
+
+    return ItemAudit(
+        examined=examined,
+        satisfied=satisfied,
+        offender_path=offender_path,
+        detail=detail,
+        line=line,
+    )

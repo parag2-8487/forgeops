@@ -129,6 +129,30 @@ class ReadinessCheckResponse(BaseModel):
     evidence: str
     why_it_matters: str
 
+    # ─── What a reader needs when a check FAILS ──────────────────────────────
+    #
+    # `evidence` was blanked on every failure, so the screen rendered "Evidence:" with nothing after
+    # it — on the one outcome that needs explaining. `why_it_matters` states a principle and says
+    # nothing about the repository being scored.
+    #
+    # Defaulted so a client older than this revision still deserialises, and so a check that somehow
+    # arrives without them renders as "not stated" rather than failing the whole report.
+    looked_for: str = ""
+    looked_in: str = ""
+    found: str = ""
+    remedy: str = ""
+    remedy_path: str = ""
+    line: int | None = None
+
+    # ─── Whether generation can fix it ───────────────────────────────────────
+    #
+    # Read by the readiness screen to state the position PER CHECK. The screen used to carry one
+    # blanket sentence — "Generation cannot raise this score" — which was wrong for 22 of the 29
+    # checks, and gave no reason for the 7 where it is true.
+    generatable: bool = False
+    blocked_because: str = ""
+    partial_offer: str = ""
+
 
 class ReadinessReportResponse(BaseModel):
     project_id: uuid.UUID
@@ -545,6 +569,18 @@ async def get_project_readiness(
         evaluated_paths=result.evaluated_paths,
         checks=[
             ReadinessCheckResponse(
+                # Copied field-by-field rather than by `model_dump()`, deliberately: the engine's model
+                # and the wire model are allowed to diverge, and an automatic copy would silently
+                # publish anything added to the engine.
+                looked_for=check.looked_for,
+                looked_in=check.looked_in,
+                found=check.found,
+                remedy=check.remedy,
+                remedy_path=check.remedy_path,
+                line=check.line,
+                generatable=check.generatable,
+                blocked_because=check.blocked_because,
+                partial_offer=check.partial_offer,
                 id=check.id,
                 category=check.category,
                 passed=check.passed,

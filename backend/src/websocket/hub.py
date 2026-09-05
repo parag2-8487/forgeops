@@ -43,6 +43,7 @@ await its result without owning the socket.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -460,7 +461,7 @@ class AgentHub:
         if not await self._live(ws, device.device_id):
             return False
 
-        active_digest = await self._active_bundle_digest(device.project_id)
+        active_digest, active_body = await self._active_bundle(device.project_id)
         presented = str(params.get("policy_bundle_digest") or "")
         stale = bool(active_digest) and presented != active_digest
 
@@ -475,13 +476,21 @@ class AgentHub:
             "server_time": self._now_iso(),
         }
         if stale:
-            # §3.1 returns the bundle itself here. `PolicyBundleService.publish` is leaf 9.3, so
-            # what this can honestly say is *that* the digest is stale and what the current one
-            # is. The bundle body is absent rather than empty: D-30 makes a missing bundle a DENY
-            # on the agent side, so a zero-byte bundle would be a field that means "refuse
-            # everything" while looking like a bundle.
+            # §3.1 RETURNS THE BUNDLE ITSELF HERE, and now it does. Previously this reported only that
+            # the digest had moved, which told a device it was stale and gave it no way to stop being
+            # stale: publishing a policy invalidated every paired agent until each re-paired.
+            #
+            # The body is still ABSENT rather than empty when there is nothing to send, because D-30
+            # makes a missing bundle a DENY on the agent side — a zero-byte bundle would be a field
+            # meaning "refuse everything" while looking like a bundle.
+            #
+            # The pin is NOT advanced here. The agent confirms it stored the bundle by reporting the new
+            # digest on `agent.status`, and `_repin_device_bundle` moves the pin then. Advancing now
+            # would let the chokepoint stamp envelopes with a digest the agent might not hold.
             result["policy_bundle_stale"] = True
             result["policy_bundle_digest"] = active_digest
+            if active_body:
+                result["policy_bundle"] = base64.b64encode(active_body).decode("ascii")
         else:
             result["policy_bundle_digest"] = presented or active_digest or ""
 
@@ -562,7 +571,21 @@ class AgentHub:
             reported_digest = params.get("policy_bundle_digest")
             if reported_digest is not None:
                 active = await self._active_bundle_digest(device.project_id)
-                if active and reported_digest != active:
+                if active and reported_digest == active:
+                    # AGREEMENT USED TO DO NOTHING. An agent that had fetched the new bundle at the
+                    # handshake and now held exactly the active digest stayed pinned to the old one and
+                    # stayed `policy_stale`, so admission kept refusing its submissions. This is the
+                    # re-pin, and it is driven by the agent's own report so the pin never claims more
+                    # than the device can prove.
+                    if await self._repin_device_bundle(local.device_id, str(reported_digest)):
+                        logger.info(
+                            "device re-pinned to the active policy bundle",
+                            extra={
+                                "device_id": str(local.device_id),
+                                "policy_bundle_digest": str(reported_digest),
+                            },
+                        )
+                elif active and reported_digest != active:
                     # Update status to POLICY_STALE
                     async with self._session_scope() as session:
                         from sqlmodel import update
@@ -1204,6 +1227,73 @@ class AgentHub:
                 await session.commit()
         except Exception:  # noqa: BLE001 - operational metadata; never worth a dropped session
             logger.debug("last_seen update failed", extra={"device_id": str(device_id)})
+
+    async def _active_bundle(self, project_id: uuid.UUID | None) -> tuple[str, bytes | None]:
+        """The active bundle's digest AND body, for handing to a device whose pin has gone stale.
+
+        WHY THE BODY IS NEEDED HERE. §3.1 specifies that `session.connect` returns the bundle when the
+        device's pin is stale. It did not: the handshake reported only *that* the digest had moved and
+        what the new one was, and the comment at that site said the body was out of reach. So a device
+        was told it was stale and given no way to stop being stale — publishing a policy invalidated
+        every paired agent, and `devices.py` conceded as much, saying submissions "are refused until one
+        is published and it pairs again".
+
+        Requiring `pair --wipe` after every policy change is not a workable deployment story. Handing
+        the bundle over this session is not a new trust decision either: the connection is mutually
+        authenticated with the device's own client certificate, which is a stronger proof of identity
+        than the one-time pairing code that carried the bundle the first time.
+
+        Returns `("", None)` when there is no active bundle. A zero-length body is never substituted for
+        a missing one: D-30 makes an absent bundle a DENY on the agent side, so an empty bundle would be
+        a field that means "refuse everything" while looking like a bundle.
+        """
+        if project_id is None:
+            return "", None
+        try:
+            async with self._session_scope() as session:
+                result = await session.execute(
+                    text(
+                        "SELECT digest, bundle FROM policy_bundles WHERE active AND "
+                        "(project_id = :project OR project_id IS NULL) "
+                        "ORDER BY (project_id IS NULL), created_at DESC LIMIT 1"
+                    ),
+                    {"project": project_id},
+                )
+                row = result.first()
+                if row is None:
+                    return "", None
+                return str(row[0]), bytes(row[1])
+        except Exception:  # noqa: BLE001 - an unreadable bundle table reports "unknown", as above
+            logger.debug("active bundle unavailable", extra={"project_id": str(project_id)})
+            return "", None
+
+    async def _repin_device_bundle(self, device_id: uuid.UUID, digest: str) -> bool:
+        """Advance a device's pinned digest, and clear the stale status that went with it.
+
+        THE PIN MOVES ONLY WHEN THE AGENT SAYS IT HOLDS THE BUNDLE. It is not advanced when the
+        handshake hands the bundle over, because at that moment the backend has posted a body and knows
+        nothing about whether the device persisted it. Advancing then would make the chokepoint mint
+        envelopes stamped with a digest the agent cannot match, and the agent would refuse them — safe,
+        but a self-inflicted outage.
+
+        Driven instead by the `agent.status` frame, which already reports the digest the agent holds.
+        That branch previously handled only DISAGREEMENT, marking the device `policy_stale`; agreement
+        did nothing, so a device that had caught up stayed marked stale and stayed unable to submit.
+
+        Guarded on the device still being pinned to something OLDER, so this can never move a pin
+        sideways or backwards, and returns whether it changed anything.
+        """
+        async with self._session_scope() as session:
+            updated = await session.execute(
+                text(
+                    "UPDATE agent_devices SET policy_bundle_digest = :digest, "
+                    "status = CASE WHEN status = 'policy_stale' THEN 'active' ELSE status END "
+                    "WHERE id = :id AND (policy_bundle_digest IS NULL OR policy_bundle_digest <> :digest)"
+                ),
+                {"digest": digest, "id": device_id},
+            )
+            await session.commit()
+        return int(updated.rowcount or 0) == 1
 
     async def _active_bundle_digest(self, project_id: uuid.UUID | None) -> str:
         """The project's active policy-bundle digest, or the global one.

@@ -759,9 +759,7 @@ describe("the onboarding path", () => {
     // Waited for, not read once: the badge starts at "Checking…" by design, and asserting before the
     // query settles would test the loading state while claiming to test the result.
     await waitFor(() => expect(screen.getByTestId("step-5-state")).toHaveTextContent("Done"));
-    expect(screen.getByTestId("onboarding-step-5")).toHaveTextContent(
-      /a device paired now is pinned/i,
-    );
+    expect(screen.getByTestId("onboarding-step-5")).toHaveTextContent(/re-pins to this digest/i);
   });
 
   it("says Not yet on the bundle step when nothing is published", async () => {

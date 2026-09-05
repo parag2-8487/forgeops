@@ -152,6 +152,37 @@ async def approve_change_set(
     return _decision_response(submission)
 
 
+@router.post("/{change_set_id}/deliver", summary="Deliver an approved change set to the agent")
+async def deliver_change_set(
+    change_set_id: uuid.UUID,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict[str, object]:
+    """Send an already-approved change set that never reached an agent.
+
+    WHY THIS ROUTE HAS TO EXIST. `sink.send_command` raises `device-not-connected` and does not queue,
+    and `_deliver` runs AFTER the approval has been committed. So approving with no agent connected
+    produced a durable, correct approval and a change set that no later action could apply: the
+    `("approved", "applying")` edge was declared and documented as retryable, and its only traversal
+    lived inside `approve`, in the transaction whose send had just failed.
+
+    That is not a rare race. The onboarding order invites it — a user can reach the approvals screen
+    before ever starting the agent, approve, and be told by the UI that the change set "moved since it
+    was displayed", which was false twice over: nothing moved, and the approval had in fact succeeded.
+
+    NO SECOND APPROVAL IS TAKEN. This carries no body for that reason: there is no decision to record
+    and no comment to attach. The original approval is the authority; this only re-attempts the send,
+    and re-runs admission and policy first so a device revoked in the meantime cannot be handed work.
+    """
+    submission = await _chokepoint(request).deliver_approved(
+        session,
+        change_set_id=change_set_id,
+        principal=principal,
+    )
+    return _decision_response(submission)
+
+
 @router.post("/{change_set_id}/reject", summary="Reject a pending change set")
 async def reject_change_set(
     change_set_id: uuid.UUID,

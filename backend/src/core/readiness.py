@@ -39,19 +39,65 @@ from pydantic import BaseModel, Field
 
 from .index_evidence import IndexEvidence
 from .manifest_facts import (
+    ItemAudit,
     dockerfile_base_pinned,
     dockerfile_healthcheck,
+    kubernetes_image_tags_audit,
     kubernetes_image_tags_pinned,
     kubernetes_probes,
+    kubernetes_probes_audit,
     kubernetes_resource_limits,
+    kubernetes_resource_limits_audit,
     pipeline_actions_pinned,
+    pipeline_actions_pinned_audit,
     pipeline_runs_tests,
     pipeline_stages_declared,
+)
+from .readiness_cross_checks import (
+    ci_builds_an_image_that_has_a_dockerfile,
+    env_example_matches_the_deployment,
+    kubernetes_images_are_produced_by_ci,
+)
+from .readiness_findings import (
+    CHECK_EXPLANATIONS,
+    GENERATED_ARTIFACT_KINDS,
+    CheckExplanation,
 )
 
 #: The §1.4 categories and their weights. Summing to 100 makes the overall score a
 #: weighted mean of six 0-100 category scores, which is what lets one category's absence
 #: be read off the breakdown instead of inferred from a total.
+#: The last-resort `found` value.
+#:
+#: Used only when a caller reports no finding for a failure. It is a real statement — the check
+#: looked in the places `looked_in` names and nothing was there — rather than the empty string,
+#: which told a reader nothing and was indistinguishable from a bug in the check itself.
+_NOTHING_FOUND: Final = "nothing matched in any of the locations searched"
+
+
+#: Max points for the four checks scored proportionally, named so `_proportional` and the `max_points`
+#: argument cannot drift apart. A partial score computed against a different total than the one
+#: reported would render a bar that disagrees with its own label.
+KUBERNETES_RESOURCE_LIMITS_DECLARED_POINTS: Final = 35
+KUBERNETES_PROBES_DECLARED_POINTS: Final = 25
+KUBERNETES_IMAGE_TAGS_PINNED_POINTS: Final = 20
+PIPELINE_ACTIONS_PINNED_POINTS: Final = 15
+
+
+def _proportional(audit: ItemAudit, max_points: int) -> int:
+    """Points for the share of items that satisfied the check.
+
+    Rounded DOWN, and capped below `max_points` until every item passes, so a repository one container
+    short of correct can never round up to a full score. The last point is earned by finishing.
+    """
+    if audit.examined <= 0:
+        return 0
+    if audit.satisfied >= audit.examined:
+        return max_points
+    earned = (max_points * audit.satisfied) // audit.examined
+    return min(earned, max_points - 1)
+
+
 CATEGORY_WEIGHTS: Final[dict[str, int]] = {
     "containerization": 25,
     "ci_config": 20,
@@ -192,6 +238,38 @@ class ReadinessCheck(BaseModel):
     evidence: str = ""
     why_it_matters: str
 
+    # ─── What a reader needs when a check FAILS ──────────────────────────────
+    #
+    # `evidence` was blanked on failure at every call site (`x if passed else ""`), so the one outcome
+    # that most needs explaining reported nothing at all. "Why it matters" states a principle and says
+    # nothing about this repository, which left a reader who did not already know the answer with a
+    # problem and no way to locate or fix it.
+    #
+    # All of these come from `readiness_findings.CHECK_EXPLANATIONS` except `found`, which can only
+    # come from the code that actually looked.
+
+    #: What would have satisfied the check, in this repository's terms.
+    looked_for: str = ""
+    #: Where it searched, so "not found" is falsifiable rather than an assertion.
+    looked_in: str = ""
+    #: What was there instead. Never empty on a failure.
+    found: str = ""
+    #: The concrete change, as text that can be pasted.
+    remedy: str = ""
+    #: The file to put it in, or the convention when the path depends on the project.
+    remedy_path: str = ""
+    #: The line the failing property sits on, when the check parsed something that has lines. `None`
+    #: when the failure is an ABSENCE — there is no line number for a file that does not exist, and
+    #: inventing one would be worse than admitting there is none.
+    line: int | None = None
+    #: Whether generation can satisfy this check, so the readiness screen can state the position per
+    #: check instead of disclaiming the whole score.
+    generatable: bool = False
+    #: Why generation cannot, when it cannot. Empty when it can.
+    blocked_because: str = ""
+    #: The nearest safe thing generation can offer when it cannot do the whole job.
+    partial_offer: str = ""
+
 
 class ReadinessBreakdown(BaseModel):
     """The §1.4 categories, each 0-100.
@@ -313,6 +391,83 @@ def _has_test_evidence(paths: tuple[str, ...]) -> str:
     return ""
 
 
+def _blocked_reason(explanation: CheckExplanation) -> str:
+    """Why the generator cannot satisfy a check, distinguishing the two different reasons.
+
+    A check can be out of reach for two unrelated reasons and a reader needs to know which:
+
+      * the fix is not a file at all - a test has to encode intent, a leaked credential has to be
+        rotated at the system that issued it. No amount of generator work changes that, and the table
+        states the reason.
+      * the fix IS a file and the generator does not emit that kind yet. That is a gap in this product,
+        not a fact about the repository, and saying so is the honest form - it tells the reader the work
+        is possible and where the limit currently sits.
+
+    Collapsing the two into one sentence would tell somebody a `.env.example` is impossible.
+    """
+    if not explanation.fixability.generatable:
+        return explanation.fixability.blocked_because
+    if explanation.artifact not in GENERATED_ARTIFACT_KINDS:
+        kind = explanation.artifact or "this kind of file"
+        return (
+            f"the fix is a file the generator does not emit yet ({kind}), so this is a gap in the "
+            "generator rather than something about your repository"
+        )
+    return ""
+
+
+def _first_action(remedy: str) -> str:
+    """The opening instruction of a remedy, without its worked example.
+
+    A remedy is written to be read in full on the readiness screen, so it carries a block of
+    configuration to paste. A recommendation is one line in a list, so it carries the instruction
+    and leaves the block to the check it names. Split on the blank line that separates the two
+    rather than truncating at a character count, which would cut a sentence mid-clause.
+    """
+    head = remedy.split("\n\n", 1)[0].strip()
+    collapsed = " ".join(head.split())
+    # A remedy that introduces its example ends with a colon. Once the example is left behind the colon
+    # points at nothing, so it becomes a full stop - the sentence is still a complete instruction.
+    if collapsed.endswith(":"):
+        collapsed = collapsed[:-1] + "."
+    return collapsed
+
+
+def _recommendation_line(check: ReadinessCheck) -> str:
+    """One failed check as an instruction naming the file, the line and the change.
+
+    THIS IS WHAT IT USED TO PRODUCE:
+
+        A tag is mutable, so an unpinned action is code this repository does not control.
+        (check: pipeline_actions_pinned)
+
+    A true principle and an identifier. It does not say which action, in which file, on which line,
+    or what to change it to, so a reader who did not already know the answer could not act on it -
+    and a reader who did know did not need the sentence.
+
+    The order is deliberate: WHERE, then WHAT IS WRONG, then WHAT TO DO, then why, then the id. A
+    reader scanning a list is looking for the file first, and the principle is the part they are
+    most likely to already accept.
+    """
+    where = check.remedy_path or check.evidence
+    if check.line is not None:
+        # Only when the check parsed something with lines. An absence has no line, and inventing
+        # one would send a reader confidently to the wrong place.
+        where = f"{where}:{check.line}" if where else f"line {check.line}"
+
+    parts: list[str] = []
+    if where:
+        parts.append(f"{where} -")
+    if check.found:
+        parts.append(f"{check.found}.")
+    action = _first_action(check.remedy)
+    if action:
+        parts.append(action)
+    parts.append(check.why_it_matters)
+    parts.append(f"(check: {check.id})")
+    return " ".join(part for part in parts if part)
+
+
 class ReadinessEngine:
     """Deterministic readiness scoring engine.
 
@@ -338,6 +493,7 @@ class ReadinessEngine:
                 40,
                 dockerfile,
                 "Without a Dockerfile the deployment target is whatever the last person's machine had installed.",
+                found=f"no Dockerfile among the {len(paths)} indexed path(s)",
             )
         )
         multi_stage = len(_FROM_LINE.findall(docker_body)) >= 2
@@ -350,6 +506,12 @@ class ReadinessEngine:
                 dockerfile if multi_stage else "",
                 "A single-stage image ships the compiler and the source alongside the binary, "
                 "which is both a larger image and a larger attack surface.",
+                found=(
+                    f"{dockerfile} has {len(_FROM_LINE.findall(docker_body))} FROM instruction(s); "
+                    "a multi-stage build needs at least two"
+                    if dockerfile
+                    else "there is no Dockerfile to examine"
+                ),
             )
         )
         non_root = bool(_NON_ROOT_USER.search(docker_body))
@@ -361,6 +523,11 @@ class ReadinessEngine:
                 20,
                 dockerfile if non_root else "",
                 "A container with no USER runs as root, so a process escape starts with root in the namespace.",
+                found=(
+                    f"{dockerfile} declares no USER, so the image runs as root"
+                    if dockerfile
+                    else "there is no Dockerfile to examine"
+                ),
             )
         )
         # The two remaining checks the design's Phase 1 list names — "pins a base image digest" and
@@ -375,6 +542,11 @@ class ReadinessEngine:
                 20,
                 dockerfile if base_pinned else "",
                 "An unpinned base means two builds of one Dockerfile can produce different images.",
+                found=(
+                    f"{dockerfile} pins no base image; its FROM instructions use a floating tag"
+                    if dockerfile
+                    else "there is no Dockerfile to examine"
+                ),
             )
         )
         healthcheck = dockerfile_healthcheck(docker_body)
@@ -386,6 +558,7 @@ class ReadinessEngine:
                 15,
                 dockerfile if healthcheck else "",
                 "Without a HEALTHCHECK the runtime cannot tell a wedged container from a busy one.",
+                found=(f"{dockerfile} declares no HEALTHCHECK" if dockerfile else "there is no Dockerfile to examine"),
             )
         )
         dockerignore = _match_exact(paths, (".dockerignore",))
@@ -397,6 +570,7 @@ class ReadinessEngine:
                 15,
                 dockerignore,
                 "Without .dockerignore the build context carries .git and local secrets into the image layer cache.",
+                found="no .dockerignore at the repository root",
             )
         )
 
@@ -410,6 +584,7 @@ class ReadinessEngine:
                 45,
                 ci,
                 "Without a pipeline definition nothing is verified before a change reaches a branch.",
+                found=f"no pipeline definition among the {len(paths)} indexed path(s)",
             )
         )
         test_path = _has_test_evidence(paths)
@@ -422,6 +597,7 @@ class ReadinessEngine:
                 35,
                 test_path,
                 "A pipeline with no tests to run reports green for every change, which is worse than no pipeline.",
+                found="no test file or test directory was indexed",
             )
         )
         lint = _match_exact(paths, _LINT_CONFIGS)
@@ -433,6 +609,7 @@ class ReadinessEngine:
                 20,
                 lint,
                 "A committed linter configuration is what makes style and a class of bugs a machine's problem.",
+                found="no linter or formatter configuration was indexed",
             )
         )
 
@@ -449,6 +626,10 @@ class ReadinessEngine:
                 25,
                 stages_evidence,
                 "A workflow with no runnable step and no trigger is a file, not a pipeline.",
+                found=(
+                    stages_evidence
+                    or (f"{ci} declares no runnable step or no trigger" if ci else "there is no workflow to examine")
+                ),
             )
         )
         ci_tests_ok, ci_tests_evidence = pipeline_runs_tests(paths, evidence.contents)
@@ -460,10 +641,15 @@ class ReadinessEngine:
                 30,
                 ci_tests_evidence,
                 "A pipeline that does not run the tests reports green for every change.",
+                found=(
+                    ci_tests_evidence
+                    or (f"no step in {ci} invokes a test runner" if ci else "there is no workflow to examine")
+                ),
             )
         )
         # Scored only when a workflow exists, for the reason the orchestration block gives: a repository
         # with no CI already fails `ci_pipeline_present`, and a second failure would misdescribe why.
+        pinned_audit = pipeline_actions_pinned_audit(paths, evidence.contents)
         pinned_ok, pinned_evidence = pipeline_actions_pinned(paths, evidence.contents)
         checks.append(
             self._check(
@@ -471,13 +657,27 @@ class ReadinessEngine:
                 "ci_config",
                 pinned_ok if ci else False,
                 15,
-                # `or ci` is the evidence fallback for the case where the workflow PATH is indexed but its
-                # body is not available to this evaluation: the check then has nothing to examine and no
-                # finding to cite, and `test_every_check_that_passes_names_its_evidence` requires a
-                # passing check to name something. The workflow is the honest citation, since it is the
-                # file the answer is about.
+                # `or ci` is the evidence fallback for the case where the workflow PATH is indexed but
+                # its body is not: the check then has nothing to examine and no finding to cite, and
+                # `test_every_check_that_passes_names_its_evidence` requires a passing check to name
+                # something. The workflow is the honest citation, since it is the file the answer is
+                # about.
                 pinned_evidence or ci,
                 "A tag is mutable, so an unpinned action is code this repository does not control.",
+                found=(
+                    pinned_audit.detail
+                    or (
+                        f"{ci} references at least one action by tag rather than by commit"
+                        if ci
+                        else "there is no workflow to examine"
+                    )
+                ),
+                line=pinned_audit.line,
+                earned=(
+                    _proportional(pinned_audit, PIPELINE_ACTIONS_PINNED_POINTS)
+                    if ci and pinned_audit.examined
+                    else None
+                ),
             )
         )
 
@@ -493,6 +693,7 @@ class ReadinessEngine:
                 45,
                 k8s_path,
                 "Without a manifest the runtime shape - replicas, probes, limits - lives only in a shell history.",
+                found="no manifest declaring a Kubernetes kind was indexed under any conventional directory",
             )
         )
         helm = _match_exact(paths, ("chart.yaml",))
@@ -504,6 +705,7 @@ class ReadinessEngine:
                 30,
                 helm,
                 "A chart is what makes the same manifests deployable to another environment unedited.",
+                found="no Chart.yaml was indexed",
             )
         )
         compose = _match(paths, _COMPOSE_PATTERNS)
@@ -515,6 +717,7 @@ class ReadinessEngine:
                 25,
                 compose,
                 "A compose file is the reproducible local topology; without one, 'works here' is unfalsifiable.",
+                found="no compose file was indexed",
             )
         )
 
@@ -527,6 +730,13 @@ class ReadinessEngine:
         # Each is scored ONLY when a manifest exists. Failing a repository with no Kubernetes for having
         # no resource limits would double-count the absence: `kubernetes_manifests_present` already
         # reports it, and the second failure would say the manifests are wrong rather than absent.
+        # THE AUDITS, not the booleans, for the three container checks and for action pinning.
+        #
+        # `(passed, path)` short-circuits on the first offender, which cannot express "four of five
+        # containers are correct" and cannot name which property was missing on which line. Points were
+        # therefore all-or-nothing: a user who fixed four containers of five saw the score not move,
+        # which teaches that the number does not respond to work.
+        limits_audit = kubernetes_resource_limits_audit(paths, evidence.contents)
         limits_ok, limits_evidence = kubernetes_resource_limits(paths, evidence.contents)
         checks.append(
             self._check(
@@ -536,8 +746,24 @@ class ReadinessEngine:
                 35,
                 limits_evidence,
                 "An unbounded container evicts its neighbours; one missing limit is enough to take a node.",
+                found=(
+                    limits_audit.detail
+                    if limits_audit.detail
+                    else (
+                        "at least one container declares no cpu/memory requests and limits"
+                        if has_k8s
+                        else "there is no manifest to examine"
+                    )
+                ),
+                line=limits_audit.line,
+                earned=(
+                    _proportional(limits_audit, KUBERNETES_RESOURCE_LIMITS_DECLARED_POINTS)
+                    if has_k8s and limits_audit.examined
+                    else None
+                ),
             )
         )
+        probes_audit = kubernetes_probes_audit(paths, evidence.contents)
         probes_ok, probes_evidence = kubernetes_probes(paths, evidence.contents)
         checks.append(
             self._check(
@@ -547,8 +773,24 @@ class ReadinessEngine:
                 25,
                 probes_evidence,
                 "Without probes a wedged container keeps serving traffic, because nothing is asking it.",
+                found=(
+                    probes_audit.detail
+                    if probes_audit.detail
+                    else (
+                        "at least one container declares no livenessProbe and readinessProbe"
+                        if has_k8s
+                        else "there is no manifest to examine"
+                    )
+                ),
+                line=probes_audit.line,
+                earned=(
+                    _proportional(probes_audit, KUBERNETES_PROBES_DECLARED_POINTS)
+                    if has_k8s and probes_audit.examined
+                    else None
+                ),
             )
         )
+        tags_audit = kubernetes_image_tags_audit(paths, evidence.contents)
         tags_ok, tags_evidence = kubernetes_image_tags_pinned(paths, evidence.contents)
         checks.append(
             self._check(
@@ -558,6 +800,21 @@ class ReadinessEngine:
                 20,
                 tags_evidence,
                 "A `latest` tag means two deployments of one manifest can run different code.",
+                found=(
+                    tags_audit.detail
+                    if tags_audit.detail
+                    else (
+                        "at least one container image uses latest or carries no tag"
+                        if has_k8s
+                        else "there is no manifest to examine"
+                    )
+                ),
+                line=tags_audit.line,
+                earned=(
+                    _proportional(tags_audit, KUBERNETES_IMAGE_TAGS_PINNED_POINTS)
+                    if has_k8s and tags_audit.examined
+                    else None
+                ),
             )
         )
 
@@ -571,6 +828,7 @@ class ReadinessEngine:
                 40,
                 env_example,
                 "Without a checked-in example, the variables the service needs are found only by crashing it.",
+                found="no .env.example, .env.sample, .env.template or example.env was indexed",
             )
         )
         committed_env = _match_exact(paths, (".env",))
@@ -586,6 +844,11 @@ class ReadinessEngine:
                 35,
                 committed_env,
                 "A committed .env puts live credentials in every clone and in the image build context.",
+                found=(
+                    f"{committed_env} is committed to the repository"
+                    if committed_env
+                    else "nothing was indexed, so the absence of a .env proves nothing"
+                ),
             )
         )
         config_dir = _match(paths, ("config/*", "configs/*", "*/settings.py", "*/config.py", "*.config.ts"))
@@ -597,6 +860,7 @@ class ReadinessEngine:
                 25,
                 config_dir,
                 "Configuration read in one validated place fails at boot; read ad hoc it fails in production.",
+                found="no single configuration module or config directory was indexed",
             )
         )
 
@@ -610,6 +874,7 @@ class ReadinessEngine:
                 30,
                 policy,
                 "A written policy is what turns a security decision into something reviewable rather than remembered.",
+                found="no SECURITY.md and no policy-as-code source was indexed",
             )
         )
         secret_scanning = _match_exact(paths, (".gitleaks.toml", ".trufflehog.yaml", ".secrets.baseline"))
@@ -621,6 +886,7 @@ class ReadinessEngine:
                 25,
                 secret_scanning,
                 "Secret scanning in the repository is the only control that catches a credential before it is pushed.",
+                found="no secret-scanner configuration was indexed",
             )
         )
         # FR-42's other half, and the one that was missing. `secret_scanning_configured` asks whether a
@@ -645,6 +911,12 @@ class ReadinessEngine:
                 30,
                 worst_offender,
                 "A credential in the tree is already disclosed to everyone who can read the repository.",
+                found=(
+                    f"{worst_offender} required "
+                    f"{evidence.redaction_counts.get(worst_offender, 0)} redaction(s) during the scan"
+                    if worst_offender
+                    else "nothing was indexed, so no scan result exists to report"
+                ),
             )
         )
         lockfile = _match_exact(paths, _LOCKFILES)
@@ -656,6 +928,7 @@ class ReadinessEngine:
                 25,
                 lockfile,
                 "Without a lockfile the dependency tree differs per build, so a fix cannot be proven applied.",
+                found="no lockfile was indexed for any package manager",
             )
         )
         key_material = _match(paths, _SECRET_MATERIAL_PATTERNS)
@@ -668,6 +941,11 @@ class ReadinessEngine:
                 20,
                 key_material,
                 "A private key in the tree is compromised the moment the repository is cloned, and history keeps it.",
+                found=(
+                    f"{key_material} looks like private key material and is committed"
+                    if key_material
+                    else "nothing was indexed, so the absence of key material proves nothing"
+                ),
             )
         )
 
@@ -681,6 +959,7 @@ class ReadinessEngine:
                 50,
                 iac,
                 "Infrastructure defined in code is reviewable and revertible; a console click is neither.",
+                found="no OpenTofu, Terraform, Pulumi or CloudFormation source was indexed",
             )
         )
         iac_lock = _match_exact(paths, (".terraform.lock.hcl",))
@@ -692,6 +971,11 @@ class ReadinessEngine:
                 25,
                 iac_lock,
                 "Without a provider lock, the same plan can produce different infrastructure on different days.",
+                found=(
+                    f"{iac} declares infrastructure but no .terraform.lock.hcl was indexed beside it"
+                    if iac
+                    else "no .terraform.lock.hcl was indexed"
+                ),
             )
         )
         iac_body = _content_of(evidence, paths, _IAC_PATTERNS)
@@ -704,8 +988,71 @@ class ReadinessEngine:
                 25,
                 iac if remote_state else "",
                 "Local state cannot be shared or locked, so two applies can silently overwrite each other.",
+                found=(
+                    f"{iac} declares no backend block, so state is written locally"
+                    if iac
+                    else "there is no infrastructure source to examine"
+                ),
             )
         )
+
+        # ─── Cross-category consistency ──────────────────────────────────────
+        #
+        # Everything above judges one artifact at a time, so a repository can hold six internally
+        # correct categories that describe six different pieces of software and score full marks. These
+        # three compare two categories against each other.
+        #
+        # Each is scored ONLY when both sides exist. `comparable=False` means there was nothing to
+        # reconcile, and scoring that as a failure would report a missing artifact twice — once
+        # honestly, by the check that looks for it, and once as a consistency fault it is not.
+        builds = ci_builds_an_image_that_has_a_dockerfile(paths, evidence.contents, dockerfile)
+        if builds.comparable:
+            checks.append(
+                self._check(
+                    "ci_builds_an_existing_dockerfile",
+                    "ci_config",
+                    builds.passed,
+                    20,
+                    builds.evidence,
+                    "A pipeline whose build step cannot find its Dockerfile fails on every run, and "
+                    "both halves look correct on their own.",
+                    found=builds.detail,
+                    line=builds.line,
+                )
+            )
+
+        produced = kubernetes_images_are_produced_by_ci(paths, evidence.contents)
+        if produced.comparable:
+            checks.append(
+                self._check(
+                    "kubernetes_images_are_built_here",
+                    "orchestration",
+                    produced.passed,
+                    20,
+                    produced.evidence,
+                    "A manifest deploying an image nothing here pushes applies whatever is in the "
+                    "registry under that name, which this repository never produced or reviewed.",
+                    found=produced.detail,
+                    line=produced.line,
+                )
+            )
+
+        example_body = _content_of(evidence, paths, _ENV_EXAMPLE_PATTERNS)
+        documented = env_example_matches_the_deployment(env_example, example_body, paths, evidence.contents)
+        if documented.comparable:
+            checks.append(
+                self._check(
+                    "env_example_matches_the_deployment",
+                    "env_config",
+                    documented.passed,
+                    20,
+                    documented.evidence,
+                    "An incomplete example reads as a complete list, so somebody follows it exactly "
+                    "and gets a service that cannot start.",
+                    found=documented.detail,
+                    line=documented.line,
+                )
+            )
 
         category_scores = self._category_scores(checks)
         overall = round(sum(CATEGORY_WEIGHTS[c] * category_scores[c] for c in CATEGORY_WEIGHTS) / 100)
@@ -765,12 +1112,52 @@ class ReadinessEngine:
         max_points: int,
         evidence: str,
         why_it_matters: str,
+        *,
+        found: str = "",
+        line: int | None = None,
+        earned: int | None = None,
     ) -> ReadinessCheck:
+        """Build one check, joining what was observed to the explanation of what was wanted.
+
+        `earned` enables PARTIAL scoring. Points were `max_points if passed else 0`, so a check
+        examining several things — three containers, two workflows — was all-or-nothing: two correct
+        containers and one without limits scored the same zero as three without. Callers that can
+        count pass a proportion; callers whose check is genuinely binary do not, and behave as before.
+
+        `found` is what was there instead, and its absence is what produced the empty `Evidence:` a
+        reader could do nothing with. Ignored on a pass: a passing check is already described by its
+        evidence, and repeating it as 'what was found instead' would read as a complaint about the
+        file that satisfied the check.
+        """
+        explanation = CHECK_EXPLANATIONS.get(check_id)
+        if explanation is None:
+            # Loud rather than silent. A check with no explanation is the exact state the table exists
+            # to prevent, and a blank fallback would reintroduce it quietly.
+            raise KeyError(
+                f"readiness check {check_id!r} has no entry in CHECK_EXPLANATIONS; add one so a "
+                "failure can be explained to somebody who does not already know the answer"
+            )
+
+        # A PASS ALWAYS SCORES FULL MARKS, and `earned` is consulted only on a failure.
+        #
+        # Pass/fail comes from the check's own predicate and the proportion comes from a counting audit,
+        # and the two can legitimately count different things - the audit may include a container the
+        # predicate skips. Letting `earned` reduce a passing check produced a row reading "Pass" beside
+        # "17 of 35", which is incoherent: a reader cannot tell whether they have work left to do.
+        # `test_the_score_is_bounded_and_the_levels_follow_it` caught it by scoring a correct repository
+        # 98 instead of 100.
+        if passed:
+            points = max_points
+        elif earned is None:
+            points = 0
+        else:
+            points = max(0, min(int(earned), max_points))
+
         return ReadinessCheck(
             id=check_id,
             category=category,
             passed=passed,
-            points=max_points if passed else 0,
+            points=points,
             max_points=max_points,
             # The path that DECIDED the check, whichever way it went. For a positive check
             # that is the file that satisfied it, and is empty when nothing did; for an
@@ -778,6 +1165,18 @@ class ReadinessEngine:
             # single most useful thing a failed check can report.
             evidence=evidence,
             why_it_matters=why_it_matters,
+            looked_for=explanation.looked_for,
+            looked_in=explanation.looked_in,
+            found=("" if passed else (found or _NOTHING_FOUND)),
+            remedy="" if passed else explanation.remedy,
+            remedy_path="" if passed else explanation.remedy_path,
+            line=line,
+            # WHAT THE GENERATOR CAN DO TODAY, not what is generatable in principle. A screen that
+            # offered a CI workflow the generator cannot emit would be the blanket disclaimer's mistake
+            # inverted - a promise instead of a refusal, and equally untrue.
+            generatable=explanation.generatable_today,
+            blocked_because=_blocked_reason(explanation),
+            partial_offer=explanation.fixability.partial_offer,
         )
 
     @staticmethod
@@ -807,4 +1206,4 @@ class ReadinessEngine:
             ]
         failed = [c for c in checks if not c.passed]
         failed.sort(key=lambda c: (-CATEGORY_WEIGHTS.get(c.category, 0), -c.max_points, c.id))
-        return [f"{c.why_it_matters} (check: {c.id})" for c in failed]
+        return [_recommendation_line(c) for c in failed]

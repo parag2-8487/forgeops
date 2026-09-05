@@ -710,6 +710,93 @@ describe("Approvals renders a real diff and submits a real decision", () => {
     );
   });
 
+  /**
+   * `device-not-connected` is ALSO registered at 409, and this screen used to branch on the status
+   * code. So a successful approval whose delivery failed was reported as "This change set moved since
+   * it was displayed" - false twice over: nothing had moved, and the decision HAD been recorded. The
+   * one action the message suggested (reload) then showed an already-approved change set, which
+   * produced the same sentence again from a different cause.
+   */
+  it("tells the truth when the approval succeeded but no agent was connected", async () => {
+    serve();
+    mockPost.mockRejectedValue(
+      new ApiProblemError({
+        type: "https://errors.forgeops.dev/device-not-connected",
+        title: "No agent connected",
+        status: 409,
+        detail: "no agent is connected for this project",
+      }),
+    );
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByRole("region", { name: /diff for/i });
+
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/decision was recorded/i);
+    expect(alert).toHaveTextContent(/no agent is connected/i);
+    expect(alert).toHaveTextContent(/do not need to approve again/i);
+    expect(alert).not.toHaveTextContent(/moved since it was displayed/i);
+  });
+
+  it("prefers the server's own detail for a real conflict", async () => {
+    serve();
+    mockPost.mockRejectedValue(
+      new ApiProblemError({
+        type: "https://errors.forgeops.dev/change-set-conflict",
+        title: "Change set conflict",
+        status: 409,
+        detail: "change set cs-1 is approved, not pending_approval",
+      }),
+    );
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByRole("region", { name: /diff for/i });
+
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/is approved, not pending_approval/i);
+  });
+
+  /**
+   * An approved-but-undelivered change set was invisible here, for exactly the reason this file
+   * already records about revert: the queue list did not name the status, so there was no row for a
+   * control to attach to.
+   */
+  it("offers delivery for an approved change set that never reached an agent", async () => {
+    serve({ status: "approved" }, "approved");
+    mockPost.mockResolvedValue({
+      change_set_id: "cs-1",
+      status: "applying",
+      outcome: "applying",
+      command_delivered: true,
+      blast_radius_score: null,
+      blast_radius_verdict: null,
+      audit_seq: 12,
+    });
+    renderPage(<ApprovalsPage />);
+    // The screen opens on "Awaiting decision"; an approved change set lives in its own queue.
+    await userEvent.click(await screen.findByTestId("queue-approved"));
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+
+    const deliver = await screen.findByTestId("deliver-button");
+    await userEvent.click(deliver);
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/deliver", undefined),
+    );
+    await waitFor(() => expect(screen.getByTestId("deliver-panel")).toHaveTextContent(/applying/i));
+  });
+
+  it("does not offer approve or reject for an already approved change set", async () => {
+    serve({ status: "approved" }, "approved");
+    renderPage(<ApprovalsPage />);
+    await userEvent.click(await screen.findByTestId("queue-approved"));
+    await userEvent.click(await screen.findByRole("button", { name: /cs-1/ }));
+    await screen.findByTestId("deliver-panel");
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
   it("explains a 409 as a stale view rather than a generic failure", async () => {
     serve();
     mockPost.mockRejectedValue(problem(409, "Change set conflict"));

@@ -7,7 +7,9 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -151,7 +153,11 @@ type connectResult struct {
 	SeqBase           int64  `json:"seq_base"`
 	BundleDigest      string `json:"policy_bundle_digest"`
 	BundleStale       bool   `json:"policy_bundle_stale"`
-	ServerTime        string `json:"server_time"`
+	// Bundle is the new bundle itself, base64 of a gzipped tar, sent only when the pin has gone
+	// stale (§3.1). ABSENT rather than empty when the backend has none: D-30 makes a missing bundle a
+	// DENY, so an empty string here would be a field meaning "refuse everything" dressed as a bundle.
+	Bundle     string `json:"policy_bundle"`
+	ServerTime string `json:"server_time"`
 }
 
 // Serve runs the session until ctx is cancelled or the device is revoked.
@@ -358,7 +364,7 @@ func (m *Manager) handshake(ctx context.Context, t connection.Transport, creds C
 			if err := json.Unmarshal(response.Result, &result); err != nil {
 				return SessionInfo{}, fmt.Errorf("%w: unreadable result: %v", ErrHandshakeRejected, err)
 			}
-			return m.acceptHandshake(result)
+			return m.acceptHandshake(ctx, result)
 		}
 		var request connection.Request
 		if err := json.Unmarshal(raw, &request); err == nil && request.Method == "agent.error" {
@@ -370,7 +376,11 @@ func (m *Manager) handshake(ctx context.Context, t connection.Transport, creds C
 }
 
 // acceptHandshake turns the result into SessionInfo and records the bundle observation.
-func (m *Manager) acceptHandshake(result connectResult) (SessionInfo, error) {
+// acceptHandshake validates the handshake result and adopts anything it hands over.
+//
+// TAKES A CONTEXT because adopting a policy bundle writes to the credential store, which is an I/O
+// operation that must be cancellable with the session it belongs to.
+func (m *Manager) acceptHandshake(ctx context.Context, result connectResult) (SessionInfo, error) {
 	if strings.TrimSpace(result.SessionID) == "" {
 		return SessionInfo{}, fmt.Errorf("%w: the result carries no session_id", ErrHandshakeRejected)
 	}
@@ -400,10 +410,77 @@ func (m *Manager) acceptHandshake(result connectResult) (SessionInfo, error) {
 		// instead of "signature invalid" (Appendix C.2's `clock-skew` row).
 		m.setSkew(m.now().Sub(parsed))
 	}
+	// ADOPT A HANDED-OVER BUNDLE BEFORE RECORDING WHAT THE BACKEND SAID, so `ObserveBackend` is told
+	// the truth after the adoption rather than before it. Publishing a policy used to strand every
+	// paired agent: the handshake said "you are stale" and carried no way to stop being stale, so the
+	// only remedy was `pair --wipe` and a fresh code for every agent in the deployment.
+	if result.BundleStale && result.Bundle != "" {
+		adopted, err := m.adoptBundle(ctx, result.Bundle, result.BundleDigest)
+		if err != nil {
+			// NOT FATAL. A session that works but enforces the previous bundle is strictly better than
+			// no session, and the agent stays honestly stale: `ObserveBackend` below still records the
+			// disagreement, so nothing treats this agent as current. The next handshake tries again.
+			m.logger.Warn("could not adopt the policy bundle the backend offered",
+				zap.String("digest", result.BundleDigest), zap.Error(err))
+		} else if adopted {
+			info.BundleStale = false
+			m.logger.Info("adopted a newly published policy bundle without re-pairing",
+				zap.String("digest", result.BundleDigest))
+		}
+	}
 	if m.bundle != nil {
-		m.bundle.ObserveBackend(result.BundleDigest, result.BundleStale)
+		m.bundle.ObserveBackend(result.BundleDigest, info.BundleStale)
 	}
 	return info, nil
+}
+
+// adoptBundle stores a bundle the backend handed over mid-session, and reports whether it did.
+//
+// THE DIGEST IS VERIFIED AGAINST THE BODY before anything is written. The backend states a digest and
+// sends a body, and those are two claims; storing the body under the stated digest without checking
+// would let a wrong pairing of the two become the value every later envelope is verified against. The
+// digest is what `envelope` compares, so a body that does not hash to it must be refused here rather
+// than discovered as a signature failure later.
+func (m *Manager) adoptBundle(ctx context.Context, encoded, digest string) (bool, error) {
+	if strings.TrimSpace(digest) == "" {
+		return false, errors.New("the backend offered a bundle with no digest")
+	}
+	body, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return false, fmt.Errorf("decoding the offered bundle: %w", err)
+	}
+	if len(body) == 0 {
+		// D-30: an empty bundle is a DENY, so accepting one would replace a working policy with a
+		// refuse-everything policy on the strength of a field the backend should not have sent.
+		return false, errors.New("the backend offered an empty bundle")
+	}
+	sum := sha256.Sum256(body)
+	computed := "sha256:" + hex.EncodeToString(sum[:])
+	if computed != digest {
+		return false, fmt.Errorf(
+			"the offered bundle hashes to %s but the backend called it %s", computed, digest)
+	}
+
+	creds, err := m.store.Load(ctx)
+	if err != nil {
+		return false, fmt.Errorf("loading credentials to store the bundle: %w", err)
+	}
+	if creds.PolicyBundleDigest == digest {
+		return false, nil
+	}
+	creds.PolicyBundle = body
+	creds.PolicyBundleDigest = digest
+	if err := m.store.Save(ctx, creds); err != nil {
+		return false, fmt.Errorf("storing the adopted bundle: %w", err)
+	}
+	// The cached digest is now wrong by construction, so the next read must reload it. Reached through
+	// an OPTIONAL interface rather than by widening `BundleState`: caching is an implementation detail
+	// of `CredentialBundleState`, and a state that holds no cache has nothing to invalidate. Widening
+	// the interface would force every implementation to carry a method most of them cannot need.
+	if inv, ok := m.bundle.(interface{ Invalidate() }); ok {
+		inv.Invalidate()
+	}
+	return true, nil
 }
 
 // session runs one connected session: heartbeat, inbound frames, serial command execution.

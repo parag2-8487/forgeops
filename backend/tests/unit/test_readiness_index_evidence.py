@@ -77,6 +77,15 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - run: pytest -q
+      # THE BUILD AND PUSH, added when the cross-category checks landed.
+      #
+      # Without it this fixture described a repository whose Deployment pulls
+      # `ghcr.io/acme/app:1.2.3` and whose pipeline never builds or pushes anything — every
+      # per-category check passed and the two halves described different software. That is
+      # exactly the fault `kubernetes_images_are_built_here` exists to catch, and it caught
+      # this fixture, which is why the fixture changed rather than the check.
+      - run: docker build -t ghcr.io/acme/app:1.2.3 .
+      - run: docker push ghcr.io/acme/app:1.2.3
 """
 
 

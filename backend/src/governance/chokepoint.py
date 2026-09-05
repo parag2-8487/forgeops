@@ -487,6 +487,49 @@ def _blast_radius_state(report: Any) -> dict[str, Any]:
     }
 
 
+#: The audit reason column accepts 1024 characters (`audit/models.py`). An approval sentence names an
+#: approver, a policy requirement and possibly a human comment, and a long comment must not be able to
+#: make the record unwritable — so the comment is the part that gets trimmed, never the two facts.
+_APPROVAL_REASON_LIMIT: Final = 1024
+_APPROVAL_COMMENT_BUDGET: Final = 400
+
+
+def _approval_audit_reason(
+    *, actor: str, policy_reason: str, comment: str | None
+) -> str:
+    """Compose the reason recorded when a human approves a change set.
+
+    THE BUG THIS FIXES. The line used to be `f"approved by {actor}: {decision.reason}"`, which read
+
+        approved by parag@forgeops.invalid: environment is absent
+
+    in the audit trail. Two different facts were sharing one colon. `decision.reason` explains why the
+    change set REQUIRED approval; putting it after "approved by X:" makes it read as X's justification,
+    so the authoritative record of a successful, deliberate approval looked like a defect report.
+
+    Nothing was wrong with the change set and nothing was wrong with the policy: a generated change set
+    legitimately carries no environment, and `approval.rego` answers `require_approval` precisely so a
+    human reviews it. The audit sentence was the only thing at fault.
+
+    The two facts are now separated and labelled, and the approver's own comment is included — it was
+    being written to `approvals.comment` and omitted from the record a reader actually reads.
+    """
+    parts = [f"approved by {actor}"]
+    policy_reason = (policy_reason or "").strip()
+    if policy_reason:
+        # "approval was required because ..." rather than a bare colon. The phrasing states the causal
+        # direction that the old line inverted.
+        parts.append(f"approval was required because {policy_reason}")
+    comment = (comment or "").strip()
+    if comment:
+        if len(comment) > _APPROVAL_COMMENT_BUDGET:
+            # Marked as trimmed rather than silently cut, because an audit reader must be able to tell
+            # a short comment from a truncated one. The full text remains in `approvals.comment`.
+            comment = comment[: _APPROVAL_COMMENT_BUDGET - 1] + "\u2026"
+        parts.append(f'approver comment: "{comment}"')
+    return "; ".join(parts)[:_APPROVAL_REASON_LIMIT]
+
+
 class GovernanceChokepoint:
     """Six ordered stages, then a mint (§11.6).
 
@@ -726,7 +769,11 @@ class GovernanceChokepoint:
             outcome="allowed",
             resource_kind="change_set",
             resource_id=str(change_set_id),
-            reason=f"approved by {principal.email or principal.subject}: {decision.reason}",
+            reason=_approval_audit_reason(
+                actor=principal.email or principal.subject,
+                policy_reason=decision.reason,
+                comment=comment,
+            ),
             before_state={"status": "pending_approval", "version": version},
             after_state={"status": "approved", "version": version + 1, "approval_id": str(approval_id)},
         )
@@ -1541,6 +1588,135 @@ class GovernanceChokepoint:
             blast_radius_score=(report.score if report is not None else (blast_radius_score or 0)),
             blast_radius_verdict=(report.verdict if report is not None else (blast_radius_verdict or "")),
             command=command,
+        )
+
+    async def deliver_approved(
+        self,
+        session: AsyncSession,
+        *,
+        change_set_id: uuid.UUID,
+        principal: Principal,
+    ) -> Submission:
+        """Deliver a change set that is already `approved` but never reached an agent.
+
+        THE EDGE WAS DECLARED, DOCUMENTED AS RETRYABLE, AND HAD EXACTLY ONE TRAVERSAL.
+        `CHANGE_SET_TRANSITIONS` contains `("approved", "applying")`, and `_deliver`'s docstring says
+        in as many words that a failed send "leaves the set `approved` and retryable rather than stuck
+        in `applying` with nothing in flight". Nothing retried. The only traversal lived inside
+        `approve`, in the same transaction whose send had just failed, so an approval recorded while no
+        agent happened to be connected produced:
+
+          - a committed, durable, correct human decision, and
+          - a change set that could never be applied by any subsequent action.
+
+        `chokepoint.submit` -> `sink.send_command` raises `device-not-connected` and does NOT queue, so
+        "approve while the agent is offline" is not an exotic race — it is what happens every time a
+        user approves before starting the agent, which the onboarding order actively encourages.
+
+        WHAT THIS IS NOT. It is not a second approval and it writes no new approval. The human's
+        decision already happened and is the authorising artifact; re-approving would make one decision
+        look like two and break Q-04's one-row-per-transit. It reuses the original `approvals` row and
+        the `change_set_approved` audit event as the authority pair, which is exactly what `_deliver`
+        binds into the signed envelope.
+
+        WHAT IT STILL DOES. Admission and policy are evaluated AGAIN, for the same reason `approve`
+        re-evaluates: a change set approved an hour ago whose device was since revoked, or whose policy
+        bundle moved, must not be applied. A deny here refuses the delivery and leaves the set
+        `approved`, because §3.6 has no `approved -> rejected_by_policy` edge and the set is genuinely
+        still approved — a later policy change could allow it.
+        """
+        row = await self._load_change_set(session, change_set_id)
+        if row["status"] != "approved":
+            # A distinct problem type from the delivery failure itself, so a caller can tell "this is
+            # not waiting to be delivered" from "it is, and the agent is not there".
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    f"change set {change_set_id} is {row['status']}, not approved; only an approved "
+                    "change set that never reached an agent can be delivered"
+                ),
+            )
+
+        admitted = await self._admit(session, project_id=row["project_id"], principal=principal)
+        decision = await self._evaluate_policy(
+            session,
+            principal=principal,
+            admitted=admitted,
+            operation=APPLY_OPERATION,
+            items=(),
+            change_set_id=change_set_id,
+        )
+
+        # The authorising pair. `approvals` holds the human decision; the audit event holds the transit
+        # it was recorded as. Ordered newest-first because a rejected-then-approved history is possible
+        # and the live decision is the last one.
+        approval_row = (
+            await session.execute(
+                text(
+                    "SELECT id FROM approvals WHERE change_set_id = :cs AND status = 'approved' "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"cs": change_set_id},
+            )
+        ).mappings().first()
+        audit_row = (
+            await session.execute(
+                text(
+                    "SELECT seq, id FROM audit_events WHERE resource_id = :r "
+                    "AND action IN ('change_set_approved', 'change_set_auto_approved') "
+                    "ORDER BY seq DESC LIMIT 1"
+                ),
+                {"r": str(change_set_id)},
+            )
+        ).mappings().first()
+        if audit_row is None:
+            # No authorising transit means this row reached `approved` by a path that left no record,
+            # which is a broken invariant rather than a delivery problem. Refused rather than papered
+            # over with a fresh authority, which would be minting approval nobody gave.
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    f"change set {change_set_id} is approved but carries no approval audit event, so "
+                    "there is no authority to deliver it under"
+                ),
+            )
+        # D-64: an auto-approved set has no `approvals` row, because nobody approved it, and its audit
+        # event id IS the approval id. The same rule applies here.
+        approval_id = approval_row["id"] if approval_row is not None else audit_row["id"]
+
+        return await self._deliver(
+            session,
+            change_set_id=change_set_id,
+            admitted=admitted,
+            approval_id=approval_id,
+            audit_seq=int(audit_row["seq"]),
+            decision=decision,
+            report=None,
+            operation=APPLY_OPERATION,
+            args={
+                "change_set_id": str(change_set_id),
+                "version": int(row["version"]),
+                "item_count": await self._item_count(session, change_set_id),
+                "entries": await self._apply_entries(session, change_set_id),
+            },
+            status_after_delivery="applying",
+            outcome="applying",
+        )
+
+    async def _item_count(self, session: AsyncSession, change_set_id: uuid.UUID) -> int:
+        """How many items the change set holds, read from the rows rather than from a request.
+
+        `approve` can count `req.items` because it has the request in hand. A redelivery has only the
+        change set, and the count is part of the signed envelope, so it must come from the same rows the
+        entries come from or the two could disagree.
+        """
+        return int(
+            (
+                await session.execute(
+                    text("SELECT count(*) FROM change_items WHERE change_set_id = :cs"),
+                    {"cs": change_set_id},
+                )
+            ).scalar_one()
         )
 
     async def record_command_result(

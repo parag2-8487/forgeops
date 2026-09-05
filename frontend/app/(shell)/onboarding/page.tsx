@@ -224,10 +224,10 @@ export default function OnboardingPage() {
           observedBy="GET /api/v1/policies/active-bundle"
           done={
             activeDigest
-              ? `Active bundle ${activeDigest.slice(0, 19)}… — a device paired now is pinned to this digest.`
+              ? `Active bundle ${activeDigest.slice(0, 19)}… — every connected agent re-pins to this digest on its next handshake, so publishing does not require re-pairing.`
               : ""
           }
-          todo="THE STEP THAT IS EASIEST TO SKIP AND HARDEST TO DIAGNOSE. The chokepoint refuses a change-set submission from any agent not pinned to the tenant's current bundle digest, so an unpublished tenant fails at step 7 with a stale-bundle error that says nothing about bundles. Publish once now, and again after every policy change you want enforced."
+          todo="THE STEP THAT IS EASIEST TO SKIP AND HARDEST TO DIAGNOSE. The chokepoint refuses a change-set submission from any agent not pinned to the tenant's current bundle digest, so an unpublished tenant fails at step 7 with a stale-bundle error that says nothing about bundles. Publish once now, and again after every policy change you want enforced — a running agent picks up a newly published bundle by itself."
           href="/policies"
           hrefLabel="Publish the bundle"
         />

@@ -794,9 +794,13 @@ def create_app() -> FastAPI:
 
     app.include_router(projects_router)
 
+    from .ai.routes import read_router as ai_read_router
     from .ai.routes import router as ai_router
 
     app.include_router(ai_router)
+    # The user-facing tier read. Registered beside the completion router and under the same prefix,
+    # so `/api/v1/ai/tiers` is where it always was — what changed is which principal it accepts.
+    app.include_router(ai_read_router)
 
     # The audit read surface (§11.9, criterion 9). Registered here rather than behind a feature
     # flag: `GET /verify` is what makes tamper evidence a product feature, and a feature nobody

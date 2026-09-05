@@ -81,8 +81,19 @@ const REVERTABLE = "applied";
  * an operation on an applied change set. Fixing the union type alone would have produced a control
  * with no row to attach it to.
  */
+/**
+ * Approved, and never sent to an agent.
+ *
+ * `sink.send_command` raises `device-not-connected` and does not queue, and delivery runs after the
+ * approval commits — so approving with no agent running leaves a change set exactly here. It was
+ * invisible on this screen for the same reason revert was: the queue list did not name the status, so
+ * there was no row for a control to attach to.
+ */
+const DELIVERABLE = "approved";
+
 const QUEUES = [
   { status: DECIDABLE, label: "Awaiting decision" },
+  { status: DELIVERABLE, label: "Approved, not sent" },
   { status: REVERTABLE, label: "Applied" },
   { status: "rejected", label: "Rejected" },
   { status: "reverted", label: "Reverted" },
@@ -298,6 +309,7 @@ export function ApprovalCenter() {
   const [mode, setMode] = useState<ViewMode>("unified");
   const [comment, setComment] = useState("");
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [deliverOutcome, setDeliverOutcome] = useState<DecisionResponse | null>(null);
   const [revertOutcome, setRevertOutcome] = useState<DecisionResponse | null>(null);
   const [revertEscalation, setRevertEscalation] = useState<string | null>(null);
 
@@ -338,6 +350,34 @@ export function ApprovalCenter() {
     },
     onError: (error: unknown) => {
       const problem = error instanceof ApiProblemError ? error.problem : null;
+      // BRANCH ON THE PROBLEM TYPE, NOT THE STATUS. Three different situations answer 409 here, and
+      // keying on the number collapsed them into one sentence that was false for two of them:
+      //
+      //   change-set-conflict   the version or status really did move — the message below is right
+      //   device-not-connected  the approval SUCCEEDED and was committed; only the send failed
+      //
+      // A user who approved with no agent running was told the change set "moved since it was
+      // displayed". Nothing had moved, and their decision had in fact been recorded — so the one
+      // action they were told to take (reload) showed a change set that was already approved, which
+      // then produced the same message again from a different cause.
+      const type = problem?.type ?? "";
+      if (type.endsWith("device-not-connected")) {
+        setDecisionError(
+          "Your decision was recorded, but it could not be sent: no agent is connected for this " +
+            "project. Start the agent, then use Deliver — you do not need to approve again.",
+        );
+        return;
+      }
+      if (type.endsWith("change-set-conflict")) {
+        // The server's own detail distinguishes "is approved, not pending_approval" from a genuine
+        // version race, and it is more specific than anything this component can infer.
+        setDecisionError(
+          problem?.detail ??
+            "This change set moved since it was displayed, so the decision was refused rather than " +
+              "applied to state you did not review. Reloading will show its current form.",
+        );
+        return;
+      }
       if (problem?.status === 409) {
         setDecisionError(
           "This change set moved since it was displayed, so the decision was refused rather than " +
@@ -357,6 +397,22 @@ export function ApprovalCenter() {
    * governance stages with its own fresh authority rather than reusing the original's, because
    * reusing it would make rollback a privileged back door.
    */
+  /**
+   * Send an approved change set that never reached an agent — `POST /api/v1/approvals/{id}/deliver`.
+   *
+   * Carries NO body, because there is no second decision to record: the original approval is the
+   * authority and re-approving would make one human decision look like two. The server re-runs
+   * admission and policy before sending, so a device revoked since the approval cannot be handed work.
+   */
+  const deliver = useMutation({
+    mutationFn: (id: string) => api.post<DecisionResponse>(`/approvals/${id}/deliver`, undefined),
+    onSuccess: async (body) => {
+      setDecisionError(null);
+      setDeliverOutcome(body);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
+    },
+  });
+
   const revert = useMutation({
     mutationFn: (id: string) => api.post<unknown>(`/approvals/${id}/revert`, undefined),
     onSuccess: async (body) => {
@@ -644,11 +700,42 @@ export function ApprovalCenter() {
                     <GovernanceRefusal error={revert.error} action="revert this change set" />
                   ) : null}
                 </section>
+              ) : current.status === DELIVERABLE ? (
+                <section className="space-y-3" data-testid="deliver-panel">
+                  <p className="text-sm text-muted-foreground">
+                    This change set is approved and has not reached an agent. That is what happens
+                    when a decision is recorded while no agent is connected: the approval is
+                    committed and durable, and only the send failed. Approving again is neither
+                    needed nor possible — §3.6 has no second <code>pending_approval</code> to return
+                    to.
+                  </p>
+                  <Button
+                    disabled={deliver.isPending}
+                    onClick={() => deliver.mutate(current.id)}
+                    data-testid="deliver-button"
+                  >
+                    {deliver.isPending ? "Sending…" : "Deliver to agent"}
+                  </Button>
+                  {deliverOutcome ? (
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                      <dt className="font-medium">Status</dt>
+                      <dd>
+                        <code>{deliverOutcome.status}</code>
+                      </dd>
+                      <dt className="font-medium">Command delivered to an agent</dt>
+                      <dd>{deliverOutcome.command_delivered ? "yes" : "no"}</dd>
+                    </dl>
+                  ) : null}
+                  {deliver.error ? (
+                    <GovernanceRefusal error={deliver.error} action="deliver this change set" />
+                  ) : null}
+                </section>
               ) : (
                 <p className="text-sm text-muted-foreground">
                   This change set is <code>{current.status}</code>. §3.6 permits a decision only
-                  from <code>{DECIDABLE}</code> and a revert only from <code>{REVERTABLE}</code>, so
-                  no control is offered here rather than offered and refused by the server.
+                  from <code>{DECIDABLE}</code>, a delivery only from <code>{DELIVERABLE}</code> and
+                  a revert only from <code>{REVERTABLE}</code>, so no control is offered here rather
+                  than offered and refused by the server.
                 </p>
               )}
             </div>

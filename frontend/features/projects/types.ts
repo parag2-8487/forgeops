@@ -65,6 +65,35 @@ export interface ReadinessCheck {
   max_points: number;
   evidence: string;
   why_it_matters: string;
+
+  /**
+   * What a reader needs when a check FAILS.
+   *
+   * `evidence` was blanked on every failure, so the screen rendered "Evidence:" with nothing after it
+   * on the one outcome that needs explaining, and `why_it_matters` states a principle that says
+   * nothing about the repository being scored.
+   *
+   * Optional so a response from a backend older than these fields still typechecks; the components
+   * render "not stated" rather than an empty label.
+   */
+  looked_for?: string;
+  looked_in?: string;
+  found?: string;
+  remedy?: string;
+  remedy_path?: string;
+  /** The line the failing property sits on. `null` when the failure is an absence. */
+  line?: number | null;
+
+  /**
+   * Whether generation can satisfy this check, stated by the backend per check.
+   *
+   * This replaces a single hard-coded sentence on the readiness screen that claimed generation could
+   * not raise the score at all — which was wrong for 22 of the 29 checks, and gave no reason for the
+   * seven where it is true.
+   */
+  generatable?: boolean;
+  blocked_because?: string;
+  partial_offer?: string;
 }
 
 /** Mirrors `ReadinessReportResponse`. */

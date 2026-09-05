@@ -50,6 +50,17 @@ CONTENT_PATTERNS: Final[tuple[str, ...]] = (
     "%deployment/%.yaml",
     "%deployment/%.yml",
     "%charts/%/templates/%.yaml",
+    # Widened for the cross-category checks. `env_example_matches_the_deployment` compares the NAMES in
+    # the committed example against the names the compose file and the container specs pass, so the
+    # example's body has to be loaded — a path alone cannot answer which variables it documents.
+    #
+    # Names only ever leave this file. §7.11 keeps values out of anything persisted, and a value in a
+    # committed example is a placeholder by definition, so comparing values would compare two things
+    # that are both deliberately not the truth.
+    "%.env.example",
+    "%.env.sample",
+    "%.env.template",
+    "%example.env",
 )
 
 

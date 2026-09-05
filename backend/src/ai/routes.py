@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
-from ..auth.dependencies import require_mcp_principal
+from ..auth.dependencies import require_mcp_principal, require_principal
 from ..core.errors import ProblemException
 from ..core.security import TokenVerifier, VerifiedClaims
 from .rate_limit.redis_bucket import RateLimitServiceError, RedisTokenBucketLimiter
@@ -32,11 +32,32 @@ from .routing.tiers import ModelTier, TierConfig
 router = APIRouter(
     prefix="/api/v1/ai",
     tags=["ai"],
-    # §4.4 names `/api/v1/ai/complete` alongside the MCP surface: same token contract,
-    # so the same gateway-audience dependency. `/tiers` is under the same router and
-    # therefore protected too, which is correct — the tier map names every configured
-    # endpoint and is not information an unauthenticated caller needs.
+    # §4.4 names `/api/v1/ai/complete` alongside the MCP surface: same token contract, so the same
+    # gateway-audience dependency. THIS ROUTER IS NOW THE COMPLETION SURFACE ONLY, and its auth is
+    # deliberately unchanged — the fix below moves a read off it rather than widening it.
     dependencies=[Depends(require_mcp_principal)],
+)
+
+# A SECOND ROUTER, for the read a HUMAN performs rather than a gateway.
+#
+# `GET /tiers` used to sit on the router above and inherit `require_mcp_principal`, which demands the
+# GATEWAY AUDIENCE. A browser session token cannot satisfy that, so the Models screen showed
+#
+#     Not authenticated to read model tiers.
+#
+# to a correctly signed-in user, for ever, no matter how many times they signed in again. The old
+# comment argued the tier map "is not information an unauthenticated caller needs" — true, and beside
+# the point: the caller here is AUTHENTICATED, just not as a machine. The dependency was answering a
+# question nobody asked.
+#
+# Same prefix and tag, so the API surface is unchanged from a caller's point of view. Separate router
+# because FastAPI applies a router-level dependency to EVERY route on it, so the only way to give one
+# route a different principal contract is to give it a different router. Deny-by-default is preserved:
+# this router still requires a principal, it simply requires a USER one.
+read_router = APIRouter(
+    prefix="/api/v1/ai",
+    tags=["ai"],
+    dependencies=[Depends(require_principal)],
 )
 
 
@@ -108,7 +129,7 @@ def _get_ai_deps(request: Request) -> AIDeps:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/tiers", response_model=TiersListResponse)
+@read_router.get("/tiers", response_model=TiersListResponse)
 async def list_tiers(deps: AIDeps = Depends(_get_ai_deps)) -> TiersListResponse:
     """Return all tier names with primary endpoint info, availability, and breaker state."""
     tiers_info: list[TierInfoResponse] = []

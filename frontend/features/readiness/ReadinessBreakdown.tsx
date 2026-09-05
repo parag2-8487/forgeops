@@ -159,14 +159,92 @@ export function ReadinessBreakdown({ report }: { report: ReadinessReport }) {
                             {check.points} of {check.max_points} points
                           </span>
                         </div>
-                        <p className="mt-1 text-muted-foreground">
-                          <span className="font-medium">Evidence: </span>
-                          {check.evidence}
-                        </p>
+                        {/*
+                          A PASS AND A FAILURE NEED DIFFERENT THINGS SAID.
+
+                          A pass is fully described by the file that satisfied it. A failure used to
+                          render "Evidence:" followed by nothing — every call site blanked evidence on
+                          failure — and then a sentence of principle that said nothing about this
+                          repository. A reader who did not already know the answer had a red row and
+                          nowhere to go.
+                        */}
+                        {check.passed ? (
+                          <p className="mt-1 text-muted-foreground">
+                            <span className="font-medium">Evidence: </span>
+                            {check.evidence || "no path recorded"}
+                          </p>
+                        ) : (
+                          <dl className="mt-1 space-y-0.5 text-muted-foreground">
+                            <div>
+                              <dt className="inline font-medium">Looked for: </dt>
+                              <dd className="inline">{check.looked_for || "not stated"}</dd>
+                            </div>
+                            <div>
+                              <dt className="inline font-medium">Looked in: </dt>
+                              <dd className="inline">{check.looked_in || "not stated"}</dd>
+                            </div>
+                            <div>
+                              <dt className="inline font-medium">Found: </dt>
+                              <dd className="inline" data-testid={`found-${check.id}`}>
+                                {check.found || "not stated"}
+                                {/* Only when the check parsed something with lines. An absence has no
+                                    line, and a number here would send a reader to the wrong place. */}
+                                {typeof check.line === "number" ? (
+                                  <span className="ml-1 font-mono text-xs">
+                                    (line {check.line})
+                                  </span>
+                                ) : null}
+                              </dd>
+                            </div>
+                            {check.remedy ? (
+                              <div className="pt-1">
+                                <dt className="font-medium">
+                                  Fix{check.remedy_path ? ` in ${check.remedy_path}` : ""}:
+                                </dt>
+                                {/* Pre-formatted: a remedy carries a block of configuration to paste,
+                                    and collapsing its whitespace would make it unusable. */}
+                                <dd>
+                                  <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-muted/50 p-2 text-xs">
+                                    {check.remedy}
+                                  </pre>
+                                </dd>
+                              </div>
+                            ) : null}
+                          </dl>
+                        )}
                         <p className="mt-0.5 text-muted-foreground">
                           <span className="font-medium">Why it matters: </span>
                           {check.why_it_matters}
                         </p>
+                        {/*
+                          THE PER-CHECK GENERATION POSITION, replacing a single blanket sentence that
+                          claimed generation could not raise the score at all. It said that while 22 of
+                          the 29 checks are in fact generatable, and gave no reason for the seven that
+                          are not.
+                        */}
+                        {!check.passed && check.generatable === false && check.blocked_because ? (
+                          <p
+                            className="mt-0.5 text-muted-foreground"
+                            data-testid={`blocked-${check.id}`}
+                          >
+                            <span className="font-medium">Generation cannot do this: </span>
+                            {check.blocked_because}
+                            {check.partial_offer
+                              ? ` It can still produce ${check.partial_offer}.`
+                              : ""}
+                          </p>
+                        ) : null}
+                        {!check.passed && check.generatable ? (
+                          <p
+                            className="mt-0.5 text-muted-foreground"
+                            data-testid={`generatable-${check.id}`}
+                          >
+                            <span className="font-medium">Generation can do this. </span>
+                            {check.partial_offer
+                              ? `With one caveat: ${check.partial_offer}.`
+                              : "It can produce the change in full."}
+                          </p>
+                        ) : null}
                       </li>
                     ))}
                   </ul>

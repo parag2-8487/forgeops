@@ -98,6 +98,21 @@ function ProblemPanel({ error, label }: { error: unknown; label: string }) {
           requested. <code>scripts/check-oidc-reachability.py</code> checks the surrounding
           topology.
         </p>
+        {/*
+          THE THIRD CAUSE, which this panel used to omit and which is the one that actually happened.
+          The Models screen reported "Not authenticated to read model tiers" to a correctly signed-in
+          user because `GET /ai/tiers` sat on the completion router and inherited the GATEWAY-audience
+          dependency. No amount of signing in and no OIDC setting could ever have satisfied it: a
+          browser session token is the wrong KIND of principal, not a stale or misconfigured one.
+          Leaving this out sent the reader to `OIDC_APP_AUDIENCE` after a problem that did not exist.
+        */}
+        <p className="mt-2 text-muted-foreground">
+          A third possibility, and the reason this paragraph exists: the route may require a{" "}
+          <em>machine</em> principal rather than a user one, in which case neither signing in nor
+          any identity-provider setting can satisfy it and the fix is on the server. If this panel
+          appears on an ordinary read screen while other screens load normally, that is the likely
+          cause — report it rather than reconfiguring your identity provider.
+        </p>
       </div>
     );
   }
