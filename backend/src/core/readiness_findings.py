@@ -190,6 +190,78 @@ CHECK_EXPLANATIONS: Final[dict[str, CheckExplanation]] = {
         fixability=_gen(),
         artifact="dockerfile",
     ),
+    "dockerfile_no_baked_secrets": CheckExplanation(
+        looked_for="no ENV or ARG that assigns a literal value to a name denoting a credential",
+        looked_in="the ENV and ARG instructions of the Dockerfile that was found",
+        remedy=(
+            "Remove the value from the Dockerfile and supply it at RUN TIME, not build time. Keep the "
+            "declaration and drop the value:\n\n"
+            "    ENV <THE_VARIABLE>=\n\n"
+            "and pass the real value with `-e <THE_VARIABLE>=...`, a Kubernetes secret reference, or "
+            "this project's own vault. For a credential a BUILD genuinely needs, use a build mount, "
+            "which never becomes a layer:\n\n"
+            "    RUN --mount=type=secret,id=<name> \\\n"
+            "        FOO=$(cat /run/secrets/<name>) npm ci\n\n"
+            "TREAT THE EXISTING VALUE AS DISCLOSED AND ROTATE IT. Editing the Dockerfile does not "
+            "remove it from any image already built: it survives `docker history`, it survives being "
+            "overwritten by a later layer, and it is present in every registry and on every host that "
+            "has pulled the image. Deleting the affected tags is part of the fix, not an optional extra."
+        ),
+        remedy_path="Dockerfile",
+        # NOT GENERATABLE, and the reason is not a gap in the generator. Rewriting the line is the easy
+        # half; the value is already disclosed, and only the operator can rotate the credential and
+        # delete the images carrying it. Offering a one-click fix would imply the exposure was over.
+        fixability=Fixability(
+            generatable=False,
+            blocked_because=(
+                "the value is already in every image built from this file, so the fix is to rotate the "
+                "credential and delete those images — editing the Dockerfile alone would leave the "
+                "exposure in place while making the report go quiet"
+            ),
+            partial_offer=(
+                "the Dockerfile can be rewritten to take the value at run time, but rotation and image "
+                "deletion remain yours"
+            ),
+        ),
+        artifact="dockerfile",
+    ),
+    "kubernetes_containers_unprivileged": CheckExplanation(
+        looked_for=(
+            "every container without privileged, without allowPrivilegeEscalation, and sharing no host namespace"
+        ),
+        looked_in="the securityContext of every container and every pod spec in the manifests found",
+        remedy=(
+            "Drop the privilege and grant only what the workload actually needs:\n\n"
+            "    securityContext:\n"
+            "      privileged: false\n"
+            "      allowPrivilegeEscalation: false\n"
+            "      capabilities:\n"
+            "        drop: [ALL]\n\n"
+            "`privileged: true` is almost always inherited from an answer to a different problem. If a "
+            "specific capability is genuinely required, add that one capability instead — "
+            "`NET_ADMIN` for packet manipulation, `SYS_TIME` for the clock. If the container needs a "
+            "host path, mount the path rather than the host's namespaces."
+        ),
+        remedy_path="k8s/deployment.yaml",
+        fixability=_gen(),
+        artifact="k8s",
+    ),
+    "kubernetes_manifests_are_valid": CheckExplanation(
+        looked_for="apiVersion, kind and metadata.name on every document",
+        looked_in="every YAML document in the Kubernetes manifests found",
+        remedy=(
+            "Add the fields the API server requires. Every object needs all three:\n\n"
+            "    apiVersion: apps/v1\n"
+            "    kind: Deployment\n"
+            "    metadata:\n"
+            "      name: <the object's name>\n\n"
+            "Verify with `kubectl apply --dry-run=server -f <path>`, which validates against the "
+            "cluster's own schema rather than a local guess at it."
+        ),
+        remedy_path="k8s/deployment.yaml",
+        fixability=_gen(),
+        artifact="k8s",
+    ),
     "dockerfile_non_root": CheckExplanation(
         looked_for="a USER instruction naming a non-root account",
         looked_in="the USER instructions of the Dockerfile that was found",

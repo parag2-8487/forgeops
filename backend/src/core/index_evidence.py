@@ -74,6 +74,18 @@ CONTENT_PATTERNS: Final[tuple[str, ...]] = (
     "%cargo.toml",
     "%gemfile",
     "%composer.json",
+    # A3. `iac_remote_state_configured` calls `_content_of(..., _IAC_PATTERNS)` and searches the body for a
+    # `backend "` block — and NO `.tf` FILE WAS EVER CONTENT-INDEXED, so the body was empty for every
+    # project ever scored and the check failed for all of them. A project with a perfectly good S3 backend
+    # and a DynamoDB lock table was told its state was written locally.
+    #
+    # This is the same class of defect as `analysis_reports.inventory`: a reader written against data the
+    # writer never produced. The check was not wrong, and neither was its evidence — the two were never
+    # connected.
+    "%.tf",
+    "%.tofu",
+    "%.tfvars",
+    "%.bicep",
 )
 
 

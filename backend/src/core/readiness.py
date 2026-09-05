@@ -37,6 +37,14 @@ from typing import Any, Final
 
 from pydantic import BaseModel, Field
 
+from .content_validation import (
+    dockerfile_has_no_baked_secrets,
+    dockerfile_secrets_audit,
+    kubernetes_containers_are_unprivileged,
+    kubernetes_manifests_are_well_formed,
+    kubernetes_privileged_audit,
+    kubernetes_schema_audit,
+)
 from .dependency_manifest import ECOSYSTEM_FILES, reconcile
 from .index_evidence import IndexEvidence
 from .manifest_facts import (
@@ -82,6 +90,15 @@ _NOTHING_FOUND: Final = "nothing matched in any of the locations searched"
 KUBERNETES_RESOURCE_LIMITS_DECLARED_POINTS: Final = 35
 KUBERNETES_PROBES_DECLARED_POINTS: Final = 25
 KUBERNETES_IMAGE_TAGS_PINNED_POINTS: Final = 20
+#: A1 content checks. Weighted against the faults already in each category rather than by novelty.
+#:
+#: A baked secret is scored as heavily as any other security finding because the exposure is permanent:
+#: unlike a missing scanner, it cannot be fixed by adding a file — the image must be rebuilt and the old
+#: tags deleted. An invalid manifest is scored highest of the three because its failure is TOTAL: the
+#: deploy does not degrade, it stops.
+DOCKERFILE_NO_BAKED_SECRETS_POINTS: Final = 25
+KUBERNETES_UNPRIVILEGED_POINTS: Final = 20
+KUBERNETES_MANIFEST_VALID_POINTS: Final = 25
 PIPELINE_ACTIONS_PINNED_POINTS: Final = 15
 
 
@@ -574,6 +591,48 @@ class ReadinessEngine:
                 found="no .dockerignore at the repository root",
             )
         )
+        # A1: SCORED UNDER SECURITY, not containerization, because the fault is not that the image is
+        # badly built — it is that a credential now exists in every registry the image reaches, survives
+        # `docker history`, and survives being overwritten by a later layer. Rotating the value does not
+        # help until the image is rebuilt and the old tags are deleted.
+        secrets_ok, secrets_evidence = dockerfile_has_no_baked_secrets(docker_body)
+        secrets_audit = dockerfile_secrets_audit(docker_body, dockerfile or "Dockerfile")
+        checks.append(
+            self._check(
+                "dockerfile_no_baked_secrets",
+                "security",
+                # A BODY THAT WAS NOT READ IS NOT A CLEAN BODY. `docker_body` is empty when the file was
+                # found in the tree but its content was never indexed, and passing then would award full
+                # marks for a file nobody looked inside — the exact path-presence fault this check exists
+                # to remove. The three states are kept apart: no Dockerfile, one that was not read, and
+                # one that was read and is clean.
+                bool(dockerfile) and bool(docker_body) and secrets_ok,
+                DOCKERFILE_NO_BAKED_SECRETS_POINTS,
+                secrets_evidence if secrets_ok and docker_body else "",
+                "A credential in an ENV or ARG is written into the image layer and travels with the "
+                "image to every registry and every host that pulls it.",
+                found=(
+                    secrets_audit.detail
+                    if secrets_audit.detail
+                    else (
+                        f"{dockerfile} was found but its content was not indexed, so its ENV and ARG "
+                        "instructions could not be read"
+                        if dockerfile and not docker_body
+                        else (
+                            "an ENV or ARG assigns a literal value to a name that denotes a credential"
+                            if dockerfile
+                            else "there is no Dockerfile to examine"
+                        )
+                    )
+                ),
+                line=secrets_audit.line,
+                earned=(
+                    _proportional(secrets_audit, DOCKERFILE_NO_BAKED_SECRETS_POINTS)
+                    if dockerfile and secrets_audit.examined
+                    else None
+                ),
+            )
+        )
 
         # ─── CI/CD (§1.4) ────────────────────────────────────────────────────
         ci = _match(paths, _CI_PATTERNS)
@@ -814,6 +873,67 @@ class ReadinessEngine:
                 earned=(
                     _proportional(tags_audit, KUBERNETES_IMAGE_TAGS_PINNED_POINTS)
                     if has_k8s and tags_audit.examined
+                    else None
+                ),
+            )
+        )
+
+        # ─── A1: two content faults that a path check awards full marks for ───
+        #
+        # Both live inside a file whose EXISTENCE already scores, which is what makes them worth reading
+        # the body for: `kubernetes_manifests_present` passes on a Deployment the API server would reject.
+        privileged_audit = kubernetes_privileged_audit(paths, evidence.contents)
+        privileged_ok, privileged_evidence = kubernetes_containers_are_unprivileged(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "kubernetes_containers_unprivileged",
+                "orchestration",
+                privileged_ok if has_k8s else False,
+                KUBERNETES_UNPRIVILEGED_POINTS,
+                privileged_evidence if privileged_ok else "",
+                "A privileged container shares the host's kernel boundaries, so a compromise inside it "
+                "is a compromise of the node.",
+                found=(
+                    privileged_audit.detail
+                    if privileged_audit.detail
+                    else (
+                        "at least one container runs privileged or shares a host namespace"
+                        if has_k8s
+                        else "there is no manifest to examine"
+                    )
+                ),
+                line=privileged_audit.line,
+                earned=(
+                    _proportional(privileged_audit, KUBERNETES_UNPRIVILEGED_POINTS)
+                    if has_k8s and privileged_audit.examined
+                    else None
+                ),
+            )
+        )
+        schema_audit = kubernetes_schema_audit(paths, evidence.contents)
+        schema_ok, schema_evidence = kubernetes_manifests_are_well_formed(paths, evidence.contents)
+        checks.append(
+            self._check(
+                "kubernetes_manifests_are_valid",
+                "orchestration",
+                schema_ok if has_k8s else False,
+                KUBERNETES_MANIFEST_VALID_POINTS,
+                schema_evidence if schema_ok else "",
+                "A document missing apiVersion, kind or metadata.name is rejected by `kubectl apply`, so "
+                "the deploy stops rather than degrades.",
+                found=(
+                    schema_audit.detail
+                    if schema_audit.detail
+                    else (
+                        "at least one document omits apiVersion, kind or metadata.name"
+                        if has_k8s
+                        else "there is no manifest to examine"
+                    )
+                ),
+                line=schema_audit.line,
+                earned=(
+                    _proportional(schema_audit, KUBERNETES_MANIFEST_VALID_POINTS)
+                    if has_k8s and schema_audit.examined
                     else None
                 ),
             )
