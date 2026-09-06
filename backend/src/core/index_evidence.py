@@ -131,6 +131,20 @@ class IndexEvidence(BaseModel):
     #: unresolved specifier is offered to every ecosystem, and `fastapi` is a perfectly valid npm package
     #: name — so a pure Python project was reported as having undeclared Node dependencies. The importing
     #: file's extension is the only thing that says which ecosystem an import belongs to.
+    #: `(path, kind, tool, status, error_count, detail, line)` from `scan_artifact_validations`.
+    #:
+    #: WHAT THIS CLOSES. Six real validators run on the agent and every one of them only ever judged
+    #: GENERATED files, because `validations` is keyed by `change_item_id` and had no rows. So a
+    #: hand-written `docker-compose.yml` was scored on whether its PATH existed while `docker compose
+    #: config` — installed, on the same machine, during the same scan — was never asked.
+    #:
+    #: AN EMPTY TUPLE MEANS NOT CHECKED, NEVER PASSED. An older agent reports no validations at all, and a
+    #: newer one reports `tool_missing` for a binary the developer has not installed. Both are "unknown",
+    #: and the checks built on this must emit nothing rather than a pass — the agent's own validator package
+    #: exists because the implementations it replaced fabricated passes for anything they did not
+    #: understand, and reproducing that here would move the same defect one layer up.
+    artifact_validations: tuple[tuple[str, str, str, str, int, str, int | None], ...] = ()
+
     dependency_specifiers: tuple[tuple[str, str, bool], ...] = ()
 
     model_config = {"frozen": True}
@@ -192,9 +206,32 @@ async def load_index_evidence(session: AsyncSession, *, project_id: uuid.UUID) -
     )
     specifiers = tuple((str(row[0]), str(row[1]), bool(row[2])) for row in dependency_rows)
 
+    # A FIFTH statement, for what the external tools said about the artifacts this repository already has.
+    validation_rows = await session.execute(
+        text(
+            "SELECT path, kind, tool, status, error_count, detail, line "
+            "FROM scan_artifact_validations WHERE project_id = :project_id "
+            "ORDER BY path, kind"
+        ),
+        {"project_id": project_id},
+    )
+    validations = tuple(
+        (
+            str(row[0]).replace("\\", "/"),
+            str(row[1]),
+            str(row[2]),
+            str(row[3]),
+            int(row[4] or 0),
+            str(row[5] or ""),
+            int(row[6]) if row[6] is not None else None,
+        )
+        for row in validation_rows
+    )
+
     return IndexEvidence(
         paths=tuple(paths),
         contents=contents,
         redaction_counts=redaction_counts,
         dependency_specifiers=specifiers,
+        artifact_validations=validations,
     )

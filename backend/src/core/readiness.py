@@ -72,6 +72,7 @@ from .readiness_findings import (
     GENERATED_ARTIFACT_KINDS,
     CheckExplanation,
 )
+from .tool_verdicts import summarise
 
 #: The §1.4 categories and their weights. Summing to 100 makes the overall score a
 #: weighted mean of six 0-100 category scores, which is what lets one category's absence
@@ -97,6 +98,10 @@ KUBERNETES_IMAGE_TAGS_PINNED_POINTS: Final = 20
 #: tags deleted. An invalid manifest is scored highest of the three because its failure is TOTAL: the
 #: deploy does not degrade, it stops.
 DOCKERFILE_NO_BAKED_SECRETS_POINTS: Final = 25
+#: A1b. Weighted highest of the content checks because the verdict comes from the DEPLOYMENT TOOL ITSELF:
+#: a manifest `kubeconform` rejects will not apply, and no amount of the rest of the repository being
+#: correct changes that. It is the one check whose failure is confirmed by the software that will refuse.
+ARTIFACT_VALIDATION_POINTS: Final = 30
 KUBERNETES_UNPRIVILEGED_POINTS: Final = 20
 KUBERNETES_MANIFEST_VALID_POINTS: Final = 25
 PIPELINE_ACTIONS_PINNED_POINTS: Final = 15
@@ -114,6 +119,19 @@ def _proportional(audit: ItemAudit, max_points: int) -> int:
         return max_points
     earned = (max_points * audit.satisfied) // audit.examined
     return min(earned, max_points - 1)
+
+
+def _earned_from_counts(satisfied: int, examined: int, max_points: int) -> int | None:
+    """`_proportional` for a caller that already holds the two counts.
+
+    Returns None when nothing was examined, which the caller must read as "do not override the pass/fail
+    decision" rather than as zero — a check with nothing to count is not a check scoring nought.
+    """
+    if examined <= 0:
+        return None
+    if satisfied >= examined:
+        return max_points
+    return min((max_points * satisfied) // examined, max_points - 1)
 
 
 CATEGORY_WEIGHTS: Final[dict[str, int]] = {
@@ -1272,6 +1290,33 @@ class ReadinessEngine:
                     "and gets a service that cannot start.",
                     found=documented.detail,
                     line=documented.line,
+                )
+            )
+
+        # ─── A1b: what the real external tools said about the user's own artifacts ───
+        #
+        # EMITTED ONLY WHEN A TOOL REACHED A CONCLUSION. A project whose agent is older, or whose developer
+        # has none of the binaries installed, produces no check at all — "your artifacts are valid" and
+        # "nothing here could tell me" are different claims and only the first is a readiness statement.
+        # The agent's validator package exists because the implementations it replaced fabricated passes
+        # for anything they did not understand, and emitting a pass here would move that defect one layer
+        # up, where it is harder to see and easier to trust.
+        verdicts = summarise(evidence.artifact_validations)
+        if verdicts.conclusive:
+            checks.append(
+                self._check(
+                    "artifacts_pass_their_validators",
+                    "orchestration",
+                    verdicts.passed,
+                    ARTIFACT_VALIDATION_POINTS,
+                    f"{verdicts.satisfied} of {verdicts.judged} artifact(s) satisfied their validator"
+                    if verdicts.passed
+                    else "",
+                    "An artifact the deployment tool itself rejects cannot deploy, whatever the rest of "
+                    "the repository looks like.",
+                    found=verdicts.first_failure_detail or _NOTHING_FOUND,
+                    line=verdicts.failures[0][4] if verdicts.failures else None,
+                    earned=_earned_from_counts(verdicts.satisfied, verdicts.judged, ARTIFACT_VALIDATION_POINTS),
                 )
             )
 

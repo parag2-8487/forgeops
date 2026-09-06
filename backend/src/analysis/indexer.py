@@ -136,6 +136,33 @@ class ScanInventoryIn(BaseModel):
     package_managers: list[str] = Field(default_factory=list)
 
 
+class ScanValidationIn(BaseModel):
+    """One external tool's verdict on one artifact the repository already contains.
+
+    WHY THIS ARRIVES ON A SCAN AT ALL. Six real validators exist in the agent and every one of them only
+    ever judged GENERATED files: the `validations` table is keyed by `change_item_id`, so a file the user
+    wrote themselves could never appear in it, and the table held no rows. A hand-written
+    `docker-compose.yml` was therefore scored on whether its PATH existed, while the tool that could have
+    said "this does not parse" sat unused on the same machine the scan was running on.
+
+    `tool` and `tool_version` are carried because "it passed" is only meaningful alongside what did the
+    passing, and `status` has FOUR values because "fine", "broken", "the tool is not installed" and "the
+    tool could not run" are four different facts. Collapsing the last two into either of the first two is
+    how a security control comes to fabricate a verdict, which is the defect the agent's validator package
+    was written to remove.
+    """
+
+    path: str = Field(max_length=1024)
+    kind: str = Field(max_length=32)
+    tool: str = Field(default="", max_length=64)
+    tool_version: str = Field(default="", max_length=128)
+    status: str = Field(max_length=16)
+    finding_count: int = 0
+    error_count: int = 0
+    detail: str = Field(default="", max_length=1024)
+    line: int = 0
+
+
 class ScanReportIn(BaseModel):
     """The agent's scan report (`agent/internal/scanner/scanreport.go`)."""
 
@@ -145,6 +172,9 @@ class ScanReportIn(BaseModel):
     inventory: ScanInventoryIn = Field(default_factory=ScanInventoryIn)
     files: list[ScanFileIn] = Field(default_factory=list)
     dependencies: list[ScanDependencyIn] = Field(default_factory=list)
+    #: Defaulted rather than required, so an older agent's report is still accepted. An empty list means
+    #: "this agent did not report validations", which the score must treat as unknown and NOT as passing.
+    validations: list[ScanValidationIn] = Field(default_factory=list)
     inventory_hash: str = Field(default="", max_length=64)
     redaction_count: int = 0
     dirty_closure: list[str] = Field(default_factory=list)
@@ -507,6 +537,11 @@ async def persist_scan_report(
         changed_paths=changed_paths,
     )
 
+    # Written BEFORE the readiness report is recorded, because the score reads these rows. Recording the
+    # report first would score the project against the previous scan's verdicts, which is the kind of
+    # ordering bug that produces a number nobody can reproduce.
+    await _persist_artifact_validations(session, project_id=project_id, report=report)
+
     vectors_written, chunks_indexed, absent_reason = await _persist_embeddings(
         session,
         project_id=project_id,
@@ -600,6 +635,66 @@ async def _persist_dependencies(
                 "specifier": edge.raw_specifier,
                 "kind": edge.kind,
                 "resolved": edge.resolved and to_id is not None,
+            },
+        )
+        written += 1
+    return written
+
+
+async def _persist_artifact_validations(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    report: ScanReportIn,
+) -> int:
+    """Replace the project's artifact verdicts with the ones this scan produced.
+
+    REPLACED WHOLESALE, and only on a FULL report. A verdict is a statement about a moment: once the user
+    fixes their compose file, the old failure is not history worth keeping, it is a wrong answer that the
+    score would keep reporting. Merging would leave the stale row in place forever, which is the same
+    mistake `_persist_dependencies` documents for removed imports.
+
+    A PARTIAL REPORT WRITES NOTHING. An incremental rescan covers a handful of changed files, so its
+    validation list omits every artifact that did not change — and treating that as the whole truth would
+    delete verdicts for files that are still there and still valid. The absence of a row must mean "not
+    checked", so it may only be produced by a scan that actually looked everywhere.
+    """
+    if report.partial:
+        return 0
+
+    await session.execute(
+        text("DELETE FROM scan_artifact_validations WHERE project_id = :project_id"),
+        {"project_id": project_id},
+    )
+
+    written = 0
+    for verdict in report.validations:
+        await session.execute(
+            text(
+                "INSERT INTO scan_artifact_validations "
+                "(id, project_id, path, kind, tool, tool_version, status, finding_count, "
+                "error_count, detail, line, created_at) "
+                "VALUES (:id, :project_id, :path, :kind, :tool, :tool_version, :status, "
+                ":finding_count, :error_count, :detail, :line, now()) "
+                "ON CONFLICT (project_id, path, kind) DO UPDATE SET "
+                "tool = EXCLUDED.tool, tool_version = EXCLUDED.tool_version, "
+                "status = EXCLUDED.status, finding_count = EXCLUDED.finding_count, "
+                "error_count = EXCLUDED.error_count, detail = EXCLUDED.detail, line = EXCLUDED.line"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "project_id": project_id,
+                "path": verdict.path.replace("\\", "/"),
+                "kind": verdict.kind,
+                "tool": verdict.tool,
+                "tool_version": verdict.tool_version,
+                "status": verdict.status,
+                "finding_count": verdict.finding_count,
+                "error_count": verdict.error_count,
+                "detail": verdict.detail,
+                # Zero means the tool reported no line, and NULL is how that is stored: a literal 0 would
+                # render as line zero, which exists in no file.
+                "line": verdict.line or None,
             },
         )
         written += 1

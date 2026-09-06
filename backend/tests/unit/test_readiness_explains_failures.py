@@ -105,6 +105,28 @@ DEPENDENCY_MISMATCH = IndexEvidence(
 )
 
 
+#: A repository whose manifest the deployment tool itself rejects.
+#:
+#: The verdict comes from `kubeconform`, recorded by the agent during the scan. This is the one finding in
+#: the whole report confirmed by the software that will actually refuse the artifact — every other check is
+#: this project's opinion about the repository, and this one is the cluster's.
+TOOL_REJECTED_ARTIFACT = IndexEvidence(
+    paths=("k8s/deployment.yaml",),
+    contents={},
+    artifact_validations=(
+        (
+            "k8s/deployment.yaml",
+            "k8s",
+            "kubeconform",
+            "failed",
+            1,
+            "missing required field metadata.name in io.k8s.api.apps.v1.Deployment",
+            3,
+        ),
+    ),
+)
+
+
 def _all_checks() -> list:
     return ReadinessEngine().evaluate(HALF_CORRECT).checks
 
@@ -132,6 +154,10 @@ def test_every_check_id_has_an_explanation() -> None:
     # without dependency rows cannot reach them — and a Python project must not be judged for having no
     # package.json, which is why they are per-ecosystem rather than unconditional.
     reachable |= {c.id for c in ReadinessEngine().evaluate(DEPENDENCY_MISMATCH).checks}
+    # The external-tool check is emitted only when a tool actually reached a conclusion about an artifact.
+    # A fixture with no validation rows cannot reach it, and that is deliberate: "your artifacts are valid"
+    # and "nothing here could tell me" are different claims, and only the first is a readiness statement.
+    reachable |= {c.id for c in ReadinessEngine().evaluate(TOOL_REJECTED_ARTIFACT).checks}
     unused = sorted(set(CHECK_EXPLANATIONS) - reachable)
     assert not unused, (
         f"these explanations describe checks nothing emits: {unused}. An explanation for a check that "

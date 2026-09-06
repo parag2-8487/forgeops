@@ -92,6 +92,34 @@ type ScanDependency struct {
 }
 
 // ScanReport is the whole payload the backend persists.
+// ScanValidation is one external tool's verdict on one artifact this repository already contains.
+//
+// Tool and ToolVersion are not decoration. "It passed" is only meaningful alongside what did the passing,
+// and a validator that cannot find its binary must say so rather than return a clean result — the whole
+// internal/validator package exists because the previous implementations were substring matching wearing a
+// validator's name, and passed anything they did not understand.
+type ScanValidation struct {
+	// Path is repository-relative, matching the keys used everywhere else in the report.
+	Path string `json:"path"`
+	// Kind is the artifact class: compose, k8s, helm, yaml_schema.
+	Kind string `json:"kind"`
+	// Tool is the binary that produced this verdict, and ToolVersion what it reported for itself.
+	Tool        string `json:"tool"`
+	ToolVersion string `json:"tool_version,omitempty"`
+	// Status is one of passed, failed, tool_missing, errored.
+	//
+	// FOUR STATES, NOT TWO. "the tool says this is fine", "the tool says it is broken", "the tool is not
+	// installed" and "the tool could not run" are four different facts, and collapsing the last two into
+	// either of the first two is how a security control comes to fabricate a verdict.
+	Status string `json:"status"`
+	// FindingCount and ErrorCount summarise the findings; Detail is the first error, verbatim.
+	FindingCount int    `json:"finding_count"`
+	ErrorCount   int    `json:"error_count"`
+	Detail       string `json:"detail,omitempty"`
+	// Line is where the first error is, when the tool reported one.
+	Line int `json:"line,omitempty"`
+}
+
 type ScanReport struct {
 	SchemaVersion int       `json:"schema_version"`
 	GeneratedAt   time.Time `json:"generated_at"`
@@ -113,6 +141,19 @@ type ScanReport struct {
 	} `json:"inventory"`
 	Files        []ScanFile       `json:"files"`
 	Dependencies []ScanDependency `json:"dependencies"`
+	// Validations are the real external tools' verdicts on the artifacts THIS repository already has.
+	//
+	// WHY THEY RIDE ON THE SCAN. Six genuine validators exist and every one of them only ever judged
+	// GENERATED files: `validations` is keyed by `change_item_id` and had no rows at all. So a user's own
+	// hand-written `docker-compose.yml` was scored on whether the PATH existed, while the tool that could
+	// have told them it does not parse sat unused on the same machine. The score said 100 and
+	// `docker compose config` said no.
+	//
+	// A MISSING TOOL IS REPORTED, NEVER PASSED. Each entry carries the tool and its version, and an entry
+	// whose Status is "tool_missing" is what the backend must render as "not checked" — the package
+	// comment in internal/validator is explicit that the old implementations fabricated passes, and
+	// re-introducing that here would be the same defect one layer up.
+	Validations []ScanValidation `json:"validations,omitempty"`
 	// InventoryHash is sha256 over the sorted `path:content_hash` pairs. It is the
 	// determinism evidence `analysis_reports.inventory_hash` stores: two scans of one
 	// tree must produce the same hash, which is what lets two readiness scores be

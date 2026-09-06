@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/parag8487/ForgeOps/agent/internal/artifactcheck"
 	"github.com/parag8487/ForgeOps/agent/internal/executor"
 	"github.com/parag8487/ForgeOps/agent/internal/identity"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner"
@@ -157,6 +158,7 @@ func (c *codebaseIndexer) IndexFull(ctx context.Context, projectID string) (exec
 	if err != nil {
 		return executor.IndexSummary{}, fmt.Errorf("building the scan report: %w", err)
 	}
+	c.attachValidations(ctx, report)
 	return c.submit(ctx, projectID, report)
 }
 
@@ -168,7 +170,29 @@ func (c *codebaseIndexer) IndexChanged(
 	if err != nil {
 		return executor.IndexSummary{}, fmt.Errorf("building the incremental scan report: %w", err)
 	}
+	c.attachValidations(ctx, report)
 	return c.submit(ctx, projectID, report)
+}
+
+// attachValidations runs the real external validators over the artifacts this repository already has.
+//
+// ORCHESTRATED HERE RATHER THAN INSIDE THE SCANNER, because `artifactcheck` imports `scanner` for the
+// report type and the reverse edge would be an import cycle. The scanner's job is to describe the tree;
+// deciding to spend seconds of external tooling on it is a policy the caller owns.
+//
+// A FAILURE HERE NEVER FAILS THE SCAN. The index is the valuable output and it is already built; losing it
+// because `helm` misbehaved would trade something the user needs for something they merely wanted. Each
+// artifact's own status records what happened, including that a tool was missing, so nothing is silently
+// reported as clean.
+func (c *codebaseIndexer) attachValidations(ctx context.Context, report *scanner.ScanReport) {
+	if report == nil {
+		return
+	}
+	paths := make([]string, 0, len(report.Files))
+	for _, file := range report.Files {
+		paths = append(paths, file.Path)
+	}
+	report.Validations = artifactcheck.Run(ctx, c.root, paths)
 }
 
 func (c *codebaseIndexer) submit(

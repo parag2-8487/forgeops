@@ -190,6 +190,46 @@ CHECK_EXPLANATIONS: Final[dict[str, CheckExplanation]] = {
         fixability=_gen(),
         artifact="dockerfile",
     ),
+    "artifacts_pass_their_validators": CheckExplanation(
+        looked_for=(
+            "every Compose file, Kubernetes manifest, Helm chart and workflow accepted by the tool that "
+            "will actually consume it"
+        ),
+        looked_in=(
+            "the verdicts the agent's own validators recorded during the scan, from docker compose "
+            "config, kubeconform, helm lint and yamllint"
+        ),
+        remedy=(
+            "Run the tool the finding names and fix what it reports. The message quoted in the finding is "
+            "the tool's own, so the same command reproduces it exactly:\n\n"
+            "    docker compose -f <path> config\n"
+            "    kubeconform -strict <path>\n"
+            "    helm lint <chart directory>\n\n"
+            "THIS IS THE ONE FINDING CONFIRMED BY THE SOFTWARE THAT WILL REFUSE. Every other check here is "
+            "this project's opinion about your repository; this one is the deployment tool's. A manifest "
+            "`kubeconform` rejects will not apply however correct the rest of the repository is.\n\n"
+            "If the finding says a tool was not installed, nothing was judged either way — install it and "
+            "rescan. An absent tool is reported rather than assumed to have passed."
+        ),
+        remedy_path="",
+        # NOT GENERATABLE as a category. The artifacts themselves are generatable and their own checks say
+        # so; this check is the TOOL'S VERDICT on whatever is there, and there is nothing to emit that
+        # would satisfy it directly. Offering to "generate" a passing verdict is the exact fabrication the
+        # agent's validator package was rewritten to remove.
+        fixability=Fixability(
+            generatable=False,
+            blocked_because=(
+                "this is an external tool's verdict on the files you already have, not a file that can be "
+                "written — the fix is to correct the artifact the tool named, which its own message "
+                "describes precisely"
+            ),
+            partial_offer=(
+                "the individual artifact checks can generate a replacement for a missing or malformed "
+                "file, and this verdict will change when the tool is next run against it"
+            ),
+        ),
+        artifact="",
+    ),
     "dockerfile_no_baked_secrets": CheckExplanation(
         looked_for="no ENV or ARG that assigns a literal value to a name denoting a credential",
         looked_in="the ENV and ARG instructions of the Dockerfile that was found",
