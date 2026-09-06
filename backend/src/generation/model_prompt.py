@@ -179,13 +179,35 @@ def build_generation_prompt(
     return "\n".join(lines)
 
 
-def parse_artifacts(raw: str, *, required: Sequence[str] = REQUIRED_ARTIFACTS) -> dict[str, str]:
+def parse_artifacts(
+    raw: str,
+    *,
+    required: Sequence[str] = REQUIRED_ARTIFACTS,
+    requested: Sequence[str] | None = None,
+) -> dict[str, str]:
     """Split model output into `{path: content}`, or raise `ArtifactParseError`.
 
     Content is taken verbatim between the fences. Nothing is normalised except the removal of the
     fence lines themselves and a trailing newline guarantee, because a Dockerfile or a manifest is
     whitespace-significant and "helpfully" reformatting model output would mean the bytes the
     deterministic gate judged are not the bytes that get written.
+
+    REQUESTED AND REQUIRED ARE DIFFERENT QUESTIONS, and conflating them cost a real regression.
+
+    `required` is the set that must ALL be present or the attempt has failed. `requested` is the set
+    the run asked for, of which any subset is acceptable. When a compiled prompt drives a run it may
+    ask for a dozen files, and treating that whole list as mandatory means one omission discards
+    eleven correct files and substitutes canned template output — which is strictly worse than the
+    partial result it replaced. The end-to-end journey caught exactly that: a run that produced most
+    of what it was asked for was recorded as `template_fallback`.
+
+    A file OUTSIDE `requested` is still dropped. That part of the original contract stands: an
+    unrequested file in a change set is a write nobody asked for, and it should be discarded here
+    rather than at the governance chokepoint.
+
+    With `requested` given, the failure condition is that NOTHING usable came back. A model that
+    produced none of the files asked for has not partially succeeded, and the caller must be able to
+    tell that apart from a shortfall.
     """
     files: dict[str, list[str]] = {}
     current: str | None = None
@@ -209,9 +231,19 @@ def parse_artifacts(raw: str, *, required: Sequence[str] = REQUIRED_ARTIFACTS) -
             files[current].append(line)
 
     contents = {path: _join(body) for path, body in files.items() if _join(body).strip()}
+
     missing = [path for path in required if path not in contents]
     if missing:
         raise ArtifactParseError(missing=missing, found=sorted(contents))
+
+    if requested is not None:
+        accepted = {path: contents[path] for path in requested if path in contents}
+        if not accepted:
+            # Nothing that was asked for came back. Reported as every requested path missing, because
+            # that is what happened, and the retry prompt is built from this list.
+            raise ArtifactParseError(missing=list(requested), found=sorted(contents))
+        return accepted
+
     # Only the required set is returned. A model that invented `README.md` gets it dropped here
     # rather than at the governance chokepoint, because an unrequested file in a change set is a
     # write nobody asked for.

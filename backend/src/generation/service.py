@@ -497,7 +497,7 @@ class GenerationService:
                     )
 
             try:
-                # REQUIRED = WHAT THIS RUN ASKED FOR, not a fixed list of four paths.
+                # WHAT THIS RUN ASKED FOR, not a fixed list of four paths.
                 #
                 # `parse_artifacts` defaulted to `REQUIRED_ARTIFACTS` — Dockerfile plus three
                 # Kubernetes manifests — so a run asked for a CI workflow failed the parse for missing a
@@ -510,15 +510,21 @@ class GenerationService:
                 # and `*.tf`, and returns None for a kind it has no opinion about rather than refusing
                 # it.
                 #
+                # PASSED AS `requested`, NOT `required`, AND THE DIFFERENCE IS A REGRESSION I CAUSED.
+                # Treating a compiled plan's dozen write targets as all-or-nothing meant one omission
+                # discarded eleven correct files and substituted canned template output — the
+                # thirteen-step journey recorded a run that produced most of what it asked for as
+                # `template_fallback`. A shortfall is now a shortfall: the files that came back are
+                # used, the checks whose files did not are simply still failing, and the score says so
+                # honestly. Canned output in place of real partial work is worse than the partial work.
+                #
                 # Falls back to the old default when no plan was compiled, so an operator typing a free
                 # prompt still gets the previous contract rather than a run that requires nothing and
                 # therefore accepts an empty answer.
-                required = (
-                    tuple(compiled.write_targets)
-                    if compiled is not None and compiled.write_targets
-                    else REQUIRED_ARTIFACTS
-                )
-                parsed = parse_artifacts(result.content, required=required)
+                if compiled is not None and compiled.write_targets:
+                    parsed = parse_artifacts(result.content, required=(), requested=tuple(compiled.write_targets))
+                else:
+                    parsed = parse_artifacts(result.content, required=REQUIRED_ARTIFACTS)
             except ArtifactParseError as exc:
                 findings = (str(exc),)
                 continue
