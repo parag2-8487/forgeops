@@ -60,9 +60,7 @@ async def hub_for_repin(
     """
     async with sessions() as session:
         project_id = (
-            await session.execute(
-                text("SELECT project_id FROM agent_devices WHERE id = :i"), {"i": device_for_repin}
-            )
+            await session.execute(text("SELECT project_id FROM agent_devices WHERE id = :i"), {"i": device_for_repin})
         ).scalar_one()
 
     class _Directory:
@@ -158,11 +156,15 @@ class TestTheDeviceCanBeRepinned:
 
         async with sessions() as session:
             row = (
-                await session.execute(
-                    text("SELECT policy_bundle_digest, status FROM agent_devices WHERE id = :i"),
-                    {"i": device_for_repin},
+                (
+                    await session.execute(
+                        text("SELECT policy_bundle_digest, status FROM agent_devices WHERE id = :i"),
+                        {"i": device_for_repin},
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
         assert row["policy_bundle_digest"] == digest
         # A device marked stale by the drift check must come back, or it stays unable to submit while
         # holding exactly the right bundle.
@@ -200,8 +202,6 @@ class TestTheDeviceCanBeRepinned:
 
         async with sessions() as session:
             status = (
-                await session.execute(
-                    text("SELECT status FROM agent_devices WHERE id = :i"), {"i": device_for_repin}
-                )
+                await session.execute(text("SELECT status FROM agent_devices WHERE id = :i"), {"i": device_for_repin})
             ).scalar_one()
         assert "revoked" in str(status).lower()

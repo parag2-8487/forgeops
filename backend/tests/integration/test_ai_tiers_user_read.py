@@ -117,9 +117,7 @@ async def test_the_completion_endpoint_still_demands_the_gateway_audience(app_no
     try:
         transport = ASGITransport(app=app_no_auth)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.post(
-                COMPLETE_PATH, json={"tier": "high_coding", "prompt": "hello"}
-            )
+            response = await client.post(COMPLETE_PATH, json={"tier": "high_coding", "prompt": "hello"})
     finally:
         app_no_auth.dependency_overrides.pop(require_principal, None)
 

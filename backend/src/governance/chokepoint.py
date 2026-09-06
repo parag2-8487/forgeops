@@ -494,9 +494,7 @@ _APPROVAL_REASON_LIMIT: Final = 1024
 _APPROVAL_COMMENT_BUDGET: Final = 400
 
 
-def _approval_audit_reason(
-    *, actor: str, policy_reason: str, comment: str | None
-) -> str:
+def _approval_audit_reason(*, actor: str, policy_reason: str, comment: str | None) -> str:
     """Compose the reason recorded when a human approves a change set.
 
     THE BUG THIS FIXES. The line used to be `f"approved by {actor}: {decision.reason}"`, which read
@@ -1651,24 +1649,32 @@ class GovernanceChokepoint:
         # it was recorded as. Ordered newest-first because a rejected-then-approved history is possible
         # and the live decision is the last one.
         approval_row = (
-            await session.execute(
-                text(
-                    "SELECT id FROM approvals WHERE change_set_id = :cs AND status = 'approved' "
-                    "ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"cs": change_set_id},
+            (
+                await session.execute(
+                    text(
+                        "SELECT id FROM approvals WHERE change_set_id = :cs AND status = 'approved' "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"cs": change_set_id},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         audit_row = (
-            await session.execute(
-                text(
-                    "SELECT seq, id FROM audit_events WHERE resource_id = :r "
-                    "AND action IN ('change_set_approved', 'change_set_auto_approved') "
-                    "ORDER BY seq DESC LIMIT 1"
-                ),
-                {"r": str(change_set_id)},
+            (
+                await session.execute(
+                    text(
+                        "SELECT seq, id FROM audit_events WHERE resource_id = :r "
+                        "AND action IN ('change_set_approved', 'change_set_auto_approved') "
+                        "ORDER BY seq DESC LIMIT 1"
+                    ),
+                    {"r": str(change_set_id)},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         if audit_row is None:
             # No authorising transit means this row reached `approved` by a path that left no record,
             # which is a broken invariant rather than a delivery problem. Refused rather than papered

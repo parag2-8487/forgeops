@@ -30,10 +30,7 @@ def test_the_policy_requirement_is_not_presented_as_the_approvers_reason() -> No
     )
     assert reason != "approved by parag@forgeops.invalid: environment is absent"
     # The causal direction is stated rather than implied by a colon.
-    assert reason == (
-        "approved by parag@forgeops.invalid; "
-        "approval was required because environment is absent"
-    )
+    assert reason == ("approved by parag@forgeops.invalid; approval was required because environment is absent")
 
 
 def test_both_facts_survive() -> None:

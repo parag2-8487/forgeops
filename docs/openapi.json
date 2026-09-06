@@ -1519,6 +1519,127 @@
         "title": "GenerationRequest",
         "type": "object"
       },
+      "GenerationRunResponse": {
+        "description": "One generation run, including the exact instruction the model was given.\n\nWHY THE PROMPT BELONGS ON THE RECORD AND NOT ONLY IN A LOG. The row recorded the tier, the endpoint,\nthe token counts, the retrieval record and the outcome \u2014 everything except what the model was asked\nto do. So when a run wrote a file to the wrong path there was no way to tell whether the model had\ndisobeyed a correct instruction or obeyed a bad one, and those two faults have opposite fixes. The\ncolumn was added with the compiler and nothing read it, which is the dead-column shape this codebase\nkeeps producing; this route is the reader that makes it evidence rather than storage.\n\n`compiled_prompt` is None for a run made before the compiler existed, or for a request with no\nreadiness findings behind it. That reads as \"not recorded\", which is true. An empty string would read\nas \"the model was sent nothing\", which is a different and false claim.",
+        "properties": {
+          "addressed_checks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Addressed Checks",
+            "type": "array"
+          },
+          "compiled_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compiled Prompt"
+          },
+          "completion_tokens": {
+            "default": 0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "deferred_checks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deferred Checks",
+            "type": "array"
+          },
+          "endpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "iterations_used": {
+            "default": 0,
+            "title": "Iterations Used",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "prompt_token_budget": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Token Budget"
+          },
+          "prompt_token_estimate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Token Estimate"
+          },
+          "prompt_tokens": {
+            "default": 0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "served_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Served From"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "status"
+        ],
+        "title": "GenerationRunResponse",
+        "type": "object"
+      },
       "GitHubImportRequest": {
         "additionalProperties": false,
         "description": "The three things an import needs. `extra=\"forbid\"` so a misspelled field is a 422, not a default.",
@@ -2709,12 +2830,79 @@
           "schema_version": {
             "title": "Schema Version",
             "type": "integer"
+          },
+          "validations": {
+            "items": {
+              "$ref": "#/components/schemas/ScanValidationIn"
+            },
+            "title": "Validations",
+            "type": "array"
           }
         },
         "required": [
           "schema_version"
         ],
         "title": "ScanReportIn",
+        "type": "object"
+      },
+      "ScanValidationIn": {
+        "description": "One external tool's verdict on one artifact the repository already contains.\n\nWHY THIS ARRIVES ON A SCAN AT ALL. Six real validators exist in the agent and every one of them only\never judged GENERATED files: the `validations` table is keyed by `change_item_id`, so a file the user\nwrote themselves could never appear in it, and the table held no rows. A hand-written\n`docker-compose.yml` was therefore scored on whether its PATH existed, while the tool that could have\nsaid \"this does not parse\" sat unused on the same machine the scan was running on.\n\n`tool` and `tool_version` are carried because \"it passed\" is only meaningful alongside what did the\npassing, and `status` has FOUR values because \"fine\", \"broken\", \"the tool is not installed\" and \"the\ntool could not run\" are four different facts. Collapsing the last two into either of the first two is\nhow a security control comes to fabricate a verdict, which is the defect the agent's validator package\nwas written to remove.",
+        "properties": {
+          "detail": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Detail",
+            "type": "string"
+          },
+          "error_count": {
+            "default": 0,
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "finding_count": {
+            "default": 0,
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "kind": {
+            "maxLength": 32,
+            "title": "Kind",
+            "type": "string"
+          },
+          "line": {
+            "default": 0,
+            "title": "Line",
+            "type": "integer"
+          },
+          "path": {
+            "maxLength": 1024,
+            "title": "Path",
+            "type": "string"
+          },
+          "status": {
+            "maxLength": 16,
+            "title": "Status",
+            "type": "string"
+          },
+          "tool": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Tool",
+            "type": "string"
+          },
+          "tool_version": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Tool Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "status"
+        ],
+        "title": "ScanValidationIn",
         "type": "object"
       },
       "SecretCreate": {
@@ -4483,6 +4671,50 @@
           }
         },
         "summary": "Generate deployment artifacts, streaming progress as SSE",
+        "tags": [
+          "generation"
+        ]
+      }
+    },
+    "/api/v1/generation/runs/{run_id}": {
+      "get": {
+        "description": "Return one run, including the instruction the model received.\n\nA MISSING RUN AND ANOTHER TENANT'S RUN ANSWER IDENTICALLY, with the same non-disclosing 403 the other\nread routes use. Distinguishing them would turn this into an enumeration oracle for run ids, exactly\nas it would for project ids.",
+        "operationId": "read_generation_run_api_v1_generation_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read one generation run and the prompt it was given",
         "tags": [
           "generation"
         ]

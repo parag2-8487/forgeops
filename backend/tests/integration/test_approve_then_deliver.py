@@ -44,11 +44,7 @@ pytestmark = pytest.mark.asyncio
 
 async def _status(session: AsyncSession, change_set_id: uuid.UUID) -> str:
     return str(
-        (
-            await session.execute(
-                text("SELECT status FROM change_sets WHERE id = :i"), {"i": change_set_id}
-            )
-        ).scalar_one()
+        (await session.execute(text("SELECT status FROM change_sets WHERE id = :i"), {"i": change_set_id})).scalar_one()
     )
 
 
@@ -65,9 +61,7 @@ class TestApprovingWithNoAgentConnected:
         not `applying`, which would claim something is in flight when nothing is.
         """
         offline = RecordingSink(
-            raises=ProblemException(
-                status=409, type_suffix="device-not-connected", title="No agent connected"
-            )
+            raises=ProblemException(status=409, type_suffix="device-not-connected", title="No agent connected")
         )
         chokepoint = build_chokepoint(
             policy=ScriptedPolicy(decision=require_approval()), sink=offline, redis_client=redis_client
@@ -86,9 +80,7 @@ class TestApprovingWithNoAgentConnected:
             assert pending.status == "pending_approval"
 
             with pytest.raises(ProblemException):
-                await chokepoint.approve(
-                    session, change_set_id=pending.change_set_id, principal=fixture.principal
-                )
+                await chokepoint.approve(session, change_set_id=pending.change_set_id, principal=fixture.principal)
 
             assert await _status(session, pending.change_set_id) == "approved"
             # The decision is recorded exactly once, which is what makes re-approving both unnecessary
@@ -106,9 +98,7 @@ class TestApprovingWithNoAgentConnected:
     ) -> None:
         """The half that did not exist. This is the edge the model declared and nothing traversed."""
         offline = RecordingSink(
-            raises=ProblemException(
-                status=409, type_suffix="device-not-connected", title="No agent connected"
-            )
+            raises=ProblemException(status=409, type_suffix="device-not-connected", title="No agent connected")
         )
         chokepoint = build_chokepoint(
             policy=ScriptedPolicy(decision=require_approval()), sink=offline, redis_client=redis_client
@@ -125,17 +115,13 @@ class TestApprovingWithNoAgentConnected:
                 principal=fixture.principal,
             )
             with pytest.raises(ProblemException):
-                await chokepoint.approve(
-                    session, change_set_id=pending.change_set_id, principal=fixture.principal
-                )
+                await chokepoint.approve(session, change_set_id=pending.change_set_id, principal=fixture.principal)
             assert await _status(session, pending.change_set_id) == "approved"
 
         # A NEW CHOKEPOINT with a working sink, which is the point: the agent arrived in a later
         # process, exactly as it does when a user starts it after approving.
         online = RecordingSink()
-        chokepoint2 = build_chokepoint(
-            policy=ScriptedPolicy(decision=allow()), sink=online, redis_client=redis_client
-        )
+        chokepoint2 = build_chokepoint(policy=ScriptedPolicy(decision=allow()), sink=online, redis_client=redis_client)
         async with sessions() as session:
             result = await chokepoint2.deliver_approved(
                 session, change_set_id=pending.change_set_id, principal=fixture.principal
@@ -155,9 +141,7 @@ class TestApprovingWithNoAgentConnected:
         transit's outcome leaving the building, which is why `_deliver` writes no audit row either.
         """
         offline = RecordingSink(
-            raises=ProblemException(
-                status=409, type_suffix="device-not-connected", title="No agent connected"
-            )
+            raises=ProblemException(status=409, type_suffix="device-not-connected", title="No agent connected")
         )
         chokepoint = build_chokepoint(
             policy=ScriptedPolicy(decision=require_approval()), sink=offline, redis_client=redis_client
@@ -174,14 +158,10 @@ class TestApprovingWithNoAgentConnected:
                 principal=fixture.principal,
             )
             with pytest.raises(ProblemException):
-                await chokepoint.approve(
-                    session, change_set_id=pending.change_set_id, principal=fixture.principal
-                )
+                await chokepoint.approve(session, change_set_id=pending.change_set_id, principal=fixture.principal)
 
         online = RecordingSink()
-        chokepoint2 = build_chokepoint(
-            policy=ScriptedPolicy(decision=allow()), sink=online, redis_client=redis_client
-        )
+        chokepoint2 = build_chokepoint(policy=ScriptedPolicy(decision=allow()), sink=online, redis_client=redis_client)
         async with sessions() as session:
             await chokepoint2.deliver_approved(
                 session, change_set_id=pending.change_set_id, principal=fixture.principal
@@ -195,10 +175,7 @@ class TestApprovingWithNoAgentConnected:
             assert int(approvals) == 1, "a redelivery must not record a second approval"
             approved_events = (
                 await session.execute(
-                    text(
-                        "SELECT count(*) FROM audit_events WHERE resource_id = :r "
-                        "AND action = 'change_set_approved'"
-                    ),
+                    text("SELECT count(*) FROM audit_events WHERE resource_id = :r AND action = 'change_set_approved'"),
                     {"r": str(pending.change_set_id)},
                 )
             ).scalar_one()

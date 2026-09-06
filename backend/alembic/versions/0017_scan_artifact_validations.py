@@ -64,9 +64,7 @@ def upgrade() -> None:
             "status IN ('passed', 'failed', 'tool_missing', 'errored')",
             name="ck_scan_artifact_validations_status",
         ),
-        sa.UniqueConstraint(
-            "project_id", "path", "kind", name="uq_scan_artifact_validations_project_path_kind"
-        ),
+        sa.UniqueConstraint("project_id", "path", "kind", name="uq_scan_artifact_validations_project_path_kind"),
     )
     op.create_index(
         "ix_scan_artifact_validations_project",

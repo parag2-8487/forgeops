@@ -422,11 +422,7 @@ class TestTiersEndpoint:
         from src.auth.dependencies import require_mcp_principal, require_principal
 
         def _deps(target) -> set[object]:
-            return {
-                call
-                for dep in target.dependencies
-                if (call := getattr(dep, "dependency", None)) is not None
-            }
+            return {call for dep in target.dependencies if (call := getattr(dep, "dependency", None)) is not None}
 
         # Asserted on the ROUTERS rather than on a test app's route table, because that is where the
         # dependency is attached and it is the same object `scripts/check-route-auth.py` inspects.
@@ -442,15 +438,13 @@ class TestTiersEndpoint:
         assert require_mcp_principal in _deps(completion_router)
         # `/tiers` lives on the read router and nowhere else, so the split is real rather than additive.
         # An APIRouter stores the PREFIXED path, so the comparison is on the suffix.
-        tier_paths = [
-            r.path for r in read_router.routes if getattr(r, "path", "").endswith("/tiers")
-        ]
+        tier_paths = [r.path for r in read_router.routes if getattr(r, "path", "").endswith("/tiers")]
         assert tier_paths == ["/api/v1/ai/tiers"], (
             f"expected exactly one tier route on the read router, got {tier_paths}"
         )
-        assert not [
-            r for r in completion_router.routes if getattr(r, "path", "").endswith("/tiers")
-        ], "the tier read must have MOVED off the completion router, not been duplicated onto both"
+        assert not [r for r in completion_router.routes if getattr(r, "path", "").endswith("/tiers")], (
+            "the tier read must have MOVED off the completion router, not been duplicated onto both"
+        )
 
 
 # ---------------------------------------------------------------------------
