@@ -53,6 +53,39 @@ CHARS_PER_TOKEN_ESTIMATE: Final = 4
 #: criterion. Stated rather than omitted: "this will be checked by a tool" and "this will be checked by
 #: the score" are different promises, and claiming the first where only the second is true would be the
 #: kind of overstatement this file exists to avoid.
+#: The BLOCKING gate's requirements, stated mechanically, per artifact kind.
+#:
+#: WHY PROSE WAS NOT ENOUGH. Section 2 already tells the model what is wrong — "declares no USER, so the
+#: image runs as root" — and that is a good explanation for a human. A 1.5b model given an explanation
+#: produced a Dockerfile that the gate then rejected for exactly the named fault, so the file was withheld
+#: and the user's most important recommendation went unaddressed. The prompt this replaced stated the same
+#: requirements LITERALLY ("contains a line that is exactly `USER 1001`") and its output passed.
+#:
+#: These are the checks in `generation/artifact_checks.py`, which is blocking under §11.5.5. An artifact
+#: that fails one is discarded, so the model is told the rule rather than only the consequence.
+GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
+    "dockerfile": (
+        "The FIRST instruction is `FROM` (an `ARG` may precede it; nothing else may).",
+        "There is a `USER` instruction that switches to a non-root account, placed after the RUN "
+        "instructions and before CMD or ENTRYPOINT.",
+        "The file contains at least one real instruction, not only comments.",
+    ),
+    "k8s": (
+        "Every document declares top-level `apiVersion`, `kind` and `metadata.name`.",
+        "Separate documents with `---` and put no document in a comment.",
+    ),
+    "compose": (
+        "There is a top-level `services` mapping with at least one service.",
+        "No service uses the `latest` tag or omits its tag.",
+    ),
+    "helm": ("`Chart.yaml` declares `apiVersion`, `name` and `version`.",),
+    "github_workflow": (
+        "There is a top-level `on` trigger and a `jobs` mapping with at least one job.",
+        "Every job has `runs-on` and at least one step.",
+    ),
+    "opentofu": ("There is at least one `terraform`, `provider` or `resource` block, and the file parses as HCL.",),
+}
+
 ARTIFACT_VALIDATORS: Final[Mapping[str, str]] = {
     "k8s": "validate.k8s (kubectl apply --dry-run=server against the cluster's own schema)",
     "compose": "validate.compose (docker compose config)",
@@ -490,6 +523,27 @@ def compile_prompt(
                 "no executable validator exists for this kind; the readiness checks above are the whole criterion"
             )
             body_lines.append(f"  - `{item.path}`: {criterion}")
+
+        # THE BLOCKING RULES, STATED AS RULES. Section 2 explains the FAULT; this states the REQUIREMENT.
+        # A small model given "declares no USER, so the image runs as root" produced a Dockerfile that the
+        # gate rejected for exactly that fault, so the file was withheld and the user's most important
+        # recommendation went unaddressed. The prompt this replaced said "contains a line that is exactly
+        # `USER 1001`" and its output passed. An explanation is for a human; a rule is for a checker.
+        mechanical = [
+            (item.path, GATE_REQUIREMENTS[item.artifact]) for item in selected if item.artifact in GATE_REQUIREMENTS
+        ]
+        if mechanical:
+            body_lines += [
+                "",
+                "These are checked mechanically and are not matters of judgement. A file that breaks one",
+                "is discarded in full, so satisfy them literally:",
+                "",
+            ]
+            for path, rules in mechanical:
+                body_lines.append(f"`{path}`:")
+                for rule in rules:
+                    body_lines.append(f"  - {rule}")
+                body_lines.append("")
         body_lines += ["", *_prohibitions()]
         if unaddressable:
             body_lines += [
