@@ -339,6 +339,21 @@ class Settings(BaseSettings):
     #: `main.py::_build_cache_embedder` for why an input-INSENSITIVE embedder is worse than none.
     self_hosted_embedding_model_id: str = Field(default="")
     outbound_http_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    #: How long a MODEL COMPLETION may take, which is not the same question as the one above.
+    #:
+    #: THE DEFECT THIS FIXES, MEASURED. Every model endpoint used the shared 60-second outbound client,
+    #: and one completion against the self-hosted `qwen2.5-coder:1.5b` with a compiled prompt took 127
+    #: seconds on CPU. So the provider call was aborted every time, the attempt was recorded as a failure,
+    #: and the run served canned templates — while the model was working correctly and would have answered.
+    #:
+    #: 60 seconds is a sensible ceiling for OPA, Cerbos, JWKS and the MCP upstream, where a slow answer
+    #: means something is wrong. A language model generating a dozen files is slow because that is what it
+    #: is doing, and the self-hosted tier exists precisely so an operator can run one on their own CPU.
+    #: Sharing one number between the two conflated "this service is unhealthy" with "this is a long job".
+    #:
+    #: Bounded, not unbounded: a hung endpoint must still fail rather than hold a request forever, and the
+    #: cascade needs to reach its next endpoint while the user is still waiting.
+    model_http_timeout_seconds: float = Field(default=300.0, gt=0, le=1800)
     ai_rate_limit_capacity: int = Field(default=20, ge=1)
     ai_rate_limit_refill_per_second: float = Field(default=0.2, gt=0)
     ai_rate_limit_fail_mode: Literal["fail_closed"] = "fail_closed"

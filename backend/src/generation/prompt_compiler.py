@@ -66,8 +66,15 @@ CHARS_PER_TOKEN_ESTIMATE: Final = 4
 GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
     "dockerfile": (
         "The FIRST instruction is `FROM` (an `ARG` may precede it; nothing else may).",
-        "There is a `USER` instruction that switches to a non-root account, placed after the RUN "
-        "instructions and before CMD or ENTRYPOINT.",
+        # AN EXACT, COPYABLE LINE, not a description of one. This requirement previously read "there is a
+        # `USER` instruction that switches to a non-root account, placed after the RUN instructions" — a
+        # correct description that the model failed on all three attempts, every time for this same fault,
+        # so the Dockerfile was withheld and the user's most important recommendation went unaddressed.
+        # The prompt this work replaced said "contains a line that is exactly `USER 1001`" and its output
+        # passed. A small model copies a literal; it does not reliably synthesise from a description.
+        "It contains a line that is exactly `USER 10001`, placed after the last RUN instruction and "
+        "before CMD or ENTRYPOINT. Write that line verbatim — a numeric id is required because "
+        "Kubernetes' runAsNonRoot check reads the uid and cannot resolve a name from the image.",
         "The file contains at least one real instruction, not only comments.",
     ),
     "k8s": (
@@ -427,6 +434,16 @@ def compile_prompt(
         faults = tuple(
             f"{c.found}{f' (line {c.line})' if c.line is not None else ''} — required: {c.looked_for}" for c in group
         )
+        # THE BLOCKING RULES BESIDE THE FILE THEY GOVERN, not only in section 3.
+        #
+        # They were listed once, further down, under a heading about how files are checked. A 1.5b model
+        # given a 9,500-character instruction failed the SAME requirement on all three attempts — the
+        # Dockerfile's `USER` line — so the file was withheld every time and the user's most important
+        # recommendation went unaddressed. Attention falls off with distance from the point of writing, so
+        # the rule now sits directly under the path it applies to as well.
+        #
+        # Duplicated deliberately: repetition in a prompt is cheap, and a rule the model misses is not.
+        faults = faults + GATE_REQUIREMENTS.get(artifact, ())
         quoted, line_count = _quote(target, body) if body else ("", 0)
         instructions.append(
             ArtifactInstruction(

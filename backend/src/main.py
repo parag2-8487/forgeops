@@ -557,7 +557,19 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # answering 422 for every tier while looking healthy, which is precisely the
     # silent-degradation shape D1 exists to remove.
     tier_config = load_tier_config(_resolve_config_path(settings.model_tier_config_path), env=os.environ)
-    endpoint_registry = EndpointRegistry.from_config(tier_config, http=shared_http)
+    # A SEPARATE CLIENT FOR MODEL CALLS, and the separation is the point.
+    #
+    # These endpoints shared `shared_http`, whose 60-second timeout is right for OPA, Cerbos, JWKS and the
+    # MCP upstream — services where a slow answer means something is wrong. One completion against the
+    # self-hosted `qwen2.5-coder:1.5b` with a compiled prompt was MEASURED at 127 seconds on CPU, so every
+    # provider call was aborted mid-flight, every attempt was recorded as a failure, and the run served
+    # canned templates while the model was working correctly and would have answered.
+    #
+    # One number could not serve both: "this service is unhealthy" and "this is a long job" are different
+    # facts, and the self-hosted tier exists precisely so an operator can run a model on their own CPU.
+    model_http = httpx.AsyncClient(timeout=settings.model_http_timeout_seconds)
+    app.state.model_http = model_http
+    endpoint_registry = EndpointRegistry.from_config(tier_config, http=model_http)
     breakers = {
         endpoint_id: CircuitBreaker(
             failure_threshold=settings.cb_failure_threshold,
@@ -698,6 +710,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await revocation_task
         await shared_http.aclose()
+        # Closed alongside it rather than left to the garbage collector: an unclosed client leaks the
+        # connection pool, and a model pool holds long-lived sockets by design.
+        await model_http.aclose()
         await redis_client.aclose()
         await engine.dispose()
         logger.info("shutdown complete")
