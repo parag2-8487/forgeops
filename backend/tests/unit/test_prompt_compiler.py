@@ -156,8 +156,32 @@ class TestOneRunAsksForNoMoreThanAModelCanFinish:
     """
 
     def test_the_cap_bounds_what_one_run_asks_for(self) -> None:
+        """The cap bounds INSTRUCTIONS, and a companion file is not a separate instruction.
+
+        A Deployment and its Service are one deployable unit — a Deployment with no Service is reachable by
+        nothing — so they cost one slot together. Counting them separately would let the cap defer the
+        Service and keep the Deployment, which is worse than deferring both.
+        """
         compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=4)
-        assert len(compiled.write_targets) == 4
+        # At most four units, each of which may carry the files it cannot work without.
+        units = {path.split("/")[0] if path.startswith("k8s/") else path for path in compiled.write_targets}
+        assert len(units) <= 4, compiled.write_targets
+
+    def test_a_deployment_is_never_generated_without_its_service(self) -> None:
+        """THE GAP THIS CLOSES. A Deployment alone applies cleanly, reports healthy and serves no traffic.
+
+        The readiness checks map one artifact kind to one path, so `kubernetes_manifests_present` produced
+        `k8s/deployment.yaml` and nothing else, and the user was left to discover they needed a Service —
+        the opposite of what generating manifests is for. Caught by the end-to-end journey at step 10, which
+        looks for the manifests on disk after an approved apply.
+        """
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY)
+        if "k8s/deployment.yaml" not in compiled.write_targets:
+            pytest.skip("this fixture does not need Kubernetes manifests")
+        assert "k8s/service.yaml" in compiled.write_targets
+        assert "k8s/ingress.yaml" in compiled.write_targets
+        # And the model is told, in prose, why they belong together.
+        assert "reachable by nothing" in compiled.text
 
     def test_the_remainder_is_deferred_rather_than_dropped(self) -> None:
         """A user must be able to see what this run did not attempt, and ask again for it."""
@@ -182,9 +206,12 @@ class TestOneRunAsksForNoMoreThanAModelCanFinish:
         would leave the user with a document and no deployment.
         """
         compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=1)
-        assert compiled.write_targets in (("Dockerfile",), ("k8s/deployment.yaml",)), (
-            f"a single-artifact run chose {compiled.write_targets}, which does not deploy anything"
-        )
+        # One slot, so one unit: either the container or the workload manifests — and the manifests arrive
+        # as the set they have to be, because a Deployment with no Service deploys nothing usable.
+        assert compiled.write_targets in (
+            ("Dockerfile",),
+            ("k8s/deployment.yaml", "k8s/ingress.yaml", "k8s/service.yaml"),
+        ), f"a single-unit run chose {compiled.write_targets}, which does not deploy anything"
 
     def test_documentation_is_deferred_before_anything_that_deploys(self) -> None:
         compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=2)

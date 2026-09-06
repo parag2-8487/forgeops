@@ -93,6 +93,16 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
     "opentofu": ("There is at least one `terraform`, `provider` or `resource` block, and the file parses as HCL.",),
 }
 
+#: Files an artifact kind does not work without, written alongside it.
+#:
+#: A Deployment with no Service is reachable by nothing: it applies cleanly, reports healthy, and serves no
+#: traffic. The readiness checks map one kind to one path, so generation produced exactly that and left the
+#: user to discover the gap. An Ingress is included for the same reason one step further out — a ClusterIP
+#: Service is reachable only from inside the cluster.
+ARTIFACT_COMPANIONS: Final[Mapping[str, tuple[str, ...]]] = {
+    "k8s": ("k8s/service.yaml", "k8s/ingress.yaml"),
+}
+
 ARTIFACT_VALIDATORS: Final[Mapping[str, str]] = {
     "k8s": "validate.k8s (kubectl apply --dry-run=server against the cluster's own schema)",
     "compose": "validate.compose (docker compose config)",
@@ -209,6 +219,17 @@ class ArtifactInstruction(BaseModel):
     preserve: tuple[str, ...] = ()
     #: The validator that will be run, or "" when only the readiness checks apply.
     validator: str = ""
+    #: Files this one does not work without, written in the same answer.
+    #:
+    #: A DEPLOYMENT ALONE RECEIVES NO TRAFFIC. The readiness checks map one artifact kind to one path, so
+    #: `kubernetes_manifests_present` produced `k8s/deployment.yaml` and nothing else — a manifest set that
+    #: applies cleanly, reports healthy, and cannot be reached by anything. The user is left to discover
+    #: they need a Service themselves, which is the opposite of what generating manifests is for.
+    #:
+    #: These ride on the same instruction rather than becoming instructions of their own so they cost one
+    #: slot against the artifact cap, not three: they are one deployable unit and deferring the Service
+    #: while keeping the Deployment would be worse than deferring both.
+    companions: tuple[str, ...] = ()
     #: The weight this artifact carries, used to decide what to defer when the budget is exceeded.
     weight: int = 0
 
@@ -456,6 +477,7 @@ def compile_prompt(
                 current_line_count=line_count,
                 preserve=_preserve_notes(body) if body else (),
                 validator=ARTIFACT_VALIDATORS.get(artifact, ""),
+                companions=tuple(c for c in ARTIFACT_COMPANIONS.get(artifact, ()) if c.lower() not in lowered),
                 weight=sum(CATEGORY_WEIGHTS.get(c.category, 0) + c.max_points for c in group),
             )
         )
@@ -528,6 +550,20 @@ def compile_prompt(
                 body_lines.append("It must satisfy:")
                 for fault in item.faults:
                     body_lines.append(f"  - {fault}")
+            if item.companions:
+                body_lines.append("")
+                body_lines.append(
+                    "Write these alongside it, in the same answer and each with its own marker — this file "
+                    "does not work without them:"
+                )
+                for companion in item.companions:
+                    body_lines.append(f"  - `{companion}`")
+                body_lines.append("")
+                body_lines.append(
+                    "A Deployment with no Service is reachable by nothing: it applies cleanly, reports "
+                    "healthy and serves no traffic. The Service must select the Deployment's pod labels, "
+                    "and the Ingress must name the Service and its port."
+                )
             body_lines.append("")
         body_lines += ["## 3. HOW EACH FILE WILL BE CHECKED", ""]
         body_lines.append(
@@ -584,7 +620,14 @@ def compile_prompt(
         # Shared with `build_generation_prompt` rather than restated, so the contract and its parser cannot
         # drift apart again. It goes LAST because it is the instruction the model should still have in view
         # when it starts emitting.
-        body_lines += output_format_section([i.path for i in selected])
+        # Companions included, and in the same order the instructions were given, so the format block
+        # and section 2 name the same set. A path shown in one and not the other is a path the model
+        # will either skip or invent a location for.
+        ordered: list[str] = []
+        for i in selected:
+            ordered.append(i.path)
+            ordered.extend(i.companions)
+        body_lines += output_format_section(ordered)
         return "\n".join(body_lines) + "\n"
 
     kept = list(instructions)
@@ -632,7 +675,9 @@ def compile_prompt(
     return CompiledPrompt(
         text=text,
         referenced_paths=tuple(sorted({i.path for i in kept if i.action == "modify"} | set(devops_paths))),
-        write_targets=tuple(sorted(i.path for i in kept)),
+        # Companions are write targets too: the parser only accepts a path it was told to expect, so a
+        # Service the model was asked for and this list omitted would be produced and then dropped.
+        write_targets=tuple(sorted({i.path for i in kept} | {c for i in kept for c in i.companions})),
         addressed_checks=tuple(sorted(cid for i in kept for cid in i.satisfies)),
         deferred_checks=tuple(sorted(cid for i in deferred for cid in i.satisfies)),
         unaddressable=tuple(unaddressable),
