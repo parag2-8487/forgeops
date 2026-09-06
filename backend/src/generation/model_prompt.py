@@ -91,6 +91,45 @@ class ProjectFacts:
     start_command: tuple[str, ...]
 
 
+def output_format_section(paths: Sequence[str]) -> list[str]:
+    """The OUTPUT FORMAT block, in the exact shape `parse_artifacts` reads.
+
+    SHARED BECAUSE ONE CALLER FORGOT IT ENTIRELY. `prompt_compiler.compile_prompt` described WHAT to write
+    across five carefully derived sections and never said HOW to format the answer — no `### FILE:` marker,
+    no fences. The model complied with everything it was actually told: it returned 2783 characters of
+    plausible artifacts and ZERO markers, so `parse_artifacts` found nothing, every attempt was recorded as
+    a failure, and the run fell back to canned templates.
+
+    Measured directly, same service and same model back to back: `accepted` with four files when no
+    compiled prompt is passed, `template_fallback` when one is. Nothing in the failure named the cause —
+    the row said `template_fallback`, the end-to-end journey reported an SSE assertion three layers away,
+    and the defect was a missing paragraph.
+
+    One function, called by both prompt builders, so a prompt cannot again omit the contract its own parser
+    depends on.
+    """
+    lines = [
+        "",
+        "OUTPUT FORMAT. This is parsed mechanically. Output that does not follow it exactly is",
+        "discarded in full, however good the file contents are:",
+        "",
+        "- Precede every file with a line that is exactly `### FILE: <path>`, using the path exactly as",
+        "  given above. No leading dash, no bold, no numbering, no backticks around the path.",
+        "- Put the file's complete contents inside a fenced block on the lines that follow.",
+        "- Emit nothing else: no explanation before the first marker, no summary after the last block,",
+        "  and no file that was not asked for.",
+        "",
+        "Emit exactly these files, in this order:",
+        "",
+    ]
+    for path in paths:
+        lines.append(f"### FILE: {path}")
+        lines.append("```")
+        lines.append("<the complete contents of this file>")
+        lines.append("```")
+    return lines
+
+
 def build_generation_prompt(
     *,
     operator_prompt: str,

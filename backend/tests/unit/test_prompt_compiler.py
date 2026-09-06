@@ -74,8 +74,21 @@ GO_INVENTORY = {
 }
 
 
+#: Effectively no artifact cap, for the tests that are about something else.
+#:
+#: `DEFAULT_MAX_WRITE_TARGETS` bounds how many files ONE RUN asks a model for, because a model asked for
+#: more than it can finish in one answer returns none of them usable. Most tests here assert path
+#: RESOLUTION and BREADTH — that a chart directory is named from the project, that the lint config follows
+#: the language, that a `.dockerignore` can be asked for at all — and coupling those to the delivery cap
+#: would make them fail whenever the cap changed, while proving nothing about either property.
+#:
+#: The cap has its own tests, which set it explicitly.
+NO_ARTIFACT_CAP = 500
+
+
 def _compile(evidence: IndexEvidence, inventory: dict, **kwargs):
     result = ReadinessEngine().evaluate(evidence)
+    kwargs.setdefault("max_write_targets", NO_ARTIFACT_CAP)
     return compile_prompt(
         checks=result.checks,
         paths=evidence.paths,
@@ -83,6 +96,103 @@ def _compile(evidence: IndexEvidence, inventory: dict, **kwargs):
         inventory=inventory,
         **kwargs,
     )
+
+
+class TestItStatesTheContractItsOwnParserDependsOn:
+    """A prompt that says what to write and not how to format it produces nothing usable.
+
+    THE DEFECT THIS PINS, MEASURED RATHER THAN REASONED. Every section of the compiled prompt described
+    WHAT to produce, derived precisely from the failing checks, and none of them said HOW to format the
+    answer. `parse_artifacts` reads exactly one shape: `### FILE: <path>` followed by a fenced block.
+
+    So the model complied with everything it was actually told. It returned 2783 characters of plausible
+    artifacts and ZERO markers, the parse found nothing, all three attempts were recorded as failures, and
+    the run served canned templates. Back to back on one service and one model: `accepted` with four files
+    when no compiled prompt was passed, `template_fallback` when one was.
+
+    Nothing in the failure named the cause. The row said `template_fallback`, the end-to-end journey
+    reported an SSE ordering assertion three layers away, and the defect was a missing paragraph.
+    """
+
+    def test_the_marker_the_parser_reads_is_in_the_prompt(self) -> None:
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY)
+        assert "### FILE:" in compiled.text
+
+    def test_every_write_target_is_shown_with_its_marker(self) -> None:
+        """A path named in section 2 and absent from the format block is a path the model will improvise."""
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY)
+        for path in compiled.write_targets:
+            assert f"### FILE: {path}" in compiled.text, path
+
+    def test_it_says_that_bad_formatting_discards_good_content(self) -> None:
+        """The consequence has to be stated, or the format reads as a preference."""
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY)
+        assert "OUTPUT FORMAT" in compiled.text
+        assert "discarded" in compiled.text
+
+    def test_the_contract_comes_from_the_parser_s_own_module(self) -> None:
+        """Shared, not restated, so the contract and its parser cannot drift apart again."""
+        from src.generation.model_prompt import output_format_section
+
+        rendered = "\n".join(output_format_section(["Dockerfile"]))
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY)
+        # The wording that survives regardless of which paths are requested.
+        assert "OUTPUT FORMAT" in rendered
+        assert rendered.split("\n")[1] in compiled.text
+
+
+class TestOneRunAsksForNoMoreThanAModelCanFinish:
+    """A model asked for more files than it can complete in one answer returns none of them usable.
+
+    THIS WAS MEASURED, NOT ASSUMED. Deriving the write targets from every failing check let one run ask for
+    eleven artifacts. Against `qwen2.5-coder:1.5b` — the model the end-to-end journey runs — a four-file
+    request came back with all four parsed and all four passing the deterministic gate, while the eleven-
+    file request produced a handful of malformed files, none of which passed, and the run fell back to
+    canned templates. A larger 3b model was measured on the same prompt and the same CPU and did WORSE:
+    it emitted fewer characters and truncated after one file. So the bound is on the ANSWER's length, not
+    on the model's parameter count, and raising the model does not remove the need for it.
+
+    `token_budget` never covered this. It bounds the instruction SENT; nothing bounded the answer EXPECTED.
+    """
+
+    def test_the_cap_bounds_what_one_run_asks_for(self) -> None:
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=4)
+        assert len(compiled.write_targets) == 4
+
+    def test_the_remainder_is_deferred_rather_than_dropped(self) -> None:
+        """A user must be able to see what this run did not attempt, and ask again for it."""
+        capped = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=3)
+        uncapped = _compile(PYTHON_SERVICE, PYTHON_INVENTORY)
+        assert len(uncapped.write_targets) > 3, "the fixture must exceed the cap for this to mean anything"
+        assert capped.deferred_checks, "the checks beyond the cap vanished instead of being deferred"
+        # Nothing is lost: every check the uncapped run addressed is still accounted for.
+        assert set(capped.addressed_checks) | set(capped.deferred_checks) >= set(uncapped.addressed_checks)
+
+    def test_the_reason_is_stated_on_the_run(self) -> None:
+        """A score that did not move needs an explanation the user can read."""
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=3)
+        assert "deferred" in compiled.budget_strategy
+        assert "one answer" in compiled.budget_strategy
+
+    def test_the_lowest_weight_artifacts_are_the_ones_deferred(self) -> None:
+        """A run reduced to one artifact spends it on something that deploys.
+
+        The exact ranking is the compiler's business and is asserted elsewhere; what matters here is the
+        direction. Dropping the container or the workload manifest so that a `SECURITY.md` can be written
+        would leave the user with a document and no deployment.
+        """
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=1)
+        assert compiled.write_targets in (("Dockerfile",), ("k8s/deployment.yaml",)), (
+            f"a single-artifact run chose {compiled.write_targets}, which does not deploy anything"
+        )
+
+    def test_documentation_is_deferred_before_anything_that_deploys(self) -> None:
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=2)
+        assert "SECURITY.md" not in compiled.write_targets
+
+    def test_a_run_under_the_cap_defers_nothing_for_it(self) -> None:
+        compiled = _compile(PYTHON_SERVICE, PYTHON_INVENTORY, max_write_targets=NO_ARTIFACT_CAP)
+        assert "asked for more than" not in compiled.budget_strategy
 
 
 class TestItIsDerivedNotTemplated:

@@ -38,6 +38,7 @@ from pydantic import BaseModel
 
 from ..core.readiness import CATEGORY_WEIGHTS, ReadinessCheck
 from ..core.readiness_findings import CHECK_EXPLANATIONS
+from .model_prompt import output_format_section
 
 #: Roughly four characters to a token for English prose and configuration. Deliberately an ESTIMATE and
 #: named as one: the real count depends on the tokeniser of whichever model the tier resolves to, and
@@ -66,6 +67,21 @@ ARTIFACT_VALIDATORS: Final[Mapping[str, str]] = {
 #: A modify instruction has to show the model what it is editing, and the whole file is often too much.
 #: Quoting the head is chosen over a summary because a summary is a paraphrase, and a paraphrase of the
 #: file the model must preserve is exactly where content gets silently dropped.
+#: How many artifacts one run may ask a model to write.
+#:
+#: A COUNT CAP AND A TOKEN CAP BOUND DIFFERENT THINGS. `token_budget` limits the instruction sent; this
+#: limits the answer expected, and nothing limited that before. A run whose write targets came from every
+#: failing check asked for eleven files, and a small model — the end-to-end journey uses
+#: `qwen2.5-coder:1.5b` — cannot emit eleven complete valid files in one response. It produced a handful,
+#: malformed, none passed the gate, and the run fell back to canned templates: nothing delivered, for
+#: minutes of compute. A capable model handles the same prompt, which is why it was invisible until a
+#: small one ran it.
+#:
+#: Six because the contract this replaced asked for four and that was demonstrably within reach, and six
+#: leaves headroom for the checks a user selected. The remainder is DEFERRED, not dropped: it is recorded
+#: on the run and named in the UI, so the user knows what to ask for next.
+DEFAULT_MAX_WRITE_TARGETS: Final = 6
+
 MAX_QUOTED_LINES: Final = 120
 
 
@@ -323,6 +339,7 @@ def compile_prompt(
     inventory: Mapping[str, Any],
     selected_check_ids: Sequence[str] | None = None,
     token_budget: int = 24_000,
+    max_write_targets: int = DEFAULT_MAX_WRITE_TARGETS,
     project_name: str = "",
 ) -> CompiledPrompt:
     """Build the instruction for the failing checks a generated artifact can satisfy.
@@ -483,12 +500,52 @@ def compile_prompt(
                 "",
             ]
             body_lines += [f"  - {entry}" for entry in unaddressable]
+
+        # THE SECTION WITHOUT WHICH NOTHING ELSE MATTERS, and it was missing.
+        #
+        # Every section above describes WHAT to write. None described HOW to format the answer, and
+        # `parse_artifacts` reads exactly one shape: `### FILE: <path>` followed by a fenced block. So the
+        # model complied with everything it was told, returned plausible artifacts with zero markers, the
+        # parse found nothing, all attempts were recorded as failures and the run served canned templates.
+        # Measured back to back on one service and one model: `accepted` with four files without a compiled
+        # prompt, `template_fallback` with one.
+        #
+        # Shared with `build_generation_prompt` rather than restated, so the contract and its parser cannot
+        # drift apart again. It goes LAST because it is the instruction the model should still have in view
+        # when it starts emitting.
+        body_lines += output_format_section([i.path for i in selected])
         return "\n".join(body_lines) + "\n"
 
     kept = list(instructions)
     text = render(kept)
     strategy = "the whole instruction fits the tier's context budget; nothing was deferred"
     budget_chars = token_budget * CHARS_PER_TOKEN_ESTIMATE
+
+    # A COUNT CAP AS WELL AS A TOKEN CAP, because they bound different things and only one of them was
+    # bounded. `token_budget` limits the INSTRUCTION; nothing limited the ANSWER.
+    #
+    # THE FAILURE THIS FIXES, MEASURED. Deriving the write targets from the failing checks let one run ask
+    # for eleven artifacts. The end-to-end journey's model is `qwen2.5-coder:1.5b`, and a 1.5-billion
+    # parameter model cannot emit eleven complete, valid files in one response — it produced a few,
+    # malformed, none passed the gate, and the run fell back to templates. The user got nothing for eight
+    # minutes of compute. On a capable model the same prompt succeeds, which is why this was invisible
+    # until the journey ran it.
+    #
+    # SIX IS NOT ARBITRARY. The contract this replaced asked for four (a Dockerfile and three manifests)
+    # and that was demonstrably within this model's reach; six gives headroom for the checks a user
+    # actually selected while staying inside a small model's single-response capacity.
+    #
+    # DEFERRING IS NOT LOSING. The remainder goes to `deferred_checks`, which the run records and the UI
+    # names, so the user is told precisely which recommendations this run did not attempt and can run
+    # generation again for them. Six artifacts delivered beats eleven requested and none delivered.
+    while len(kept) > max_write_targets:
+        deferred.insert(0, kept.pop())
+        strategy = (
+            f"the run asked for more than {max_write_targets} artifacts, so "
+            f"{len(deferred)} were deferred to a later run, lowest weight first. A model asked for "
+            "more files than it can complete in one answer returns none of them usable."
+        )
+        text = render(kept)
 
     # WHOLE SECTIONS, LOWEST WEIGHT FIRST, and never a partial one. A truncated instruction is acted on
     # by the model as though it were complete, so it is strictly more dangerous than a missing one.
