@@ -36,6 +36,10 @@ APPROVAL_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", f"/api/v1/approvals/{uuid.uuid4()}"),
     ("POST", f"/api/v1/approvals/{uuid.uuid4()}/approve"),
     ("POST", f"/api/v1/approvals/{uuid.uuid4()}/reject"),
+    # Included so the deny-by-default assertions cover it too. A retry of a SEND is still a mutation
+    # request reaching the chokepoint, and a route that skipped authentication because it carried no body
+    # would be the softest door in the set.
+    ("POST", f"/api/v1/approvals/{uuid.uuid4()}/deliver"),
     ("POST", f"/api/v1/approvals/{uuid.uuid4()}/revert"),
 )
 
@@ -98,6 +102,13 @@ class TestItIsMountedAtAll:
             ("GET", "/api/v1/approvals/{change_set_id}"),
             ("POST", "/api/v1/approvals/{change_set_id}/approve"),
             ("POST", "/api/v1/approvals/{change_set_id}/reject"),
+            # `deliver` retries the SEND of an already-approved change set. It exists because
+            # `("approved", "applying")` was declared in `CHANGE_SET_TRANSITIONS` and documented as
+            # retryable, while the only traversal lived inside `approve` — in the very transaction whose
+            # send had just failed. So approving before starting the agent stranded the set permanently.
+            # It carries NO BODY: the decision was already recorded, and asking for a second one would
+            # write a second approval for one transit.
+            ("POST", "/api/v1/approvals/{change_set_id}/deliver"),
             ("POST", "/api/v1/approvals/{change_set_id}/revert"),
         }
 

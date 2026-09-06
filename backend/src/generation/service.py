@@ -542,8 +542,46 @@ class GenerationService:
                 },
             )
             if not passed:
-                findings = gate_findings
-                continue
+                # RETRY WHILE THERE IS AN ATTEMPT LEFT, because the model can usually repair what the
+                # gate named and a fully valid set is the better outcome.
+                if attempt < self._max_attempts:
+                    findings = gate_findings
+                    continue
+
+                # LAST ATTEMPT. Keep the artifacts that PASSED rather than discarding them because a
+                # sibling failed, and this is a strengthening rather than a relaxation: an artifact the
+                # gate rejected is still never accepted — §11.5.5's gate stays blocking, per file.
+                #
+                # What changes is the alternative. Discarding the whole set fell through to the template
+                # path, which writes canned files addressing none of the user's specific findings. So a
+                # run that produced nine correct artifacts and one malformed one delivered zero correct
+                # ones. The thirteen-step journey caught exactly this, twice: first as a parse failure
+                # over the requested set, then here as a gate failure over it.
+                accepted = tuple(
+                    artifact
+                    for artifact in files
+                    if not any(finding.startswith(f"{artifact.path}: ") for finding in gate_findings)
+                )
+                if not accepted:
+                    findings = gate_findings
+                    continue
+                withheld = len(files) - len(accepted)
+                files = accepted
+                yield format_event(
+                    SSEEventType.VALIDATION,
+                    {
+                        "run_id": str(run_id),
+                        "passed": True,
+                        "findings": [
+                            f"delivering {len(accepted)} artifact(s) that passed the gate; "
+                            f"{withheld} rejected artifact(s) were withheld and are not in the "
+                            "change set",
+                            *gate_findings,
+                        ],
+                        "served_from": served_from,
+                        "attempt": attempt,
+                    },
+                )
 
             if outcome is not None:
                 outcome.files = list(files)

@@ -169,9 +169,18 @@ class TestTheTiersRouteServesTheLoadedConfig:
 
     @staticmethod
     def _authorise(app: FastAPI) -> None:
+        """Authorise as a HUMAN, because that is what this route now requires.
+
+        `GET /ai/tiers` used to sit on the completion router and inherit `require_mcp_principal`, which
+        demands the GATEWAY audience — so a signed-in user reading the Models screen was refused with a
+        401 that no amount of signing in again could fix, because the token was being REFUSED rather than
+        found missing. The route moved to a second router requiring a user principal, and this override
+        follows it: overriding `require_mcp_principal` here would leave the real dependency in place and
+        the request unauthenticated.
+        """
         import uuid as _uuid
 
-        from src.auth.dependencies import require_mcp_principal
+        from src.auth.dependencies import require_principal
         from src.auth.models import UserRole
         from src.auth.principal import Principal
 
@@ -181,7 +190,7 @@ class TestTheTiersRouteServesTheLoadedConfig:
             email="tiers@example.invalid",
             role=UserRole.DEVELOPER,
         )
-        app.dependency_overrides[require_mcp_principal] = lambda: principal
+        app.dependency_overrides[require_principal] = lambda: principal
 
     async def test_the_route_answers_from_the_loaded_tier_set(self, production_app: FastAPI) -> None:
         import httpx

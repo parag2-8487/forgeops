@@ -125,6 +125,16 @@ spec:
 #: The same four files, but the Dockerfile never drops root — the gate refuses it.
 ROOTFUL_OUTPUT = GOOD_OUTPUT.replace("USER 1001\n", "")
 
+#: Every artifact malformed, so the gate has no valid subset to deliver.
+#:
+#: The manifests are replaced with text that is not a Kubernetes object at all rather than merely
+#: incomplete, because the point is that NOTHING passes — a fixture where one document happened to parse
+#: would prove the opposite of what the test claims.
+UNPARSEABLE_OUTPUT = "".join(
+    f"### FILE: {path}\n```\nthis is not a document of the kind this path implies: [\n```\n"
+    for path in ("Dockerfile", "k8s/deployment.yaml", "k8s/service.yaml", "k8s/ingress.yaml")
+)
+
 PROJECT = {"name": "checkout-api", "path": "/tmp/checkout", "repo_url": None, "settings": {}}
 
 
@@ -377,17 +387,56 @@ class TestTheTemplateIsReachedOnlyAfterTheProviderFails:
         assert outcome.status == "template_fallback"
         assert any("Dockerfile" in finding for finding in payloads[-1]["provider_findings"])
 
-    async def test_output_that_fails_the_gate_is_retried_and_then_falls_back(self) -> None:
-        """A root-running Dockerfile is refused, and the refusal reaches the retry prompt."""
+    async def test_output_that_fails_the_gate_is_retried_and_the_bad_artifact_withheld(self) -> None:
+        """A root-running Dockerfile is refused, retried, and then WITHHELD — not delivered, and not
+        allowed to discard its valid siblings.
+
+        THE BEHAVIOUR THIS REPLACED, AND WHY. The gate was all-or-nothing over the whole set, so one
+        malformed artifact sent the run to the template path — which writes canned files addressing none
+        of the user's findings. This fixture is exactly that shape: four artifacts, of which only the
+        Dockerfile is rootful. The old contract delivered zero correct files; the new one delivers the
+        three valid manifests and keeps the Dockerfile out of the change set.
+
+        The gate is not relaxed. An artifact it rejects is still never accepted — the check is now per
+        file rather than per set, which is strictly more precise. What changed is the alternative to
+        rejection: withholding one file instead of discarding four.
+        """
 
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, content=_sse_for(ROOTFUL_OUTPUT))
 
         outcome, events, payloads = await _run(_service(handler))
-        assert outcome.served_from == "template"
-        assert outcome.status == "template_fallback"
+
+        # The rejection still reaches the retry prompt, and the model still gets every attempt.
         validations = [p for e, p in zip(events, payloads, strict=True) if e == SSEEventType.VALIDATION.value]
         assert any("USER" in finding for v in validations for finding in v["findings"])
+
+        # The offending artifact is NOT in the change set.
+        delivered = {artifact.path for artifact in outcome.files}
+        assert "Dockerfile" not in delivered, "a Dockerfile the gate rejected was delivered"
+
+        # Its valid siblings are.
+        assert delivered, "every artifact was discarded because one of them failed"
+        assert all(path.startswith("k8s/") for path in delivered), delivered
+
+        # And the withholding is stated rather than silent, so the user is not left wondering why the
+        # Dockerfile recommendation did not move.
+        assert any("withheld" in finding for v in validations for finding in v["findings"])
+
+    async def test_the_template_is_still_reached_when_no_artifact_passes(self) -> None:
+        """The fallback must remain reachable, or "withhold the bad ones" becomes "accept anything".
+
+        Every artifact here is malformed, so there is no valid subset to deliver and the template path is
+        the only honest remaining answer. Without this test, a bug that accepted an empty set would look
+        identical to a successful partial delivery.
+        """
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=_sse_for(UNPARSEABLE_OUTPUT))
+
+        outcome, _events, _payloads = await _run(_service(handler))
+        assert outcome.served_from == "template"
+        assert outcome.status == "template_fallback"
 
     async def test_the_retry_prompt_differs_so_the_cache_cannot_serve_the_rejection(self) -> None:
         """The subtle one, and the reason findings are quoted back into the prompt.
