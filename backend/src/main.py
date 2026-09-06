@@ -567,8 +567,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     #
     # One number could not serve both: "this service is unhealthy" and "this is a long job" are different
     # facts, and the self-hosted tier exists precisely so an operator can run a model on their own CPU.
+    # NOT PUT ON `app.state`, deliberately. Nothing reads it: the registry holds the reference it needs and
+    # the shutdown closure below captures this local. Publishing it would add a composed collaborator that
+    # no wiring test drives, which is precisely the unexercised surface `test_wiring_coverage` exists to
+    # refuse — and it refused this, correctly, on the first attempt.
     model_http = httpx.AsyncClient(timeout=settings.model_http_timeout_seconds)
-    app.state.model_http = model_http
     endpoint_registry = EndpointRegistry.from_config(tier_config, http=model_http)
     breakers = {
         endpoint_id: CircuitBreaker(

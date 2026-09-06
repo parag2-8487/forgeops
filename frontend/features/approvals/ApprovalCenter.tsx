@@ -93,7 +93,13 @@ const DELIVERABLE = "approved";
 
 const QUEUES = [
   { status: DECIDABLE, label: "Awaiting decision" },
-  { status: DELIVERABLE, label: "Approved, not sent" },
+  // LABELLED "Awaiting delivery" AND NOT "Approved, not sent", which is not a cosmetic choice.
+  //
+  // Playwright's `getByRole(role, { name })` matches the accessible name as a SUBSTRING, so a tab reading
+  // "Approved, not sent" also matched `{ name: "Approve" }` and the end-to-end journey's approve step died
+  // on a strict-mode violation: two elements for one selector. The wording also reads better — it names
+  // what the user has to do next rather than restating the status the tab already filters on.
+  { status: DELIVERABLE, label: "Awaiting delivery" },
   { status: REVERTABLE, label: "Applied" },
   { status: "rejected", label: "Rejected" },
   { status: "reverted", label: "Reverted" },
