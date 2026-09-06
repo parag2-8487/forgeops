@@ -16,6 +16,7 @@ from datetime import datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Column,
     DateTime,
     Index,
@@ -167,6 +168,56 @@ class FileDependency(SQLModel, table=True):
     raw_specifier: str = Field(max_length=1024)
     kind: str = Field(max_length=16)  # import|require|include|use
     resolved: bool = Field(default=False)
+    created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))
+
+
+class ScanArtifactValidation(SQLModel, table=True):
+    """One external tool's verdict on one artifact the repository ALREADY contains.
+
+    Distinct from `validations`, which is keyed by `change_item_id` and therefore can only ever describe
+    a file this system GENERATED — it had no rows. A file the user wrote themselves has no change item
+    and never will, so there was nowhere to record that `docker compose config` rejects their compose
+    file, and the readiness score fell back to asking whether the path existed.
+
+    Two different questions, kept in two tables: "is the thing we propose to write valid" and "is the
+    thing you already have valid".
+
+    `tool` and `tool_version` are stored because "it passed" is only meaningful alongside what did the
+    passing — an absent `kubeconform` causes a fallback to a weaker built-in schema, and the row must
+    name which one answered rather than implying the stronger one ran.
+
+    FOUR STATUSES, ENFORCED BY A CHECK CONSTRAINT. `passed`, `failed`, `tool_missing` and `errored` are
+    four different facts, and the constraint is what stops a future writer collapsing the last two into
+    one of the first two — which is precisely how a security control comes to fabricate a verdict.
+    """
+
+    __tablename__ = "scan_artifact_validations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('passed', 'failed', 'tool_missing', 'errored')",
+            name="ck_scan_artifact_validations_status",
+        ),
+        UniqueConstraint("project_id", "path", "kind", name="uq_scan_artifact_validations_project_path_kind"),
+        Index("ix_scan_artifact_validations_project", "project_id"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    # `index=True` deliberately absent: `ix_scan_artifact_validations_project` above already indexes
+    # this column, and declaring both would create two identical indexes for no read benefit.
+    project_id: uuid.UUID = Field(foreign_key="projects.id", ondelete="CASCADE")
+    path: str = Field(max_length=1024)
+    #: compose | k8s | helm | yaml_schema
+    kind: str = Field(max_length=32)
+    #: Empty when the tool was never reached — a path that could not be read has no tool.
+    tool: str = Field(default="", max_length=64, sa_column_kwargs={"server_default": ""})
+    tool_version: str = Field(default="", max_length=128, sa_column_kwargs={"server_default": ""})
+    status: str = Field(max_length=16)
+    finding_count: int = Field(default=0, sa_column_kwargs={"server_default": "0"})
+    error_count: int = Field(default=0, sa_column_kwargs={"server_default": "0"})
+    detail: str = Field(default="", max_length=1024, sa_column_kwargs={"server_default": ""})
+    #: Nullable, because an invented line number is worse than none: it sends a reader to the wrong
+    #: place confidently. `helm lint` reports about a chart, not a line.
+    line: int | None = Field(default=None)
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))
 
 

@@ -23,13 +23,15 @@ first two — which is precisely how a security control comes to fabricate a ver
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0017"
-down_revision = "0016"
-branch_labels = None
-depends_on = None
+revision: str = "0017"
+down_revision: str | None = "0016"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

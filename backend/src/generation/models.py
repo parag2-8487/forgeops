@@ -18,6 +18,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Index,
+    Text,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -82,3 +83,25 @@ class GenerationRun(SQLModel, table=True):
     finished_at: datetime | None = Field(
         default=None, sa_column=Column("finished_at", DateTime(timezone=True), nullable=True)
     )
+
+    # ─── Revision 0016: the instruction the model was actually given ──────────
+    #
+    # DECLARED HERE, NOT ONLY IN THE MIGRATION. `alembic check` compares this metadata against the
+    # migrated schema and treats any difference as a defect — a model change with no migration, a
+    # migration with no model change, or an object created by raw DDL and never declared. These columns
+    # were the second kind: the migration created them, the model did not know about them, and the check
+    # correctly proposed dropping all five.
+    #
+    # `compiled_prompt` is NULL for a run made before the compiler existed, or for one driven by free
+    # text with no readiness findings behind it. That reads as "not recorded", which is true; an empty
+    # string would read as "the model was sent nothing", which is a different and false claim.
+    compiled_prompt: str | None = Field(default=None, sa_column=Column("compiled_prompt", Text, nullable=True))
+    #: What the compiler estimated, beside the budget it was held to. Both are stored because a prompt
+    #: that dropped a section is only explicable next to the limit that forced the drop.
+    prompt_token_estimate: int | None = Field(default=None)
+    prompt_token_budget: int | None = Field(default=None)
+    #: The failing checks this run set out to fix, and the ones the budget could not hold. Kept apart
+    #: because a user looking at an unchanged score needs to know a check was never attempted rather
+    #: than attempted and rejected — only the first is fixed by narrowing the request.
+    addressed_checks: list | None = Field(default=None, sa_column=Column("addressed_checks", JSONB, nullable=True))
+    deferred_checks: list | None = Field(default=None, sa_column=Column("deferred_checks", JSONB, nullable=True))

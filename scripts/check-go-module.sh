@@ -16,10 +16,23 @@ if [ "$MOD_PATH" != "github.com/parag8487/ForgeOps/agent" ]; then
 fi
 
 # 2. Go 1.26 directive
+#
+# ACCEPTS `1.26` OR `1.26.N`, and the distinction is forced rather than chosen. The invariant this
+# protects is that the module targets the Go 1.26 language version — not 1.25, and not 1.27. A patch
+# suffix does not change the language version.
+#
+# The exact-string form of this check had to go because it made a security fix impossible to take:
+# `golang.org/x/crypto v0.56.0` — the version that fixes GO-2026-6354 and GO-2026-6355 — declares
+# `go 1.26.0`, and Go will not accept a bare `go 1.26` as satisfying a dependency that names a patch.
+# So the module could either carry the vulnerable v0.54.0 or fail this check. That is a gate blocking
+# a fix rather than a defect, which is the one thing a gate must never do.
+#
+# The series itself is still pinned, so drift in either direction still fails.
 GO_VER=$(sed -n 's/^go //p' "$AGENT_DIR/go.mod" | tr -d '\r')
-if [ "$GO_VER" != "1.26" ]; then
-  err "Go directive is '$GO_VER', expected '1.26'"
-fi
+case "$GO_VER" in
+  1.26|1.26.*) ;;
+  *) err "Go directive is '$GO_VER', expected '1.26' or a 1.26 patch release" ;;
+esac
 
 # 3. -mod=readonly (verify go mod download works in readonly mode)
 export PATH="C:/IMP/kiro/_toolchain/go/bin:$PATH"
