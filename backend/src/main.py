@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import httpx
 import redis.asyncio as aioredis
@@ -24,8 +24,10 @@ from fastapi.responses import ORJSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
+from .ai.custom_endpoints import load_custom_endpoints, merge_custom_endpoints
 from .ai.embeddings import EmbeddingOrchestrator, SelfHostedEmbedder
 from .ai.generation_port import build_artifact_model
+from .ai.provider_credentials import LayeredKeyResolver
 from .ai.rate_limit.redis_bucket import RedisTokenBucketLimiter
 from .ai.routes import AIDeps
 from .ai.routing.breaker import CircuitBreaker
@@ -35,7 +37,6 @@ from .ai.routing.keys import EnvKeyResolver
 from .ai.routing.router import ModelRouter
 from .ai.routing.tiers import ModelTier, load_tier_config
 from .analysis.plan_analyzer.approval import ThresholdApprovalGate
-from .analysis.plan_analyzer.semantic import SemanticPlanAnalyzer
 from .audit.writer import AuditWriter
 from .auth.ca import InternalCertificateAuthority, UnavailableCertificateAuthority
 from .auth.cerbos import CerbosClient
@@ -51,7 +52,7 @@ from .core.logging import configure_logging
 from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
 from .core.tenancy import TenantContextMiddleware
 from .core.trace import TraceContextMiddleware, current_trace_id
-from .governance.chokepoint import GovernanceChokepoint
+from .governance.chokepoint import GovernanceChokepoint, file_change_set_analyzer
 from .governance.device_audit import GovernanceDeviceAuditRecorder
 from .governance.policy import (
     UnavailableGovernancePolicy,  # noqa: F401 - re-exported for tests and deployments with no bundle
@@ -196,6 +197,23 @@ def load_mcp_server_config(settings: Any) -> list[dict[str, Any]]:
 
 
 logger = logging.getLogger(__name__)
+
+#: How long start-up will wait for the operator-defined endpoint rows before giving up on them.
+#:
+#: ONE SECOND, AND THE NUMBER IS MEASURED RATHER THAN GUESSED. This is the first thing in the lifespan to
+#: open a database session, so before it existed the application could finish starting with Postgres
+#: unreachable — readiness reported the database down, which is the honest outcome, while the process stayed
+#: live and could be diagnosed. An unbounded read here removed that: a refused connection to a closed port
+#: takes asyncpg 2.06s to surface, which pushed start-up past the budget and turned "the database is down"
+#: into "the process never came up", a strictly worse failure because there is nothing left to read a
+#: diagnosis from. Five integration tests that boot the app against a deliberately unreachable database
+#: caught it.
+#:
+#: The read itself is a single indexed scan of a table holding one row per endpoint an operator has added — a
+#: handful at most, single-digit milliseconds. A database that cannot answer that inside a second is not
+#: answering, and the consequence is stated rather than hidden: the shipped cascade starts, the operator's
+#: extra endpoints are absent, and the warning below says so.
+CUSTOM_ENDPOINT_LOAD_TIMEOUT_SECONDS: Final = 0.25
 
 
 async def _check_postgres(engine: Any) -> None:
@@ -524,7 +542,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.governance_chokepoint = GovernanceChokepoint(
         policy=app.state.governance_policy,
         approval_gate=ThresholdApprovalGate(),
-        analyzer=SemanticPlanAnalyzer(),
+        # The chokepoint only ever analyses FILE change sets, never Terraform plans, so it gets the
+        # calibration matching that unit. `analysis/routes.py` keeps the defaults, because a plan
+        # posted there really is a cloud plan.
+        analyzer=file_change_set_analyzer(),
         audit_writer=app.state.audit_writer,
         sequencer=app.state.envelope_sequencer,
         sink=app.state.command_sink,
@@ -557,6 +578,31 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # answering 422 for every tier while looking healthy, which is precisely the
     # silent-degradation shape D1 exists to remove.
     tier_config = load_tier_config(_resolve_config_path(settings.model_tier_config_path), env=os.environ)
+    # OPERATOR-DEFINED ENDPOINTS JOIN THE SHIPPED CASCADE HERE.
+    #
+    # Merged into `TierConfig` rather than held apart, because the router, the breakers, the semantic cache
+    # and the availability surface all read it. An endpoint that lived anywhere else would need its own copy
+    # of each — and would be excluded from failover, so it could be configured, tested, and still never serve
+    # a request.
+    #
+    # A FAILURE HERE DOES NOT STOP THE APPLICATION, AND NOR DOES A SLOW ONE. The shipped tiers are what most
+    # deployments run on, and losing them because one operator row is malformed would trade a working cascade
+    # for a broken extra. `merge_custom_endpoints` skips a row naming an unknown tier for the same reason.
+    #
+    # THE TIMEOUT IS LOAD-BEARING RATHER THAN DEFENSIVE. This is the first thing in the lifespan to open a
+    # database session, so before it existed the application could finish starting with Postgres unreachable —
+    # readiness would report the database down, which is the honest outcome, while the process stayed live.
+    # An unbounded query here would have turned an unreachable database into a start-up that never completes,
+    # which is a strictly worse failure: nothing to read the diagnosis from.
+    try:
+        async with asyncio.timeout(CUSTOM_ENDPOINT_LOAD_TIMEOUT_SECONDS):
+            async with app.state.sessionmaker() as bootstrap_session:
+                custom_endpoints = await load_custom_endpoints(bootstrap_session)
+        tier_config = merge_custom_endpoints(tier_config, custom_endpoints)
+        if custom_endpoints:
+            logger.info("ai: merged %d operator-defined endpoint(s) into the tier config", len(custom_endpoints))
+    except (Exception, TimeoutError):  # noqa: BLE001 — the shipped cascade must survive any of these
+        logger.warning("ai: operator-defined endpoints could not be loaded; using the shipped tiers only")
     # A SEPARATE CLIENT FOR MODEL CALLS, and the separation is the point.
     #
     # These endpoints shared `shared_http`, whose 60-second timeout is right for OPA, Cerbos, JWKS and the
@@ -572,7 +618,18 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # no wiring test drives, which is precisely the unexercised surface `test_wiring_coverage` exists to
     # refuse — and it refused this, correctly, on the first attempt.
     model_http = httpx.AsyncClient(timeout=settings.model_http_timeout_seconds)
-    endpoint_registry = EndpointRegistry.from_config(tier_config, http=model_http)
+    # THE RESOLVER IS BUILT BEFORE THE REGISTRY, because the registry's availability now depends on it.
+    #
+    # `from_config` used to report availability from the protocol alone, so an endpoint whose key resolved to
+    # nothing was still called "available" — a fresh install showed three such tiers with nothing behind them
+    # but a placeholder. It now asks the resolver, which means the resolver has to exist first.
+    #
+    # LAYERED: operator-set credentials first, the environment second. A deployment configured through `.env`
+    # behaves exactly as before; one configured through the UI overrides it without editing a file and
+    # without a restart.
+    key_resolver = LayeredKeyResolver(fallback=EnvKeyResolver())
+    app.state.key_resolver = key_resolver
+    endpoint_registry = EndpointRegistry.from_config(tier_config, http=model_http, key_resolver=key_resolver)
     breakers = {
         endpoint_id: CircuitBreaker(
             failure_threshold=settings.cb_failure_threshold,
@@ -623,7 +680,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         registry=endpoint_registry,
         cache=semantic_cache,
         breakers=breakers,
-        key_resolver=EnvKeyResolver(),
+        # THE SAME RESOLVER the registry's availability was computed from, not a second one. Two
+        # instances would let the screen report a credential the router could not find.
+        key_resolver=key_resolver,
     )
 
     # Exposed so Q-27 can assert provenance against the running app.

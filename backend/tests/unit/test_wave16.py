@@ -242,6 +242,20 @@ class TestEndpointRegistry:
                 key_ref="google",
                 timeout_seconds=60.0,
             ),
+            # A keyless self-hosted endpoint, because the real `config/model-tiers.yaml` has four of
+            # them and they are the only endpoints that have ever served a live call in this
+            # deployment. Without one here the fixture could only express hosted endpoints, and
+            # `credential_required is False` — the state where having no credential is CORRECT
+            # rather than missing — would have nothing to be asserted against.
+            "qwen3-coder-next": EndpointDescriptor(
+                id="qwen3-coder-next",
+                provider="self_hosted",
+                model="qwen2.5-coder:1.5b",
+                protocol=EndpointProtocol.OPENAI_COMPATIBLE,
+                base_url="http://ollama:11434/v1",
+                key_ref=None,
+                timeout_seconds=60.0,
+            ),
         }
         tiers = {
             ModelTier.HIGH_CODING: TierChain(primary="gpt-5.6-sol", secondary="claude-fable-5"),
@@ -261,8 +275,14 @@ class TestEndpointRegistry:
         assert ep.endpoint_id == "gpt-5.6-sol"
         assert ep.provider_kind == "openai"
 
-    def test_native_protocols_marked_unavailable(self):
-        """Anthropic and Google native protocols are marked unavailable."""
+    def test_native_protocols_name_the_missing_adapter_and_the_missing_credential(self):
+        """A native-protocol endpoint is unavailable for TWO independent reasons, and says both.
+
+        This used to assert `reason == "unsupported_protocol_phase_0"`, one string standing in for
+        every failure. Two causes with opposite remedies were indistinguishable: a missing adapter
+        is a gap in ForgeOps that no configuration fixes, a missing credential is a gap in the
+        operator's setup that nothing else can fix.
+        """
         from src.ai.routing.endpoints import EndpointRegistry
 
         config = self._make_config()
@@ -272,19 +292,32 @@ class TestEndpointRegistry:
         assert registry.endpoint("claude-fable-5") is None
         assert registry.endpoint("gemini-3-flash") is None
 
-        # But availability info exists with reason
         avail_claude = registry.get_availability("claude-fable-5")
         assert avail_claude is not None
         assert avail_claude.available is False
-        assert avail_claude.reason == "unsupported_protocol_phase_0"
+        assert avail_claude.protocol_supported is False
+        assert avail_claude.reason is not None
+        assert "anthropic_native" in avail_claude.reason, "it names the protocol that has no adapter"
+        assert "anthropic" in avail_claude.reason, "and the credential reference that is unset"
 
         avail_gemini = registry.get_availability("gemini-3-flash")
         assert avail_gemini is not None
         assert avail_gemini.available is False
-        assert avail_gemini.reason == "unsupported_protocol_phase_0"
+        assert avail_gemini.protocol_supported is False
+        assert avail_gemini.reason is not None
+        assert "google_native" in avail_gemini.reason
 
-    def test_openai_compatible_marked_available(self):
-        """OpenAI-compatible endpoints are marked available."""
+    def test_a_supported_protocol_with_no_credential_is_not_available(self):
+        """The defect this file used to assert as correct behaviour.
+
+        `available` was computed from the protocol alone, so a hosted endpoint with no API key
+        anywhere reported `available is True`. A user asked why models they had never configured a
+        key for were shown as available; the honest answer was that `available` meant "ForgeOps has
+        an adapter for this protocol" and the screen rendered it as "this endpoint will answer".
+
+        No `key_resolver` is passed here, and that is the case being pinned: with no way to check,
+        the credential is reported MISSING rather than assumed satisfied.
+        """
         from src.ai.routing.endpoints import EndpointRegistry
 
         config = self._make_config()
@@ -292,8 +325,50 @@ class TestEndpointRegistry:
 
         avail = registry.get_availability("gpt-5.6-sol")
         assert avail is not None
+        assert avail.protocol_supported is True, "the adapter does exist"
+        assert avail.credential_required is True, "a hosted endpoint needs one"
+        assert avail.credential_configured is False, "and none was resolvable"
+        assert avail.available is False, "so it must not claim to be available"
+        assert avail.reason is not None
+        assert "openai" in avail.reason, "it names the credential the operator has to set"
+
+    def test_a_resolvable_credential_makes_the_endpoint_available(self):
+        """The other half of the conjunction: adapter AND credential, checked against the resolver."""
+        from src.ai.routing.endpoints import EndpointRegistry
+
+        class StubResolver:
+            def resolve(self, key_ref: str) -> str | None:
+                return "a-real-looking-value" if key_ref == "openai" else None
+
+        registry = EndpointRegistry.from_config(self._make_config(), key_resolver=StubResolver())
+
+        avail = registry.get_availability("gpt-5.6-sol")
+        assert avail is not None
+        assert avail.credential_configured is True
         assert avail.available is True
-        assert avail.reason is None
+        assert avail.reason is None, "nothing is known to be missing, so there is nothing to explain"
+
+    def test_a_local_endpoint_needs_no_credential_to_be_available(self):
+        """`credential_required is False` is a third state, not a synonym for configured.
+
+        A self-hosted server with no `key_ref` has no credential and that is CORRECT, not missing.
+        Collapsing the two would report a working local endpoint as misconfigured forever.
+        """
+        from src.ai.routing.endpoints import EndpointRegistry
+
+        registry = EndpointRegistry.from_config(self._make_config())
+        checked = 0
+
+        for endpoint_id in ("qwen3-coder-next",):
+            avail = registry.get_availability(endpoint_id)
+            if avail is None:  # pragma: no cover - only if the fixture stops defining it
+                continue
+            checked += 1
+            assert avail.credential_required is False, endpoint_id
+            assert avail.credential_configured is True, "no credential needed is a satisfied state"
+            assert avail.available is True, endpoint_id
+
+        assert checked > 0, "the fixture must contain at least one keyless endpoint for this to mean anything"
 
     async def test_openai_compatible_complete(self):
         """OpenAICompatibleEndpoint sends to /chat/completions."""

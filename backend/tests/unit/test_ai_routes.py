@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from src.ai.rate_limit.redis_bucket import (
     RateLimitDecision,
     RateLimitServiceError,
@@ -275,6 +276,41 @@ def app(ai_deps: AIDeps) -> FastAPI:
     # so the Models screen reported "Not authenticated to read model tiers" to a signed-in user for ever.
     # Both routers share the prefix, so the paths are unchanged; a test app has to mount both.
     app.include_router(read_router)
+
+    # `GET /tiers` READS THE DATABASE NOW, and that is not incidental to what it reports.
+    #
+    # Availability stopped being a statement about the protocol and became a conjunction that
+    # includes "is a credential actually configured", which means operator-set credentials in
+    # `provider_credentials` plus the last real connection test recorded against each. Neither fact
+    # exists in `AIDeps`.
+    #
+    # The double returns NO ROWS, so these tests describe a deployment where nothing has been
+    # configured through the UI — which is the case the shape assertions below are about, and the
+    # case a fresh install is in. The credential lifecycle itself is asserted against a real
+    # database in the integration suite, because sealing and unsealing a value is exactly the thing
+    # a double would let pass without doing.
+    from src.core.db import get_session
+
+    # Only the ONE field the route reads. A full `Settings()` needs a database and a Redis URL,
+    # neither of which a unit test has, and asking for them here would make this fixture assert
+    # something about the environment rather than about the route.
+    class _SealKeyOnlySettings:
+        local_secret_seal_key = SecretStr("unit-test-seal-key-not-a-deployment-value")
+
+    app.state.settings = _SealKeyOnlySettings()
+
+    class _NoRows:
+        def scalars(self) -> _NoRows:
+            return self
+
+        def all(self) -> list[object]:
+            return []
+
+    class _EmptySession:
+        async def execute(self, *_args: object, **_kwargs: object) -> _NoRows:
+            return _NoRows()
+
+    app.dependency_overrides[get_session] = lambda: _EmptySession()
     return app
 
 
@@ -366,6 +402,17 @@ class TestTiersEndpoint:
         assert "primary_protocol" in tier
         assert "available" in tier
         assert "breaker_state" in tier
+        # The three facts `available` is now derived from, each reported separately so the screen can
+        # say WHICH one is missing. A single boolean could not distinguish "ForgeOps has no adapter
+        # for this protocol" from "you have not set an API key", which have opposite remedies.
+        assert "protocol_supported" in tier
+        assert "credential_configured" in tier
+        assert "credential_required" in tier
+        assert "reason" in tier
+        # And what a real call last said, which is the only field here that is evidence rather than
+        # configuration.
+        assert "last_test_ok" in tier
+        assert "last_tested_at" in tier
 
     def test_tier_names_are_correct(self, authed_client: TestClient):
         resp = authed_client.get("/api/v1/ai/tiers")
@@ -381,14 +428,25 @@ class TestTiersEndpoint:
         }
         assert tier_names == expected
 
-    def test_openai_compatible_endpoints_are_available(self, authed_client: TestClient):
+    def test_a_supported_protocol_with_no_credential_is_not_available(self, authed_client: TestClient):
+        """`available` used to mean "ForgeOps has an adapter for this protocol".
+
+        The screen rendered that as "this endpoint will answer", so a fresh install reported hosted
+        models as available when the only credentials present were the placeholders `.env.example`
+        ships. This asserts the corrected meaning: a supported protocol is necessary but not
+        sufficient, and the response names the credential that is missing.
+        """
         resp = authed_client.get("/api/v1/ai/tiers")
         data = resp.json()
-        # high_coding primary is gpt-5.6-sol (openai_compatible → available)
         high_coding = next(t for t in data["tiers"] if t["name"] == "high_coding")
         assert high_coding["primary_endpoint"] == "gpt-5.6-sol"
         assert high_coding["primary_protocol"] == "openai_compatible"
-        assert high_coding["available"] is True
+        assert high_coding["protocol_supported"] is True, "the adapter exists"
+        assert high_coding["credential_required"] is True, "a hosted endpoint needs a key"
+        assert high_coding["credential_configured"] is False, "and this deployment has none stored"
+        assert high_coding["available"] is False, "so it must not be reported as available"
+        assert "openai" in high_coding["reason"], "the reason names what the operator must set"
+        assert high_coding["last_test_ok"] is None, "never tested is distinct from tested and failing"
         assert high_coding["breaker_state"] == "closed"
 
     def test_native_protocol_endpoints_not_available(self, authed_client: TestClient):

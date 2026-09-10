@@ -109,11 +109,36 @@ class StreamingModelEndpoint(ModelEndpoint, Protocol):
 
 @dataclass(frozen=True)
 class EndpointAvailability:
-    """Availability status for an endpoint."""
+    """What is known about whether an endpoint could answer — and what is not known.
+
+    `available` MEANT ONE THING AND READ AS ANOTHER. It was set purely from
+    `descriptor.protocol == OPENAI_COMPATIBLE`, so a fresh install showed three tiers as "available" with
+    nothing behind them but shipped placeholders: the flag answered "does this codebase have an adapter for this
+    protocol" and the screen presented it as "this endpoint will answer". A user reasonably asked why models
+    they had never configured a key for were reported as available.
+
+    The two facts are now separate, because they have different causes and different remedies:
+
+      * `protocol_supported` — static, about this codebase. False for `anthropic_native` and `google_native`
+        because no adapter exists; no amount of configuration changes it.
+      * `credential_configured` — about this deployment, and fixable by the operator. True when the resolver
+        can answer the endpoint's `key_ref`, or when the endpoint declares none (a local server needs no
+        key, which is what the self-hosted tier relies on).
+
+    `available` is now their conjunction, so it means "there is nothing known to be missing". IT STILL DOES
+    NOT MEAN THE ENDPOINT WORKS. A configured key can be expired, revoked, or a placeholder — only a real
+    call establishes that, which is what the connection test is for and where `last_test_ok` comes from.
+    """
 
     endpoint_id: str
     available: bool
     reason: str | None = None
+    #: An adapter exists for this endpoint's protocol. Static; not fixable by configuration.
+    protocol_supported: bool = True
+    #: A credential can be resolved, or none is required. Fixable by the operator.
+    credential_configured: bool = True
+    #: True when the endpoint declares no `key_ref`, so "no credential" is correct rather than missing.
+    credential_required: bool = True
 
 
 class OpenAICompatibleEndpoint:
@@ -339,6 +364,32 @@ class OpenAICompatibleEndpoint:
         )
 
 
+def _availability_reason(
+    *,
+    protocol_supported: bool,
+    credential_configured: bool,
+    key_ref: str | None,
+    protocol: str,
+) -> str | None:
+    """Why this endpoint is not available, named precisely enough to act on.
+
+    THE OLD REASON WAS `unsupported_protocol_phase_0` FOR EVERY FAILURE, which is one cause standing in for
+    two with opposite remedies: an operator can fix a missing credential in a minute and can do nothing at
+    all about a protocol with no adapter. Reporting both as the same thing sent people looking for a setting
+    that does not exist.
+
+    None when nothing is known to be missing — which is not a promise that the endpoint answers.
+    """
+    if not protocol_supported and not credential_configured:
+        # Both, and said in that order: no credential will help a protocol nothing can speak.
+        return f"no adapter exists for the {protocol} protocol, and no credential is configured for '{key_ref}'"
+    if not protocol_supported:
+        return f"no adapter exists for the {protocol} protocol; this is a gap in ForgeOps, not in your setup"
+    if not credential_configured:
+        return f"no credential is configured for '{key_ref}'"
+    return None
+
+
 class EndpointRegistry:
     """Registry of active model endpoints with availability tracking."""
 
@@ -357,30 +408,53 @@ class EndpointRegistry:
         config: TierConfig,
         *,
         http: httpx.AsyncClient | None = None,
+        key_resolver: Any | None = None,
     ) -> EndpointRegistry:
         """Build an endpoint registry from a tier configuration.
 
-        Only openai_compatible endpoints are instantiated.
-        Native protocols (anthropic_native, google_native) are marked unavailable.
+        Only `openai_compatible` endpoints are instantiated; native protocols have no adapter.
+
+        `key_resolver` IS WHAT MAKES AVAILABILITY MEAN SOMETHING. Without it this method reported
+        availability from the protocol alone, so an endpoint whose `key_ref` resolved to nothing was still
+        called "available" — and the Models screen showed three such tiers on a fresh install. Optional
+        rather than required so a caller that only wants the adapters (tests, and the tier-config loader)
+        does not have to construct a resolver; when it is absent, credential presence is reported as UNKNOWN
+        rather than as satisfied, because assuming satisfied is the bug being fixed.
         """
         endpoints: dict[str, ModelEndpoint] = {}
         availability: dict[str, EndpointAvailability] = {}
 
         for eid, descriptor in config.endpoints.items():
-            if descriptor.protocol == EndpointProtocol.OPENAI_COMPATIBLE:
-                ep = OpenAICompatibleEndpoint(descriptor=descriptor, http=http)
-                endpoints[eid] = ep
-                availability[eid] = EndpointAvailability(
-                    endpoint_id=eid,
-                    available=True,
-                )
+            protocol_supported = descriptor.protocol == EndpointProtocol.OPENAI_COMPATIBLE
+            if protocol_supported:
+                endpoints[eid] = OpenAICompatibleEndpoint(descriptor=descriptor, http=http)
+
+            # A local server needs no key. `credential_required=False` is not a way of passing the check —
+            # it says the question does not apply, which is why the self-hosted tier is genuinely available
+            # with no credential configured anywhere.
+            credential_required = bool(descriptor.key_ref)
+            if not credential_required:
+                credential_configured = True
+            elif key_resolver is None:
+                # Not asked, therefore not known. Reported as missing rather than satisfied: the whole point
+                # of this change is that an unverified assumption must not render as a green tick.
+                credential_configured = False
             else:
-                # Native protocols not yet supported in Phase 0
-                availability[eid] = EndpointAvailability(
-                    endpoint_id=eid,
-                    available=False,
-                    reason="unsupported_protocol_phase_0",
-                )
+                credential_configured = key_resolver.resolve(descriptor.key_ref) is not None
+
+            availability[eid] = EndpointAvailability(
+                endpoint_id=eid,
+                available=protocol_supported and credential_configured,
+                reason=_availability_reason(
+                    protocol_supported=protocol_supported,
+                    credential_configured=credential_configured,
+                    key_ref=descriptor.key_ref,
+                    protocol=descriptor.protocol.value,
+                ),
+                protocol_supported=protocol_supported,
+                credential_configured=credential_configured,
+                credential_required=credential_required,
+            )
 
         return cls(endpoints=endpoints, availability=availability)
 

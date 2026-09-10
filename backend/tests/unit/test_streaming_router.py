@@ -383,12 +383,21 @@ class TestTheHostedKeyPathReachesTheProvider:
             tiers={ModelTier.HIGH_CODING: TierChain(primary="hosted")},
             endpoints={"hosted": descriptor},
         )
+        resolver = EnvKeyResolver()
         router = ModelRouter(
             tier_config=config,
-            registry=EndpointRegistry.from_config(config, http=http),
+            # THE SAME RESOLVER INSTANCE the router gets, which is how `main.py` wires it.
+            #
+            # Availability is now a conjunction including "is a credential resolvable", and the router
+            # SKIPS an unavailable endpoint (`skipped_unavailable`) rather than calling it. A registry
+            # built without the resolver reports every hosted endpoint's credential as missing, so this
+            # test exhausted the cascade without ever reaching the wire it exists to inspect. Two
+            # resolvers would be worse than none: the registry could then report a credential the
+            # router cannot find, or the reverse.
+            registry=EndpointRegistry.from_config(config, http=http, key_resolver=resolver),
             cache=TieredSemanticCache(redis=_Redis()),
             breakers={"hosted": CircuitBreaker()},
-            key_resolver=EnvKeyResolver(),
+            key_resolver=resolver,
         )
 
         async def sink(text: str) -> None:
@@ -416,25 +425,25 @@ class TestTheHostedKeyPathReachesTheProvider:
 
         http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         descriptor = _descriptor("hosted", key_ref="test")
-        config = TierConfig(
-            tiers={ModelTier.HIGH_CODING: TierChain(primary="hosted")},
-            endpoints={"hosted": descriptor},
-        )
-        router = ModelRouter(
-            tier_config=config,
-            registry=EndpointRegistry.from_config(config, http=http),
-            cache=TieredSemanticCache(redis=_Redis()),
-            breakers={"hosted": CircuitBreaker()},
-            key_resolver=EnvKeyResolver(),
-        )
+
+        # ASSERTED AGAINST THE ENDPOINT, NOT THROUGH THE ROUTER, and that changed for a reason.
+        #
+        # Availability is now a conjunction that includes "is a credential resolvable", and the router
+        # SKIPS an unavailable endpoint (`skipped_unavailable`) instead of calling it. So a hosted
+        # endpoint whose key does not resolve can no longer reach the wire through `router.complete` at
+        # all — which is the improvement, because the old behaviour spent a real request earning a 401
+        # and counted it as a failure, five of which inside thirty seconds tripped the breaker.
+        #
+        # The defence being asserted here is the endpoint's own: given no credential, it must withhold
+        # the header rather than send the scheme followed by the word `None`. Routing it through a
+        # router that now declines to call it would have turned this into a test that passes because
+        # nothing happened, so it calls the endpoint directly and checks that the wire was reached.
+        endpoint = OpenAICompatibleEndpoint(descriptor=descriptor, http=http)
 
         async def sink(text: str) -> None:
             return None
 
-        await router.complete(
-            tier=ModelTier.HIGH_CODING,
-            request=_request(),
-            prompt=create_redacted_prompt("hello"),
-            on_token=sink,
-        )
+        await endpoint.complete_streaming(_request(), credential=None, on_token=sink)
+
+        assert seen_headers, "the endpoint was never called, so this proves nothing about its headers"
         assert "authorization" not in seen_headers
