@@ -100,8 +100,7 @@ def backend_counts(rep: Report) -> None:
         if not path.exists():
             rep.missing(
                 f"{path.relative_to(ROOT)}",
-                f'cd backend; pytest <{shard} paths> -m "not oidc and not infisical" '
-                f"--junitxml={shard}.junit.xml",
+                f'cd backend; pytest <{shard} paths> -m "not oidc and not infisical" --junitxml={shard}.junit.xml',
             )
             continue
         suite = ET.parse(path).getroot()
@@ -125,7 +124,9 @@ def backend_counts(rep: Report) -> None:
     if seen != len(SHARDS):
         rep.failures.append(f"only {seen} of {len(SHARDS)} backend shards reported a JUnit result")
         return
-    rep.say(f"  {'COMBINED':<12} tests={total:<6} passed={passed:<6} failed={failed:<3} errors={errors:<3} skipped={skipped}")
+    rep.say(
+        f"  {'COMBINED':<12} tests={total:<6} passed={passed:<6} failed={failed:<3} errors={errors:<3} skipped={skipped}"
+    )
     if failed or errors:
         rep.failures.append(f"backend suite has {failed} failure(s) and {errors} error(s)")
 
@@ -203,7 +204,9 @@ def agent_section(rep: Report) -> None:
             else:
                 pct = float(last[-1].split()[-1].rstrip("%"))
                 rep.say(f"  {last[-1].strip()}")
-                rep.say(f"  AGENT COVERAGE = {pct:.1f}%   gate {AGENT_GATE}  -> {'PASS' if pct >= AGENT_GATE else 'FAIL'}")
+                rep.say(
+                    f"  AGENT COVERAGE = {pct:.1f}%   gate {AGENT_GATE}  -> {'PASS' if pct >= AGENT_GATE else 'FAIL'}"
+                )
                 if pct < AGENT_GATE:
                     rep.failures.append(f"agent coverage {pct:.1f}% is below {AGENT_GATE}")
 
@@ -239,7 +242,9 @@ def frontend_section(rep: Report) -> None:
 
     junit = FRONTEND / "vitest.junit.xml"
     if not junit.exists():
-        rep.missing("frontend/vitest.junit.xml", "cd frontend; npx vitest run --reporter=junit --outputFile=vitest.junit.xml")
+        rep.missing(
+            "frontend/vitest.junit.xml", "cd frontend; npx vitest run --reporter=junit --outputFile=vitest.junit.xml"
+        )
         return
     root = ET.parse(junit).getroot()
     tests = sum(int(s.get("tests", 0)) for s in root.iter("testsuite"))
@@ -268,7 +273,9 @@ def gates_section(rep: Report) -> None:
         paths = len(json.loads(openapi.read_text(encoding="utf-8"))["paths"])
         drift = run([sys.executable, str(ROOT / "scripts" / "dump-openapi.py"), "--check"], ROOT)
         rep.say(f"  docs/openapi.json paths={paths}")
-        rep.say(f"  dump-openapi.py --check exit={drift.returncode}  {drift.stdout.strip().splitlines()[-1] if drift.stdout.strip() else ''}")
+        rep.say(
+            f"  dump-openapi.py --check exit={drift.returncode}  {drift.stdout.strip().splitlines()[-1] if drift.stdout.strip() else ''}"
+        )
         if drift.returncode != 0:
             rep.failures.append("docs/openapi.json has drifted from the live schema")
 
@@ -290,10 +297,11 @@ def gates_section(rep: Report) -> None:
 # ── workflows ────────────────────────────────────────────────────────────────────────────────────
 
 
-def workflows_section(rep: Report, sha: str) -> None:
+def workflows_section(rep: Report, sha: str, repo: str | None) -> None:
     rep.head(f"WORKFLOWS — conclusions for {sha[:8]} (source: GitHub API via gh)")
     proc = run(
-        ["gh", "run", "list", "--commit", sha, "--limit", "40", "--json", "name,conclusion,databaseId,status"],
+        ["gh", "run", "list", "--commit", sha, "--limit", "40", "--json", "name,conclusion,databaseId,status"]
+        + (["--repo", repo] if repo else []),
         ROOT,
     )
     if proc.returncode != 0 or not proc.stdout.strip():
@@ -323,6 +331,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Emit the verification set from real artifacts.")
     parser.add_argument("--sha", default=None, help="commit to read workflow conclusions for (default: HEAD)")
     parser.add_argument(
+        "--repo",
+        default=None,
+        help=(
+            "owner/name to read workflow runs from. Required when the checkout has more than one "
+            "remote, because `gh` would otherwise guess and a wrong guess reports NO RUNS, which this "
+            "script correctly treats as a missing source rather than a pass."
+        ),
+    )
+    parser.add_argument(
         "--skip-workflows",
         action="store_true",
         help="omit the workflow section, for use before the commit has been pushed",
@@ -345,7 +362,7 @@ def main() -> int:
         rep.head("WORKFLOWS")
         rep.say("  skipped by --skip-workflows")
     else:
-        workflows_section(rep, sha)
+        workflows_section(rep, sha, args.repo)
 
     rep.head("RESULT")
     if rep.failures:
