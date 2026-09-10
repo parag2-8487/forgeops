@@ -210,7 +210,7 @@ export function AgentConnectPanel({
           <p className="font-medium">2. Unpack it and put it on your PATH</p>
           <CommandBlock
             command={installOnPathCommand(active, activeShell)}
-            caption="Run this from the folder the download saved to. It opens the archive, installs the binary and adds it to PATH — after this, the bare command works from anywhere."
+            caption="Run this anywhere — it finds the archive in this folder or your Downloads folder, installs the binary and adds it to PATH. After this, the bare command works from any terminal."
             testId="install-command"
           />
         </li>

@@ -186,7 +186,7 @@ describe("installOnPathCommand", () => {
     expect(installOnPathCommand("linux", "bash")).toContain(
       // `install(1)` still sets the mode in the same step; it is now preceded by the extract, because
       // step 1 hands the user a tarball and this step used to act on a binary that did not exist yet.
-      "sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent",
+      'sudo install -m 0755 "$t/forgeops-agent" /usr/local/bin/forgeops-agent',
     );
   });
 });

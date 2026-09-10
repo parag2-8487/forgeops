@@ -224,26 +224,34 @@ export function archiveName(platform: Platform, tag: string, arch: "amd64" | "ar
  *
  * `Join-Path` also handles a username with a space in it, which a bare unquoted path would not.
  *
- * IT EXTRACTS THE ARCHIVE FIRST, and the previous version did not. Step 1 offers a `.zip`; this step
- * then moved `.\forgeops-agent.exe`, a file that does not exist until the zip is opened. A user
- * following the screen exactly got
+ * IT LOOKS IN DOWNLOADS AS WELL AS THE CURRENT FOLDER, because that is where the archive actually is.
+ * The first version searched only `Get-Location`, so a user who clicked the download link and then
+ * pasted this into the shell PowerShell opens by default got
  *
- *     Move-Item : Cannot find path 'C:\Users\<name>\forgeops-agent.exe' because it does not exist.
+ *     No forgeops-agent zip found in C:\Users\<name>.
  *
- * and nothing on the page said to unzip anything. The archive is found by GLOB rather than by name
- * because the page offers two architectures and cannot know which one was taken; newest-first so a
- * re-download wins over a stale copy. A missing archive now fails with a sentence naming the
- * directory it looked in, instead of a `Move-Item` error about a path the user never typed.
+ * which is true and useless: the file was one directory below, in `Downloads`, and the instruction
+ * amounted to "work out where your browser put it and cd there first". Searching both removes the step
+ * rather than explaining it. Newest-first across BOTH locations, so a fresh download in either place
+ * beats a stale copy in the other.
+ *
+ * EXTRACTED INTO A TEMPORARY DIRECTORY, not into the current one. Expanding into `Get-Location` would
+ * scatter the archive's contents through whatever folder the user happened to be standing in - their
+ * home directory, in the reported case - and leave them there after a successful install.
  */
 const WINDOWS_INSTALL =
-  "$zip = Get-ChildItem -Filter 'forgeops-agent_*_windows_*.zip' | " +
+  "$pat = 'forgeops-agent_*_windows_*.zip'; " +
+  "$zip = @(Get-ChildItem -Path (Get-Location).Path, (Join-Path $env:USERPROFILE 'Downloads') " +
+  "-Filter $pat -File -ErrorAction SilentlyContinue) | " +
   "Sort-Object LastWriteTime -Descending | Select-Object -First 1; " +
-  "if (-not $zip) { throw ('No forgeops-agent zip found in ' + (Get-Location).Path + " +
-  "'. Download it in step 1, then run this from the folder it saved to.') }; " +
-  "Expand-Archive -Force -LiteralPath $zip.FullName -DestinationPath .; " +
+  "if (-not $zip) { throw ('No forgeops-agent zip found in ' + (Get-Location).Path + ' or ' + " +
+  "(Join-Path $env:USERPROFILE 'Downloads') + '. Download it in step 1 first.') }; " +
   "$d = Join-Path $env:LOCALAPPDATA 'Programs\\ForgeOps'; " +
   "New-Item -ItemType Directory -Force $d | Out-Null; " +
-  "Move-Item -Force .\\forgeops-agent.exe $d; " +
+  "$tmp = Join-Path $env:TEMP ('forgeops-' + [guid]::NewGuid().ToString('N')); " +
+  "Expand-Archive -Force -LiteralPath $zip.FullName -DestinationPath $tmp; " +
+  "Move-Item -Force (Join-Path $tmp 'forgeops-agent.exe') $d; " +
+  "Remove-Item -Recurse -Force $tmp; " +
   "$u = [Environment]::GetEnvironmentVariable('PATH','User'); " +
   "if ($u -notlike ('*' + $d + '*')) " +
   "{ [Environment]::SetEnvironmentVariable('PATH', ($u + ';' + $d), 'User') }; " +
@@ -280,19 +288,26 @@ export function installOnPathCommand(platform: Platform, shell: Shell): string {
         ? 'powershell -NoProfile -Command "' + WINDOWS_INSTALL + '"'
         : WINDOWS_INSTALL;
     case "macos":
-    case "linux":
-      // IT EXTRACTS FIRST, for the reason the Windows branch does: step 1 offers a `.tar.gz` and this
-      // step used to `install ./forgeops-agent`, a file that does not exist until the tarball is
-      // opened. Globbed rather than named because the page offers two architectures and cannot know
-      // which was taken; `tar` fails loudly on a glob that matches nothing, which is the right
-      // outcome and names the missing archive rather than the missing binary.
+    case "linux": {
+      // SEARCHES `~/Downloads` AS WELL AS THE CURRENT FOLDER, for the reason the Windows branch does:
+      // the archive is wherever the browser put it, and telling the user to find that themselves is a
+      // step the command can simply take. `ls -t` orders newest-first across both locations.
       //
-      // `/usr/local/bin` is on PATH everywhere and `install` sets the mode in the same step, so there
-      // is no separate chmod to forget. The extract is NOT run under sudo — only the copy into a
-      // system directory needs it.
+      // Extracted into `mktemp -d` rather than the current directory, so a successful install leaves
+      // nothing behind in whatever folder the user was standing in.
+      //
+      // Globbed rather than named because the page offers two architectures and cannot know which was
+      // taken. An empty result PRINTS and stops instead of `exit`, which in an interactive shell would
+      // close the user's terminal.
+      const goos = platform === "macos" ? "darwin" : "linux";
+      const glob = `forgeops-agent_*_${goos}_*.tar.gz`;
       return (
-        `tar -xzf forgeops-agent_*_${platform === "macos" ? "darwin" : "linux"}_*.tar.gz && ` +
-        "sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent"
+        `z=$(ls -t ./${glob} ~/Downloads/${glob} 2>/dev/null | head -1); ` +
+        `if [ -z "$z" ]; then ` +
+        `echo 'No forgeops-agent tarball found here or in ~/Downloads. Download it in step 1 first.'; ` +
+        `else t=$(mktemp -d) && tar -xzf "$z" -C "$t" && ` +
+        `sudo install -m 0755 "$t/forgeops-agent" /usr/local/bin/forgeops-agent && rm -rf "$t"; fi`
       );
+    }
   }
 }

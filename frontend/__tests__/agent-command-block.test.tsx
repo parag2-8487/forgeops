@@ -123,9 +123,17 @@ describe("installOnPathCommand for cmd.exe", () => {
     const linux = installOnPathCommand("linux", "bash");
     expect(macos).toContain("forgeops-agent_*_darwin_*.tar.gz");
     expect(linux).toContain("forgeops-agent_*_linux_*.tar.gz");
-    const install = "sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent";
+    const install = 'sudo install -m 0755 "$t/forgeops-agent" /usr/local/bin/forgeops-agent';
     expect(macos).toContain(install);
     expect(linux).toContain(install);
-    expect(macos.replace("darwin", "linux")).toBe(linux);
+    // `replaceAll`, not `replace`: the goos token appears twice now - once for the current folder
+    // and once for `~/Downloads` - and a single replacement would leave the second one as `darwin`
+    // and fail for a reason that has nothing to do with the property under test.
+    expect(macos.replaceAll("darwin", "linux")).toBe(linux);
+    // BOTH LOCATIONS. The archive is wherever the browser put it, and a command that searched only
+    // the current directory told a user standing in their home folder that nothing was found while
+    // the file sat in `Downloads` one level down.
+    expect(macos).toContain("~/Downloads/");
+    expect(linux).toContain("~/Downloads/");
   });
 });
