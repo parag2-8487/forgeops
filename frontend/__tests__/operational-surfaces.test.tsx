@@ -495,29 +495,171 @@ describe("model tier health", () => {
         primary_endpoint: "qwen3-coder-next",
         primary_protocol: "openai",
         available: true,
+        protocol_supported: true,
+        credential_configured: true,
+        // A local server needs no key, so having none is CORRECT rather than missing.
+        credential_required: false,
+        reason: null,
+        key_ref: null,
+        last_test_ok: null,
+        last_tested_at: null,
+        last_test_detail: "",
         breaker_state: "closed",
       },
       {
         name: "high_coding",
         primary_endpoint: "gpt-5.6-sol",
         primary_protocol: "openai",
+        // The case the whole change is about: the adapter exists, the credential does not.
         available: false,
+        protocol_supported: true,
+        credential_configured: false,
+        credential_required: true,
+        reason: "no credential is configured for 'openai'",
+        key_ref: "openai",
+        last_test_ok: null,
+        last_tested_at: null,
+        last_test_detail: "",
         breaker_state: "open",
       },
     ],
   };
 
-  it("reports each tier's endpoint, availability and breaker state", async () => {
-    mockGet.mockResolvedValue(TIERS);
+  /**
+   * The screen now reads TWO endpoints, so the mock has to answer by path.
+   *
+   * A blanket `mockResolvedValue(TIERS)` returned the tier payload for `GET /ai/credentials` as well,
+   * which the component then tried to treat as a list. Routing by path is also what the real client
+   * does, so a test that does not is asserting against a shape production never produces.
+   */
+  function mockTiers(payload: unknown = TIERS, credentials: unknown = []) {
+    mockGet.mockImplementation((raw: unknown) => {
+      const path = String(raw ?? "");
+      if (path.startsWith("/ai/credentials")) return Promise.resolve(credentials);
+      if (path.startsWith("/ai/endpoints/custom")) return Promise.resolve([]);
+      return Promise.resolve(payload);
+    });
+  }
+
+  it("reports each tier's endpoint, what is configured, and its breaker state", async () => {
+    mockTiers();
     renderPage(<ModelTiersPage />);
 
     expect(await screen.findByTestId("tier-self_hosted")).toBeInTheDocument();
-    expect(screen.getByTestId("availability-high_coding")).toHaveTextContent("unavailable");
     expect(screen.getByTestId("breaker-high_coding")).toHaveTextContent("open");
   });
 
+  it("does not call a tier available when no credential is configured for it", async () => {
+    // THE DEFECT THIS SCREEN WAS REPORTED FOR. `available` was computed from the protocol alone, so a
+    // hosted tier whose only key was the shipped placeholder rendered a green "available" badge. The
+    // status line now names the missing thing, and the reason is shown beside it.
+    mockTiers();
+    renderPage(<ModelTiersPage />);
+
+    expect(await screen.findByTestId("availability-high_coding")).toHaveTextContent(
+      "no credential configured",
+    );
+    expect(screen.getByTestId("reason-high_coding")).toHaveTextContent(
+      "no credential is configured for 'openai'",
+    );
+    expect(screen.getByTestId("credential-high_coding")).toHaveTextContent(
+      /cascade falls through/i,
+    );
+  });
+
+  it("distinguishes a missing adapter from a missing credential", async () => {
+    // Two causes with opposite remedies: one no configuration can fix, one only the operator can.
+    mockTiers({
+      tiers: [
+        {
+          ...TIERS.tiers[1],
+          name: "high_analysis",
+          primary_endpoint: "claude-fable-5",
+          primary_protocol: "anthropic_native",
+          protocol_supported: false,
+          reason: "no adapter exists for the anthropic_native protocol",
+        },
+      ],
+    });
+    renderPage(<ModelTiersPage />);
+
+    expect(await screen.findByTestId("protocol-high_analysis")).toHaveTextContent(
+      /gap in ForgeOps, not in your configuration/i,
+    );
+    expect(screen.getByTestId("protocol-high_analysis")).toHaveTextContent(
+      /no key will make this tier work/i,
+    );
+  });
+
+  it("says a local endpoint needs no credential rather than reporting one missing", async () => {
+    mockTiers();
+    renderPage(<ModelTiersPage />);
+    expect(await screen.findByTestId("credential-self_hosted")).toHaveTextContent(/None needed/i);
+  });
+
+  it("keeps never tested visibly distinct from failing", async () => {
+    mockTiers();
+    renderPage(<ModelTiersPage />);
+    // Configuration cannot prove an endpoint answers, so the only evidence on the page is a real call,
+    // and its absence must not read as health.
+    expect(await screen.findByTestId("test-high_coding")).toHaveTextContent(/Never tested/i);
+  });
+
+  it("shows the provider's own words when a real call failed", async () => {
+    mockTiers({
+      tiers: [
+        {
+          ...TIERS.tiers[1],
+          credential_configured: true,
+          last_test_ok: false,
+          last_tested_at: "2026-09-10T00:00:00Z",
+          last_test_detail: "HTTP 401 Unauthorized - the credential was rejected.",
+        },
+      ],
+    });
+    renderPage(<ModelTiersPage />);
+
+    const panel = await screen.findByTestId("test-high_coding");
+    expect(panel).toHaveTextContent("Failed");
+    // 401, 404 and a DNS failure have three different remedies, and none of them can be chosen from
+    // the words "test failed".
+    expect(panel).toHaveTextContent("HTTP 401 Unauthorized");
+    expect(await screen.findByTestId("availability-high_coding")).toHaveTextContent(
+      "failed its last real call",
+    );
+  });
+
+  it("offers a credential box only where an adapter exists to use the key", async () => {
+    mockTiers();
+    renderPage(<ModelTiersPage />);
+
+    expect(await screen.findByTestId("cred-input-openai")).toBeInTheDocument();
+    // The local tier needs none, so it gets no box.
+    expect(screen.queryByTestId("cred-input-qwen3-coder-next")).not.toBeInTheDocument();
+  });
+
+  it("reports a stored key by length and last characters and never its value", async () => {
+    mockTiers(TIERS, [
+      {
+        key_ref: "openai",
+        length: 41,
+        hint: "0001",
+        last_tested_at: null,
+        last_test_ok: null,
+        last_test_detail: "",
+      },
+    ]);
+    renderPage(<ModelTiersPage />);
+
+    const configured = await screen.findByTestId("cred-configured-openai");
+    expect(configured).toHaveTextContent("41 characters");
+    expect(configured).toHaveTextContent("0001");
+    // There is no route that returns a value and no reveal control, so nothing here can disclose one.
+    expect(screen.queryByText(/reveal/i)).not.toBeInTheDocument();
+  });
+
   it("explains what each breaker state means for the next request", async () => {
-    mockGet.mockResolvedValue(TIERS);
+    mockTiers();
     renderPage(<ModelTiersPage />);
     // The lifecycle is the reason this screen exists: a generation that silently fell back to a
     // secondary endpoint or a safe template looked identical to one that did not.
@@ -525,8 +667,18 @@ describe("model tier health", () => {
     expect(screen.getByText(/five inside thirty seconds opens it/i)).toBeInTheDocument();
   });
 
+  it("does not let a closed breaker read as an assurance", async () => {
+    // `closed` is the STARTING state, so it was being shown beside hosted tiers that had never
+    // completed a call, phrased as though it described a working endpoint.
+    mockTiers();
+    renderPage(<ModelTiersPage />);
+    expect(
+      await screen.findByText(/closed is the starting state rather than a sign of health/i),
+    ).toBeInTheDocument();
+  });
+
   it("describes an unknown breaker state without inventing a meaning", async () => {
-    mockGet.mockResolvedValue({
+    mockTiers({
       tiers: [{ ...TIERS.tiers[0], breaker_state: "quarantined" }],
     });
     renderPage(<ModelTiersPage />);
@@ -534,26 +686,16 @@ describe("model tier health", () => {
     expect(screen.getByText(/no description here/i)).toBeInTheDocument();
   });
 
-  it("says availability is a last observation rather than a probe", async () => {
-    mockGet.mockResolvedValue(TIERS);
+  it("says loading the page tests nothing", async () => {
+    mockTiers();
     renderPage(<ModelTiersPage />);
     // A page that probed every configured model on load would put load on every vendor every time
     // somebody glanced at a dashboard.
-    expect(
-      await screen.findByText(/loading\s+this page does not test any endpoint/i),
-    ).toBeInTheDocument();
-  });
-
-  it("states the limit that only self-hosted endpoints have served a live call", async () => {
-    mockGet.mockResolvedValue(TIERS);
-    renderPage(<ModelTiersPage />);
-    expect(
-      await screen.findByText(/a tier can appear here with an endpoint it has never/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Loading this page tests nothing/i)).toBeInTheDocument();
   });
 
   it("says an empty registry means generation has nothing to route to", async () => {
-    mockGet.mockResolvedValue({ tiers: [] });
+    mockTiers({ tiers: [] });
     renderPage(<ModelTiersPage />);
     expect(
       await screen.findByText(/an empty registry means generation has nothing/i),

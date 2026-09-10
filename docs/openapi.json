@@ -960,6 +960,179 @@
         "title": "CompletionResponseBody",
         "type": "object"
       },
+      "ConnectionTestRequest": {
+        "description": "An endpoint to probe that may not be registered yet.\n\nTHE POINT OF TESTING BEFORE SAVING. An operator pasting a base URL and a key wants to know they are\nright before committing them, and a form that only tests what it has already stored makes them save a\nguess first.",
+        "properties": {
+          "base_url": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential"
+          },
+          "key_ref": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Ref"
+          },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "base_url",
+          "model"
+        ],
+        "title": "ConnectionTestRequest",
+        "type": "object"
+      },
+      "ConnectionTestResponse": {
+        "description": "What happened when a real request was sent.\n\n`ok` IS EVIDENCE, NOT CONFIGURATION. The whole defect this feature answers is a screen that reported\n\"available\" from a static fact; a test that only checked the key was non-empty would repeat it one layer\ndown. So this sends an actual completion and reports the status line the provider returned.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "endpoint_id": {
+            "title": "Endpoint Id",
+            "type": "string"
+          },
+          "latency_ms": {
+            "default": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model_reported": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Reported"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "endpoint_id",
+          "ok",
+          "detail"
+        ],
+        "title": "ConnectionTestResponse",
+        "type": "object"
+      },
+      "CustomEndpointRequest": {
+        "description": "An endpoint an operator is defining.\n\nONLY `openai_compatible` IS ACCEPTED, because it is the only protocol with a client. Accepting a\nprotocol name we cannot speak would let an operator configure something that can never work and then\nwonder why \u2014 which is the defect this whole area is correcting, in a new place.\n\nNO `id` FIELD: it comes from the path. See `normalise_endpoint_id`.",
+        "properties": {
+          "base_url": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "key_ref": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Ref"
+          },
+          "model": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "tier": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "base_url",
+          "tier"
+        ],
+        "title": "CustomEndpointRequest",
+        "type": "object"
+      },
+      "CustomEndpointResponse": {
+        "properties": {
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Ref"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "protocol": {
+            "default": "openai_compatible",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "model",
+          "base_url",
+          "tier"
+        ],
+        "title": "CustomEndpointResponse",
+        "type": "object"
+      },
       "DeleteRequest": {
         "additionalProperties": false,
         "description": "Why the project is being deleted, and an explicit acknowledgement of what goes with it.\n\n`confirm_name` must equal the project's own name. Not a checkbox: a checkbox is clicked by\nreflex, and typing the name is the smallest gesture that proves the operator knows WHICH project\nthey are deleting. The same reason `gh repo delete` asks.",
@@ -2280,6 +2453,73 @@
         "title": "ProjectResponse",
         "type": "object"
       },
+      "ProviderCredentialRequest": {
+        "description": "A credential an operator is setting.\n\nTrimmed, because a key pasted from a web page routinely carries whitespace and a leading or trailing\nspace produces a 401 that looks exactly like a wrong key.",
+        "properties": {
+          "value": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "ProviderCredentialRequest",
+        "type": "object"
+      },
+      "ProviderCredentialResponse": {
+        "description": "What is known about a stored credential, and never the credential.\n\nNo `value` field, deliberately. \u00a77.11 keeps secret values out of anything that leaves the process, and a\nreveal affordance is the one that ends up in a screenshot. `length` and `hint` are enough to show that\nsomething is configured and to tell two keys for one provider apart.",
+        "properties": {
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "key_ref": {
+            "title": "Key Ref",
+            "type": "string"
+          },
+          "last_test_detail": {
+            "default": "",
+            "title": "Last Test Detail",
+            "type": "string"
+          },
+          "last_test_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Test Ok"
+          },
+          "last_tested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Tested At"
+          },
+          "length": {
+            "title": "Length",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key_ref",
+          "length",
+          "hint"
+        ],
+        "title": "ProviderCredentialResponse",
+        "type": "object"
+      },
       "ReadinessCheckResponse": {
         "description": "One checklist item, with the indexed path that satisfied it.\n\n\u00c2\u00a71.4 asks for \"checklist checks\" and a report that says \"why it matters\"; this is that, on the\nwire. `evidence` is what makes a score auditable \u00e2\u20ac\u201d a category at 40 with no evidence anywhere is\nindistinguishable from a bug in the scorer.",
         "properties": {
@@ -3129,6 +3369,7 @@
         "type": "object"
       },
       "TierInfoResponse": {
+        "description": "What is known about a tier \u2014 and, as importantly, what is not.\n\n`available` USED TO MEAN \"an adapter exists for this protocol\" and was rendered as \"this will answer\". A\nfresh install therefore reported three tiers as available with nothing behind them but the placeholders `.env.example` ships.\nThe facts are separated here so the screen can state each one and stop implying the others.",
         "properties": {
           "available": {
             "title": "Available",
@@ -3137,6 +3378,52 @@
           "breaker_state": {
             "title": "Breaker State",
             "type": "string"
+          },
+          "credential_configured": {
+            "title": "Credential Configured",
+            "type": "boolean"
+          },
+          "credential_required": {
+            "title": "Credential Required",
+            "type": "boolean"
+          },
+          "key_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Ref"
+          },
+          "last_test_detail": {
+            "default": "",
+            "title": "Last Test Detail",
+            "type": "string"
+          },
+          "last_test_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Test Ok"
+          },
+          "last_tested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Tested At"
           },
           "name": {
             "title": "Name",
@@ -3149,6 +3436,21 @@
           "primary_protocol": {
             "title": "Primary Protocol",
             "type": "string"
+          },
+          "protocol_supported": {
+            "title": "Protocol Supported",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "required": [
@@ -3156,6 +3458,9 @@
           "primary_endpoint",
           "primary_protocol",
           "available",
+          "protocol_supported",
+          "credential_configured",
+          "credential_required",
           "breaker_state"
         ],
         "title": "TierInfoResponse",
@@ -3576,9 +3881,320 @@
         ]
       }
     },
+    "/api/v1/ai/credentials": {
+      "get": {
+        "description": "Which providers have a credential configured, and what the last real call said about each.",
+        "operationId": "list_provider_credentials_api_v1_ai_credentials_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderCredentialResponse"
+                  },
+                  "title": "Response List Provider Credentials Api V1 Ai Credentials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Provider Credentials",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/credentials/{key_ref}": {
+      "delete": {
+        "description": "Remove a stored credential, falling back to the environment if one is set there.\n\nNot an error when absent: the caller's intent is \"there should be no credential here\", and that is\nalready true. Answering 404 would make a retry after a partial failure look like a new problem.",
+        "operationId": "delete_provider_credential_api_v1_ai_credentials__key_ref__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_ref",
+            "required": true,
+            "schema": {
+              "title": "Key Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Provider Credential",
+        "tags": [
+          "ai"
+        ]
+      },
+      "put": {
+        "description": "Store a provider credential, sealed, and refresh the resolver so it takes effect at once.\n\nADMIN ONLY. A provider key spends the deployment's money and reaches an external service, which is not a\ndeveloper-level decision \u2014 and unlike most settings here, a wrong value is billed rather than refused.\n\nUPSERT ON `key_ref`, so rotating a key is the same operation as setting one. The previous value is\noverwritten rather than versioned: this is a pointer at a live credential, not an audit trail, and\nkeeping superseded secrets is a liability with no reader.\n\nThe test metadata is CLEARED on write, because it described the old value. Leaving `last_test_ok = true`\nbeside a freshly-pasted key is exactly the stale-evidence problem this whole change is about.",
+        "operationId": "set_provider_credential_api_v1_ai_credentials__key_ref__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_ref",
+            "required": true,
+            "schema": {
+              "title": "Key Ref",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCredentialResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Provider Credential",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/endpoints/custom": {
+      "get": {
+        "description": "Every endpoint an operator defined.",
+        "operationId": "list_custom_endpoints_api_v1_ai_endpoints_custom_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CustomEndpointResponse"
+                  },
+                  "title": "Response List Custom Endpoints Api V1 Ai Endpoints Custom Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Custom Endpoints",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/endpoints/custom/{endpoint_id}": {
+      "delete": {
+        "description": "Remove an operator-defined endpoint. Not an error when absent.",
+        "operationId": "delete_custom_endpoint_api_v1_ai_endpoints_custom__endpoint_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Custom Endpoint",
+        "tags": [
+          "ai"
+        ]
+      },
+      "put": {
+        "description": "Define or update an endpoint, and place it in a tier's cascade.\n\nADMIN ONLY, and for a sharper reason than most settings: this names a host that generated code and\nrepository context will be sent to. That is a data-egress decision.\n\nTHE TIER MUST EXIST. An endpoint naming a tier nothing routes to would be stored, listed, and never\nreached \u2014 configured and inert, which is the shape of defect this area is being corrected for.\n\nA RESTART IS REQUIRED before it serves traffic, and the response says so rather than implying\notherwise. The tier config, the breakers and the registry are composed during the lifespan; rebuilding\nthem under live traffic would mean swapping the cascade mid-request, and a stale breaker is worse than\na deferred endpoint.",
+        "operationId": "upsert_custom_endpoint_api_v1_ai_endpoints_custom__endpoint_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomEndpointRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomEndpointResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Custom Endpoint",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/endpoints/probe": {
+      "post": {
+        "description": "Send a real completion to a base URL and model the caller supplies.\n\nLets the Models screen test a custom endpoint BEFORE it is saved, so an operator finds a typo in a base\nURL while the form is still open rather than after committing it.\n\nA credential supplied here is used and NOT stored. Storing it as a side effect of a test would mean a\nfailed test left a bad key configured.",
+        "operationId": "probe_arbitrary_endpoint_api_v1_ai_endpoints_probe_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe Arbitrary Endpoint",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
+    "/api/v1/ai/endpoints/{endpoint_id}/test": {
+      "post": {
+        "description": "Send a real completion to one endpoint and report exactly what came back.\n\nA REAL CALL, deliberately. Checking that a key is non-empty would reproduce the original defect one layer\ndown: the Models screen reported \"available\" from a static fact, and a test that inspected configuration\nrather than behaviour would be equally confident and equally uninformed. Only a request establishes that\na key is accepted, that the model name exists, and that the host is reachable.\n\nTHE PROVIDER'S OWN WORDS ARE RETURNED. 401, 404 and a DNS failure have three different remedies, and an\noperator cannot tell them apart from \"test failed\".\n\nThe outcome is recorded against the credential so the Models screen can show evidence rather than\npresence \u2014 and `None` there keeps meaning \"never tested\", which is not the same as failing.",
+        "operationId": "test_endpoint_connection_api_v1_ai_endpoints__endpoint_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Endpoint Connection",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/v1/ai/tiers": {
       "get": {
-        "description": "Return all tier names with primary endpoint info, availability, and breaker state.",
+        "description": "Return each tier's endpoint, what is known about it, and what the last real call said.\n\nTHE CREDENTIAL HALF IS COMPUTED LIVE, not read from the registry's start-up snapshot. An operator who\nsets a key expects the screen to reflect it without a restart, and the registry was built once during\nthe lifespan. So the snapshot is refreshed from the database here \u2014 this is one of the two moments it\ncan have changed, the other being a write.\n\nA DATABASE THAT WILL NOT ANSWER DOES NOT TAKE THIS SCREEN DOWN. This is a diagnostic surface: it reports\nwhich endpoint each tier would reach and whether its breaker is letting anything through, which are\nexactly the facts somebody wants while something is broken. Answering 500 because the credential table\ncould not be read would remove the page precisely when it is needed, so the refresh is best-effort and\nthe resolver keeps whatever snapshot it already had. That is the same \"last observation\" framing the rest\nof the page already states, rather than a new and quieter one.",
         "operationId": "list_tiers_api_v1_ai_tiers_get",
         "responses": {
           "200": {
