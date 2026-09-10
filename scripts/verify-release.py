@@ -125,7 +125,8 @@ def backend_counts(rep: Report) -> None:
         rep.failures.append(f"only {seen} of {len(SHARDS)} backend shards reported a JUnit result")
         return
     rep.say(
-        f"  {'COMBINED':<12} tests={total:<6} passed={passed:<6} failed={failed:<3} errors={errors:<3} skipped={skipped}"
+        f"  {'COMBINED':<12} tests={total:<6} passed={passed:<6} "
+        f"failed={failed:<3} errors={errors:<3} skipped={skipped}"
     )
     if failed or errors:
         rep.failures.append(f"backend suite has {failed} failure(s) and {errors} error(s)")
@@ -273,9 +274,8 @@ def gates_section(rep: Report) -> None:
         paths = len(json.loads(openapi.read_text(encoding="utf-8"))["paths"])
         drift = run([sys.executable, str(ROOT / "scripts" / "dump-openapi.py"), "--check"], ROOT)
         rep.say(f"  docs/openapi.json paths={paths}")
-        rep.say(
-            f"  dump-openapi.py --check exit={drift.returncode}  {drift.stdout.strip().splitlines()[-1] if drift.stdout.strip() else ''}"
-        )
+        tail = drift.stdout.strip().splitlines()[-1] if drift.stdout.strip() else ""
+        rep.say(f"  dump-openapi.py --check exit={drift.returncode}  {tail}")
         if drift.returncode != 0:
             rep.failures.append("docs/openapi.json has drifted from the live schema")
 
@@ -349,7 +349,7 @@ def main() -> int:
     sha = args.sha or head_sha()
     rep = Report()
     rep.say("=" * 96)
-    rep.say(f"VERIFICATION SET — every figure below was read from an artifact, none typed by hand")
+    rep.say("VERIFICATION SET - every figure below was read from an artifact, none typed by hand")
     rep.say(f"commit {sha}")
     rep.say("=" * 96)
 
