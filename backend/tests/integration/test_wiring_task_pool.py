@@ -38,9 +38,10 @@ from __future__ import annotations
 import os
 
 import pytest
-from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from src.core.tasks import ArqDispatcher, InlineDispatcher, build_dispatcher
+
+from tests.integration.production_app import real_app_lifespan
 
 from .capability import require_capability
 from .production_app import apply_committed_baseline_env
@@ -68,7 +69,7 @@ class TestTheTaskPoolIsComposedWhereItIsNeeded:
         from src.main import create_app
 
         app = create_app()
-        async with LifespanManager(app):
+        async with real_app_lifespan(app):
             assert hasattr(app.state, "arq_pool"), (
                 "the composition must declare arq_pool; get_bundle_service reads it directly"
             )
@@ -124,7 +125,7 @@ class TestTheTaskPoolIsComposedWhereItIsNeeded:
         from src.policies.routes import _arq_pool
 
         app: FastAPI = create_app()
-        async with LifespanManager(app):
+        async with real_app_lifespan(app):
             settings = app.state.settings
 
             class _Request:

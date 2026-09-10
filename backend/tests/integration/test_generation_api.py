@@ -16,12 +16,11 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 from src.core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from src.generation.service import GeneratedFile, GenerationOutcome, GenerationService
 
-from tests.integration.production_app import apply_committed_baseline_env
+from tests.integration.production_app import apply_committed_baseline_env, real_app_lifespan
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 
@@ -35,7 +34,7 @@ async def app_no_auth(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     apply_committed_baseline_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "test")
     app = create_app()
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
 
 

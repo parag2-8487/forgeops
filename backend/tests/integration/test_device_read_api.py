@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 from src.auth.dependencies import require_principal
 from src.auth.device_models import DeviceStatus
@@ -49,12 +48,12 @@ def _principal() -> Principal:
 async def app_no_auth(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     from src.main import create_app
 
-    from tests.integration.production_app import apply_committed_baseline_env
+    from tests.integration.production_app import apply_committed_baseline_env, real_app_lifespan
 
     apply_committed_baseline_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "test")
     app = create_app()
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
 
 

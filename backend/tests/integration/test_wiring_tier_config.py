@@ -26,8 +26,9 @@ from pathlib import Path
 
 import pytest
 import yaml
-from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
+
+from tests.integration.production_app import real_app_lifespan
 
 from .production_app import (
     UNREACHABLE_DATABASE_URL,
@@ -78,7 +79,7 @@ async def _app_from(
         monkeypatch.delenv(key, raising=False)
 
     app = create_app()
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
 
 
@@ -392,5 +393,5 @@ class TestALoadFailureIsNotMasked:
 
         with pytest.raises(ValueError, match="OPENAI_BASE_URL"):
             app = create_app()
-            async with LifespanManager(app):
+            async with real_app_lifespan(app):
                 pytest.fail("startup succeeded with an unset base_url variable")

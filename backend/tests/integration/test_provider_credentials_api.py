@@ -24,7 +24,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -51,7 +50,7 @@ TIER_NAME = "high_coding"
 async def app(monkeypatch: pytest.MonkeyPatch, schema_at_head: str) -> AsyncIterator[Any]:
     from src.main import create_app
 
-    from tests.integration.production_app import apply_committed_baseline_env
+    from tests.integration.production_app import apply_committed_baseline_env, real_app_lifespan
 
     apply_committed_baseline_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "test")
@@ -89,7 +88,7 @@ async def app(monkeypatch: pytest.MonkeyPatch, schema_at_head: str) -> AsyncIter
                     },
                 )
 
-        async with LifespanManager(built):
+        async with real_app_lifespan(built):
             yield built
 
         # Rows are shared state; a credential left behind would decide the next test's availability.

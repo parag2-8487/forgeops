@@ -23,7 +23,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from src.auth.dependencies import require_principal
@@ -55,14 +54,14 @@ async def app_no_auth(monkeypatch: pytest.MonkeyPatch, database_url: str) -> Asy
     """
     from src.main import create_app
 
-    from tests.integration.production_app import apply_committed_baseline_env
+    from tests.integration.production_app import apply_committed_baseline_env, real_app_lifespan
 
     apply_committed_baseline_env(monkeypatch)
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("REDIS_URL", os.environ.get("FORGEOPS_TEST_REDIS_URL", "redis://127.0.0.1:26379/0"))
     app = create_app()
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
 
 

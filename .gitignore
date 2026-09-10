@@ -208,3 +208,13 @@ tests/e2e/fixture-project/*.backup.*
 tests/e2e/fixture-project/charts/
 tests/e2e/fixture-project/infra/
 tests/e2e/fixture-project/.github/
+
+# Artifacts `scripts/verify-release.py` READS, produced by running the suites locally.
+#
+# They are evidence, not source, and two of them cannot be committed even by accident: a JUnit XML
+# embeds test names and captured output, so the credential-shaped fixtures the suite deliberately
+# exercises appear inside it and `check-added-shapes.py` blocks the commit -- correctly, since the
+# gate matches on shape rather than sensitivity.
+*.junit.xml
+backend/coverage.verify.json
+agent/race.status

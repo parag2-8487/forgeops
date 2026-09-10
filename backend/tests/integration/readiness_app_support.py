@@ -34,12 +34,13 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from src.auth.dependencies import require_principal
 from src.auth.device_dependencies import require_device
 from src.auth.principal import Principal, UserRole
+
+from tests.integration.production_app import real_app_lifespan
 
 from .production_app import apply_committed_baseline_env
 
@@ -90,7 +91,7 @@ async def readiness_app(monkeypatch: pytest.MonkeyPatch, schema_at_head: str) ->
     app = create_app()
     app.dependency_overrides[require_principal] = _principal
     app.dependency_overrides[require_device] = _device
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
     app.dependency_overrides.clear()
 

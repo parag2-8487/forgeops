@@ -20,7 +20,12 @@ export default defineConfig({
     // evidence that the gate was on and green. See LEARNING-JOURNAL finding 81.
     coverage: {
       provider: "v8",
-      reporter: ["text", "text-summary"],
+      // `json-summary` alongside the human ones, so the four percentages exist as an ARTIFACT rather
+      // than only as console text somebody retypes. `scripts/verify-release.py` reads
+      // `coverage/coverage-summary.json`; the specific failure that motivated it was a report quoting
+      // coverage figures measured over a subset of the suite, which nobody could check without
+      // re-running everything.
+      reporter: ["text", "text-summary", "json-summary"],
       // Scoped to application source. Everything listed is code that ships to a browser;
       // nothing is excluded because it happens to be poorly covered, which is the failure mode
       // that makes a coverage gate meaningless. `app/**` is included even though route

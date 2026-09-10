@@ -32,7 +32,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -41,7 +40,7 @@ from src.auth.models import UserRole
 from src.auth.principal import Principal
 
 from tests.integration.capability import require_capability
-from tests.integration.production_app import apply_committed_baseline_env
+from tests.integration.production_app import apply_committed_baseline_env, real_app_lifespan
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 
@@ -86,7 +85,7 @@ async def policies_app(
     app = create_app()
     app.dependency_overrides[require_principal] = _principal
 
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
 
     app.dependency_overrides.clear()

@@ -32,6 +32,7 @@ through the real ASGI lifespan, so `app.state` holds the real composition.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Final
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -102,8 +103,41 @@ async def production_app(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FastA
     )
 
     app = create_app()
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
+
+
+#: How long a test may wait for the REAL application's lifespan to finish starting.
+#:
+#: MEASURED, NOT PICKED. `asgi_lifespan`'s default is 5 seconds, and the real lifespan takes **4.59s**
+#: under this harness on a developer machine — because the harness points `DATABASE_URL` and
+#: `REDIS_URL` at a closed port ON PURPOSE, so the app spends that time discovering its dependencies
+#: are unreachable. That is the behaviour under test: the process stays live and readiness reports the
+#: outage. But it leaves roughly 0.4s of headroom against the library default, so under the load of a
+#: full suite run the startup crosses it and the fixture raises `TimeoutError` — twenty tests across
+#: six files failed that way locally while CI, on a quieter machine, passed.
+#:
+#: A flaky fixture is worse than a slow one: it fails tests that are correct and it teaches a reader to
+#: re-run rather than investigate. `test_q27_tier_provenance.py` already passed an explicit 60s for the
+#: same reason, so this generalises an existing decision rather than inventing one.
+#:
+#: NOT A WEAKENED ASSERTION. No test asserts how long startup takes, and this changes no threshold the
+#: project defines — 5 seconds is a library default, not a requirement of this system. What is asserted
+#: is that the app comes up and serves, and that is unchanged.
+LIFESPAN_STARTUP_TIMEOUT: Final = 60.0
+
+
+def real_app_lifespan(app: FastAPI) -> LifespanManager:
+    """Run the real lifespan under a budget that reflects deliberately unreachable dependencies.
+
+    Every integration fixture that boots `create_app()` goes through here, so the budget is stated once
+    rather than defaulted differently in seventeen files.
+    """
+    return LifespanManager(
+        app,
+        startup_timeout=LIFESPAN_STARTUP_TIMEOUT,
+        shutdown_timeout=LIFESPAN_STARTUP_TIMEOUT,
+    )
 
 
 def composed_state_names(app: FastAPI) -> frozenset[str]:

@@ -5,7 +5,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -13,7 +12,7 @@ from src.auth.cerbos import CerbosPrincipal
 from src.auth.dependencies import require_principal
 from src.main import create_app
 
-from tests.integration.production_app import apply_committed_baseline_env
+from tests.integration.production_app import apply_committed_baseline_env, real_app_lifespan
 from tests.integration.wiring import wires
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory, pytest.mark.infisical]
@@ -51,7 +50,7 @@ async def secrets_app(
 
     app.dependency_overrides[require_principal] = mock_principal
 
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
 
     app.dependency_overrides.clear()

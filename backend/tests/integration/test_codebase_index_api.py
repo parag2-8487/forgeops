@@ -25,7 +25,6 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
@@ -36,7 +35,7 @@ from src.auth.device_dependencies import require_device
 from src.auth.models import UserRole
 from src.auth.principal import Principal
 
-from tests.integration.production_app import apply_committed_baseline_env
+from tests.integration.production_app import apply_committed_baseline_env, real_app_lifespan
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 
@@ -115,7 +114,7 @@ async def analysis_app(monkeypatch: pytest.MonkeyPatch, schema_at_head: str) -> 
     # asserted in `test_index_route_device_auth.py`, which is where a weaker credential is proved
     # to be refused.
     app.dependency_overrides[require_device] = _device
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
     app.dependency_overrides.clear()
 

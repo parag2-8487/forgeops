@@ -27,7 +27,8 @@ from typing import Any
 import httpx
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
+
+from tests.integration.production_app import real_app_lifespan
 
 from .capability import require_capability
 from .cerbos_stub import cerbos_health_stub
@@ -73,7 +74,7 @@ async def app_with_unreachable_idp(
         monkeypatch.setenv("CERBOS_URL", cerbos_url)
         monkeypatch.setenv("OPA_URL", opa_url)
         app = create_app()
-        async with LifespanManager(app):
+        async with real_app_lifespan(app):
             yield app
 
 

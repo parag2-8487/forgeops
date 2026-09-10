@@ -39,11 +39,12 @@ import httpx
 import jwt
 import pytest
 import pytest_asyncio
-from asgi_lifespan import LifespanManager
 from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
+
+from tests.integration.production_app import real_app_lifespan
 
 from .capability import require_capability
 from .production_app import apply_committed_baseline_env
@@ -307,7 +308,7 @@ async def auth_app(
     monkeypatch.setenv("ENVELOPE_PEPPER", "test-only-not-a-real-secret-pepper")
 
     app = create_app()
-    async with LifespanManager(app):
+    async with real_app_lifespan(app):
         yield app
 
     engine = create_async_engine(schema_at_head, poolclass=NullPool)

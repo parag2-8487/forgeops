@@ -28,6 +28,8 @@ import yaml
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from tests.integration.production_app import real_app_lifespan
+
 pytestmark = pytest.mark.mandatory
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -109,7 +111,6 @@ def _app_tier_map(tier_yaml: Path) -> dict[str, str]:
     full run. Building the environment per example removes the ordering dependency
     rather than hiding it behind a retry.
     """
-    from asgi_lifespan import LifespanManager
     from src.core.config import load_project_dotenv
     from src.main import create_app
 
@@ -131,7 +132,7 @@ def _app_tier_map(tier_yaml: Path) -> dict[str, str]:
         # nothing about tier configuration, which is what it is actually asserting. A generous
         # explicit bound removes a limit this test never chose; it does not hide a slow path,
         # because the path being timed is the deliberate unreachable-dependency one.
-        async with LifespanManager(app, startup_timeout=60.0, shutdown_timeout=60.0):
+        async with real_app_lifespan(app):
             return {tier.value: chain.primary for tier, chain in app.state.tier_config.tiers.items()}
 
     saved = {key: os.environ.get(key) for key in environment}
