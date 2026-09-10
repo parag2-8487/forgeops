@@ -124,6 +124,58 @@ ROLLBACK_HANDLE_TTL: Final[timedelta] = timedelta(days=30)
 FILE_RESOURCE_TYPE: Final[str] = "forgeops_file"
 
 
+#: Score a file change set must reach before destruction blocks it.
+#:
+#: DERIVED, NOT PICKED. Every file item classifies as `unknown` (multiplier 2), so one deletion
+#: contributes 8 × 2 = 16 and four contribute 64. Four is the smallest count the suite ever
+#: asserted must be refused outright, so 64 is the smallest threshold that keeps that refusal
+#: while admitting three deletions to approval, where a human sees each path before it goes.
+FILE_BLOCK_SCORE: Final[int] = 64
+
+#: Score at which a file change set stops being routine and wants a human.
+#:
+#: Five created files, or three updated ones. Left at the analyser's default because approval is
+#: cheap and reversible whereas an unreviewed write is neither; there was no reason found to
+#: loosen it.
+FILE_WARN_SCORE: Final[int] = 10
+
+
+def file_change_set_analyzer() -> SemanticPlanAnalyzer:
+    """The blast-radius analyser calibrated for file change sets rather than cloud plans.
+
+    WHY THIS EXISTS. The chokepoint scored file change sets with the analyser's Terraform defaults
+    (warn 10, block 25) and that combination blocks a correct generation. A run producing a Helm
+    chart, a Dockerfile edit, a workflow, a Terraform root module and the Kubernetes trio is ten
+    files — seven created and three updated, 7×2 + 3×4 = 26 — which crosses a block threshold of
+    25 while deleting nothing. `block` is terminal: it persists `blocked`, mints no authority and
+    raises, so there is no approval path out of it. The user saw a complete generation refused as
+    though it were dangerous.
+
+    It was invisible because the only test to exercise the block submitted four deletions, whose
+    score of 64 clears the threshold for the intended reason. Nothing ever submitted a large
+    create-only change set, so the cliff at thirteen new files was never observed.
+
+    D-107 made it strictly worse rather than causing it. Attaching `service.yaml` and
+    `ingress.yaml` to the Kubernetes instruction was right — a Deployment alone receives no
+    traffic — but it added two files to the very change set already near the threshold. The better
+    the generation got at emitting a complete deployable unit, the more reliably governance
+    refused it.
+
+    WHAT THIS DOES NOT WEAKEN. Deletion still blocks at the same count it always did, stateful
+    deletions still block unconditionally, and a single destructive item still forces at least
+    `warn`. Nothing that used to be refused is now applied without a human: what changes is that a
+    large *non-destructive* change set routes to the approval gate instead of a dead end. Files
+    are the one unit where that is defensible, because the chokepoint keeps a byte-exact pre-image
+    and a rollback handle for every applied item — a file change set has nothing unrecoverable in
+    it, which is exactly why `stateful_deletions` can never fire for one.
+    """
+    return SemanticPlanAnalyzer(
+        warn_threshold=FILE_WARN_SCORE,
+        block_threshold=FILE_BLOCK_SCORE,
+        size_alone_blocks=False,
+    )
+
+
 def merge_policy_parameters(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Combine the parameter sets of a project's enabled policies into one `input.project`.
 

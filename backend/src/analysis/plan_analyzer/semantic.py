@@ -143,9 +143,30 @@ class SemanticPlanAnalyzer:
         *,
         warn_threshold: int = 10,
         block_threshold: int = 25,
+        size_alone_blocks: bool = True,
     ) -> None:
+        """Calibration, not behaviour: the scoring is identical for every caller.
+
+        `size_alone_blocks` exists because `score` is a scalar that has already lost the action
+        mix, and the two units this analyser is asked about disagree about what a large score
+        MEANS. For a Terraform plan, size and danger travel together — the score only climbs
+        because resources are being replaced or destroyed — so size alone blocking is correct and
+        this stays `True`.
+
+        For a file change set (`plan_from_change_items`) it is not. Every item classifies as
+        `unknown` and a *created* file contributes 2 points, so thirteen brand-new files reach the
+        default block threshold of 25 while destroying nothing. Blocking is terminal and has no
+        recourse, whereas "many files at once" is precisely what the approval gate is for. Passing
+        `False` keeps destruction blocking and lets size route to approval instead of a dead end.
+
+        Deliberately a calibration flag rather than a second analyser: D-65 rejected a separate
+        implementation for file change sets because two blast-radius implementations are how two
+        answers to the same question come to disagree. This changes which conclusion is drawn from
+        the evidence, not how the evidence is computed.
+        """
         self._warn = warn_threshold
         self._block = block_threshold
+        self._size_alone_blocks = size_alone_blocks
 
     def analyse(self, doc: PlanDocument) -> BlastRadius:
         score = 0
@@ -176,7 +197,13 @@ class SemanticPlanAnalyzer:
                     stateful_deletions.append(address)
 
         # Verdict is a pure, monotone function of the accumulated evidence.
-        if stateful_deletions or score >= self._block:
+        #
+        # Monotonicity (P-11) survives `size_alone_blocks=False`: adding a destructive action still
+        # only ever raises `score` and `destructive_count`, and both appear on the blocking side of
+        # this rule. What the flag removes is a block reachable with `destructive_count == 0`, which
+        # no destructive action was needed to trigger in the first place.
+        size_blocks = score >= self._block and (self._size_alone_blocks or destructive_count > 0)
+        if stateful_deletions or size_blocks:
             verdict = "block"
         elif destructive_count > 0 or score >= self._warn:
             verdict = "warn"

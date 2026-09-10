@@ -40,7 +40,7 @@ from src.audit.writer import AuditWriter
 from src.auth.devices import DeviceService
 from src.auth.models import UserRole
 from src.auth.principal import Principal
-from src.governance.chokepoint import ChangeItemRequest, GovernanceChokepoint
+from src.governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, file_change_set_analyzer
 from src.governance.policy import GovernanceDecision
 from src.governance.sequencing import RedisEnvelopeSequencer
 
@@ -182,7 +182,11 @@ def build_chokepoint(
     return GovernanceChokepoint(
         policy=policy,
         approval_gate=ThresholdApprovalGate(),
-        analyzer=analyzer or SemanticPlanAnalyzer(),
+        # The SAME calibration `main.py` wires, because a harness that analysed file change sets
+        # with the Terraform defaults is how the block-at-thirteen-created-files defect survived a
+        # green suite: every test here would have agreed with a production that refused a correct
+        # generation.
+        analyzer=analyzer or file_change_set_analyzer(),
         audit_writer=AuditWriter(),
         sequencer=RedisEnvelopeSequencer(redis_client, key_prefix=f"forgeops-test-{uuid.uuid4().hex[:8]}"),
         sink=sink,

@@ -383,6 +383,63 @@ class TestAdmissionRefusals:
 
 
 class TestTheBlockedTransit:
+    async def test_a_complete_generation_reaches_approval_rather_than_a_terminal_block(
+        self, sessions: async_sessionmaker[AsyncSession], sink: RecordingSink, redis_client: Any
+    ) -> None:
+        """Run `ae72a6ad`'s exact ten items, through the real chokepoint, at the real calibration.
+
+        A user's generation was refused as `blast-radius-blocked`. It had produced a Helm chart, a
+        Dockerfile edit, a workflow, a Terraform root module and the Kubernetes trio: seven files created
+        and three updated, deleting nothing. Every file item classifies as `unknown` (multiplier 2), so
+        7×2 + 3×4 = 26 against the analyser's Terraform block threshold of 25 — and `block` is terminal,
+        persisting `blocked`, minting no authority and raising, with no approval path out of it.
+
+        This asserts the outcome a change set of that shape must get: `pending_approval`, which is what
+        the approval gate exists for. It is the wired path rather than the analyser in isolation, because
+        the defect was never in the scoring — it was in which calibration the chokepoint handed a file
+        change set, and `build_chokepoint` now uses the same one `main.py` wires.
+        """
+        chokepoint = build_chokepoint(policy=ScriptedPolicy(decision=allow()), sink=sink, redis_client=redis_client)
+        items = tuple(
+            [
+                ChangeItemRequest(file_path=path, action="create", new_content="x\n")
+                for path in (
+                    "charts/test-2/Chart.yaml",
+                    "charts/test-2/templates/deployment.yaml",
+                    "charts/test-2/templates/_helpers.tpl",
+                    "charts/test-2/values.yaml",
+                    ".github/workflows/build.yml",
+                    "infra/main.tf",
+                    "k8s/ingress.yaml",
+                )
+            ]
+            + [
+                ChangeItemRequest(file_path=path, action="update", old_content="x\n", new_content="y\n")
+                for path in ("Dockerfile", "k8s/deployment.yaml", "k8s/service.yaml")
+            ]
+        )
+
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            submission = await chokepoint.submit(
+                session,
+                MutationRequest(
+                    project_id=fixture.project_id,
+                    items=items,
+                    reason="generated from prompt: containerise this service",
+                    origin="generation",
+                ),
+                principal=fixture.principal,
+            )
+
+            assert submission.blast_radius_score == 26, "the arithmetic the defect turned on"
+            assert submission.blast_radius_verdict != "block", (
+                "a complete generation that deletes nothing must not hit a terminal refusal"
+            )
+            assert submission.status == "pending_approval", f"expected the approval gate, got {submission.status!r}"
+            sets = await change_sets(session, fixture.project_id)
+            assert sets[0]["status"] == "pending_approval"
+
     async def test_a_blast_radius_block_persists_the_state_and_mints_nothing(
         self, sessions: async_sessionmaker[AsyncSession], sink: RecordingSink, redis_client: Any
     ) -> None:
