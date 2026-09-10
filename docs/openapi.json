@@ -3369,7 +3369,7 @@
         "type": "object"
       },
       "TierInfoResponse": {
-        "description": "What is known about a tier \u2014 and, as importantly, what is not.\n\n`available` USED TO MEAN \"an adapter exists for this protocol\" and was rendered as \"this will answer\". A\nfresh install therefore reported three tiers as available with nothing behind them but the placeholders `.env.example` ships.\nThe facts are separated here so the screen can state each one and stop implying the others.",
+        "description": "What is known about a tier \u2014 and, as importantly, what is not.\n\n`available` USED TO MEAN \"an adapter exists for this protocol\" and was rendered as \"this will answer\". A\nfresh install therefore reported three tiers as available with nothing behind them but the\nplaceholders `.env.example` ships.\nThe facts are separated here so the screen can state each one and stop implying the others.",
         "properties": {
           "available": {
             "title": "Available",

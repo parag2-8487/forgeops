@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # here is invisible to `--autogenerate`, which then proposes dropping its table:
 # `test_alembic_autogenerate_clean.py` (task 5.9) is what turns that into a failure
 # rather than a surprise in a later diff.
+from src.ai.provider_models import ProviderCredential, ProviderEndpoint  # noqa: F401, E402
 from src.analysis.models import (  # noqa: F401, E402
     AnalysisReport,
     Embedding,
