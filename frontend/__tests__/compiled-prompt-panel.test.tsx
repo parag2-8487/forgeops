@@ -83,7 +83,11 @@ describe("what the panel shows", () => {
   it("reads the run it was given", async () => {
     mockGet.mockResolvedValue(record());
     await reveal();
-    await waitFor(() => expect(mockGet).toHaveBeenCalledWith(`/api/v1/generation/runs/${RUN}`));
+    // THE PATH IS BARE, and this assertion is why the defect shipped: it agreed with the component
+    // rather than with the client. `api.get` prepends `NEXT_PUBLIC_API_BASE_URL`, which ends in
+    // `/api/v1`, so the old `/api/v1/generation/runs/...` became `/api/v1/api/v1/...` and answered 404.
+    // Mocking `api.get` hid it, because a mock has no base URL to double up.
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith(`/generation/runs/${RUN}`));
   });
 
   it("reports the estimate beside the budget", async () => {

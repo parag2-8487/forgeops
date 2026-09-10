@@ -116,6 +116,16 @@ describe("installOnPathCommand for cmd.exe", () => {
   });
 
   it("gives macOS the same POSIX install as Linux", () => {
-    expect(installOnPathCommand("macos", "bash")).toBe(installOnPathCommand("linux", "bash"));
+    // THE SAME MECHANISM, NOT THE SAME STRING. Both extract a tarball and then `install(1)` it,
+    // but each names its own archive - the release asset is `..._darwin_...` on macOS and
+    // `..._linux_...` on Linux, and a command that globbed for the wrong one would match nothing.
+    const macos = installOnPathCommand("macos", "bash");
+    const linux = installOnPathCommand("linux", "bash");
+    expect(macos).toContain("forgeops-agent_*_darwin_*.tar.gz");
+    expect(linux).toContain("forgeops-agent_*_linux_*.tar.gz");
+    const install = "sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent";
+    expect(macos).toContain(install);
+    expect(linux).toContain(install);
+    expect(macos.replace("darwin", "linux")).toBe(linux);
   });
 });

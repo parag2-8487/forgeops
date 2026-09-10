@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { resolve } from "path";
 
 const ROOT = resolve(__dirname, "..");
@@ -65,5 +65,62 @@ describe("Makefile load target validation", () => {
   it("load target references k6", () => {
     const makefile = readFileSync(resolve(ROOT, "..", "Makefile"), "utf-8");
     expect(makefile).toContain("k6");
+  });
+});
+
+describe("no caller may spell the API base path", () => {
+  /**
+   * `api.get("/api/v1/...")` is always a bug, and it shipped once.
+   *
+   * `lib/api/client.ts` builds every request as `${NEXT_PUBLIC_API_BASE_URL}${path}`, and that base
+   * already ends in `/api/v1`. `CompiledPromptPanel` passed `/api/v1/generation/runs/${runId}`, so the
+   * browser requested `/api/v1/api/v1/generation/runs/...` and got a 404 that the panel reported as
+   * "Not Found" - a message a reader cannot tell apart from a run that genuinely does not exist.
+   *
+   * ITS OWN TEST DID NOT CATCH IT because the test mocked `api.get` and asserted the same wrong string.
+   * A mock has no base URL to double up, so both sides agreed and both were wrong. This checks the
+   * SOURCE instead, which is the only place the mistake is visible.
+   */
+  const DIRS = ["app", "components", "features", "lib", "hooks", "stores"];
+
+  function sourceFiles(dir: string): string[] {
+    const full = resolve(ROOT, dir);
+    if (!existsSync(full)) return [];
+    const out: string[] = [];
+    for (const entry of readdirSync(full)) {
+      const child = resolve(full, entry);
+      if (statSync(child).isDirectory()) {
+        out.push(...sourceFiles(resolve(dir, entry)));
+      } else if (/\.(ts|tsx)$/.test(entry)) {
+        out.push(child);
+      }
+    }
+    return out;
+  }
+
+  it("passes a bare path to every api call, never one starting with the base", () => {
+    const offenders: string[] = [];
+    const call =
+      /\bapi\s*\.\s*(?:get|post|put|patch|delete|deleteWith|stream)\s*(?:<[^>]*>)?\s*\(\s*[`"'](\/api\/v\d)/;
+
+    for (const file of DIRS.flatMap(sourceFiles)) {
+      readFileSync(file, "utf8")
+        .split("\n")
+        .forEach((line, index) => {
+          if (call.test(line)) {
+            offenders.push(`${file.replace(ROOT, "")}:${index + 1}: ${line.trim()}`);
+          }
+        });
+    }
+
+    expect(
+      offenders,
+      `these calls prepend the API base a second time, producing /api/v1/api/v1/...:\n${offenders.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  it("finds the files it is meant to be scanning", () => {
+    // Without this the walk could silently match nothing - a guard that examines no files passes.
+    expect(DIRS.flatMap(sourceFiles).length).toBeGreaterThan(40);
   });
 });

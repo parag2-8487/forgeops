@@ -223,8 +223,24 @@ export function archiveName(platform: Platform, tag: string, arch: "amd64" | "ar
  * `\"` that PowerShell could not parse. Removing the character removes the whole class.
  *
  * `Join-Path` also handles a username with a space in it, which a bare unquoted path would not.
+ *
+ * IT EXTRACTS THE ARCHIVE FIRST, and the previous version did not. Step 1 offers a `.zip`; this step
+ * then moved `.\forgeops-agent.exe`, a file that does not exist until the zip is opened. A user
+ * following the screen exactly got
+ *
+ *     Move-Item : Cannot find path 'C:\Users\<name>\forgeops-agent.exe' because it does not exist.
+ *
+ * and nothing on the page said to unzip anything. The archive is found by GLOB rather than by name
+ * because the page offers two architectures and cannot know which one was taken; newest-first so a
+ * re-download wins over a stale copy. A missing archive now fails with a sentence naming the
+ * directory it looked in, instead of a `Move-Item` error about a path the user never typed.
  */
 const WINDOWS_INSTALL =
+  "$zip = Get-ChildItem -Filter 'forgeops-agent_*_windows_*.zip' | " +
+  "Sort-Object LastWriteTime -Descending | Select-Object -First 1; " +
+  "if (-not $zip) { throw ('No forgeops-agent zip found in ' + (Get-Location).Path + " +
+  "'. Download it in step 1, then run this from the folder it saved to.') }; " +
+  "Expand-Archive -Force -LiteralPath $zip.FullName -DestinationPath .; " +
   "$d = Join-Path $env:LOCALAPPDATA 'Programs\\ForgeOps'; " +
   "New-Item -ItemType Directory -Force $d | Out-Null; " +
   "Move-Item -Force .\\forgeops-agent.exe $d; " +
@@ -265,8 +281,18 @@ export function installOnPathCommand(platform: Platform, shell: Shell): string {
         : WINDOWS_INSTALL;
     case "macos":
     case "linux":
-      // `/usr/local/bin` is on PATH everywhere and `install` sets the mode in the same step, so
-      // there is no separate chmod to forget.
-      return "sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent";
+      // IT EXTRACTS FIRST, for the reason the Windows branch does: step 1 offers a `.tar.gz` and this
+      // step used to `install ./forgeops-agent`, a file that does not exist until the tarball is
+      // opened. Globbed rather than named because the page offers two architectures and cannot know
+      // which was taken; `tar` fails loudly on a glob that matches nothing, which is the right
+      // outcome and names the missing archive rather than the missing binary.
+      //
+      // `/usr/local/bin` is on PATH everywhere and `install` sets the mode in the same step, so there
+      // is no separate chmod to forget. The extract is NOT run under sudo — only the copy into a
+      // system directory needs it.
+      return (
+        `tar -xzf forgeops-agent_*_${platform === "macos" ? "darwin" : "linux"}_*.tar.gz && ` +
+        "sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent"
+      );
   }
 }

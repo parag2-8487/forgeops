@@ -47,7 +47,11 @@ export function CompiledPromptPanel({ runId }: { runId: string }) {
     setLoading(true);
     setError(null);
     try {
-      setRecord(await api.get<GenerationRunRecord>(`/api/v1/generation/runs/${runId}`));
+      // NO `/api/v1` PREFIX. `api.get` prepends `NEXT_PUBLIC_API_BASE_URL`, which already ends in
+      // `/api/v1`, so spelling it here requested `/api/v1/api/v1/generation/runs/...` and got a 404 the
+      // panel faithfully reported as "Not Found" — indistinguishable, to a reader, from a run that does
+      // not exist. Every other caller in this application passes the bare path.
+      setRecord(await api.get<GenerationRunRecord>(`/generation/runs/${runId}`));
       setOpen(true);
     } catch (caught) {
       if (caught instanceof ApiProblemError) {
