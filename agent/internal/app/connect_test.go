@@ -191,6 +191,18 @@ func TestConnect_HasOnlyTheFlagsTheUIRenders(t *testing.T) {
 	// asserts the same thing from the Go side, so a flag removed here fails the agent's own suite
 	// rather than only the repository gate.
 	want := map[string]bool{"code": true, "backend": true, "project": true, "workspace": true}
+
+	// `--replace` is DELIBERATELY NOT RENDERED, and the reason is that the UI cannot know its cost.
+	//
+	// It unpairs this device from whatever project it currently holds a certificate for. The web page
+	// printing the command has no idea what the operator's local agent is paired to — it cannot even
+	// know whether an agent is installed — so a rendered `--replace` would advise every reader to
+	// destroy a pairing that most of them do not have and some of them need.
+	//
+	// The CLI names it at the only moment it is relevant: in the refusal, where the agent has just read
+	// its own credential and can say which project it would be unpairing from. That is better placement
+	// than a checkbox on a page, so this is an exclusion rather than a gap.
+	notRendered := map[string]bool{"replace": true}
 	got := map[string]bool{}
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { got[f.Name] = true })
 
@@ -200,7 +212,7 @@ func TestConnect_HasOnlyTheFlagsTheUIRenders(t *testing.T) {
 		}
 	}
 	for name := range got {
-		if !want[name] {
+		if !want[name] && !notRendered[name] {
 			t.Errorf("connect accepts --%s, which the UI does not know about; add it to "+
 				"AGENT_COMMANDS or to NOT_RENDERED", name)
 		}

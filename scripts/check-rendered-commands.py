@@ -56,6 +56,12 @@ RENDERED_SOURCES = (
 NOT_RENDERED: dict[tuple[str, str], str] = {
     ("pair", "wipe"): "destructive; recovering from a half-paired state is an operator action, "
     "not something to put a button next to a pairing code",
+    ("connect", "replace"): "destructive, and the UI cannot know its cost — it unpairs this device "
+    "from whatever project it currently holds a certificate for, and the page printing the command "
+    "has no idea what the local agent is paired to or whether one is installed. A rendered --replace "
+    "would advise every reader to destroy a pairing most of them do not have. The CLI names it in "
+    "the refusal instead, where the agent has read its own credential and can say which project it "
+    "would be unpairing from",
     ("watch", "debounce"): "tuning, not part of any first run",
     ("watch", "once"): "a testing aid",
 }

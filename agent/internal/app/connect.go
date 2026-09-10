@@ -38,6 +38,7 @@ func newConnectCmd(a *App) *cobra.Command {
 		backend   string
 		projectID string
 		workspace string
+		replace   bool
 	)
 
 	cmd := &cobra.Command{
@@ -93,7 +94,7 @@ func newConnectCmd(a *App) *cobra.Command {
 			// Re-pairing would spend a second code for nothing and, worse, `pair` refuses a
 			// second exchange on a healthy agent — so a naive `connect` would fail on its second
 			// invocation, which is the invocation a user makes after a laptop reboot.
-			paired, pairedProject, err := alreadyPaired(ctx, manager)
+			paired, pairedProject, pairedDevice, err := alreadyPaired(ctx, manager)
 			if err != nil {
 				return fmt.Errorf("connect: stage 1 (pair): %w", err)
 			}
@@ -118,13 +119,81 @@ func newConnectCmd(a *App) *cobra.Command {
 				// project — in neither case is there a disagreement to report, so it behaves exactly
 				// as it did before rather than refusing on a fact it does not have.
 				if resolvedProject != "" && pairedProject != "" && resolvedProject != pairedProject {
+					// THE ONE-STEP PATH, and it is opt-in for a reason.
+					//
+					// Wiping a credential destroys this device's identity for the project it was
+					// paired to. Doing that automatically because `--project` disagreed would
+					// deauthorise a working agent on a mistyped id, so `--replace` makes the
+					// operator say it. What it does NOT do is make them run a second command and
+					// obtain a second code.
+					if replace {
+						if code == "" {
+							return fmt.Errorf(
+								"connect: stage 1 (pair): --replace needs --code, because wiping the "+
+									"credential for project %s leaves this agent unpaired and only a "+
+									"pairing code can pair it again",
+								pairedProject)
+						}
+						if err := manager.Wipe(ctx); err != nil {
+							return fmt.Errorf("connect: stage 1 (pair): unpairing from %s: %w", pairedProject, err)
+						}
+						_, _ = fmt.Fprintf(out,
+							"[1/3] pair   unpaired from project %s at your request; pairing to %s\n",
+							pairedProject, resolvedProject)
+						// SAID AT THE MOMENT IT HAPPENS, because nobody goes looking for it later.
+						//
+						// Wiping removes the credential from THIS machine. It does not revoke it: the
+						// certificate stays valid and `agent_devices` still lists the device as active,
+						// so a copy of the old credential store would still be authorised for the old
+						// project. `DELETE /api/v1/agents/{device_id}` is admin-only and the agent
+						// cannot revoke itself, so the operator has to do it — and cannot revoke a
+						// device nobody named.
+						if pairedDevice != "" {
+							_, _ = fmt.Fprintf(out,
+								"[1/3] pair   NOTE the old credential is removed from this machine but "+
+									"NOT revoked;\n"+
+									"             device %s stays authorised for project %s until an "+
+									"admin revokes it\n"+
+									"             (Agents screen, or DELETE /api/v1/agents/%s)\n",
+								pairedDevice, pairedProject, pairedDevice)
+						}
+						result, perr := manager.Pair(ctx, code, resolved)
+						if perr != nil {
+							return fmt.Errorf("connect: stage 1 (pair): %w", perr)
+						}
+						_, _ = fmt.Fprintf(out, "[1/3] pair   device %s, credentials in %s\n",
+							result.DeviceID, result.StoreBackend)
+						break
+					}
+					// TWO OPTIONS, DISTINGUISHED BY A FACT ONLY THE OPERATOR HAS. A device certificate
+					// authorises one project, so this agent serves one project — that part is not a
+					// choice. What varies is whether the new project REPLACES the old one or sits
+					// beside it, and that depends on whether they are the same codebase.
+					//
+					// An earlier version of this message led with the multi-agent option as though it
+					// were generally better. It is not: several projects pointing at one directory is
+					// the common shape while somebody is finding their way around, and starting a
+					// second agent on the same folder indexes one tree into two projects for no
+					// benefit. Neither option is recommended over the other here, because the agent
+					// cannot see the other project's workspace path and so cannot know which applies.
 					return fmt.Errorf(
 						"connect: stage 1 (pair): this agent is already paired to project %s, but "+
-							"--project names %s. A device certificate authorises one project, so the "+
-							"backend would refuse the scan with 403. Run `forgeops-agent pair --wipe` "+
-							"and connect again with a new code for %s, or drop --project to use the "+
-							"project this device is already paired to",
-						pairedProject, resolvedProject, resolvedProject)
+							"--project names %s. A device certificate authorises one project, so one "+
+							"agent serves one project and the backend would refuse the scan with 403.\n\n"+
+							"Your pairing code has NOT been used — this was decided locally, before "+
+							"anything was sent.\n\n"+
+							"If %s REPLACES the project this agent was serving, move the agent and give "+
+							"up the old pairing:\n"+
+							"    re-run this command with --replace, using the same code.\n\n"+
+							"If both projects are separate codebases you want indexed at the same time, "+
+							"give this one its own credential store and run a second agent:\n"+
+							"    $env:AGENT_STATE_DIR=\"$env:LOCALAPPDATA\\ForgeOps\\%s\"\n"+
+							"    forgeops-agent connect --code <code> --project %s --workspace <path>\n"+
+							"  One state directory holds one credential, so both stay paired. Only worth "+
+							"it when the two projects are different directories.\n\n"+
+							"To carry on with the project this device already has, drop --project.",
+						pairedProject, resolvedProject, resolvedProject,
+						shortID(resolvedProject), resolvedProject)
 				}
 				if resolvedProject == "" {
 					// The stored credential names the project, so the user need not repeat it — the
@@ -193,6 +262,11 @@ func newConnectCmd(a *App) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&code, "code", "", "the one-time pairing code from the ForgeOps UI (required)")
+	cmd.Flags().BoolVar(&replace, "replace", false,
+		"when this agent is already paired to a DIFFERENT project, unpair from it and pair to the one "+
+			"--project names, using --code. Requires --code, because wiping leaves the agent unpaired. "+
+			"Opt-in rather than automatic: it destroys this device's identity for the old project, which "+
+			"a mistyped --project must not be able to do")
 	cmd.Flags().StringVar(&backend, "backend", "",
 		"backend URL; overrides AGENT_BACKEND_WSS_URL and any value discovered from .env")
 	cmd.Flags().StringVar(&projectID, "project", "",
@@ -214,14 +288,35 @@ func newConnectCmd(a *App) *cobra.Command {
 // certificate authorises one project, so a stored credential is only usable for the project it was
 // issued for, and the caller cannot judge that from a bool. Empty means a credential written before
 // the field existed.
-func alreadyPaired(ctx context.Context, manager *session.Manager) (bool, string, error) {
+// shortID is the leading segment of a uuid, for naming a directory a human has to type.
+//
+// A full uuid in a path is correct and unreadable; the first segment is unique enough to keep two projects
+// apart on one machine and short enough that an operator can see which is which in a file browser.
+func shortID(id string) string {
+	if index := strings.Index(id, "-"); index > 0 {
+		return id[:index]
+	}
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+// alreadyPaired reports whether a usable credential exists, and what it is for.
+//
+// The DEVICE ID is returned as well as the project because `--replace` discards this credential without
+// revoking it — `DELETE /api/v1/agents/{device_id}` is admin-only, so the agent cannot revoke itself — and an
+// operator cannot revoke what nobody named. Re-pairing therefore leaves the previous certificate valid and
+// authorised, which is worth saying out loud at the moment it happens rather than leaving to be discovered in
+// a device list months later.
+func alreadyPaired(ctx context.Context, manager *session.Manager) (bool, string, string, error) {
 	status, err := manager.Status(ctx)
 	switch {
 	case err == nil:
-		return true, status.ProjectID, nil
+		return true, status.ProjectID, status.DeviceID, nil
 	case errors.Is(err, session.ErrUnpaired), errors.Is(err, session.ErrNoCredentials):
-		return false, "", nil
+		return false, "", "", nil
 	default:
-		return false, "", err
+		return false, "", "", err
 	}
 }
