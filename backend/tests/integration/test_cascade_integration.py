@@ -618,6 +618,13 @@ class TestUnsupportedNativeProtocolSkip:
         }
 
         # Build registry from config — native protocols should be unavailable
+        #
+        # THE REGISTRY GETS THE SAME RESOLVER THE ROUTER DOES, which is how `main.py` wires it.
+        # Availability is now a conjunction that includes "is a credential resolvable", and the router
+        # SKIPS an unavailable endpoint. A registry built without the resolver reports every endpoint's
+        # credential as missing, so `ep-fallback` was skipped too and the cascade exhausted, which would
+        # have turned this into a test asserting that a SUPPORTED protocol is unreachable.
+        resolver = _fake_key_resolver()
         ok_http = httpx.AsyncClient(transport=MockTransport())
         registry = EndpointRegistry.from_config(
             TierConfig(
@@ -631,6 +638,7 @@ class TestUnsupportedNativeProtocolSkip:
                 endpoints=descs,
             ),
             http=ok_http,
+            key_resolver=resolver,
         )
 
         chain = TierChain(primary="ep-anthropic", secondary="ep-google", cross_vendor=("ep-fallback",))
@@ -642,7 +650,7 @@ class TestUnsupportedNativeProtocolSkip:
             registry=registry,
             cache=cache,
             breakers={},
-            key_resolver=_fake_key_resolver(),
+            key_resolver=resolver,
         )
 
         result = await router.complete(
@@ -650,11 +658,15 @@ class TestUnsupportedNativeProtocolSkip:
         )
         assert result.outcome == RoutingOutcome.OK
 
-        # Anthropic and Google should be skipped with unsupported_protocol reason
+        # Anthropic and Google are skipped, and the reason NAMES THE PROTOCOL that has no adapter.
+        # It was previously the one string `unsupported_protocol_phase_0` for every failure, so a gap in
+        # ForgeOps and a gap in the operator's configuration were indistinguishable.
         skipped = [a for a in result.attempts if a.result == "skipped"]
         assert len(skipped) == 2
-        assert "unsupported_protocol" in skipped[0].reason
-        assert "unsupported_protocol" in skipped[1].reason
+        assert "no adapter exists" in skipped[0].reason
+        assert "anthropic_native" in skipped[0].reason
+        assert "no adapter exists" in skipped[1].reason
+        assert "google_native" in skipped[1].reason
 
         # Fallback should succeed
         assert result.endpoint_id == "ep-fallback"
@@ -745,7 +757,8 @@ class TestOpenAICompatibleIsOnlyProductionAdapter:
         avail_anth = registry.get_availability("ep-anth")
         assert avail_anth is not None
         assert avail_anth.available is False
-        assert "unsupported_protocol" in avail_anth.reason
+        assert "no adapter exists" in avail_anth.reason
+        assert "anthropic_native" in avail_anth.reason, "the reason names the protocol, not a generic code"
 
     def test_model_endpoint_protocol_only_openai_impl(self):
         """Verify only OpenAICompatibleEndpoint implements ModelEndpoint in production."""
