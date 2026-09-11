@@ -1,4 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
+
+// Package scanner's watcher, and the one environment where it cannot work.
+//
+// WATCH MODE ACROSS A HOST-TO-VM BIND MOUNT: A PLATFORM CONSTRAINT, NOT A DEFECT HERE. MEASURED.
+//
+// The open question was whether watch mode failing on Linux was this code's fault. It is not, and the
+// evidence is a pair of runs against the same Docker bind mount, watching with `inotifywait` inside an
+// Alpine container:
+//
+//	write made INSIDE the container   -> /w/ CREATE from_container.txt
+//	                                     /w/ MODIFY from_container.txt
+//	                                     /w/ CLOSE_WRITE,CLOSE from_container.txt
+//	write made on the WINDOWS HOST    -> no events at all
+//
+// Same mount, same watcher, same kernel. `fsnotify` uses inotify on Linux, and inotify is a kernel
+// facility: it reports changes the kernel performs on a filesystem it owns. When a workspace is shared
+// from a Windows or macOS host into a Linux VM, the writes happen on the HOST's filesystem and arrive
+// through a file-sharing layer (virtiofs, or gRPC-FUSE on older Docker Desktop) that does not raise
+// inotify events in the guest. There is no flag and no API that makes the guest kernel aware of a write
+// it never performed, so no change to this watcher can fix it.
+//
+// WHERE IT DOES WORK: native Linux watching a local filesystem, including a genuine bind mount of one,
+// because the kernel performing the write is the kernel serving the watch. Also Windows and macOS
+// watching their own filesystems, where fsnotify uses ReadDirectoryChangesW and FSEvents.
+//
+// WHERE IT DOES NOT: a workspace shared from a Windows or macOS host into a container, and any network
+// filesystem (NFS, SMB) for the same reason - the writer and the watcher are not the same kernel.
+//
+// THE HONEST REMEDY, NOT IMPLEMENTED HERE: polling. It is the only mechanism that works when events are
+// unavailable, and it is a different tool with a different cost - it must stat the tree on an interval,
+// which on a large repository is the expense watch mode exists to avoid. Offering it silently as a
+// fallback would turn "watch mode is running" into "something is running, possibly minutes behind", so
+// it should be asked for explicitly rather than substituted. Run `scan` when watch mode reports no
+// events in an environment matching the second list above.
 package scanner
 
 import (

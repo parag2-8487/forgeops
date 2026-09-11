@@ -39,6 +39,7 @@ from .iac_renderers import (
     GENERATED_IMAGE_TAG,
     GENERATED_RUN_AS_USER,
     github_workflow_yaml,
+    helm_chart_ignore,
     helm_chart_yaml,
     helm_deployment_template,
     helm_helpers_template,
@@ -933,6 +934,9 @@ class GenerationService:
                 content=github_workflow_yaml(app_name, runtime="node" if runtime.startswith("node") else "python"),
             ),
             GeneratedFile(path=f"charts/{app_name}/Chart.yaml", content=helm_chart_yaml(app_name)),
+            # Declares what is not chart content, so a stray file beside a template cannot make
+            # `helm lint` reject a chart this platform just wrote.
+            GeneratedFile(path=f"charts/{app_name}/.helmignore", content=helm_chart_ignore()),
             GeneratedFile(path=f"charts/{app_name}/values.yaml", content=helm_values_yaml(app_name, port)),
             GeneratedFile(
                 path=f"charts/{app_name}/templates/_helpers.tpl",

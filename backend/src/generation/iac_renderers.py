@@ -227,6 +227,53 @@ spec:
 """
 
 
+def helm_chart_ignore() -> str:
+    """`.helmignore` — what Helm must not treat as chart content.
+
+    WHY THIS EXISTS RATHER THAN BEING ASSUMED UNNECESSARY. `helm lint` failed on a chart this platform
+    generated, because a file named `templates/deployment.yaml.backup.20260911T063257Z` was sitting
+    beside the template: Helm reads everything under `templates/` and rejects unknown extensions with
+    "file extension '.20260911T063257Z' not valid". The backups are no longer written there, which is the
+    real fix, but a chart that breaks the moment anything unexpected appears next to a template is
+    fragile in a way the user will hit again - an editor swap file, a merge artifact, a colleague's
+    `.orig` from a conflict.
+
+    So the chart declares what is not chart content. Helm's own default list is NOT inherited when this
+    file exists, which is why the conventional entries are repeated rather than only the additions.
+    """
+    return """# Patterns Helm must not treat as chart content. When this file exists Helm does not also apply
+# its built-in defaults, so the conventional entries are repeated here rather than assumed.
+
+# Version control and editor litter
+.git/
+.gitignore
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Merge and conflict artifacts, which carry no valid extension
+*.orig
+*.rej
+*.bak
+
+# This platform's own pre-images. They live under .forgeops-rollback at the workspace root rather than
+# beside their targets, and this entry is the second line of defence for a chart restored from an older
+# layout where they did not.
+*.backup.*
+.forgeops-rollback/
+
+# Build output and dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+dist/
+build/
+"""
+
+
 def helm_helpers_template(app_name: str) -> str:
     """`_helpers.tpl`, because the deployment template calls `include`.
 
