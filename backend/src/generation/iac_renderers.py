@@ -22,16 +22,66 @@ user can extend.
 
 from __future__ import annotations
 
+from typing import Final
 
-def github_workflow_yaml(app_name: str, *, image_tag: str = "latest") -> str:
-    """A workflow that builds and pushes the image the manifests reference.
+#: The tag every generated artifact references. One constant because three artifacts must agree: the
+#: Deployment's `image:`, the chart's `image.tag`, and the tag the workflow builds. When they drifted,
+#: `kubernetes_images_are_built_here` reported a manifest deploying something CI never produced.
+#:
+#: NOT `latest`. `kubernetes_image_tags_pinned` scores this, and the reason it does is that two applies
+#: of one manifest must deploy the same code. `0.1.0` matches the chart's `appVersion`.
+GENERATED_IMAGE_TAG: Final[str] = "0.1.0"
 
-    Pinned action SHAs are deliberately ABSENT here and tags are used instead, which is the one place
-    this repository's own rule is knowingly inverted — and the reason is that these are the *user's*
-    artifacts, not ours: writing a SHA the user cannot verify and will not update is worse than a tag
-    they can read. The comment in the generated file says so, so the choice is visible to whoever
-    adopts it.
+#: The uid generated workloads run as. Any high-numbered non-zero uid satisfies `runAsNonRoot`; this one
+#: matches the `USER` line in the generated Dockerfile so the image and the manifest agree.
+GENERATED_RUN_AS_USER: Final[int] = 1001
+
+#: `actions/checkout` pinned to the commit this repository already vetted for its own workflows.
+#:
+#: A SHA, not a tag, because `pipeline_actions_pinned` requires exactly 40 lowercase hex characters and
+#: the supply-chain reason behind that rule applies to the user's pipeline as much as to ours. This
+#: value is not invented: it is the same pin `.github/workflows/` uses, so there is one place to update.
+CHECKOUT_ACTION: Final[str] = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2"
+
+#: Test command per runtime, keyed by the runtime `_render` detects. `pipeline_runs_tests` matches the
+#: step's COMMAND, so a job merely named "test" does not count — and rightly, since a pipeline with no
+#: tests to run reports green for every change.
+_TEST_COMMANDS: Final[dict[str, str]] = {
+    "node": "npm test --if-present",
+    "python": "python -m pytest -q",
+}
+
+
+def github_workflow_yaml(
+    app_name: str,
+    *,
+    image_tag: str = GENERATED_IMAGE_TAG,
+    runtime: str = "python",
+) -> str:
+    """A workflow that builds the image the manifests reference, and runs the project's tests.
+
+    TWO EARLIER DECISIONS HERE WERE WRONG AND ARE REVERSED.
+
+    The first: this docstring used to say pinned action SHAs were "deliberately ABSENT ... the one place
+    this repository's own rule is knowingly inverted", on the reasoning that a SHA the user cannot verify
+    is worse than a tag they can read. But `pipeline_actions_pinned` is a check this platform scores the
+    user against, worth 15 points, and `CHECK_EXPLANATIONS` names `github_workflow` as the artifact whose
+    generation fixes it. So the generator emitted a file that failed the check the generator offered to
+    fix. Whatever the merits of the tag argument, that combination cannot be defended: either pin, or
+    stop claiming the artifact fixes the check. Pinning is the better half, and the SHA used is one this
+    repository already relies on rather than a value conjured for the occasion.
+
+    The second: there was no test step at all, so `pipeline_runs_tests` (30 points) failed for the same
+    reason. The command is chosen from the runtime `_render` already detected for the Dockerfile, so the
+    workflow tests the language the image actually contains.
+
+    THIRD-PARTY DOCKER ACTIONS ARE GONE, and that is what makes the pinning honest rather than
+    performative. `docker/setup-buildx-action` and `docker/build-push-action` would each need a SHA, and
+    this repository has vetted neither — writing two SHAs I cannot stand behind to satisfy a checker
+    would be exactly the fabrication the rule exists to prevent. `docker build` via `run:` needs no
+    action, is pinned by definition, and builds the same image.
     """
+    test_command = _TEST_COMMANDS.get(runtime, _TEST_COMMANDS["python"])
     return f"""---
 name: build
 
@@ -55,21 +105,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # Actions are referenced by tag rather than by commit SHA. Pin these to SHAs for a production
-      # pipeline: a tag is mutable, so what runs here can change without this file changing.
-      - uses: actions/checkout@v4
+      # Pinned to a commit SHA rather than a tag: a tag is mutable, so what runs here could change
+      # without this file changing. Update the SHA and the trailing version comment together.
+      - uses: {CHECKOUT_ACTION}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # Tests run BEFORE the build. A pipeline that publishes an image and then discovers the tests
+      # fail has already shipped the defect.
+      - name: Run the tests
+        run: {test_command}
 
+      # `docker build` rather than a build-push action: no third-party action means nothing to pin and
+      # nothing to trust. The tag matches the manifests and the chart so CI produces what they deploy.
       - name: Build the image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: {app_name}:{image_tag}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        run: docker build -f Dockerfile -t {app_name}:{image_tag} .
 """
 
 
@@ -87,25 +135,48 @@ appVersion: "0.1.0"
 
 
 def helm_values_yaml(app_name: str, port: int) -> str:
+    """The chart's values.
+
+    `resources` USED TO BE `{}` with a comment arguing that a guessed request is worse than none. The
+    argument has real merit and is still wrong here, for the same reason the Deployment template's was:
+    `kubernetes_resource_limits_declared` is a check this platform scores the user against, so an
+    artifact that leaves the block empty hands the user a failing check the artifact existed to fix. A
+    modest labelled default they will tune beats both an empty block and a silent failure.
+
+    `tag` is the shared constant rather than `latest`, so the chart, the manifests and the workflow all
+    name one image.
+    """
     return f"""---
 replicaCount: 1
 
 image:
   repository: {app_name}
-  tag: latest
+  # An explicit tag, not `latest`: two installs of one chart must deploy the same code.
+  tag: "{GENERATED_IMAGE_TAG}"
   pullPolicy: IfNotPresent
 
 service:
   type: ClusterIP
   port: {port}
 
-# Empty by default rather than guessed. A generated resource request that does not match the workload
-# is worse than none: it either wastes capacity or gets the pod evicted.
-resources: {{}}
+# A starting point, not a measurement. Requests are what the scheduler reserves; limits are what stop
+# this container taking the node. Tune both once the workload's real usage is known.
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Probe path `/` because nothing here knows the application serves a dedicated health route, and a probe
+# pointed at a 404 restarts a healthy container forever.
+probes:
+  path: /
 
 securityContext:
   runAsNonRoot: true
-  runAsUser: 1001
+  runAsUser: {GENERATED_RUN_AS_USER}
   allowPrivilegeEscalation: false
 """
 
@@ -138,6 +209,18 @@ spec:
           imagePullPolicy: {{{{ .Values.image.pullPolicy }}}}
           ports:
             - containerPort: {{{{ .Values.service.port }}}}
+          livenessProbe:
+            httpGet:
+              path: {{{{ .Values.probes.path }}}}
+              port: {{{{ .Values.service.port }}}}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: {{{{ .Values.probes.path }}}}
+              port: {{{{ .Values.service.port }}}}
+            initialDelaySeconds: 5
+            periodSeconds: 10
           securityContext:
             allowPrivilegeEscalation: {{{{ .Values.securityContext.allowPrivilegeEscalation }}}}
           resources: {{{{- toYaml .Values.resources | nindent 12 }}}}
@@ -157,14 +240,33 @@ def helm_helpers_template(app_name: str) -> str:
 
 
 def opentofu_main_tf(app_name: str, port: int) -> str:
-    """A module that validates and plans with no credentials and no remote state.
+    """A module that validates and plans, with remote state declared as a partial configuration.
 
     The `kubernetes` provider rather than a cloud one, deliberately: the manifests this accompanies are
     Kubernetes, so the infrastructure that matches them is a namespace and a deployment. Generating an
     AWS VPC for a project whose target is unknown would be a guess with a bill attached.
+
+    REMOTE STATE USED TO BE ABSENT, and the docstring said so approvingly — "no credentials and no
+    remote state". `iac_remote_state_configured` is worth 25 points and names `opentofu` as the artifact
+    that fixes it, so once again the generator shipped a file failing the check it claimed to fix. It is
+    also the most consequential of the three: local state means the first colleague to run `apply`
+    cannot see what the first one created, and concurrent applies corrupt each other.
+
+    The block is a PARTIAL configuration — a backend type with no bucket, key or region. That is a real
+    OpenTofu idiom, not a placeholder: `tofu init -backend-config=...` supplies the rest, and `tofu
+    validate` accepts it as written. Hard-coding a bucket name would be inventing infrastructure that
+    does not exist, which is worse than declaring the intent and letting init bind it.
     """
     return f"""terraform {{
   required_version = ">= 1.6.0"
+
+  # Remote state, as a PARTIAL configuration: the type is declared here, and the bucket, key and region
+  # are supplied at init time with `tofu init -backend-config=backend.hcl`. Local state means a
+  # colleague's `apply` cannot see what yours created, and two concurrent applies corrupt each other.
+  #
+  # Swap `s3` for `gcs`, `azurerm` or any other supported backend — what matters is that state is not
+  # sitting in one working copy.
+  backend "s3" {{}}
 
   required_providers {{
     kubernetes = {{
@@ -183,7 +285,7 @@ variable "namespace" {{
 variable "image" {{
   description = "Fully qualified image reference for {app_name}."
   type        = string
-  default     = "{app_name}:latest"
+  default     = "{app_name}:{GENERATED_IMAGE_TAG}"
 }}
 
 variable "replicas" {{

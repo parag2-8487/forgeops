@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: FSL-1.1-ALv2
-"""The generated artifacts must describe the REAL project (design.md §11.5, §12.6).
+﻿# SPDX-License-Identifier: FSL-1.1-ALv2
+"""The generated artifacts must describe the REAL project (design.md Â§11.5, Â§12.6).
 
 WHY THESE ARE ASSERTED
 
@@ -10,12 +10,13 @@ different infrastructure depending on how somebody phrased a sentence.
 
 The name is also the part that fails LOUDLY but late. Kubernetes refuses a label with capitals,
 underscores or a leading digit, so an unsanitised project name reaches the validation pipeline and
-fails the run there — three layers from the cause.
+fails the run there â€” three layers from the cause.
 """
 
 from __future__ import annotations
 
 import pytest
+from src.generation.iac_renderers import GENERATED_IMAGE_TAG
 from src.generation.service import (
     GenerationService,
     _deployment_yaml,
@@ -37,7 +38,7 @@ class TestTheKubernetesNameIsAValidLabel:
             ("  Payments Service  ", "payments-service"),
             # Runs of separators collapse rather than leaving an empty segment.
             ("a///b", "a-b"),
-            # A label must START with a letter, so a numeric name is prefixed rather than discarded —
+            # A label must START with a letter, so a numeric name is prefixed rather than discarded â€”
             # keeping it identifiable instead of silently becoming the generic default.
             ("2024-migration", "app-2024-migration"),
             # Nothing usable: the caller keeps its documented default.
@@ -88,7 +89,11 @@ class TestTheRenderReadsTheProject:
         files = self._render("a service", {"name": "Checkout_API", "settings": {}})
         by_path = {f.path: f.content for f in files}
         assert "name: checkout-api" in by_path["k8s/deployment.yaml"]
-        assert "image: checkout-api:latest" in by_path["k8s/deployment.yaml"]
+        # The tag is the shared `GENERATED_IMAGE_TAG`, not `latest`. This assertion used to read
+        # `image: checkout-api:latest`, which pinned the defect that made the template fail
+        # `kubernetes_image_tags_pinned` â€” the check the manifest is generated to satisfy.
+        assert f"image: checkout-api:{GENERATED_IMAGE_TAG}" in by_path["k8s/deployment.yaml"]
+        assert ":latest" not in by_path["k8s/deployment.yaml"]
 
     def test_a_recorded_runtime_beats_the_prompt(self) -> None:
         """A prompt is a request; `settings` is a fact somebody recorded about the project."""

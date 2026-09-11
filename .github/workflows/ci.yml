@@ -47,18 +47,61 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      agent: ${{ steps.filter.outputs.agent }}
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      infra: ${{ steps.filter.outputs.infra }}
+      # Each output is OR-ed with `undeterminable`, so a diff that cannot be computed runs EVERYTHING.
+      #
+      # WHY. `paths-filter` had no `base:`, so on a `push` it diffs against `github.event.before`. For
+      # the first push of a newly created branch that value is forty zeros, there is nothing to diff
+      # against, and every filter returned false. A commit touching `backend/**`, `frontend/**` and
+      # `scripts/**` produced a GREEN `ci` in 1m45s with ten jobs skipped, including `backend` and
+      # `backend-coverage` — so the coverage gate did not run and the tick meant nothing.
+      #
+      # The direction is the whole point: a filter is an OPTIMISATION, and when it fails it must cost
+      # time, never coverage.
+      agent: ${{ steps.base.outputs.undeterminable == 'true' || steps.filter.outputs.agent == 'true' }}
+      backend: ${{ steps.base.outputs.undeterminable == 'true' || steps.filter.outputs.backend == 'true' }}
+      frontend: ${{ steps.base.outputs.undeterminable == 'true' || steps.filter.outputs.frontend == 'true' }}
+      infra: ${{ steps.base.outputs.undeterminable == 'true' || steps.filter.outputs.infra == 'true' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
+      - name: Decide whether a diff can be computed at all
+        id: base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A pull request always has a base commit that exists, so the diff is computable.
+          if [ "$EVENT_NAME" != "push" ]; then
+            echo "undeterminable=false" >> "$GITHUB_OUTPUT"
+            echo "base=" >> "$GITHUB_OUTPUT"
+            echo "a $EVENT_NAME event has a base to diff against"
+            exit 0
+          fi
+          # A push whose `before` is absent, all zeros, or not an object in this clone has nothing to
+          # diff against. Branch creation is the common case.
+          if [ -z "${BEFORE:-}" ] \
+            || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "undeterminable=true" >> "$GITHUB_OUTPUT"
+            echo "base=" >> "$GITHUB_OUTPUT"
+            echo "no usable base commit (before='${BEFORE:-}') - every filter will be forced true"
+            exit 0
+          fi
+          echo "undeterminable=false" >> "$GITHUB_OUTPUT"
+          echo "base=$BEFORE" >> "$GITHUB_OUTPUT"
+          echo "diffing against $BEFORE"
+
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
+        # Skipped when there is no base. Its outputs are then empty and the OR above forces every job
+        # to run, which is the safe direction.
+        if: steps.base.outputs.undeterminable != 'true'
         with:
+          # Explicit, rather than relying on the implicit `github.event.before`.
+          base: ${{ steps.base.outputs.base }}
           filters: |
             agent:
               - 'agent/**'
@@ -99,6 +142,22 @@ jobs:
       # and are already built by the step above.
       - name: Phase 0 area-1 safeguards (task 1.8)
         run: bash scripts/check-area1.sh
+
+      # Invariant 1: an artifact must pass the readiness checks it is generated to fix.
+      #
+      # This job has NO `if:` guard, and that placement is deliberate. `check-shard-collection.py`
+      # lives inside the `backend` job, so when the path filter skipped `backend` the guard was
+      # skipped with it — a gate that can be skipped by the thing it is meant to catch is not a gate.
+      # The template library is also read by nothing else in CI, so a defect in it reached users
+      # through the fallback path with every suite still green.
+      #
+      # Needs the backend's own dependencies because it imports the real renderer and the real scorer
+      # rather than a copy of either. `--require-hashes` against the same lock the `backend` job uses,
+      # so this step cannot drift from what the tests run against.
+      - name: Install the backend for the template audit
+        run: pip install --require-hashes -r backend/requirements.lock
+      - name: Every template satisfies the checks it targets (Invariant 1)
+        run: python scripts/check-template-readiness.py --verbose
 
   # ── 2. lock-integrity (Python hashes + six-platform tofu lock) ────────────
   lock-integrity:

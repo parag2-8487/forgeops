@@ -191,6 +191,11 @@ _REQUIRED_FIELDS: Final[tuple[tuple[tuple[str, ...], str], ...]] = (
 )
 
 
+#: Chart-level files that declare `apiVersion` for Helm's own schema rather than Kubernetes'. Excluded
+#: from the Kubernetes object claim test by `_claims_to_be_a_kubernetes_object`.
+_HELM_CHART_METADATA: Final[frozenset[str]] = frozenset({"chart.yaml", "values.yaml"})
+
+
 def _claims_to_be_a_kubernetes_object(path: str, document: Mapping[str, Any]) -> bool:
     """Whether this document is asserting that it is a Kubernetes object.
 
@@ -206,8 +211,28 @@ def _claims_to_be_a_kubernetes_object(path: str, document: Mapping[str, Any]) ->
     makes the missing third field a fault rather than a category error. A Deployment that declares both
     and omits `metadata.name` is asserting it is an object the API server will accept, and it is wrong.
     Paths under `.github/` are excluded outright: whatever they contain, they are not manifests.
+
+    HELM CHART METADATA IS EXCLUDED ON THE SAME GROUND, and missing it was a real defect. A chart's
+    `Chart.yaml` declares `apiVersion: v2` — that is the CHART schema version, not a Kubernetes API
+    group — and it carries no `kind` because it does not describe an object. Judged by the rule below it
+    was examined and failed, reporting
+
+        a document in charts/<name>/chart.yaml has no kind, so nothing says what object it is
+
+    which marked down every repository shipping a Helm chart, including the one this platform generates
+    itself: three sound manifests plus one category error scored 18/25 instead of 25/25. The `.github/`
+    exclusion above is the same judgement applied to workflows — chart metadata simply was not
+    considered when it was written.
+
+    `values.yaml` goes with it: also chart configuration, also not an object. Chart TEMPLATES are
+    deliberately NOT excluded by path, because a rendered template is a real Kubernetes object and
+    should be judged as one; an unrendered one carries `{{ }}` and does not survive the YAML parser to
+    reach this function.
     """
-    if path.replace("\\", "/").lower().startswith(".github/"):
+    normalised = path.replace("\\", "/").lower()
+    if normalised.startswith(".github/"):
+        return False
+    if normalised.rsplit("/", 1)[-1] in _HELM_CHART_METADATA:
         return False
     return bool(document.get("apiVersion")) or bool(document.get("kind"))
 

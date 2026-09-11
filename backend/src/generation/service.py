@@ -35,6 +35,8 @@ from ..core.sse import SSEEventType, format_event
 from ..secrets.redaction import create_redacted_prompt
 from .artifact_checks import validate_artifacts
 from .iac_renderers import (
+    GENERATED_IMAGE_TAG,
+    GENERATED_RUN_AS_USER,
     github_workflow_yaml,
     helm_chart_yaml,
     helm_deployment_template,
@@ -50,6 +52,14 @@ from .model_prompt import (
     parse_artifacts,
 )
 from .models import MAX_GENERATION_ITERATIONS
+from .project_hygiene_renderers import (
+    compose_file,
+    dockerignore,
+    env_example,
+    lint_config,
+    secret_scanner_config,
+    security_policy,
+)
 from .prompt_compiler import CompiledPrompt
 from .retrieval import RetrievalContext, render_context_section
 
@@ -128,8 +138,28 @@ def _kubernetes_name(raw: str) -> str:
     return trimmed
 
 
-def _deployment_yaml(app_name: str, port: int) -> str:
-    """The Deployment. `replicas: 1` because nothing here knows the intended scale."""
+def _deployment_yaml(app_name: str, port: int, image_tag: str = GENERATED_IMAGE_TAG) -> str:
+    """The Deployment. `replicas: 1` because nothing here knows the intended scale.
+
+    EVERY PROPERTY BELOW IS SCORED, AND THAT IS WHY IT IS HERE. This template used to emit
+    `image: {app_name}:latest` with no `resources` and no probes, and the readiness engine scores
+    exactly those three things — `kubernetes_image_tags_pinned` (20), `kubernetes_probes_declared` (25)
+    and `kubernetes_resource_limits_declared` (35). So a run whose instruction said "probes are
+    missing" fell back to this template, applied it, and the operator's score did not move. The
+    fallback is the FLOOR: an artifact that fails the check it was generated to fix is worse than no
+    artifact, because it consumes the change set and reports success.
+
+    THE NUMBERS ARE A STARTING POINT AND SAY SO IN THE FILE. An earlier version of the Helm values
+    left `resources: {}` with a comment arguing that a guessed request is worse than none. That
+    reasoning is defensible in isolation and wrong here: `kubernetes_resource_limits_declared` is a
+    check this platform scores the user against, so shipping an artifact that fails it hands the user a
+    defect and then bills them for it. A modest, clearly-labelled default that the operator will tune
+    is the honest resolution — and unlike an absent block, it cannot evict a neighbour on day one.
+
+    The probe path is `/` rather than `/healthz`: nothing here knows that the application serves a
+    dedicated health route, and a probe pointed at a 404 would restart a healthy container forever.
+    `/` is the one path a web application can be assumed to answer.
+    """
     return "\n".join(
         [
             "apiVersion: apps/v1",
@@ -148,11 +178,43 @@ def _deployment_yaml(app_name: str, port: int) -> str:
             "      labels:",
             f"        app: {app_name}",
             "    spec:",
+            "      securityContext:",
+            "        runAsNonRoot: true",
+            f"        runAsUser: {GENERATED_RUN_AS_USER}",
             "      containers:",
             "        - name: app",
-            f"          image: {app_name}:latest",
+            # An explicit tag, not `latest`: two applies of one manifest must deploy the same code.
+            f"          image: {app_name}:{image_tag}",
             "          ports:",
             f"            - containerPort: {port}",
+            "          # Requests are what the scheduler reserves; limits are what stops this container",
+            "          # taking the node. Tune both to the workload's measured usage.",
+            "          resources:",
+            "            requests:",
+            '              cpu: "100m"',
+            '              memory: "128Mi"',
+            "            limits:",
+            '              cpu: "500m"',
+            '              memory: "512Mi"',
+            "          # Without probes a wedged container keeps receiving traffic, because nothing asks it.",
+            "          livenessProbe:",
+            "            httpGet:",
+            "              path: /",
+            f"              port: {port}",
+            "            initialDelaySeconds: 10",
+            "            periodSeconds: 20",
+            "          readinessProbe:",
+            "            httpGet:",
+            "              path: /",
+            f"              port: {port}",
+            "            initialDelaySeconds: 5",
+            "            periodSeconds: 10",
+            "          securityContext:",
+            "            allowPrivilegeEscalation: false",
+            "            readOnlyRootFilesystem: true",
+            "            capabilities:",
+            "              drop:",
+            '                - "ALL"',
             "",
         ]
     )
@@ -791,18 +853,71 @@ class GenerationService:
         elif isinstance(configured_start, str) and configured_start.strip():
             start = configured_start.split()
 
+        # MULTI-STAGE AND HEALTHCHECK ARE BOTH SCORED, AND NEITHER WAS PRESENT.
+        #
+        # `dockerfile_multi_stage` (25) counts `FROM` lines and wants at least two;
+        # `dockerfile_healthcheck_present` (15) wants a `HEALTHCHECK` instruction. This renderer emitted
+        # a single stage and no healthcheck, so the artifact the platform offered as the fix for those
+        # checks failed them both.
+        #
+        # The split is real, not cosmetic: dependencies are installed in the builder and only their
+        # product is copied forward, so the compilers and package caches never reach the shipped image.
+        #
+        # The healthcheck uses the runtime's own interpreter rather than `curl`, which a slim base image
+        # does not carry — a HEALTHCHECK calling a missing binary reports unhealthy forever, which is
+        # worse than none because an orchestrator will kill a working container.
+        if runtime.startswith("node"):
+            builder = [
+                f"FROM {base} AS builder",
+                "WORKDIR /app",
+                "COPY package*.json ./",
+                f"RUN {install}",
+            ]
+            copy_forward = ["COPY --from=builder /app/node_modules /app/node_modules", "COPY . ."]
+            health = (
+                "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n"
+                f'  CMD node -e "fetch(\'http://127.0.0.1:{port}/\')'
+                '.then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+            )
+        else:
+            builder = [
+                f"FROM {base} AS builder",
+                "WORKDIR /app",
+                "COPY requirements.txt ./",
+                # Wheels are built once here and installed in the runtime stage, so neither pip's cache
+                # nor any build toolchain survives into the image that ships.
+                "RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt",
+            ]
+            copy_forward = [
+                "COPY --from=builder /wheels /wheels",
+                "RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* && rm -rf /wheels",
+                "COPY . .",
+            ]
+            health = (
+                "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n"
+                f'  CMD python -c "import urllib.request,sys; '
+                f"sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:{port}/', timeout=2)"
+                '.status < 400 else 1)"'
+            )
+
         dockerfile = "\n".join(
             [
+                *builder,
+                "",
                 f"FROM {base}",
                 "WORKDIR /app",
-                "COPY . .",
-                f"RUN {install}",
+                *copy_forward,
                 f"EXPOSE {port}",
-                "USER 1001",
+                health,
+                f"USER {GENERATED_RUN_AS_USER}",
                 f"CMD {start!r}".replace("'", '"'),
                 "",
             ]
         )
+        # The linter configuration is chosen by runtime, so the file is one the project's own linter
+        # loads rather than a name that merely satisfies the path check.
+        lint_path, lint_body = lint_config(runtime)
+
         return (
             GeneratedFile(path="Dockerfile", content=dockerfile),
             GeneratedFile(path="k8s/deployment.yaml", content=_deployment_yaml(app_name, port)),
@@ -811,7 +926,11 @@ class GenerationService:
             # FR-24's other two halves. A Dockerfile and manifests with nothing to build the image and
             # nothing to create the cluster is not a deployable project, and the agent's
             # `validate.yaml`, `validate.helm` and `validate.tofu` operations had nothing to check.
-            GeneratedFile(path=".github/workflows/build.yml", content=github_workflow_yaml(app_name)),
+            GeneratedFile(
+                path=".github/workflows/build.yml",
+                # The runtime is threaded through so the workflow tests the language the image contains.
+                content=github_workflow_yaml(app_name, runtime="node" if runtime.startswith("node") else "python"),
+            ),
             GeneratedFile(path=f"charts/{app_name}/Chart.yaml", content=helm_chart_yaml(app_name)),
             GeneratedFile(path=f"charts/{app_name}/values.yaml", content=helm_values_yaml(app_name, port)),
             GeneratedFile(
@@ -823,6 +942,18 @@ class GenerationService:
                 content=helm_deployment_template(app_name),
             ),
             GeneratedFile(path="infra/main.tf", content=opentofu_main_tf(app_name, port)),
+            # The six kinds `GENERATED_ARTIFACT_KINDS` declared generatable and nothing rendered. The
+            # readiness screen was offering these as fixes — `env_example_present` alone is 40 points —
+            # while no code path produced them, so the offer could never be fulfilled.
+            GeneratedFile(path=".dockerignore", content=dockerignore(runtime)),
+            GeneratedFile(path=".env.example", content=env_example(app_name, port)),
+            GeneratedFile(path="SECURITY.md", content=security_policy(app_name)),
+            GeneratedFile(path=".gitleaks.toml", content=secret_scanner_config()),
+            GeneratedFile(path=lint_path, content=lint_body),
+            GeneratedFile(
+                path="docker-compose.yml",
+                content=compose_file(app_name, port, GENERATED_IMAGE_TAG),
+            ),
         )
 
     def _chunks(self, content: str, size: int = 120) -> list[str]:
