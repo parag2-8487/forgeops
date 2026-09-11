@@ -259,7 +259,7 @@ async def create_generation_run(
         # prohibitions that describe how generated infrastructure goes wrong. A model asked for "a
         # Dockerfile" with no facts has to guess the language, the entry point and the port, and a guess
         # that reads plausibly is indistinguishable from a fact until it fails.
-        compiled = await _compile_generation_plan(
+        compiled, existing_contents = await _compile_generation_plan(
             session,
             project_id=body.project_id,
             selected_check_ids=body.target_checks,
@@ -276,6 +276,7 @@ async def create_generation_run(
             project=project_row,
             retrieval=retrieval,
             compiled=compiled,
+            existing=existing_contents,
         ):
             if _is_terminal(frame):
                 withheld = frame
@@ -446,7 +447,7 @@ async def _compile_generation_plan(
     *,
     project_id: uuid.UUID,
     selected_check_ids: list[str] | None,
-) -> CompiledPrompt | None:
+) -> tuple[CompiledPrompt | None, Mapping[str, str]]:
     """Build the instruction from this project's own index and its failing checks.
 
     Returns None when the project has never been scanned. That is deliberate rather than a fallback to a
@@ -456,7 +457,8 @@ async def _compile_generation_plan(
     """
     evidence = await load_index_evidence(session, project_id=project_id)
     if not evidence.paths:
-        return None
+        # No index: no facts to compile from, and no stored text to compare a rewrite against.
+        return None, {}
     inventory = (
         await session.execute(
             text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
@@ -470,6 +472,9 @@ async def _compile_generation_plan(
         await session.execute(text("SELECT name FROM projects WHERE id = :p"), {"p": project_id})
     ).scalar_one_or_none() or ""
     report = ReadinessEngine().evaluate(evidence)
+    # THE CONTENTS TRAVEL WITH THE PROMPT, because the same index answers both questions: what to
+    # tell the model, and what each file it rewrites already satisfied. Loading the index twice would
+    # let the two drift apart between the compile and the gate.
     return compile_prompt(
         checks=report.checks,
         paths=evidence.paths,
@@ -477,7 +482,7 @@ async def _compile_generation_plan(
         inventory=inventory,
         selected_check_ids=selected_check_ids,
         project_name=str(project_name),
-    )
+    ), evidence.contents
 
 
 async def _record_compiled_prompt(session: AsyncSession, *, run_id: uuid.UUID, compiled: CompiledPrompt | None) -> None:

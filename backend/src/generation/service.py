@@ -29,6 +29,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from ..core.content_regression import regression_findings
 from ..core.model_port import ArtifactModelPort
 from ..core.sse import SSEEventType, format_event
 from ..secrets.redaction import create_redacted_prompt
@@ -311,6 +312,7 @@ class GenerationService:
         project: Mapping[str, Any] | None = None,
         retrieval: RetrievalContext | None = None,
         compiled: CompiledPrompt | None = None,
+        existing: Mapping[str, str] | None = None,
     ) -> AsyncGenerator[str]:
         """Yield §7.4 frames for one generation run.
 
@@ -341,6 +343,7 @@ class GenerationService:
                 report=report,
                 retrieval=retrieval,
                 compiled=compiled,
+                existing=existing,
             ):
                 yield frame
             if report.succeeded:
@@ -356,6 +359,7 @@ class GenerationService:
             project=project,
             outcome=outcome,
             provider_findings=provider_findings,
+            existing=existing,
         ):
             yield frame
 
@@ -367,6 +371,7 @@ class GenerationService:
         run_id: uuid.UUID,
         prompt: str,
         project: Mapping[str, Any] | None,
+        existing: Mapping[str, str] | None,
         outcome: GenerationOutcome | None,
         report: _ModelReport,
         retrieval: RetrievalContext | None = None,
@@ -530,7 +535,7 @@ class GenerationService:
                 continue
 
             files = tuple(GeneratedFile(path=path, content=content) for path, content in parsed.items())
-            passed, gate_findings = self._validate(files)
+            passed, gate_findings = self._validate(files, existing)
             yield format_event(
                 SSEEventType.VALIDATION,
                 {
@@ -623,6 +628,7 @@ class GenerationService:
         run_id: uuid.UUID,
         prompt: str,
         project: Mapping[str, Any] | None,
+        existing: Mapping[str, str] | None,
         outcome: GenerationOutcome | None,
         provider_findings: tuple[str, ...],
     ) -> AsyncGenerator[str]:
@@ -652,7 +658,7 @@ class GenerationService:
 
         # §11.5.5's deterministic gate is the blocking one; the rubric is advisory and is not
         # consulted here, deliberately, so a low rubric score cannot fail a run.
-        passed, findings = self._validate(files)
+        passed, findings = self._validate(files, existing)
         yield format_event(
             SSEEventType.VALIDATION,
             {
@@ -828,7 +834,9 @@ class GenerationService:
         """
         return [content[i : i + size] for i in range(0, len(content), size)] or [""]
 
-    def _validate(self, files: Sequence[GeneratedFile]) -> tuple[bool, tuple[str, ...]]:
+    def _validate(
+        self, files: Sequence[GeneratedFile], existing: Mapping[str, str] | None = None
+    ) -> tuple[bool, tuple[str, ...]]:
         """§11.5.5's deterministic gate: structural checks that either hold or do not.
 
         Deliberately not a quality score. Each check is something a malformed artifact fails outright,
@@ -853,5 +861,12 @@ class GenerationService:
         cheap and offline and actionable by a repair iteration; the agent's is "will the real tools
         accept it".
         """
-        findings = validate_artifacts(files)
+        findings = list(validate_artifacts(files))
+        # A SECOND QUESTION, ASKED IN THE SAME PLACE. `validate_artifacts` answers "is this document
+        # well formed and the right shape"; a 345-byte Deployment with no probes, no resource limits
+        # and `:latest` passes that and is still strictly worse than the 1301-byte one it replaces.
+        # Findings share the `path: ` prefix, so D-106's per-file machinery handles them unchanged:
+        # the model is told what it dropped while an attempt remains, and the artifact alone is
+        # withheld if it will not put it back.
+        findings.extend(regression_findings(files, existing))
         return (not findings), tuple(findings)
