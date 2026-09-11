@@ -49,10 +49,46 @@ var writableExemptions = [...]string{
 
 // blockedForRead reports whether reading absPath is refused.
 //
-// Phase 0's `isBlocked`, unchanged in behaviour and moved here so the two intents sit
-// side by side and a future edit cannot change one while believing it changed both.
+// Phase 0's `isBlocked`, moved here so the two intents sit side by side and a future edit
+// cannot change one while believing it changed both.
+//
+// THE THREE EXAMPLE NAMES ARE NOW READABLE, AND THAT IS A CHANGE OF BOUNDARY, SO HERE IS WHY.
+//
+// They were writable and not readable. The consequence was a closed loop that no amount of
+// generation could escape, measured on a real project:
+//
+//   - `.env.example` existed on disk, 108 bytes, committed
+//   - the scanner refused to read it, so it was absent from all 51 indexed paths
+//   - `env_example_present` scored 0/40, because the index is what the score reads
+//   - the readiness screen offered generation as the fix, since the file "did not exist"
+//   - generation produced it as a CREATE, and the apply refused: pre-image hash mismatch,
+//     ".env.example already exists but the entry is a create"
+//
+// So a 40-point check could never pass, and the offered fix could never apply. The file the
+// platform generates is a file the platform then cannot see.
+//
+// The read rule exists because reading a real `.env` puts live credentials in a prompt. That
+// reasoning does not reach these three names: the entire purpose of an example env file is that it
+// carries names and no values, which is also why D-46 already accepted them as safe to WRITE. A
+// file that is safe to generate is safe to read back.
+//
+// WHAT STILL PROTECTS THE CASE WHERE SOMEBODY PUT A REAL SECRET IN ONE. The scanner redacts before
+// content reaches the database and records `redaction_count` per file, and `no_secrets_found_by_scan`
+// fails on any non-zero count. So a credential in `.env.example` is caught and reported as the defect
+// it is, rather than being hidden by refusing to look — which never protected the credential, it only
+// protected the platform from knowing about it.
+//
+// The exemption is EXACT and case-sensitive, matching the write rule, and still refuses inside
+// `~/.ssh` and `~/.aws`: it widens the NAME rule and never the DIRECTORY rule.
 func blockedForRead(absPath string) bool {
 	norm := filepath.Clean(absPath)
+
+	base := filepath.Base(norm)
+	for _, permitted := range writableExemptions {
+		if base == permitted {
+			return blockedDirectory(absPath)
+		}
+	}
 
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		for _, sensitive := range []string{".ssh", ".aws"} {
@@ -69,11 +105,11 @@ func blockedForRead(absPath string) bool {
 	// `.env.production`. The blocklist could therefore be bypassed by changing the
 	// case of a filename. The `.pem` check below already folded case; the `.env` family
 	// did not, and nothing had asked.
-	base := strings.ToLower(filepath.Base(norm))
-	if base == ".env" || strings.HasPrefix(base, ".env.") {
+	lowered := strings.ToLower(base)
+	if lowered == ".env" || strings.HasPrefix(lowered, ".env.") {
 		return true
 	}
-	if strings.HasSuffix(base, ".pem") {
+	if strings.HasSuffix(lowered, ".pem") {
 		return true
 	}
 	return false

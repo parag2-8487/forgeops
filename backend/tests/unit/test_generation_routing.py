@@ -54,11 +54,18 @@ MODEL = "test-coder"
 #: generator happened to produce valid YAML.
 GOOD_OUTPUT = """### FILE: Dockerfile
 ```dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
 FROM python:3.11-slim
 WORKDIR /app
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/*
 COPY . .
-RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import sys; sys.exit(0)"
 USER 1001
 CMD ["python", "main.py"]
 ```
@@ -79,11 +86,31 @@ spec:
       labels:
         app: checkout-api
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
       containers:
         - name: app
-          image: checkout-api:latest
+          image: checkout-api:1.4.2
           ports:
             - containerPort: 8000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 5
 ```
 
 ### FILE: k8s/service.yaml
@@ -237,7 +264,12 @@ class TestAGenuineModelCallRecordsProvider:
         assert sorted(by_path) == ["Dockerfile", "k8s/deployment.yaml", "k8s/ingress.yaml", "k8s/service.yaml"]
         # `RUN pip install ... requirements.txt` on its own line and `COPY . .` are the fixture's
         # wording; `service.py::_render`'s Dockerfile has neither in this arrangement.
-        assert "RUN pip install --no-cache-dir -r requirements.txt" in by_path["Dockerfile"]
+        # A discriminator the template CANNOT produce. The Dockerfile line this used to assert on is
+        # now present in both the model fixture and the real template (both build wheels in a builder
+        # stage), so it stopped distinguishing them. The image tag does: the template renders
+        # `GENERATED_IMAGE_TAG`, currently 0.1.0, and never 1.4.2.
+        assert "image: checkout-api:1.4.2" in by_path["k8s/deployment.yaml"]
+        assert "0.1.0" not in by_path["k8s/deployment.yaml"], "this is the template's tag, not the model's"
         assert "replicas: 1" in by_path["k8s/deployment.yaml"]
 
     async def test_the_token_frames_carry_the_providers_deltas(self) -> None:

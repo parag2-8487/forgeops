@@ -39,16 +39,22 @@ func TestBlocklist_IntentMatrix(t *testing.T) {
 			explanation: "the most sensitive of all",
 		},
 		{
-			path: ".env.example", blockRead: true, blockWrite: false,
-			explanation: "an artifact §1.5 generates; placeholder values only",
+			path: ".env.example", blockRead: false, blockWrite: false,
+			explanation: "names and no values, so readable too: refusing to read it made env_example_present " +
+				"permanently unsatisfiable and generation's own fix un-appliable",
 		},
 		{
-			path: ".env.sample", blockRead: true, blockWrite: false,
+			path: ".env.sample", blockRead: false, blockWrite: false,
 			explanation: "the same file under its other conventional name",
 		},
 		{
-			path: ".env.template", blockRead: true, blockWrite: false,
+			path: ".env.template", blockRead: false, blockWrite: false,
 			explanation: "and its third conventional name",
+		},
+		{
+			path: ".ENV.EXAMPLE", blockRead: true, blockWrite: true,
+			explanation: "the exemption is case-SENSITIVE in both directions, so an oddly-cased name " +
+				"falls through to the case-folded .env. rule and stays refused",
 		},
 		{
 			path: ".env.example.bak", blockRead: true, blockWrite: true,
@@ -67,7 +73,7 @@ func TestBlocklist_IntentMatrix(t *testing.T) {
 			explanation: "the rule is on the base name, so nesting changes nothing",
 		},
 		{
-			path: "sub/.env.example", blockRead: true, blockWrite: false,
+			path: "sub/.env.example", blockRead: false, blockWrite: false,
 			explanation: "and the exemption is on the base name too",
 		},
 		{
@@ -112,9 +118,16 @@ func TestBlocklist_IntentMatrix(t *testing.T) {
 func TestBlocklist_WriteIsReadPlusExactlyThreeNames(t *testing.T) {
 	t.Parallel()
 
-	// The structural claim, asserted rather than inspected: the write list is the read
-	// list with three exemptions and no other difference. If a future edit relaxes the
-	// write rule anywhere else, this fails even if the matrix above was not updated.
+	// THE CONTRACT CHANGED, and this asserts the new one rather than the old.
+	//
+	// The three example names used to be writable and NOT readable. That asymmetry produced a closed
+	// loop on a real project: `.env.example` existed, the scanner refused to read it, so it was absent
+	// from the index, `env_example_present` scored 0/40, the screen offered generation as the fix, and
+	// the apply then refused because the file it was "creating" was already there.
+	//
+	// They are now permitted in BOTH directions, for the reason the file exists: names and no values.
+	// Everything else is unchanged, and that is the part worth asserting — a future edit that relaxes
+	// either rule anywhere else fails here even if the matrix above was not updated.
 	if len(writableExemptions) != 3 {
 		t.Fatalf("writableExemptions has %d entries, want exactly 3: %v", len(writableExemptions), writableExemptions)
 	}
@@ -130,6 +143,7 @@ func TestBlocklist_WriteIsReadPlusExactlyThreeNames(t *testing.T) {
 		".env", ".env.local", ".env.production", ".env.test", ".env.ci",
 		".env.example", ".env.sample", ".env.template",
 		".env.example.bak", ".env.sample.old", ".env.templates", ".env.exampl",
+		".ENV.EXAMPLE", ".Env.Sample",
 		".envrc", "env", "environment", "server.pem", "key.PEM",
 		"Dockerfile", "compose.yaml", "main.go", "README.md",
 	}
@@ -139,10 +153,14 @@ func TestBlocklist_WriteIsReadPlusExactlyThreeNames(t *testing.T) {
 		read, write := blockedForRead(abs), blockedForWrite(abs)
 		switch {
 		case exempt[name]:
-			if !read || write {
-				t.Errorf("%q: want read=true write=false, got read=%v write=%v", name, read, write)
+			// Permitted both ways. An example env file the platform generates and cannot read is a
+			// file the platform cannot score, which is how the 40-point hole opened.
+			if read || write {
+				t.Errorf("%q: want read=false write=false, got read=%v write=%v", name, read, write)
 			}
 		default:
+			// Every other name: the two intents must agree, and a near-miss must be refused. This is
+			// what stops the exemption widening into `.env.example.bak` or a cased variant.
 			if read != write {
 				t.Errorf("%q: the two intents must agree for any non-exempt name, got read=%v write=%v",
 					name, read, write)
@@ -263,14 +281,27 @@ func TestBlocklist_ReadStrictnessIsUnchangedFromPhase0(t *testing.T) {
 				name, refusedByResolver)
 		}
 	}
-	// And specifically: reading an example file is still refused. The write exemption
-	// must not have leaked into the read path, because a readable `.env.example` in a
-	// project that (wrongly) put real values in it would reach a prompt.
-	if _, err := ResolveForRead(root, ".env.example"); !errors.Is(err, ErrPathBlocked) {
-		t.Error(".env.example became readable; the write exemption leaked into the read path")
+	// And specifically: an example env file IS readable now, and a real one is not. The rule the
+	// original version of this test defended — "a readable `.env.example` in a project that wrongly
+	// put real values in it would reach a prompt" — is real but is not answered by refusing to look.
+	// The scanner redacts before content is persisted and records `redaction_count`, and
+	// `no_secrets_found_by_scan` fails on any non-zero count, so a credential in an example file is
+	// REPORTED rather than hidden. Refusing to read it never protected the credential; it only cost a
+	// 40-point check that could then never pass and a generated fix that could never apply.
+	if _, err := ResolveForRead(root, ".env.example"); err != nil {
+		t.Errorf(".env.example must be readable: it carries names and no values, and the score reads the index: %v", err)
 	}
-	// The counterpart, which is the whole reason D-46 split the list: the same name IS
-	// writable. Asserting both here means the pair cannot drift in one direction only.
+	if _, err := ResolveForRead(root, ".env"); !errors.Is(err, ErrPathBlocked) {
+		t.Error(".env must never be readable — that is the rule the exemption must not widen")
+	}
+	if _, err := ResolveForRead(root, ".env.production"); !errors.Is(err, ErrPathBlocked) {
+		t.Error(".env.production must never be readable")
+	}
+	if _, err := ResolveForRead(root, ".env.example.bak"); !errors.Is(err, ErrPathBlocked) {
+		t.Error(".env.example.bak is a backup of something real; the exemption is exact names only")
+	}
+	// The counterpart: the same name is writable. Asserting both means the pair cannot drift in one
+	// direction only.
 	if _, err := ResolveForWrite(root, ".env.example"); err != nil {
 		t.Errorf(".env.example must be writable (D-46, §1.5 lists it as a generated artifact): %v", err)
 	}

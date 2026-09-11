@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from ..core.content_regression import regression_findings
 from ..core.model_port import ArtifactModelPort
 from ..core.sse import SSEEventType, format_event
+from ..core.target_checks import unsatisfied_targets
 from ..secrets.redaction import create_redacted_prompt
 from .artifact_checks import validate_artifacts
 from .iac_renderers import (
@@ -1000,4 +1001,15 @@ class GenerationService:
         # the model is told what it dropped while an attempt remains, and the artifact alone is
         # withheld if it will not put it back.
         findings.extend(regression_findings(files, existing))
+        # A THIRD QUESTION, AND THE ONE THAT WAS ASKED OF NOTHING AT RUNTIME.
+        #
+        # `validate_artifacts` asks "is this well formed"; `regression_findings` asks "is this worse
+        # than what it replaces". Neither asks "does this satisfy the check it was generated for", and a
+        # real provider run exposed the gap: 296 completion tokens, an instruction naming
+        # `kubernetes_probes_declared` with line numbers, and a returned Deployment with no probes that
+        # passed this gate with zero findings and applied.
+        #
+        # The same rule the CI template gate uses, imported rather than restated so the two cannot
+        # disagree about what satisfying a check means.
+        findings.extend(unsatisfied_targets({item.path: item.content for item in files}, existing))
         return (not findings), tuple(findings)

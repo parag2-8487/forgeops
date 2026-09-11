@@ -183,12 +183,37 @@ class TestTheGateActuallyUsesIt:
         passed, findings = self._service()._validate([self._file(PATH, DEGRADED)], {PATH: COMPLIANT})
 
         assert passed is False
-        assert len(findings) == 3, findings
+        # Three REGRESSION findings — one per property the rewrite dropped. The count is no longer the
+        # whole of `findings`: Invariant 1's target-check rule now also fires on the same artifact,
+        # because a Deployment with no probes fails the check it was generated to satisfy whether or not
+        # anything was lost. Asserting the regression findings specifically keeps this test about the
+        # question it was written to ask.
+        regressions = [f for f in findings if "still fails" not in f]
+        assert len(regressions) == 3, findings
 
-    def test_the_gate_passes_the_same_artifact_as_a_create(self):
+    def test_a_create_is_not_exempt_from_the_target_checks(self):
+        """A created artifact must satisfy its checks too, even though it displaces nothing.
+
+        THIS REPLACES `test_the_gate_passes_the_same_artifact_as_a_create`, which asserted the opposite
+        and was right about the guard it was testing: the regression guard compares against what is
+        being replaced, and a create replaces nothing, so it raises nothing. That is still true and is
+        asserted below.
+
+        What changed is that the regression guard is no longer the only content question. A real
+        provider run returned a Deployment with no probes for an instruction that named
+        `kubernetes_probes_declared` with line numbers, and because the file on disk was already
+        degraded nothing objected and the change set applied. Creating a bad artifact is not better than
+        rewriting one badly — the operator ends up with the same file and the same unchanged score.
+        """
         passed, findings = self._service()._validate([self._file(PATH, DEGRADED)], None)
 
-        assert passed is True, findings
+        assert passed is False, "a create that fails its own target checks must not pass"
+        # No regression finding, because nothing was displaced.
+        assert not [f for f in findings if "still fails" not in f], findings
+        # And the target-check rule names the checks the artifact was generated to satisfy.
+        assert any("kubernetes_probes_declared" in f for f in findings), findings
+        assert any("kubernetes_resource_limits_declared" in f for f in findings), findings
+        assert all(f.startswith(f"{PATH}: ") for f in findings), findings
 
     def test_the_gate_passes_a_rewrite_that_keeps_every_property(self):
         kept = COMPLIANT.replace("replicas: 2", "replicas: 4")

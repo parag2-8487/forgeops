@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Invariant 1: an artifact must pass the readiness checks it is generated to fix.
+"""Invariant 1, over the template library: an artifact must pass the checks it targets.
 
 WHY THIS EXISTS
 
@@ -14,24 +14,15 @@ the cascade falls back to a template, and a template that fails the target check
 a trapdoor: the run reports success, a change set applies, and the number the operator was trying to
 raise stays where it was.
 
-HOW IT DECIDES, WITHOUT A SECOND IMPLEMENTATION
+THE RULE IS NOT IMPLEMENTED HERE
 
-Three things already in the product are composed here rather than re-expressed:
+`src.core.target_checks.unsatisfied_targets` is the rule, and `GenerationService._validate` applies
+the same function to model output at runtime. This script is the TEMPLATE call site: it renders the
+real template path and asks the shared question about the result. Restating the rule here would let
+CI and the runtime disagree about what satisfying a check means, and each would pass its own suite.
 
-  * `GenerationService._render` - the REAL template path. Called unbound (it touches no `self`), so
-    this gate exercises the same bytes a fallback run would write. A copy of the templates here
-    could pass while production shipped something else.
-  * `CHECK_EXPLANATIONS[...].artifact` - the product's own statement of which artifact kind fixes
-    which check, and `generatable_today`, which is that AND-ed with what the generator actually emits.
-  * `ReadinessEngine.evaluate` - the same scorer the readiness screen uses. Pure over `IndexEvidence`,
-    so no database is needed and the gate cannot drift from the number the user sees.
-
-So the rule is mechanical: for every check the product claims is generatable, if this run rendered
-the artifact kind that check names, that check MUST pass. A template that cannot satisfy the check it
-exists to satisfy fails the build here.
-
-WHAT A FAILURE MEANS. Either the template is wrong, or the check is wrong, or the `artifact` mapping
-claims a kind fixes a check it does not. All three are defects and all three should stop a release.
+`GenerationService._render` is called unbound because it reads no instance state — so the gate sees
+production's bytes rather than a copy that could pass while production shipped something else.
 """
 
 from __future__ import annotations
@@ -45,113 +36,28 @@ BACKEND = REPO_ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from src.core.index_evidence import IndexEvidence  # noqa: E402
-from src.core.readiness import ReadinessEngine  # noqa: E402
 from src.core.readiness_findings import (  # noqa: E402
     CHECK_EXPLANATIONS,
     GENERATED_ARTIFACT_KINDS,
 )
-from src.generation.service import GenerationService  # noqa: E402
-
-#: Path shape to the artifact kind `CHECK_EXPLANATIONS` names. The first match wins, so the specific
-#: `.github/workflows/` rule precedes anything that would also match a bare YAML file.
-#:
-#: `unmapped_kinds` asserts this covers every member of `GENERATED_ARTIFACT_KINDS`, so adding a kind
-#: to the product without teaching this gate to recognise it is itself a failure - the defect class
-#: this file guards against, applied to the guard.
-_PATH_KINDS: tuple[tuple[str, str], ...] = (
-    (".github/workflows/", "github_workflow"),
-    ("k8s/", "k8s"),
-    ("charts/", "helm"),
-    ("helm/", "helm"),
-    (".dockerignore", "dockerignore"),
-    (".env.example", "env_example"),
-    ("docker-compose", "compose"),
-    ("dockerfile", "dockerfile"),
-    (".tf", "opentofu"),
-    ("package.json", "dependency_manifest"),
-    ("requirements.txt", "dependency_manifest"),
-    ("pyproject.toml", "dependency_manifest"),
-    ("go.mod", "dependency_manifest"),
-    (".gitleaks.toml", "secret_scanner_config"),
-    ("security.md", "security_policy"),
-    (".eslintrc", "lint_config"),
-    (".ruff.toml", "lint_config"),
+from src.core.target_checks import (  # noqa: E402
+    kind_for_path,
+    score_files,
+    unmapped_kinds,
+    unsatisfied_targets,
 )
-
-
-def kind_for_path(path: str) -> str:
-    """The artifact kind a repository path represents, or `""` when it is not a generated kind."""
-    lowered = path.lower()
-    for needle, kind in _PATH_KINDS:
-        if needle in lowered:
-            return kind
-    return ""
-
-
-def unmapped_kinds() -> tuple[str, ...]:
-    """Kinds the product claims it generates that no rule above recognises."""
-    mapped = {kind for _needle, kind in _PATH_KINDS}
-    return tuple(sorted(set(GENERATED_ARTIFACT_KINDS) - mapped))
+from src.generation.service import GenerationService  # noqa: E402
 
 
 def render_template_artifacts(
     project_name: str = "auditapp", port: int = 8080
 ) -> dict[str, str]:
-    """The real template-path artifacts, keyed by repository path.
-
-    `_render` is called unbound because it reads no instance state. That is deliberate: the gate must
-    see production's bytes, and an instance would drag a session, a router and a settings object into
-    a check that needs none of them.
-    """
+    """The real template-path artifacts, keyed by repository path."""
     project = {"name": project_name, "settings": {"port": port}}
     rendered = GenerationService._render(
         None, "generate the deployment artifacts", project
     )  # type: ignore[arg-type]
     return {item.path: item.content for item in rendered}
-
-
-def score(files: dict[str, str]) -> object:
-    """Run the product's own scorer over a synthetic repository made only of these files."""
-    evidence = IndexEvidence(
-        paths=tuple(sorted(files)),
-        contents={path.lower(): body for path, body in files.items()},
-    )
-    return ReadinessEngine().evaluate(evidence)
-
-
-def audit(files: dict[str, str], *, verbose: bool) -> list[str]:
-    """Every check that a rendered artifact kind targets and does not satisfy."""
-    kinds_present = {kind_for_path(path) for path in files} - {""}
-    result = score(files)
-    by_id = {check.id: check for check in result.checks}
-
-    failures: list[str] = []
-    for check_id, explanation in sorted(CHECK_EXPLANATIONS.items()):
-        if not explanation.generatable_today:
-            continue
-        if explanation.artifact not in kinds_present:
-            continue
-        check = by_id.get(check_id)
-        if check is None:
-            failures.append(
-                f"{check_id}: the explanation table claims artifact '{explanation.artifact}' fixes this "
-                f"check, but the scorer emitted no such check - the mapping names a check that does not exist"
-            )
-            continue
-        if not check.passed:
-            owners = sorted(
-                p for p in files if kind_for_path(p) == explanation.artifact
-            )
-            failures.append(
-                f"{check_id} ({check.points}/{check.max_points}) is targeted by artifact "
-                f"'{explanation.artifact}' but the rendered template does not satisfy it\n"
-                f"      rendered: {', '.join(owners)}\n"
-                f"      evidence: {check.evidence}"
-            )
-        elif verbose:
-            print(f"  ok   {check_id:38} {check.points}/{check.max_points}")
-    return failures
 
 
 def main() -> int:
@@ -168,10 +74,10 @@ def main() -> int:
     stray = unmapped_kinds()
     if stray:
         print(
-            f"\nFAIL: the product can generate {len(stray)} kind(s) this gate cannot recognise: {', '.join(stray)}"
+            f"\nFAIL: the product can generate {len(stray)} kind(s) the rule cannot recognise: {', '.join(stray)}"
         )
         print(
-            "      add a rule to _PATH_KINDS, or the kind's checks are audited by nothing"
+            "      add a rule to src/core/target_checks.py, or the kind's checks are audited by nothing"
         )
         return 1
 
@@ -179,15 +85,23 @@ def main() -> int:
     print(f"\nrendered {len(files)} artifact(s) from the real template path:")
     for path in sorted(files):
         print(
-            f"  {kind_for_path(path) or '(unmapped)':20} {path:44} {len(files[path]):>6} bytes"
+            f"  {kind_for_path(path) or '(unmapped)':22} {path:44} {len(files[path]):>6} bytes"
         )
 
-    result = score(files)
+    result = score_files(files)
     print(
         f"\nthe template library's own output scores {result.overall_score} ({result.level})"
     )
 
-    failures = audit(files, verbose=args.verbose)
+    if args.verbose:
+        kinds_present = {kind_for_path(p) for p in files} - {""}
+        for check_id, explanation in sorted(CHECK_EXPLANATIONS.items()):
+            if explanation.generatable_today and explanation.artifact in kinds_present:
+                check = next((c for c in result.checks if c.id == check_id), None)
+                if check is not None and check.passed:
+                    print(f"  ok   {check_id:38} {check.points}/{check.max_points}")
+
+    failures = unsatisfied_targets(files)
 
     kinds_present = {kind_for_path(p) for p in files} - {""}
     missing = sorted(set(GENERATED_ARTIFACT_KINDS) - kinds_present)

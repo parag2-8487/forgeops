@@ -76,30 +76,45 @@ func TestResolve_TheTwoIntentsDifferOnExactlyThreeNames(t *testing.T) {
 		".env.template", ".env.example.bak", ".ENV.EXAMPLE", ".envrc",
 		"key.pem", "CERT.PEM", "sub/.env", "sub/.env.example", "ordinary.txt",
 	}
-	// Collected as a SET of base names, because the exemption is a base-name rule: both
-	// `.env.example` and `sub/.env.example` are exempt, and counting them separately would
-	// make the assertion depend on how many directories the candidate list happens to use.
-	differ := make(map[string]bool)
+	// THE TWO INTENTS NOW AGREE ON EVERY NAME, and that is the point of the change rather than a
+	// loosening that slipped through.
+	//
+	// D-46 made three example names writable and left them unreadable. The gap was not survivable:
+	// `.env.example` on disk was invisible to the index, so `env_example_present` scored 0/40 and could
+	// not be fixed — generation created the file and the apply refused because it already existed.
+	// Reading a file whose entire purpose is to carry names and no values is not the harm the read rule
+	// was written to prevent.
+	//
+	// A writable-but-unreadable name is no longer possible, so the assertion is simply that the two
+	// agree, plus the two directed checks below that the exemption did not widen.
 	for _, name := range candidates {
 		_, readErr := ResolveForRead(root, name)
 		_, writeErr := ResolveForWrite(root, name)
 		readBlocked := errors.Is(readErr, ErrPathBlocked)
 		writeBlocked := errors.Is(writeErr, ErrPathBlocked)
 		if readBlocked != writeBlocked {
-			if readBlocked && !writeBlocked {
-				differ[filepath.Base(name)] = true
-				continue
-			}
-			t.Errorf("%q is writable-but-unreadable, which is backwards", name)
+			t.Errorf("%q: the intents must agree, got readBlocked=%v writeBlocked=%v",
+				name, readBlocked, writeBlocked)
 		}
 	}
-	want := map[string]bool{".env.example": true, ".env.sample": true, ".env.template": true}
-	if len(differ) != len(want) {
-		t.Fatalf("the intents differ on %v; D-46 permits exactly %v", keysOf(differ), keysOf(want))
+
+	// The exemption must not have widened. Each of these carries, or may carry, real values.
+	for _, refused := range []string{".env", ".env.local", ".env.production", ".env.example.bak", ".ENV.EXAMPLE"} {
+		if _, err := ResolveForRead(root, refused); !errors.Is(err, ErrPathBlocked) {
+			t.Errorf("%q must stay unreadable", refused)
+		}
+		if _, err := ResolveForWrite(root, refused); !errors.Is(err, ErrPathBlocked) {
+			t.Errorf("%q must stay unwritable", refused)
+		}
 	}
-	for name := range differ {
-		if !want[name] {
-			t.Errorf("%q is exempt for writing and is not one of D-46's three names", name)
+
+	// And the three exact names are permitted both ways, at any depth.
+	for _, permitted := range []string{".env.example", ".env.sample", ".env.template", "sub/.env.example"} {
+		if _, err := ResolveForRead(root, permitted); err != nil {
+			t.Errorf("%q must be readable so the index can see it: %v", permitted, err)
+		}
+		if _, err := ResolveForWrite(root, permitted); err != nil {
+			t.Errorf("%q must be writable (D-46): %v", permitted, err)
 		}
 	}
 }
