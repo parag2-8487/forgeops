@@ -183,12 +183,13 @@ class TestTheGateActuallyUsesIt:
         passed, findings = self._service()._validate([self._file(PATH, DEGRADED)], {PATH: COMPLIANT})
 
         assert passed is False
-        # Three REGRESSION findings — one per property the rewrite dropped. The count is no longer the
-        # whole of `findings`: Invariant 1's target-check rule now also fires on the same artifact,
-        # because a Deployment with no probes fails the check it was generated to satisfy whether or not
-        # anything was lost. Asserting the regression findings specifically keeps this test about the
-        # question it was written to ask.
-        regressions = [f for f in findings if "still fails" not in f]
+        # Three REGRESSION findings - one per property the rewrite dropped. The count is no longer the
+        # whole of `findings`: Invariant 1's target-check rule also fires on the same artifact (a
+        # Deployment with no probes fails the check it was generated to satisfy whether or not anything
+        # was lost), and Invariant 2 adds a set-level refusal because the score falls. Selecting the
+        # per-file findings that are not target-check findings keeps this test about the question it was
+        # written to ask.
+        regressions = [f for f in findings if f.startswith(f"{PATH}: ") and "still fails" not in f]
         assert len(regressions) == 3, findings
 
     def test_a_create_is_not_exempt_from_the_target_checks(self):

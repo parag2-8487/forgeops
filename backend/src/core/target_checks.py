@@ -99,6 +99,67 @@ def score_files(files: Mapping[str, str]) -> object:
     )
 
 
+def score_delta(
+    files: Sequence[tuple[str, str]] | Mapping[str, str],
+    existing: Mapping[str, str] | None = None,
+) -> tuple[int, int, tuple[str, ...]]:
+    """`(before, after, per_check_losses)` for applying `files` over `existing`.
+
+    Invariant 2: no change set may lower the readiness score.
+
+    WHY AN AGGREGATE CHECK WHEN `content_regression` ALREADY EXISTS. That guard is per-property and
+    per-file: it catches a rewrite that drops the probes from the Deployment it replaces. It cannot see
+    a change set that improves one file and quietly costs points somewhere else - a rewritten workflow
+    that no longer builds the Dockerfile, say, where nothing was removed from any single file's own
+    guarded list but `ci_builds_an_existing_dockerfile` stops holding. The score is the thing the
+    operator is watching, so the score is what has to be defended.
+
+    Returns the numbers rather than a verdict so the caller can decide, and so the reachable-score
+    contract can quote the same arithmetic rather than recomputing it differently.
+    """
+    produced: dict[str, str] = dict(files) if isinstance(files, Mapping) else {p: b for p, b in files}
+    baseline = dict(existing or {})
+    if not baseline:
+        # Nothing to compare against. A first-time generation into an unindexed project cannot lower a
+        # score that does not exist, and inventing a zero baseline would report every artifact as an
+        # improvement, which is true but says nothing.
+        return (0, 0, ())
+
+    merged = dict(baseline)
+    merged.update(produced)
+
+    before = score_files(baseline)
+    after = score_files(merged)
+
+    before_checks = {c.id: c for c in before.checks}  # type: ignore[attr-defined]
+    losses: list[str] = []
+    for check in after.checks:  # type: ignore[attr-defined]
+        was = before_checks.get(check.id)
+        if was is not None and check.points < was.points:
+            losses.append(
+                f"{check.id} falls from {was.points} to {check.points} of {check.max_points}"
+                f"{'; ' + check.evidence if check.evidence else ''}"
+            )
+    return (before.overall_score, after.overall_score, tuple(losses))  # type: ignore[attr-defined]
+
+
+def score_lowering_findings(
+    files: Sequence[tuple[str, str]] | Mapping[str, str],
+    existing: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    """A refusal naming the check and the delta, when the change set would lower the score.
+
+    Deliberately NOT prefixed with a path. D-106's per-file withholding answers "which artifact is bad";
+    this answers "this set, taken together, makes the repository worse", and withholding one file from
+    it could leave a partial application that is worse still. The whole set is refused.
+    """
+    before, after, losses = score_delta(files, existing)
+    if after >= before:
+        return ()
+    detail = "; ".join(losses) if losses else "no single check regressed, so the loss is in partial credit"
+    return (f"this change set lowers the readiness score from {before} to {after} ({after - before}): {detail}",)
+
+
 def unsatisfied_targets(
     files: Sequence[tuple[str, str]] | Mapping[str, str],
     existing: Mapping[str, str] | None = None,

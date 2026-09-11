@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from ..core.content_regression import regression_findings
 from ..core.model_port import ArtifactModelPort
 from ..core.sse import SSEEventType, format_event
-from ..core.target_checks import unsatisfied_targets
+from ..core.target_checks import score_lowering_findings, unsatisfied_targets
 from ..secrets.redaction import create_redacted_prompt
 from .artifact_checks import validate_artifacts
 from .iac_renderers import (
@@ -1012,4 +1012,8 @@ class GenerationService:
         # The same rule the CI template gate uses, imported rather than restated so the two cannot
         # disagree about what satisfying a check means.
         findings.extend(unsatisfied_targets({item.path: item.content for item in files}, existing))
+        # INVARIANT 2: no change set may lower the score. Checked over the SET rather than per file,
+        # because a set can improve one artifact and cost points elsewhere without any single file
+        # dropping a property of its own - which is exactly what the per-file guard above cannot see.
+        findings.extend(score_lowering_findings({item.path: item.content for item in files}, existing))
         return (not findings), tuple(findings)
