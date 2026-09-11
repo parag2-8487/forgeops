@@ -177,6 +177,17 @@ class ReadinessReportResponse(BaseModel):
     #: How many indexed paths the score was computed from.
     evaluated_paths: int = 0
     checks: list[ReadinessCheckResponse] = Field(default_factory=list)
+    #: Invariant 3, made visible. The screen used to carry a blanket "generation cannot raise this
+    #: score", which is wrong for most checks and gives an operator no way to tell "the platform will
+    #: fix this" from "somebody has to sit down and do it".
+    #:
+    #: `reachable_score` is what a generation run can reach from here; `unreachable` names every point
+    #: it cannot and why, with a reason about the project rather than about this platform's roadmap.
+    #: After an apply the rescan is compared against `reachable_score`, and a gap is a defect.
+    reachable_score: int = 0
+    reachable_summary: str = ""
+    generation_would_fix: list[str] = Field(default_factory=list)
+    unreachable: list[str] = Field(default_factory=list)
 
 
 def _tenant_clause(tenant_id: uuid.UUID | None) -> str:
@@ -545,6 +556,13 @@ async def get_project_readiness(
 
     result = ReadinessEngine().evaluate(refined)
 
+    # Invariant 3: state the reachable score BEFORE anything is generated, so the apply has something to
+    # be measured against. Computed from the engine's own result and the same fixability table the
+    # per-check `generatable` flag uses, so the screen cannot promise a fix the generator will not make.
+    from ..core.reachable_score import reachable_score as _reachable
+
+    prediction = _reachable(result)
+
     if result.indexed:
         summary = (
             f"{project['name']} scored {result.overall_score}/100 and is categorised as "
@@ -567,6 +585,10 @@ async def get_project_readiness(
         categories=result.breakdown.model_dump(),
         indexed=result.indexed,
         evaluated_paths=result.evaluated_paths,
+        reachable_score=prediction.reachable,
+        reachable_summary=prediction.summary(),
+        generation_would_fix=[f"{check_id} (+{points})" for check_id, points in prediction.fixable],
+        unreachable=[str(item) for item in prediction.unreachable],
         checks=[
             ReadinessCheckResponse(
                 # Copied field-by-field rather than by `model_dump()`, deliberately: the engine's model

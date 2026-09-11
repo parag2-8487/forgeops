@@ -83,6 +83,16 @@ func (s *FilteredScanner) walkFiles(targetDir string, visit func(scannedFile) er
 			if name == ".git" || name == "node_modules" || name == ".pytest_cache" || name == ".ruff_cache" {
 				return filepath.SkipDir
 			}
+			// And this platform's own rollback state. `.forgeops-rollback` holds the pre-images an apply
+			// saved and the single-use consumption markers; none of it is the user's source.
+			//
+			// Indexing it was not harmless. A rescan after an apply picked up
+			// `charts/<name>/values.yaml.backup.<timestamp>` as a real file, so superseded copies of
+			// artifacts were scored alongside the current ones - the readiness engine cannot tell a
+			// backup from a manifest, and it should not have to.
+			if name == rollbackStateDirName {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 

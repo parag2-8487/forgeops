@@ -257,7 +257,22 @@ def compose_file(app_name: str, port: int, image_tag: str) -> str:
     No database service is invented. Adding a Postgres this project may not use would produce a stack
     that starts and a `DATABASE_URL` pointing at something the application never asked for.
     """
-    environment = "\n".join(f'      {name}: "${{{name}}}"' for name, _value, _comment in _ENV_VARIABLES)
+    environment = "\n".join(
+        # `${NAME:-default}` rather than `${NAME}`, and the default comes from the same list that renders
+        # `.env.example`.
+        #
+        # WHY: `docker compose config` FAILED on the generated file. `.env` is git-ignored and therefore
+        # absent from a fresh clone, so a bare `${LOG_LEVEL}` produced 'The "LOG_LEVEL" variable is not
+        # set. Defaulting to a blank string.' and the agent's validator reported the artifact as failing -
+        # which it was. An artifact that only validates once the user has done something the repository
+        # does not tell them to do is not a working artifact.
+        #
+        # A secret's default stays EMPTY. Substituting a value for `SECRET_KEY` would put a working
+        # credential in a committed file, and an empty default is the honest statement that it has to be
+        # supplied.
+        f'      {name}: "${{{name}:-{value.format(app_name=app_name, port=port)}}}"'
+        for name, value, _comment in _ENV_VARIABLES
+    )
     return f"""---
 # Local development stack. `docker compose up --build` builds the same image tag the Kubernetes
 # manifests and the Helm chart deploy, so what runs here is what ships.
@@ -270,11 +285,16 @@ services:
     image: {app_name}:{image_tag}
     ports:
       - "{port}:{port}"
-    # Values come from `.env`, which is git-ignored. Copy `.env.example` to `.env` first.
-    env_file:
-      - .env
-    # Passed explicitly as well as through env_file so this file states what the service needs. The set
-    # is rendered from the same list as `.env.example`, so the two cannot drift apart.
+    # NO `env_file:` ENTRY, DELIBERATELY, and its absence is a fix.
+    #
+    # The first version declared `env_file: [.env]`, and `docker compose config` failed outright:
+    # "env file .env not found". `.env` is git-ignored, so it is absent from every fresh clone, and a
+    # declared env_file is REQUIRED - compose refuses the file rather than warning. The artifact could
+    # only validate after the user had done something the repository never told them to do.
+    #
+    # Nothing is lost. Compose reads `.env` from the project directory automatically for interpolation,
+    # so a developer who copies `.env.example` to `.env` still gets their values through the `${...}`
+    # substitutions below; the difference is that its absence is no longer fatal.
     environment:
 {environment}
     restart: unless-stopped

@@ -39,6 +39,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from src.secrets.redaction import RedactedPrompt
 
+from .contract_version import GENERATION_CONTRACT_VERSION
+
 
 @dataclass(frozen=True)
 class CacheHit:
@@ -88,6 +90,7 @@ def cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     if left_norm == 0.0 or right_norm == 0.0:
         return 0.0
     return dot / (left_norm * right_norm)
+
 
 
 class TieredSemanticCache:
@@ -238,9 +241,29 @@ class TieredSemanticCache:
         prompt: RedactedPrompt,
         params: dict[str, Any] | None,
     ) -> str:
-        """Build a deterministic SHA-256 cache key."""
+        """Build a deterministic SHA-256 cache key.
+
+        THE CONTRACT VERSION IS PART OF THE KEY, and it is here because its absence was a correctness
+        bug rather than a tidiness one.
+
+        The key was model + prompt + params. So an entry stored before a fix to the prompt compiler, the
+        parse contract, the validator set or the template library was returned forever afterwards for an
+        unchanged repository: the improvement could not take effect, and the only way to see the new
+        behaviour was to delete `ai:cache:*` by hand - which is exactly what had to be done, twice, to
+        observe a fix that had already shipped. A cache that survives a correctness fix silently undoes
+        it.
+
+        The prompt does not carry the fix. Two runs on the same repository compile the SAME prompt before
+        and after the gate learns a new rule, so nothing in the hashed material changes while the set of
+        acceptable answers does. That is why the version has to be supplied rather than derived.
+        """
         canonical = json.dumps(
-            {"model": model, "prompt": prompt, "params": params or {}},
+            {
+                "contract": GENERATION_CONTRACT_VERSION,
+                "model": model,
+                "prompt": prompt,
+                "params": params or {},
+            },
             sort_keys=True,
             separators=(",", ":"),
         )

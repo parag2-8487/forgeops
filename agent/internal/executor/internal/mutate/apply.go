@@ -282,7 +282,37 @@ func ApplyVerified(
 		// Backup if exists
 		var bi backupInfo
 		if _, statErr := os.Stat(abs); statErr == nil {
-			backupPath := abs + ".backup." + started.UTC().Format("20060102T150405Z")
+			// INSIDE `.forgeops-rollback`, NOT BESIDE THE TARGET, and that placement is a fix rather
+			// than a preference.
+			//
+			// Phase 0 wrote `<target>.backup.<timestamp>` next to the original. Two things went wrong
+			// with that, both measured on a real apply:
+			//
+			//   * `helm lint` FAILED on a chart this platform had just generated. Helm treats every file
+			//     under `templates/` as chart content and rejects unknown extensions, so
+			//     `templates/deployment.yaml.backup.20260911T063257Z` produced "file extension
+			//     '.20260911T063257Z' not valid". The rollback mechanism broke the artifact it was
+			//     protecting, and `artifacts_pass_their_validators` reported it - 21 of 30.
+			//   * the backups were INDEXED. A rescan picked up `charts/test-4/values.yaml.backup.<ts>`
+			//     as a real file, so stale copies of superseded artifacts were scored alongside the
+			//     current ones.
+			//
+			// Still inside root, which is the part of the original reasoning that was right: a marker or
+			// a backup in the system temp directory would not survive a reboot, and "the handle is
+			// single-use" would quietly become "single-use until you restart". The relative path is
+			// preserved under the timestamp so one apply's backups sit together and a human can see
+			// which file each one came from.
+			backupPath := filepath.Join(
+				root,
+				rollbackDirName,
+				"backups",
+				started.UTC().Format("20060102T150405Z"),
+				filepath.FromSlash(e.RelPath),
+			)
+			if err := os.MkdirAll(filepath.Dir(backupPath), 0o755); err != nil {
+				rollback(written, backups)
+				return nil, fmt.Errorf("backup dir for %s: %w", abs, err)
+			}
 			if err := copyFile(abs, backupPath); err != nil {
 				rollback(written, backups)
 				return nil, fmt.Errorf("backup %s: %w", abs, err)

@@ -1675,3 +1675,60 @@ jobs:
           count="$(find dist -type f -name 'forgeops-agent*' \( -perm -u+x -o -name '*.exe' \) | wc -l)"
           echo "binaries: $count"
           test "$count" -ge 6
+
+
+  # ── A green tick has to mean the gates ran ─────────────────────────────────
+  #
+  # `ci` reported success in 1m45s with ten jobs skipped, including `backend` and `backend-coverage`, on
+  # a commit that changed `backend/tests/**`, `frontend/vitest.config.ts` and `scripts/**`. The filter
+  # was the cause and is fixed - an undeterminable diff now runs everything - but that fix lives in the
+  # `changes` job, and a filter is exactly the kind of thing that breaks again.
+  #
+  # So this job asserts the OUTCOME rather than trusting the mechanism: if the filter said the backend
+  # changed, the coverage gate must have actually run. It has no `if:` on the paths and it `needs` the
+  # jobs it judges with `always()`, so it runs on every commit and cannot be skipped by the thing it is
+  # there to catch. `check-shard-collection.py` sits inside `backend` and was skipped along with it,
+  # which is the mistake this avoids.
+  gates-actually-ran:
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [changes, backend, backend-coverage, frontend, agent]
+    steps:
+      - name: A green run must have enforced the gates its diff required
+        env:
+          BACKEND_CHANGED: ${{ needs.changes.outputs.backend }}
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend }}
+          AGENT_CHANGED: ${{ needs.changes.outputs.agent }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          COVERAGE_RESULT: ${{ needs.backend-coverage.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          AGENT_RESULT: ${{ needs.agent.result }}
+        run: |
+          set -euo pipefail
+          echo "changes:  backend=$BACKEND_CHANGED frontend=$FRONTEND_CHANGED agent=$AGENT_CHANGED"
+          echo "results:  backend=$BACKEND_RESULT coverage=$COVERAGE_RESULT frontend=$FRONTEND_RESULT agent=$AGENT_RESULT"
+
+          failed=0
+          # `success` is required, not merely "not skipped": a cancelled or failed gate is not an
+          # enforced gate either, and `needs` alone would let a cancellation through as long as this job
+          # still ran.
+          require() {
+            local changed="$1" result="$2" name="$3"
+            if [ "$changed" = "true" ] && [ "$result" != "success" ]; then
+              echo "::error::$name did not run to success ($result) while the filter reported its paths changed"
+              failed=1
+            fi
+          }
+          require "$BACKEND_CHANGED" "$BACKEND_RESULT"  "the backend test shards"
+          require "$BACKEND_CHANGED" "$COVERAGE_RESULT" "the backend combined coverage gate"
+          require "$FRONTEND_CHANGED" "$FRONTEND_RESULT" "the frontend suite"
+          require "$AGENT_CHANGED" "$AGENT_RESULT" "the agent suite"
+
+          # And the case that produced the meaningless green tick: every filter false at once. That is
+          # possible for a genuinely unrelated commit, so it is reported rather than failed - but it is
+          # reported loudly, because it was invisible before.
+          if [ "$BACKEND_CHANGED" != "true" ] && [ "$FRONTEND_CHANGED" != "true" ] && [ "$AGENT_CHANGED" != "true" ]; then
+            echo "::warning::no filter matched, so no suite ran; a green tick here proves only that nothing was checked"
+          fi
+
+          test "$failed" -eq 0
