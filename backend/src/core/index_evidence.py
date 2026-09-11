@@ -61,6 +61,41 @@ CONTENT_PATTERNS: Final[tuple[str, ...]] = (
     "%.env.sample",
     "%.env.template",
     "%example.env",
+    # ── Widened again, for the two checks that stopped being presence checks ──────────────────────────
+    #
+    # `automated_tests_present` (35 points) passed on a PATH matching `tests/`, and
+    # `centralised_configuration` (25) on a DIRECTORY existing. Both are now answered by reading the
+    # source: a test file has to declare a case and assert something that can fail, and every
+    # environment read has to happen in the configuration module. Neither question can be answered from
+    # a path, so the bodies have to be here.
+    #
+    # THE COST IS REAL AND IS THE POINT OF THIS COMMENT. The set above was kept "explicit and small" so a
+    # readiness request would not read the whole repository out of the database. Source files are not a
+    # handful, and on a large repository this is the most expensive part of the request. It is here
+    # anyway because the alternative measured worse: without these bodies the strengthened checks see no
+    # test content and no environment reads, so `automated_tests_present` fails every project that has
+    # tests and `centralised_configuration` passes every project that scatters its configuration - the
+    # first wrong pessimistically, the second wrong in the direction that reopens the hole the
+    # strengthening closed.
+    #
+    # The right long-term answer is to have the agent count env reads during the scan, where the source
+    # already is, and persist the counts - the same shape as `redaction_count`. That is a protocol change
+    # and is not this.
+    "%test%.py",
+    "%test%.js",
+    "%test%.ts",
+    "%test%.jsx",
+    "%test%.tsx",
+    "%spec%.js",
+    "%spec%.ts",
+    "%_test.go",
+    "%.py",
+    "%.js",
+    "%.jsx",
+    "%.ts",
+    "%.tsx",
+    "%.mjs",
+    "%.cjs",
     # Dependency manifests. The reconciliation reads the DECLARATIONS out of these, so a path alone
     # cannot answer it — "package.json exists" and "package.json declares express" are different facts
     # and only the second can be compared against what the code imports.

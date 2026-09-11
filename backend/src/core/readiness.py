@@ -72,6 +72,7 @@ from .readiness_findings import (
     GENERATED_ARTIFACT_KINDS,
     CheckExplanation,
 )
+from .source_analysis import centralisation, test_substance
 from .tool_verdicts import summarise
 
 #: The §1.4 categories and their weights. Summing to 100 makes the overall score a
@@ -665,17 +666,39 @@ class ReadinessEngine:
                 found=f"no pipeline definition among the {len(paths)} indexed path(s)",
             )
         )
+        # A TEST FILE HAS TO CONTAIN A TEST THAT CAN FAIL.
+        #
+        # This passed on `_has_test_evidence(paths)` - a path matched `tests/` or `*_test.py`. So
+        # `tests/test_placeholder.py` containing nothing earned 35 points, the largest single award in
+        # the check set, and a generator asked to raise the score could take it by writing an empty
+        # file. That is the defect this whole area keeps producing: a name with nothing behind it.
+        #
+        # `evidence.has_tests` still wins when set, because a caller may know something the paths do
+        # not - but it no longer means "a path looked like a test".
+        substance = test_substance(paths, evidence.contents)
         test_path = _has_test_evidence(paths)
-        has_tests = evidence.has_tests if evidence.has_tests is not None else bool(test_path)
+        if evidence.has_tests is not None:
+            has_tests = evidence.has_tests
+        else:
+            has_tests = bool(test_path) and substance.passed
         checks.append(
             self._check(
                 "automated_tests_present",
                 "ci_config",
                 has_tests,
                 35,
-                test_path,
+                test_path if has_tests else "",
                 "A pipeline with no tests to run reports green for every change, which is worse than no pipeline.",
-                found="no test file or test directory was indexed",
+                found=(
+                    "no test file or test directory was indexed"
+                    if not test_path
+                    else (
+                        f"{substance.files} test file(s) were indexed but nothing in them can fail: "
+                        f"{substance.cases} case(s), {substance.meaningful_assertions} meaningful "
+                        f"assertion(s), {substance.vacuous_assertions} vacuous"
+                        + (f" - {'; '.join(substance.examples)}" if substance.examples else "")
+                    )
+                ),
             )
         )
         lint = _match_exact(paths, _LINT_CONFIGS)
@@ -990,16 +1013,67 @@ class ReadinessEngine:
                 ),
             )
         )
-        config_dir = _match(paths, ("config/*", "configs/*", "*/settings.py", "*/config.py", "*.config.ts"))
+        # CONFIGURATION HAS TO ACTUALLY FLOW THROUGH THE MODULE.
+        #
+        # This asked `bool(config_dir)` - does a path matching `config/*` exist. A directory proves
+        # nothing, and the failure the check exists to catch survives it intact: a service that reads
+        # `os.getenv("DATABASE_URL")` in six modules and dies in production because the seventh spelled
+        # it differently HAS a `config/` directory. Worse, a generator could earn 25 points by writing an
+        # empty module, which is the score moving while the project does not improve.
+        #
+        # Now every environment read in the project's own sources is located by parsing, and the check
+        # asks whether they happen in the configuration module. Partial credit is proportional, so
+        # fixing four of five reads moves the number - a check that does not respond to work teaches
+        # that the work is pointless.
+        config_flow = centralisation(paths, evidence.contents)
+        config_dir = config_flow.module_path or _match(
+            paths, ("config/*", "configs/*", "*/settings.py", "*/config.py", "*.config.ts")
+        )
+        # A passing check must cite a file - `test_every_check_that_passes_names_its_evidence` enforces
+        # it, and rightly: a pass with no evidence tells an operator nothing about why it passed. When
+        # there is nothing to centralise the honest citation is the source that WAS examined and found
+        # to read no environment, which is the same reasoning `pipeline_actions_pinned` uses when a
+        # workflow references no external action.
+        config_evidence = config_dir or config_flow.examined_path
         checks.append(
             self._check(
                 "centralised_configuration",
                 "env_config",
-                bool(config_dir),
+                # `bool(paths) and` is not redundant: an UNSCANNED project has no reads to find, and
+                # without this it would pass for having nothing scattered - the fail-open reading of an
+                # absent scan. `no_secrets_found_by_scan` guards the same way for the same reason.
+                #
+                # A PROJECT WITH NO ENVIRONMENT READS PASSES WITHOUT NEEDING A MODULE, and that clause is
+                # what closes the last way to earn these points for nothing. Requiring `config_dir`
+                # unconditionally meant a generator could write an empty `config/settings.py` into a
+                # project that reads no environment at all and collect 25 points for an artifact that
+                # centralised nothing. Now the module only earns credit when there is something for it to
+                # hold, so the points follow the work rather than the filename.
+                bool(paths)
+                and config_flow.passed
+                # Something must have been READ for a pass to mean anything. A repository of YAML with
+                # no source files offers nothing to examine, and passing it for having no scattered
+                # reads would be the same fail-open reading as passing an unscanned project.
+                and bool(config_evidence)
+                and (config_flow.total == 0 or bool(config_dir)),
                 25,
-                config_dir,
+                config_evidence if config_flow.passed else "",
                 "Configuration read in one validated place fails at boot; read ad hoc it fails in production.",
-                found="no single configuration module or config directory was indexed",
+                found=(
+                    f"{config_flow.scattered} of {config_flow.total} environment read(s) happen outside "
+                    f"{config_dir or 'any configuration module'}: {'; '.join(config_flow.examples)}"
+                    if config_flow.scattered
+                    else (
+                        "no configuration module or config directory was indexed"
+                        if not config_dir
+                        else "no environment reads were found to centralise"
+                    )
+                ),
+                earned=(
+                    _earned_from_counts(config_flow.centralised, config_flow.total, 25)
+                    if config_flow.total and config_dir
+                    else None
+                ),
             )
         )
 

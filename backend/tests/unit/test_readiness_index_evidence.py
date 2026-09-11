@@ -134,18 +134,52 @@ def test_an_unscanned_project_scores_zero_and_says_it_is_unindexed() -> None:
 def test_tests_are_not_assumed_to_exist() -> None:
     """`has_tests` defaulted to True, handing every project a quarter of its score.
 
-    Absent an explicit statement the answer is now DERIVED from the paths, and a repository
-    with no test files fails the check.
+    Absent an explicit statement the answer is DERIVED, and it is no longer derived from the PATHS
+    alone. A path that looks like a test proves a filename; the check is worth 35 points, the largest
+    single award in the set, and a generator asked to raise a score could have collected it by writing
+    an empty file. So the body has to contain a case and an assertion that could fail.
     """
     without = ReadinessEngine().evaluate(IndexEvidence(paths=("main.go", "readme.md")))
     assert _check(without, "automated_tests_present").passed is False
 
-    with_tests = ReadinessEngine().evaluate(IndexEvidence(paths=("main.go", "internal/repo_test.go")))
-    assert _check(with_tests, "automated_tests_present").passed is True
-    assert _check(with_tests, "automated_tests_present").evidence == "internal/repo_test.go"
+    # A test PATH with nothing behind it does not count, which is the strengthening.
+    named_only = ReadinessEngine().evaluate(IndexEvidence(paths=("main.go", "internal/repo_test.go")))
+    assert _check(named_only, "automated_tests_present").passed is False
+    assert "nothing in them can fail" in _check(named_only, "automated_tests_present").found
 
-    # A test DIRECTORY counts too, since a repository may name its files anything.
-    with_dir = ReadinessEngine().evaluate(IndexEvidence(paths=("tests/e2e/journey.spec.ts",)))
+    # An empty file is the exact artifact the check exists to refuse.
+    empty = ReadinessEngine().evaluate(
+        IndexEvidence(paths=("main.go", "tests/test_app.py"), contents={"tests/test_app.py": ""})
+    )
+    assert _check(empty, "automated_tests_present").passed is False
+
+    # A suite of `assert True` asserts nothing about the program.
+    vacuous = ReadinessEngine().evaluate(
+        IndexEvidence(
+            paths=("main.go", "tests/test_app.py"),
+            contents={"tests/test_app.py": "def test_ok():\n    assert True\n"},
+        )
+    )
+    assert _check(vacuous, "automated_tests_present").passed is False
+
+    # A real case with an assertion that depends on the program passes, and cites the file.
+    with_tests = ReadinessEngine().evaluate(
+        IndexEvidence(
+            paths=("main.go", "tests/test_app.py"),
+            contents={"tests/test_app.py": "from app import boot\n\ndef test_boots():\n    assert boot() == 200\n"},
+        )
+    )
+    assert _check(with_tests, "automated_tests_present").passed is True
+    assert _check(with_tests, "automated_tests_present").evidence == "tests/test_app.py"
+
+    # A test DIRECTORY counts too, since a repository may name its files anything - but the body still
+    # has to do something.
+    with_dir = ReadinessEngine().evaluate(
+        IndexEvidence(
+            paths=("tests/e2e/journey.spec.ts",),
+            contents={"tests/e2e/journey.spec.ts": "it('loads', () => { expect(page.status).toBe(200); });"},
+        )
+    )
     assert _check(with_dir, "automated_tests_present").passed is True
 
 
@@ -281,6 +315,20 @@ def test_the_score_is_bounded_and_the_levels_follow_it() -> None:
             "k8s/deployment.yaml": BOUNDED_DEPLOYMENT,
             ".github/workflows/ci.yml": PINNED_WORKFLOW,
             "infra/main.tf": 'terraform {\n  backend "s3" {}\n}\n',
+            # Two more real bodies, for the same reason as the ones above: `automated_tests_present`
+            # and `centralised_configuration` used to pass on a PATH and a DIRECTORY, so this fixture
+            # described a complete repository while proving nothing about either. A file named
+            # `tests/test_x.py` containing nothing was worth 35 points.
+            #
+            # The test declares a case and asserts on something the program decides. The config module
+            # holds the environment read, and no other source in this fixture reads the environment -
+            # which is what "centralised" now has to mean.
+            "tests/test_x.py": (
+                "from config.settings import PORT\n\n\ndef test_the_port_is_configured():\n    assert PORT == 8000\n"
+            ),
+            "config/settings.py": (
+                "import os\n\nPORT = int(os.getenv('PORT', '8000'))\nDATABASE_URL = os.environ['DATABASE_URL']\n"
+            ),
         },
     )
     best = engine.evaluate(everything)
