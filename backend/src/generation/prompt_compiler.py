@@ -36,6 +36,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel
 
+from ..core.content_regression import properties_to_preserve
 from ..core.readiness import CATEGORY_WEIGHTS, ReadinessCheck
 from ..core.readiness_findings import CHECK_EXPLANATIONS
 from .model_prompt import output_format_section
@@ -475,7 +476,10 @@ def compile_prompt(
                 faults=faults,
                 current_content=quoted,
                 current_line_count=line_count,
-                preserve=_preserve_notes(body) if body else (),
+                # BOTH SOURCES. `_preserve_notes` protects what is visibly structural - comment
+                # blocks, named build stages. `properties_to_preserve` protects what the readiness
+                # score measures, which is what the reported regression actually dropped.
+                preserve=((*_preserve_notes(body), *properties_to_preserve(path, body)) if body else ()),
                 validator=ARTIFACT_VALIDATORS.get(artifact, ""),
                 companions=tuple(c for c in ARTIFACT_COMPANIONS.get(artifact, ()) if c.lower() not in lowered),
                 weight=sum(CATEGORY_WEIGHTS.get(c.category, 0) + c.max_points for c in group),

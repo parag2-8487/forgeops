@@ -14,7 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.core.content_regression import properties_lost, regression_findings
+from src.core.content_regression import (
+    properties_lost,
+    properties_to_preserve,
+    regression_findings,
+)
 
 #: The 1301-byte Deployment that scored 90.
 COMPLIANT = """apiVersion: apps/v1
@@ -233,3 +237,48 @@ class TestUnparseableContent:
         after = "FROM python:latest\nHEALTHCHECK CMD true\n"
         lost = dict(properties_lost("Dockerfile", before, after))
         assert "dockerfile_base_image_pinned" in lost
+
+
+class TestThePromptIsToldWhatToKeep:
+    """The guard alone produces a stalemate; this is what lets the score RISE.
+
+    Without preserve instructions the model keeps emitting the same wholesale rewrite, the gate keeps
+    withholding it, and the checks it was meant to fix stay exactly where they were. The score stops
+    falling and never climbs. `_preserve_notes` already protected comment blocks and named build stages
+    — the visibly structural things — and said nothing about the properties the score measures.
+    """
+
+    def test_it_names_every_property_the_file_currently_satisfies(self):
+        notes = properties_to_preserve(PATH, COMPLIANT)
+        joined = " ".join(notes)
+
+        assert "resources:" in joined
+        assert "livenessProbe" in joined and "readinessProbe" in joined
+        assert "image tag" in joined and "latest" in joined
+
+    def test_it_never_asks_for_a_property_the_file_does_not_have(self):
+        """Otherwise it is an instruction to invent something, and the compiler states facts only."""
+        notes = " ".join(properties_to_preserve(PATH, DEGRADED))
+
+        assert "livenessProbe" not in notes
+        assert "resources:" not in notes
+
+    def test_an_empty_body_asks_for_nothing(self):
+        assert properties_to_preserve(PATH, "") == ()
+        assert properties_to_preserve(PATH, "   \n") == ()
+
+    def test_the_compiler_attaches_them_to_a_modify(self):
+        """Wiring, not just the helper: a refactor that drops the call fails here."""
+        import inspect
+
+        from src.generation import prompt_compiler
+
+        source = inspect.getsource(prompt_compiler)
+        assert "properties_to_preserve(path, body)" in source
+
+    def test_a_dockerfile_is_told_to_keep_its_healthcheck_and_pin(self):
+        body = "FROM python:3.13.1-slim\nUSER 10001\nHEALTHCHECK CMD curl -f http://localhost:8000/health\n"
+        joined = " ".join(properties_to_preserve("Dockerfile", body))
+
+        assert "HEALTHCHECK" in joined
+        assert "base image pinned" in joined

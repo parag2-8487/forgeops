@@ -180,3 +180,48 @@ def regression_findings(
                 f"it: keep every block it already has and change only what the instruction named."
             )
     return tuple(findings)
+
+
+#: What to tell a model to keep, per guarded property, phrased as an instruction rather than a label.
+#:
+#: THE OTHER HALF OF THE GATE. `regression_findings` refuses a rewrite that drops one of these; this
+#: tells the model not to drop it in the first place. Without it the guard alone produces a stalemate:
+#: the model keeps emitting the same wholesale rewrite, the gate keeps withholding it, and the checks
+#: it was supposed to fix stay exactly where they were. The score stops falling and never rises.
+#:
+#: `_preserve_notes` in the prompt compiler already protected comment blocks and named build stages -
+#: the two things a regeneration visibly destroys. It said nothing about the SEMANTIC properties the
+#: readiness score actually measures, which is what the reported regression dropped.
+PRESERVE_INSTRUCTIONS: Final[Mapping[str, str]] = {
+    "kubernetes_resource_limits_declared": (
+        "keep the existing `resources:` block on every container, with both `limits` and `requests` for cpu and memory"
+    ),
+    "kubernetes_probes_declared": "keep the existing `livenessProbe` and `readinessProbe` on every container",
+    "kubernetes_image_tags_pinned": "keep the existing image tag exactly as it is; do not change it to `latest`",
+    "kubernetes_containers_unprivileged": "keep every container unprivileged; do not add `privileged: true`",
+    "kubernetes_manifests_well_formed": "keep every field the existing Kubernetes objects declare",
+    "dockerfile_no_baked_secrets": "do not introduce any hard-coded credential",
+    "dockerfile_healthcheck_present": "keep the existing `HEALTHCHECK` instruction",
+    "dockerfile_base_image_pinned": "keep the base image pinned exactly as it is",
+}
+
+
+def properties_to_preserve(path: str, body: str) -> tuple[str, ...]:
+    """Instructions for every guarded property `body` already satisfies.
+
+    Read off the file rather than assumed, so a Deployment with no probes is not told to keep probes
+    it does not have — which would be an instruction to invent something, and the compiler's whole
+    contract is that it states facts.
+    """
+    if not body.strip():
+        return ()
+    notes: list[str] = []
+    for check_id, guard, _description in GUARDED_PROPERTIES:
+        try:
+            if guard(path, body):
+                instruction = PRESERVE_INSTRUCTIONS.get(check_id)
+                if instruction:
+                    notes.append(instruction)
+        except Exception:  # noqa: BLE001 - a validator that cannot read the file has nothing to assert
+            continue
+    return tuple(notes)
