@@ -936,6 +936,19 @@ jobs:
           # Asserted rather than assumed. A binary that copied but will not execute would
           # otherwise surface as a 503 inside a fixture, which names the symptom and not the cause.
           opa version
+      # `yamllint`, for the same reason the OPA binary is here rather than assumed.
+      #
+      # `test_generated_artifacts_validate.py` runs the real validator over the real rendered output,
+      # and the validator shells out to `yamllint`. With `FORGEOPS_REQUIRE_INTEGRATION=1` set — as it
+      # is for every shard — `require_capability` FAILS rather than skips, which is the right
+      # behaviour and made the shard red for a missing tool rather than for a product defect. The
+      # `agent` job already installs it at this pinned version for its own validator tests; the
+      # backend shard needed it too and did not have it.
+      - name: Install yamllint at a pinned version
+        working-directory: .
+        run: |
+          pip install "yamllint==1.37.1"
+          yamllint --version
       # The local OpenAI-compatible model server, so §11.7's `self_hosted` tier is REACHABLE in
       # CI rather than merely configured.
       #

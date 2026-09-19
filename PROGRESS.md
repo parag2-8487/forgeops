@@ -184,6 +184,38 @@ measurement or a gap somebody has already paid for, not a nice-to-have.
       pairs, drops `AGENT_BACKEND_WSS_URL`, runs, and requires a live session.
 - [ ] **A full rescan must not lose the import graph** (the defect above).
 
+### Six integration failures that had been invisible, and why they surfaced now
+
+**They are not regressions from this branch.** The `backend (integration)` shard had not executed a single
+test since the template-library and renderer pass: on 2026-09-11 (run `34604857055`) it failed at a
+PRE-TEST gate — `check-test-credentials.py` could not parse
+`backend/tests/unit/test_generation_project_facts.py` because the file carried a UTF-8 BOM (`U+FEFF`).
+The shard was red, the pytest step never ran, and the failure named a scanner rather than the suite. That
+BOM was removed by `ruff-format` in this branch's first commit, so run `35448817607` is the first time
+these tests have actually run since the change they are about. The four schema failures in that run WERE
+this branch's and are fixed; these six are the ones the BOM had been hiding.
+
+- [ ] **`test_generated_artifacts_validate::test_the_generated_workflow_passes_yamllint`** — an
+      environment gap rather than a product defect: the backend shard had no `yamllint`, and
+      `require_capability` fails rather than skips when `FORGEOPS_REQUIRE_INTEGRATION=1`. **Fixed here** by
+      installing it at the same pinned version the `agent` job uses.
+- [ ] **`test_generation_api::test_it_accepts_a_configmap_which_has_no_spec`** — the gate refuses the
+      library's own render: "Dockerfile: still fails `dockerfile_base_pinned` (0/20), the check this
+      artifact is generated to satisfy", plus the probes check. This is the same shape as the incident
+      that produced `scripts/check-template-readiness.py` — and that gate is GREEN, so the template it
+      renders and the artifact the runtime path renders are not the same bytes. Finding the divergence is
+      the work; it is not a threshold to lower.
+- [ ] **`test_self_hosted_generation::test_a_run_is_served_from_provider_and_the_artifacts_pass_the_gate`**
+      — the same gate refusal over a real model run. This is also the `served_from='provider'` measurement
+      the backlog above asks for, so the two are one task.
+- [ ] **`test_generation_run_rows::test_a_near_duplicate_prompt_stores_l2`** and
+      **`test_self_hosted_generation::test_a_near_duplicate_generation_prompt_is_served_from_l2`** — "the
+      first run stored `...`, so nothing was indexed to match". L2 is not being populated, which is
+      exactly the surface `GENERATION_CONTRACT_VERSION` was added to in `74ad20a`; the baseline cycle in
+      this file was served from L2, so the read path works and the WRITE path is the suspect.
+- [ ] **`test_semantic_cache::test_l2_near_duplicate`** — the same property at the cache layer, without
+      generation in the way. The cheapest place to start.
+
 ## GitHub onboarding — what is built, and what the next session has to build
 
 Three parts were asked for. Two are complete and exercised; the third is complete on the agent side and
