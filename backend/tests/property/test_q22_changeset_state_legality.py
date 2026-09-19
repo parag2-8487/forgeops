@@ -171,6 +171,11 @@ class _FakeSession:
                         "version": self.version,
                         "blast_radius_score": 1,
                         "blast_radius_verdict": "allow",
+                        # `change_sets.operation` (revision `0021`). `approve()` reads it to refuse an
+                        # operation it cannot deliver — a clone, whose arguments carry a credential that
+                        # is deliberately not stored — so a row without it raises `KeyError` before the
+                        # property under test is reached. `changeset.apply` is what these rows are.
+                        "operation": "changeset.apply",
                     }
                 ]
             )

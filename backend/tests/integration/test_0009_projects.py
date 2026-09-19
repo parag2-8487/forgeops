@@ -79,9 +79,23 @@ class TestTheSettingsValidator:
             "repo_default_branch": "main",
             "repo_private": True,
             "repo_languages": ["Go", "Python"],
+            # Written by the GitHub-onboarded clone (Part 3). `clone_state` is what makes
+            # `awaiting_clone` distinguishable from `empty` on the codebase-status route, and it is a
+            # CLOSED set for that reason — the branch that reads it must not be reachable by a typo.
+            "clone_state": "awaiting_clone",
+            "repo_full_name": "octo-org/deploy-me",
+            "clone_url": "https://github.com/octo-org/deploy-me.git",
         }
         assert set(settings) == set(PROJECT_SETTINGS_KEYS)
         assert validate_project_settings(settings) == settings
+
+    @pytest.mark.parametrize("value", ["cloned", "done", "", "AWAITING_CLONE"])
+    def test_an_unknown_clone_state_is_rejected(self, value: str) -> None:
+        """The closed set, exercised. `cloned` is the plausible wrong answer: there is deliberately no
+        success value — the key is REMOVED once the directory exists, so its absence means "ordinary
+        project" and nothing downstream has to know where the project came from."""
+        with pytest.raises(ProjectSettingsError, match="clone_state"):
+            validate_project_settings({"clone_state": value})
 
     def test_an_empty_document_is_accepted(self) -> None:
         assert validate_project_settings({}) == {}

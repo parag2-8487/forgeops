@@ -34,6 +34,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    String,
     Text,
     UniqueConstraint,
     func,
@@ -109,6 +110,12 @@ CHANGE_ITEM_ACTIONS: tuple[str, ...] = ("create", "update", "delete")
 
 CHANGE_SET_ORIGINS: tuple[str, ...] = ("generation", "manual", "policy")
 
+#: WHAT A CHANGE SET CAN BE, and therefore what a later approval can deliver. Closed, because
+#: `approve()` branches on it: it can rebuild an apply's arguments from `change_items` and cannot
+#: rebuild a clone's, whose envelope carries a credential that is deliberately not stored. A value
+#: outside this set would put that branch back to guessing. Revision `0021` holds the same list.
+CHANGE_SET_OPERATIONS: tuple[str, ...] = ("changeset.apply", "repository.clone")
+
 APPROVAL_STATUSES: tuple[str, ...] = ("approved", "rejected")
 
 
@@ -130,6 +137,9 @@ class ChangeSet(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint(in_list("status", CHANGE_SET_STATUSES), name="ck_change_sets_status_allowed"),
         CheckConstraint(in_list("origin", CHANGE_SET_ORIGINS), name="ck_change_sets_origin_allowed"),
+        # The closed set of operations a change set can carry, declared here as well as in revision
+        # `0021` so `alembic check` does not propose dropping it.
+        CheckConstraint(in_list("operation", CHANGE_SET_OPERATIONS), name="ck_change_sets_operation"),
         Index("ix_change_sets_project_status", "project_id", "status"),
     )
 
@@ -140,6 +150,14 @@ class ChangeSet(SQLModel, table=True):
     # Nullable: a change set may originate from the system rather than a person.
     created_by: uuid.UUID | None = Field(default=None, foreign_key="users.id", ondelete="SET NULL")
     origin: str = Field(max_length=16)
+    #: WHAT THIS CHANGE SET IS, so `approve()` does not have to assume. `changeset.apply` for every row
+    #: that existed before revision `0021`; `repository.clone` for a clone, whose arguments a later
+    #: approval cannot rebuild because they carry a credential that is deliberately not stored. The
+    #: database holds the closed set as a check constraint, for the reason `0021`'s docstring gives.
+    operation: str = Field(
+        default="changeset.apply",
+        sa_column=Column("operation", String(length=64), nullable=False, server_default=text("'changeset.apply'")),
+    )
     # The foreign key is created in `0008`, not `0004`: `generation_runs` does not
     # exist until then. Declared here so the model and the database agree.
     generation_run_id: uuid.UUID | None = Field(
