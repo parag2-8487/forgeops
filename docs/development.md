@@ -290,6 +290,35 @@ docker start forgeops-test-pg forgeops-test-redis forgeops-test-cerbos `
              forgeops-test-ak-server forgeops-test-ak-worker
 ```
 
+### Pushing from a machine with two GitHub accounts
+
+Both remotes carry the account in the URL:
+
+```
+origin  https://parag8487@github.com/parag8487/ForgeOps.git
+mirror  https://parag2-8487@github.com/parag2-8487/forgeops.git
+```
+
+**That is load-bearing, not cosmetic.** Without the `user@` prefix, Git Credential Manager cannot tell
+which of the two stored accounts a URL belongs to, so it opens an account-selection dialog — and an
+agent session or a script has no way to answer one. Worse, when it guessed wrong it produced two
+failures that look like something else entirely:
+
+- `origin` answered **"Repository not found"** intermittently. `parag8487/ForgeOps` is private, so a
+  request authenticated as the *other* account gets a 404 rather than a 403 — GitHub does not reveal that
+  a private repository exists. The repository was never missing; the credential was the wrong one.
+- `mirror` answered **403 "Permission denied"** when the credential was the `parag8487` account, which
+  holds only `READ` there.
+
+**Which remote runs CI.** `parag8487/ForgeOps` has no Actions minutes left: every workflow fails in
+3–10 seconds with no step ever starting, which is the billing signal rather than a test failure. So CI
+evidence comes from `mirror`, where the same five workflows run normally. Push to both; read conclusions
+from the mirror.
+
+Nothing here stores a credential. The `user@` prefix is a username, not a secret, and each account's
+token stays where it already was — in the credential manager for one and in the gitignored
+`credentials.md` for the other.
+
 ### Running the suite: the two-chunk split
 
 The whole backend suite passes 1,476 tests and takes over an hour, which exceeds the shell

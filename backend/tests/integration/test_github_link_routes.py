@@ -533,9 +533,7 @@ class TestLinkingWithAPastedToken:
         unconfigured_app.state.github_link_service._users.api_base_url = fake_github  # noqa: SLF001
 
         async with await _client(unconfigured_app) as client:
-            response = await client.put(
-                "/api/v1/integrations/github/token", json={"token": ISSUED_TOKEN}
-            )
+            response = await client.put("/api/v1/integrations/github/token", json={"token": ISSUED_TOKEN})
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["connected"] is True
@@ -573,9 +571,7 @@ class TestLinkingWithAPastedToken:
         # possible against a credential that cannot be refreshed.
         assert row["refresh_token_sealed"] is None
 
-    async def test_a_token_github_refuses_is_not_stored(
-        self, unconfigured_app: Any, fake_github: str
-    ) -> None:
+    async def test_a_token_github_refuses_is_not_stored(self, unconfigured_app: Any, fake_github: str) -> None:
         unconfigured_app.state.github_link_service._users.api_base_url = fake_github  # noqa: SLF001
 
         async with await _client(unconfigured_app) as client:
@@ -589,9 +585,7 @@ class TestLinkingWithAPastedToken:
         assert "Contents and Metadata" in response.text
 
         async with unconfigured_app.state.sessionmaker() as session:
-            stored = (
-                await session.execute(text("SELECT count(*) FROM github_account_links"))
-            ).scalar_one()
+            stored = (await session.execute(text("SELECT count(*) FROM github_account_links"))).scalar_one()
         assert stored == 0
 
     async def test_pasting_twice_leaves_one_link(self, unconfigured_app: Any, fake_github: str) -> None:
@@ -603,9 +597,7 @@ class TestLinkingWithAPastedToken:
 
         assert (first.status_code, second.status_code) == (200, 200)
         async with unconfigured_app.state.sessionmaker() as session:
-            stored = (
-                await session.execute(text("SELECT count(*) FROM github_account_links"))
-            ).scalar_one()
+            stored = (await session.execute(text("SELECT count(*) FROM github_account_links"))).scalar_one()
         assert stored == 1
 
     async def test_disconnecting_a_pasted_token_says_it_must_be_deleted_on_github(
@@ -639,17 +631,13 @@ class TestLinkingWithAPastedToken:
             ).scalar_one()
         assert "only be deleted on GitHub" in reason
 
-    async def test_a_short_paste_is_refused_before_github_is_called(
-        self, unconfigured_app: Any
-    ) -> None:
+    async def test_a_short_paste_is_refused_before_github_is_called(self, unconfigured_app: Any) -> None:
         async with await _client(unconfigured_app) as client:
             response = await client.put("/api/v1/integrations/github/token", json={"token": "short"})
 
         assert response.status_code == 422, response.text
 
-    async def test_the_listing_works_through_a_pasted_token(
-        self, unconfigured_app: Any, fake_github: str
-    ) -> None:
+    async def test_the_listing_works_through_a_pasted_token(self, unconfigured_app: Any, fake_github: str) -> None:
         """The point of linking at all. An unconfigured deployment must still list repositories."""
         service = unconfigured_app.state.github_link_service
         service._users.api_base_url = fake_github  # noqa: SLF001
