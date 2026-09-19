@@ -305,7 +305,7 @@ agent session or a script has no way to answer one. Worse, when it guessed wrong
 failures that look like something else entirely:
 
 - `origin` answered **"Repository not found"** intermittently. `parag8487/ForgeOps` is private, so a
-  request authenticated as the *other* account gets a 404 rather than a 403 — GitHub does not reveal that
+  request authenticated as the _other_ account gets a 404 rather than a 403 — GitHub does not reveal that
   a private repository exists. The repository was never missing; the credential was the wrong one.
 - `mirror` answered **403 "Permission denied"** when the credential was the `parag8487` account, which
   holds only `READ` there.
