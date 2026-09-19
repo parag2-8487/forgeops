@@ -42,6 +42,7 @@ from src.audit.models import AuditEvent  # noqa: F401, E402
 from src.auth.device_models import AgentDevice  # noqa: F401, E402
 from src.auth.models import Session, User  # noqa: F401, E402
 from src.generation.models import GenerationRun  # noqa: F401, E402
+from src.integrations.models import GitHubAccountLink  # noqa: F401, E402
 from src.governance.models import (  # noqa: F401, E402
     Approval,
     ChangeItem,

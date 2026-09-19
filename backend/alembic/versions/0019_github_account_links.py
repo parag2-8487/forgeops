@@ -56,7 +56,18 @@ def upgrade() -> None:
         ),
         # Denormalised on purpose: every read predicates on user AND tenant (§6.7 makes tenancy a
         # row-level property), so this column is what makes the cross-tenant test assertable.
-        sa.Column("tenant_id", sa.Uuid(), nullable=False),
+        #
+        # NULLABLE, like every other `tenant_id` in this schema, and that is a repository-wide invariant
+        # rather than a local choice: D-35 defers enforced tenancy, and
+        # `test_tenant_context.py::test_tenant_id_columns_remain_nullable` reads
+        # `information_schema` to assert no table has jumped ahead of that decision. A `NOT NULL` here
+        # would make this one table refuse a row every other table accepts.
+        #
+        # Nothing writes NULL: the value comes from `principal.tenant_id`, and a read predicate of
+        # `tenant_id = :tenant_id` does not match NULL — so a row without a tenant would be invisible
+        # rather than visible to everyone, which is the safe direction for the failure that cannot
+        # happen yet.
+        sa.Column("tenant_id", sa.Uuid(), nullable=True),
         # What the screen shows. Not a credential.
         sa.Column("github_login", sa.String(length=39), nullable=False),
         sa.Column("github_user_id", sa.BigInteger(), nullable=False),
@@ -86,9 +97,9 @@ def upgrade() -> None:
     )
     # The listing path reads by (user, tenant); the primary key covers the user half and this covers
     # the tenant half for an administrative "who has linked an account" question.
-    op.create_index("ix_github_account_links_tenant", "github_account_links", ["tenant_id"])
+    op.create_index("ix_github_account_links_tenant_id", "github_account_links", ["tenant_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_github_account_links_tenant", table_name="github_account_links")
+    op.drop_index("ix_github_account_links_tenant_id", table_name="github_account_links")
     op.drop_table("github_account_links")
