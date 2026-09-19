@@ -410,6 +410,37 @@ class TestIsolation:
             ).scalar_one()
         assert remaining == 1
 
+    async def test_a_principal_with_no_tenant_can_read_its_own_link(self, link_app: Any) -> None:
+        """THE DEFECT THIS PINS, found by running the product rather than by a test.
+
+        D-35 defers enforced tenancy, so the principals this deployment actually issues carry
+        `tenant_id = None`. The predicate was `tenant_id = :tenant_id`, and `= NULL` is never true in
+        SQL — so a link was stored, committed, and then reported as absent by the very next request.
+        Every test in this class passed, because every one of them built a principal WITH a tenant.
+
+        The tenant halves of the isolation property are asserted above and still hold: this adds the
+        deferred case, which is the one real sign-in produces.
+        """
+        app, switch = link_app
+        switch.current = Principal.for_user(
+            user_id=USER_A,
+            subject=f"sub-{USER_A}",
+            email=f"{USER_A.hex}@example.invalid",
+            role=UserRole.ADMIN,
+            # No tenant, exactly as `Principal.for_user` is called on the paths that have no tenancy.
+            tenant_id=None,
+        )
+
+        async with await _client(app) as client:
+            await _connect(client)
+            status = await client.get("/api/v1/integrations/github")
+            repositories = await client.get("/api/v1/integrations/github/repositories")
+            disconnect = await client.delete("/api/v1/integrations/github")
+
+        assert status.json()["connected"] is True, "a tenant-less principal could not read its own link"
+        assert repositories.status_code == 200, repositories.text
+        assert disconnect.status_code == 200, disconnect.text
+
     async def test_a_transplanted_ciphertext_does_not_open(self, link_app: Any) -> None:
         """The second, independent half of the isolation guarantee: the seal is bound to the user.
 

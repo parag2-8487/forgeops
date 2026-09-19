@@ -290,7 +290,16 @@ async def begin_github_link(
 
     await request.app.state.redis.set(
         state_key(state),
-        json.dumps({"user_id": str(principal.user_id), "tenant_id": str(principal.tenant_id)}),
+        json.dumps(
+            {
+                "user_id": str(principal.user_id),
+                # `None` RATHER THAN THE STRING "None". D-35 defers enforced tenancy, so a principal
+                # this deployment issues today has no tenant, and `str(None)` round-trips as a value
+                # `uuid.UUID` cannot parse — which made the callback refuse a link it had just issued
+                # the state for, reporting "the pending link record was unreadable".
+                "tenant_id": str(principal.tenant_id) if principal.tenant_id is not None else None,
+            }
+        ),
         ex=STATE_TTL_SECONDS,
     )
     return ConnectResponse(authorize_url=authorize_url, expires_in_seconds=STATE_TTL_SECONDS)
@@ -328,7 +337,10 @@ async def github_link_callback(
     try:
         pending = json.loads(raw)
         user_id = uuid.UUID(str(pending["user_id"]))
-        tenant_id = uuid.UUID(str(pending["tenant_id"]))
+        # Optional, for the reason the writer states: a deployment with tenancy deferred has none, and
+        # a link must attach to the user either way.
+        raw_tenant = pending.get("tenant_id")
+        tenant_id = uuid.UUID(str(raw_tenant)) if raw_tenant else None
     except (ValueError, KeyError, TypeError) as exc:
         raise problem("github-link-failed", detail="the pending link record was unreadable") from exc
 

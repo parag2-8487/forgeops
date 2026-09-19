@@ -1242,7 +1242,12 @@ async def clone_project_repository(
     next_state = "cloning" if submission.outcome == "applying" else "awaiting_clone"
     await session.execute(
         text(
-            "UPDATE projects SET settings = jsonb_set(settings, '{clone_state}', to_jsonb(:state::text)) WHERE id = :id"
+            # `CAST(:state AS text)` rather than `:state::text`: SQLAlchemy reads the `::` as the start
+            # of another bind parameter, so the statement reached Postgres with a literal colon and a
+            # syntax error. Caught by running the route against the real database — no unit test on this
+            # path would have, because the SQL is only parsed when it is sent.
+            "UPDATE projects SET settings = jsonb_set(settings, '{clone_state}', "
+            "to_jsonb(CAST(:state AS text))) WHERE id = :id"
         ),
         {"state": next_state, "id": project_id},
     )

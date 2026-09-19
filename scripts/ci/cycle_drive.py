@@ -94,9 +94,123 @@ async def main(argv: list[str]) -> int:
                 )
             elif action == "approve":
                 await approve(client, uuid.UUID(rest[0]))
+            elif action == "link-github":
+                # THE TOKEN ARRIVES ON STDIN, not as an argument: an argument is visible in `ps` to
+                # every other user on the machine, which is one of the exposures Part 3 forbids.
+                await link_github(client, sys.stdin.read().strip())
+            elif action == "list-repos":
+                await list_repos(client, rest[0] if rest else "")
+            elif action == "create-from-github":
+                await create_from_github(
+                    client, rest[0], rest[1] if len(rest) > 1 else ""
+                )
+            elif action == "clone":
+                await clone(client, project_id)
+            elif action == "pair-code":
+                await pair_code(app, principal, uuid.UUID(rest[0]))
             else:
                 raise SystemExit(f"unknown action {action!r}")
     return 0
+
+
+async def pair_code(app: Any, principal: Any, target_project: uuid.UUID) -> None:
+    """Mint a pairing code for a project through the composed `DeviceService`.
+
+    NOT through `POST /agents/pairing-codes`: that route carries `require_role` as a ROUTER dependency,
+    and this driver overrides only `require_principal` — overriding the role check as well would be
+    substituting the authorisation this repository's tests exist to prove. The service is the same
+    object the route would have called, which is the substitution `seed_host_apply.py` already argues
+    for: a real `DeviceService`, the real internal CA, the real Redis, the real pepper.
+    """
+    async with app.state.sessionmaker() as session:
+        issued = await app.state.device_service.issue_pairing_code(
+            session, project_id=target_project, actor=principal
+        )
+        await session.commit()
+    print(json.dumps({"code": issued.code, "device_id": str(issued.device_id)}))
+
+
+async def link_github(client: httpx.AsyncClient, token: str) -> None:
+    """Link with a pasted token — the path that needs no GitHub App and shows no GitHub screen."""
+    response = await client.put(
+        "/api/v1/integrations/github/token", json={"token": token}
+    )
+    if response.status_code >= 400:
+        raise SystemExit(f"link refused {response.status_code}: {response.text[:600]}")
+    body = response.json()
+    print(
+        json.dumps({"login": body["login"], "credential_kind": body["credential_kind"]})
+    )
+
+
+async def list_repos(client: httpx.AsyncClient, query: str) -> None:
+    """The real listing, as the picker reads it."""
+    response = await client.get(
+        "/api/v1/integrations/github/repositories",
+        params={"query": query, "per_page": 5},
+    )
+    if response.status_code >= 400:
+        raise SystemExit(
+            f"listing refused {response.status_code}: {response.text[:600]}"
+        )
+    body = response.json()
+    print(
+        json.dumps(
+            {
+                "total": body["total"],
+                "truncated": body["truncated"],
+                "items": [
+                    {
+                        "full_name": item["full_name"],
+                        "private": item["private"],
+                        "default_branch": item["default_branch"],
+                        "language": item["language"],
+                    }
+                    for item in body["items"]
+                ],
+            }
+        )
+    )
+
+
+async def create_from_github(
+    client: httpx.AsyncClient, full_name: str, parent: str
+) -> None:
+    """Create the project, then read the index status so the `awaiting_clone` state is visible."""
+    response = await client.post(
+        "/api/v1/projects/from-github",
+        json={
+            "repo_full_name": full_name,
+            "parent_directory": parent,
+            "directory_name": "",
+            "branch": "",
+        },
+    )
+    if response.status_code >= 400:
+        raise SystemExit(
+            f"create refused {response.status_code}: {response.text[:600]}"
+        )
+    body = response.json()
+    status = await client.get(f"/api/v1/analysis/codebase/{body['id']}/status")
+    print(
+        json.dumps(
+            {
+                "project_id": body["id"],
+                "name": body["name"],
+                "path": body["path"],
+                "clone_state": body["settings"].get("clone_state"),
+                "index_status": status.json().get("status"),
+            }
+        )
+    )
+
+
+async def clone(client: httpx.AsyncClient, project_id: uuid.UUID) -> None:
+    """Dispatch the clone through the governance chokepoint."""
+    response = await client.post(f"/api/v1/projects/{project_id}/clone")
+    if response.status_code >= 400:
+        raise SystemExit(f"clone refused {response.status_code}: {response.text[:900]}")
+    print(json.dumps(response.json()))
 
 
 async def score(client: httpx.AsyncClient, project_id: uuid.UUID) -> None:

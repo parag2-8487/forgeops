@@ -813,8 +813,10 @@ class GovernanceChokepoint:
         await session.execute(
             text(
                 "INSERT INTO change_sets (id, project_id, tenant_id, status, created_by, origin, "
-                "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, version) "
-                "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, 0, '', :digest, 1)"
+                "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, "
+                "version, operation) "
+                "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, 0, '', "
+                ":digest, 1, :operation)"
             ),
             {
                 "id": change_set_id,
@@ -822,6 +824,9 @@ class GovernanceChokepoint:
                 "tenant": admitted.tenant_id,
                 "created_by": principal.user_id if principal.kind == "user" else None,
                 "digest": admitted.bundle_digest,
+                # The row SAYS what it is. `approve()` reads this rather than assuming an apply, which
+                # is what made a human-approved clone arrive at the agent as a malformed apply.
+                "operation": CLONE_OPERATION,
             },
         )
         await self._store_blast_radius(session, change_set_id, report)
@@ -945,6 +950,31 @@ class GovernanceChokepoint:
                 detail=f"change set {change_set_id} is {row['status']}, not pending_approval",
             )
         version = int(row["version"]) if expected_version is None else int(expected_version)
+        # WHAT THIS METHOD CAN DELIVER, checked rather than assumed.
+        #
+        # This path ends in `_deliver(operation=APPLY_OPERATION, args=_apply_entries(...))`. For a clone
+        # that is the WRONG COMMAND: it arrived at the agent as an apply with no entries, the agent
+        # correctly refused, and the change set reached `rolled_back` -- which reads as an agent problem
+        # and was the backend sending the wrong thing. Found by running a real clone against a real
+        # agent; every test passed, because the auto-approved clone path mints its own envelope and
+        # never comes through here.
+        #
+        # It REFUSES rather than guesses, and it cannot simply be taught to rebuild a clone: a clone's
+        # envelope carries a short-lived GitHub credential which is deliberately stored nowhere, so
+        # there is nothing here to rebuild it from. Delivering a human-approved clone needs that
+        # credential re-minted at delivery time from the link of the user who asked
+        # (`change_sets.created_by`); until that exists, an honest 409 beats a malformed command.
+        operation = str(row["operation"] or APPLY_OPERATION)
+        if operation != APPLY_OPERATION:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    f"change set {change_set_id} carries the operation {operation!r}, which this "
+                    "approval path cannot deliver: its arguments include a short-lived credential that "
+                    "is deliberately not stored, so they cannot be rebuilt from the row. Re-request the "
+                    "operation instead of approving this record."
+                ),
+            )
 
         admitted = await self._admit(session, project_id=row["project_id"], principal=principal)
         decision = await self._evaluate_policy(
@@ -1608,7 +1638,8 @@ class GovernanceChokepoint:
     async def _load_change_set(self, session: AsyncSession, change_set_id: uuid.UUID) -> Mapping[str, Any]:
         result = await session.execute(
             text(
-                "SELECT id, project_id, tenant_id, status, version, blast_radius_score, blast_radius_verdict "
+                "SELECT id, project_id, tenant_id, status, version, blast_radius_score, "
+                "blast_radius_verdict, operation "
                 "FROM change_sets WHERE id = :id FOR UPDATE"
             ),
             {"id": change_set_id},

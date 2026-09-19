@@ -10,6 +10,15 @@ THE ISOLATION RULE IS ENFORCED TWICE, deliberately. The WHERE clause carries bot
 tenant, AND the seal's additional authenticated data is the user id — so a row moved between users does
 not open even if a predicate were dropped. One of those is a mistake away from being wrong; both being
 wrong at once takes two.
+
+THE TENANT PREDICATE IS `IS NOT DISTINCT FROM`, NOT `=`, and that is a defect fixed rather than a style
+choice. D-35 defers enforced tenancy, so `principal.tenant_id` is `None` for a principal this
+deployment issues today, and `tenant_id = NULL` is never true in SQL — a link written by such a
+principal could be stored and then never read back, which is exactly what happened the first time this
+was exercised against the running stack. `IS NOT DISTINCT FROM` treats NULL as a value, so a tenant-less
+principal sees tenant-less rows and nothing else, which is the same rule `projects._tenant_clause`
+states for the same reason. Two non-equal tenants still do not match, and a NULL does not match a real
+tenant, so the isolation property is unchanged; what changed is that the deferred case works.
 """
 
 from __future__ import annotations
@@ -283,7 +292,8 @@ class GitHubLinkService:
             revoked = await self._oauth.revoke(token, client=client)
         result = await session.execute(
             text(
-                "DELETE FROM github_account_links WHERE user_id = :user_id AND tenant_id = :tenant_id "
+                "DELETE FROM github_account_links "
+                "WHERE user_id = :user_id AND tenant_id IS NOT DISTINCT FROM :tenant_id "
                 "RETURNING github_login"
             ),
             {"user_id": user_id, "tenant_id": tenant_id},
@@ -298,7 +308,8 @@ class GitHubLinkService:
     async def read(self, session: AsyncSession, *, user_id: uuid.UUID, tenant_id: uuid.UUID) -> LinkRecord | None:
         result = await session.execute(
             text(
-                f"SELECT {PUBLIC_COLUMNS} FROM github_account_links WHERE user_id = :user_id AND tenant_id = :tenant_id"
+                f"SELECT {PUBLIC_COLUMNS} FROM github_account_links "
+                "WHERE user_id = :user_id AND tenant_id IS NOT DISTINCT FROM :tenant_id"
             ),
             {"user_id": user_id, "tenant_id": tenant_id},
         )
@@ -356,7 +367,7 @@ class GitHubLinkService:
             text(
                 "SELECT access_token_sealed, access_token_expires_at, refresh_token_sealed, "
                 "refresh_token_expires_at, scopes, github_login, github_user_id, github_avatar_url "
-                "FROM github_account_links WHERE user_id = :user_id AND tenant_id = :tenant_id"
+                "FROM github_account_links WHERE user_id = :user_id AND tenant_id IS NOT DISTINCT FROM :tenant_id"
             ),
             {"user_id": user_id, "tenant_id": tenant_id},
         )
@@ -400,7 +411,8 @@ class GitHubLinkService:
         """Which of the two kinds this link is. Defaults to the App kind for a pre-`0020` row."""
         result = await session.execute(
             text(
-                "SELECT credential_kind FROM github_account_links WHERE user_id = :user_id AND tenant_id = :tenant_id"
+                "SELECT credential_kind FROM github_account_links "
+                "WHERE user_id = :user_id AND tenant_id IS NOT DISTINCT FROM :tenant_id"
             ),
             {"user_id": user_id, "tenant_id": tenant_id},
         )
@@ -414,7 +426,7 @@ class GitHubLinkService:
         result = await session.execute(
             text(
                 "SELECT access_token_sealed FROM github_account_links "
-                "WHERE user_id = :user_id AND tenant_id = :tenant_id"
+                "WHERE user_id = :user_id AND tenant_id IS NOT DISTINCT FROM :tenant_id"
             ),
             {"user_id": user_id, "tenant_id": tenant_id},
         )

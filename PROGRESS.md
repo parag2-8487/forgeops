@@ -232,6 +232,23 @@ repository's recurring defect class, and the honest position is to name it.
 
 ### Done, exercised
 
+**The GitHub onboarding path, run against real GitHub and a real host agent (2026-09-19).** Not a test
+— the product, on the local stack, with the token from `credentials.md`:
+
+| Step                                               | Result                                                                                                                                                                                                             |
+| :------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| link the account with a pasted token, no GitHub UI | `{"login": "parag2-8487", "credential_kind": "personal_token"}`                                                                                                                                                    |
+| list repositories from the real API                | `{"total": 3, "truncated": false, ...}` — `parag2-8487/forgeops` (branch `phase-1-implementation`, Python), `vantage-protocol22` (main, HTML), `vantage-protocol` (main, TypeScript)                               |
+| create a project from one                          | `path: C:\forgeops-gh/vantage-protocol22`, `clone_state: awaiting_clone`, **`index_status: awaiting_clone`**                                                                                                       |
+| dispatch the clone                                 | reached the chokepoint and stopped at the approval gate: `status: pending_approval`, audit `approval_required` — _"human approval required before cloning parag2-8487/vantage-protocol22 … environment is absent"_ |
+| approve it                                         | **refused, and that is the gap below**                                                                                                                                                                             |
+
+Three defects that only a real run could find, all fixed here: the tenant predicate was `= :tenant_id`
+and `= NULL` is never true, so a link written by the tenant-less principal this deployment actually
+issues could never be read back; the pending-link record stored `str(None)` as a tenant and the callback
+then called its own state unreadable; and `to_jsonb(:state::text)` was parsed by SQLAlchemy as a second
+bind parameter, so the clone dispatch sent Postgres a literal colon.
+
 - **The per-user GitHub account link** (`backend/src/integrations/`, migration `0019`,
   `frontend/features/integrations/GitHubConnection.tsx`, Settings → Integrations). Authentik OIDC is
   untouched: no sign-in route, no cookie, no principal. Evidence: 25 unit tests
@@ -252,27 +269,34 @@ repository's recurring defect class, and the honest position is to name it.
   collision, non-empty target named in the message, URL carrying userinfo, missing project or URL, size
   over the ceiling, and a failed clone leaving nothing behind. `go test -race` clean.
 
-### Not started, and what it needs
+### Not finished, and exactly what is left
 
-- [ ] **The backend transit that mints `repository.clone`.** §2.2.1 confines `send_command` to
-      `governance/`, so this is a chokepoint transit and not a route. `MutationRequest` cannot express it
-      as it stands: it requires at least one `ChangeItemRequest`, and every item is a file write with a
-      pre-image hash. What it needs is a `change_sets` row of a new origin whose single item is the clone,
-      a blast-radius score for "one directory created", and a rollback handle that records the directory
-      to remove so a revert can undo it.
-- [ ] **The ordering decision, already made and written down so it is not relitigated:** create the
-      project row first with the intended path and an `awaiting_clone` index state, then pair an agent for
-      it through the existing onboarding flow, then the clone runs and reports the absolute path it
-      created — which the backend writes onto `projects.path`, so the project's path is what exists on
-      disk rather than what somebody typed. This was chosen over "let an already-paired agent accept a
-      clone for a new project in the same tenant" because devices are paired per project and the policy
-      gate scopes on that; the alternative would widen device scope to make onboarding shorter.
-- [ ] **`awaiting_clone` in the index-status vocabulary**, beside `empty` and `indexed`, so a project
-      pointing at a directory that does not exist yet says so.
-- [ ] **The repository picker** (`GET /api/v1/integrations/github/repositories` is built and tested; the
-      UI that consumes it is not) and the replacement of the create form's GitHub branch, which today
-      asks for an App installation id, an owner and a repo name typed by hand.
-- [ ] **The E2E covering connect → pick → clone → project → scan → score.**
+- [ ] **A human-approved clone cannot be delivered.** The clone transit's AUTO-APPROVED path is complete
+      — it mints and delivers a signed `repository.clone` envelope, proven by nine tests including one
+      that asserts the credential reaches no database row. The APPROVED path is not: `approve()` ends in
+      `_deliver(operation=changeset.apply, args=_apply_entries(...))`, so a clone arrived at the agent as
+      an apply with no entries, the agent refused correctly, and the change set read `rolled_back` —
+      which looks like an agent fault and was the backend sending the wrong command. **It now refuses
+      honestly instead**: `change_sets.operation` (migration `0021`) records what a change set is, and
+      `approve()` answers 409 naming the operation and the reason. It cannot simply be taught to rebuild
+      a clone: the envelope carries a short-lived GitHub credential that is deliberately stored nowhere.
+      The fix is to re-mint that credential at delivery time from the link of the user who asked
+      (`change_sets.created_by`) — which is a design decision about credential lifetime, not a patch.
+- [ ] **Or: a policy that has an opinion about clones.** The refusal above is only reached because
+      `approval.rego` requires approval when `environment` is absent, and a clone has no environment —
+      it is not a deployment. Passing a synthetic environment to make it auto-approve would be gaming
+      the policy in the fail-open direction; the honest change is a Rego rule about `repository.clone`,
+      with its own `opa test` case.
+- [ ] **The clone credential should travel as a single-use ticket.** It is in the signed envelope today,
+      which means it crosses the Redis command stream on its way to the socket owner and sits there until
+      the stream is trimmed. Postgres never sees it and no audit row carries it. The refinement is an
+      opaque id in the envelope that the agent redeems over its device session.
+- [ ] **The E2E covering connect → pick → clone → project → scan → score.** The first four steps are
+      demonstrated above against real GitHub; the last two need the clone to land, so the spec waits on
+      the item above rather than being written against a flow that stops.
+- [ ] **`onboarding.spec.ts` and `printed-instructions.spec.ts` were not re-run.** They need the e2e
+      compose overlay and a provisioned IdP; the create form they drive changed, so they are the first
+      thing the next session should run.
 
 ## Current phase task list — Phase 1
 

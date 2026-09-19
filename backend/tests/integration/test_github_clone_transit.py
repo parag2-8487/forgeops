@@ -239,6 +239,73 @@ class TestTheCloneTransit:
         assert len(nonces) == 2, "two commands shared a nonce"
 
 
+class TestTheApprovalPathRefusesWhatItCannotBuild:
+    """The defect a real clone against a real agent exposed, pinned so it cannot return.
+
+    `approve()` ends in `_deliver(operation=changeset.apply, args=_apply_entries(...))`. A clone reached
+    the agent through it as an apply with no entries; the agent refused correctly and the change set
+    read `rolled_back`, which looks like an agent fault and was the backend sending the wrong command.
+    Every test passed at the time, because the AUTO-APPROVED clone path mints its own envelope and never
+    goes through `approve()` — so the test that would have caught it is this one.
+    """
+
+    async def test_a_pending_clone_cannot_be_approved_into_an_apply(
+        self, sessions: Any, redis_client: Any, sink: RecordingSink
+    ) -> None:
+        chokepoint = build_chokepoint(
+            policy=ScriptedPolicy(decision=require_approval()), sink=sink, redis_client=redis_client
+        )
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            submission = await _clone(chokepoint, session, fixture)
+            assert submission.status == "pending_approval"
+
+            with pytest.raises(Exception) as caught:  # noqa: PT011 - the registered problem type
+                await chokepoint.approve(session, change_set_id=submission.change_set_id, principal=fixture.principal)
+
+            # The refusal NAMES the operation and why, read from the problem DOCUMENT rather than the
+            # exception's string form — `str()` on a `ProblemException` is the registry title, which is
+            # the same sentence for every conflict and would make this assertion pass against any of them.
+            detail = str(getattr(caught.value.problem, "detail", "") or "")
+            assert "repository.clone" in detail, detail
+            assert "not stored" in detail, detail
+
+        # AND NOTHING WAS SENT. The whole point: a malformed command must not reach the agent.
+        assert sink.sent == []
+
+    async def test_an_apply_still_approves_normally(
+        self, sessions: Any, redis_client: Any, sink: RecordingSink
+    ) -> None:
+        """The guard must not have closed the door it was standing beside."""
+        from src.governance.chokepoint import MutationRequest
+
+        from tests.integration.chokepoint_support import one_create
+
+        chokepoint = build_chokepoint(
+            policy=ScriptedPolicy(decision=require_approval()), sink=sink, redis_client=redis_client
+        )
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            submitted = await chokepoint.submit(
+                session,
+                MutationRequest(
+                    project_id=fixture.project_id,
+                    items=one_create(),
+                    reason="the guard must not block an apply",
+                ),
+                principal=fixture.principal,
+            )
+            assert submitted.status == "pending_approval"
+
+            approved = await chokepoint.approve(
+                session, change_set_id=submitted.change_set_id, principal=fixture.principal
+            )
+
+        assert approved.status == "applying"
+        assert len(sink.sent) == 1
+        assert sink.sent[0][1].envelope["operation"] == "changeset.apply"
+
+
 class TestTheOperationIsOnTheWhitelist:
     async def test_the_mint_refuses_an_operation_outside_the_catalogue(
         self, sessions: Any, redis_client: Any, sink: RecordingSink
