@@ -219,8 +219,68 @@ def unsatisfied_targets(
             # first by path is cited: the finding is about the kind's content, and every file of the
             # kind is part of the same answer.
             offenders = sorted(path for path in produced if kind_for_path(path) == kind)
+            if not _any_offender_can_satisfy(check_id, offenders, produced):
+                # A CHECK ABOUT CONTAINERS IS NOT A CHECK ABOUT EVERY MANIFEST. `kind_for_path` keys on
+                # the path, so a `k8s/configmap.yaml` was held answerable for
+                # `kubernetes_containers_unprivileged` and `kubernetes_resource_limits_declared` — checks
+                # a ConfigMap has no containers to satisfy. The artifact was withheld for failing to be
+                # something it is not, which is the same mistake as blaming `build.yml` for `ci.yml`
+                # (above) one level down: the unit of judgement has to be what the document IS, not where
+                # it sits. Only container-bearing kinds are judged by container checks; a run that wrote
+                # only a ConfigMap is answerable for the checks a ConfigMap can satisfy.
+                continue
             findings.append(
                 f"{offenders[0]}: still fails {check_id} ({check.points}/{check.max_points}), "
                 f"the check this artifact is generated to satisfy; {check.evidence or explanation.looked_for}"
             )
     return tuple(findings)
+
+
+#: Checks that read a pod template. A Kubernetes document without one cannot satisfy them and must not
+#: be judged by them — `kind_for_path` cannot tell the difference, so the document's own `kind` does.
+_CONTAINER_CHECKS: frozenset[str] = frozenset(
+    {
+        "kubernetes_containers_unprivileged",
+        "kubernetes_resource_limits_declared",
+        "kubernetes_probes_declared",
+        "kubernetes_image_tags_pinned",
+    }
+)
+
+#: The kinds that carry a pod template. Read from the document's `kind:` field rather than its path,
+#: because a ConfigMap, a Service, an Ingress and a Secret all live beside a Deployment and none of them
+#: has a container.
+_CONTAINER_BEARING_KINDS: frozenset[str] = frozenset(
+    {"deployment", "statefulset", "daemonset", "job", "cronjob", "replicaset", "pod", "rollout"}
+)
+
+
+def _any_offender_can_satisfy(check_id: str, offenders: Sequence[str], produced: Mapping[str, str]) -> bool:
+    """Whether at least one artifact this run produced could satisfy `check_id` at all.
+
+    Conservative in the direction that keeps the gate strict: anything not recognised as a
+    container-check-versus-container-free-document pair is judged exactly as before, and a document whose
+    `kind` cannot be read is treated as container-bearing so an unparsable manifest is not excused.
+    """
+    if check_id not in _CONTAINER_CHECKS:
+        return True
+    for path in offenders:
+        body = produced.get(path, "")
+        kind = _document_kind(body)
+        if kind is None or kind in _CONTAINER_BEARING_KINDS:
+            return True
+    return False
+
+
+def _document_kind(body: str) -> str | None:
+    """The `kind:` of the first document, lowercased, or `None` when it cannot be read.
+
+    Read with a line scan rather than a YAML parse: this runs inside a gate that must not fail because a
+    manifest is mid-edit, and `None` (meaning "judge it") is the strict answer when the shape is unclear.
+    """
+    for raw in body.splitlines():
+        line = raw.strip()
+        if line.lower().startswith("kind:"):
+            value = line.split(":", 1)[1].strip().strip("\"'")
+            return value.lower() or None
+    return None
