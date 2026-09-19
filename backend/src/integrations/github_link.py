@@ -435,6 +435,28 @@ class GitHubUserClient:
             raise GitHubAppError("read the linked account", response.status_code, "no login in the response")
         return GitHubAccount(login=login, account_id=account_id, avatar_url=str(payload.get("avatar_url") or ""))
 
+    async def scopes(self, token: str, *, client: httpx.AsyncClient | None = None) -> str:
+        """What this token may do, as GitHub reports it — or an empty string when it does not say.
+
+        A CLASSIC token's scopes come back in the `X-OAuth-Scopes` response header. A fine-grained token
+        and a user-to-server token have permissions rather than scopes and the header is absent, so this
+        returns "" for them. Empty means "GitHub did not say", and the screen renders that as absence
+        rather than as "no permissions" — the two are different and only one of them is a problem.
+
+        Never raises: a missing header is not a failure, and a link must not be refused because its
+        permissions could not be described.
+        """
+        owned = client is None
+        http = client or httpx.AsyncClient(timeout=httpx.Timeout(15.0))
+        try:
+            response = await http.get(f"{self.api_base_url}/user", headers=self._headers(token))
+        except httpx.HTTPError:
+            return ""
+        finally:
+            if owned:
+                await http.aclose()
+        return str(response.headers.get("X-OAuth-Scopes") or "").strip()
+
     async def repositories(
         self, token: str, *, client: httpx.AsyncClient | None = None
     ) -> tuple[tuple[Repository, ...], bool]:

@@ -32,10 +32,14 @@ import { api, ApiProblemError, queryKeys } from "@/lib/api";
 export interface GitHubLinkStatus {
   configured: boolean;
   connected: boolean;
+  /** Pasting a token needs no GitHub App, so this path is offered even when `configured` is false. */
+  token_link_available: boolean;
   configuration_hint: string;
   login: string | null;
   avatar_url: string | null;
   scopes: string[];
+  /** `oauth_app` or `personal_token`. Decides what disconnecting can promise. */
+  credential_kind: string | null;
   connected_at: string | null;
   /** `null` means the link has never been used — not that it is fine, and not that it is broken. */
   last_use_ok: boolean | null;
@@ -61,6 +65,23 @@ export function GitHubConnection() {
   const client = useQueryClient();
   const status = useGitHubLink();
   const [error, setError] = useState<string | null>(null);
+  const [token, setToken] = useState("");
+
+  /**
+   * The redirect-free link. `PUT`, because the effect is idempotent — one link per user — and the
+   * value is cleared from component state the moment it is accepted, so a token does not sit in a
+   * React tree waiting to be serialised by a devtools snapshot.
+   */
+  const linkWithToken = useMutation({
+    mutationFn: () =>
+      api.put<GitHubLinkStatus>("/integrations/github/token", { token: token.trim() }),
+    onSuccess: () => {
+      setError(null);
+      setToken("");
+      void client.invalidateQueries({ queryKey: queryKeys.integrations.github() });
+    },
+    onError: (caught: unknown) => setError(describe(caught)),
+  });
 
   const connect = useMutation({
     mutationFn: () => api.post<ConnectResponse>("/integrations/github/connect"),
@@ -76,14 +97,21 @@ export function GitHubConnection() {
 
   const disconnect = useMutation({
     mutationFn: () =>
-      api.delete<{ login: string; revoked_at_github: boolean }>("/integrations/github"),
+      api.delete<{ login: string; revoked_at_github: boolean; credential_kind: string }>(
+        "/integrations/github",
+      ),
     onSuccess: (response) => {
       setError(
         response.revoked_at_github
           ? null
-          : // Stated rather than swallowed: the local link is gone but the token may still be live at
-            // GitHub, which is a different fact and the user may want to act on it.
-            `Disconnected ${response.login}, but GitHub did not confirm the token was revoked. ` +
+          : response.credential_kind === "personal_token"
+            ? // Not a failure, and it must not read as one: this server cannot delete a token the
+              // person created, so the honest instruction is where to delete it.
+              `Disconnected ${response.login}. The token you supplied still exists on GitHub — delete ` +
+              "it under Settings → Developer settings if you no longer want it."
+            : // Stated rather than swallowed: the local link is gone but the token may still be live at
+              // GitHub, which is a different fact and the user may want to act on it.
+              `Disconnected ${response.login}, but GitHub did not confirm the token was revoked. ` +
               "Review it under Settings → Applications on GitHub.",
       );
       void client.invalidateQueries({ queryKey: queryKeys.integrations.github() });
@@ -104,36 +132,81 @@ export function GitHubConnection() {
 
   const link = status.data;
 
-  if (!link.configured) {
-    return (
-      <section data-testid="github-link-unconfigured" aria-labelledby="github-unconfigured-heading">
-        <h3 id="github-unconfigured-heading">GitHub is not configured on this server</h3>
-        <p>
-          A GitHub account cannot be linked until an administrator registers a GitHub App for this
-          deployment. This is the state of a fresh installation rather than a fault.
-        </p>
-        <p data-testid="github-link-hint">{link.configuration_hint}</p>
-      </section>
-    );
-  }
-
   if (!link.connected) {
     return (
       <section data-testid="github-link-disconnected" aria-labelledby="github-connect-heading">
         <h3 id="github-connect-heading">Connect a GitHub account</h3>
         <p>
           Linking GitHub lets you pick a repository to clone onto your machine. It does not change
-          how you sign in to ForgeOps, and it grants ForgeOps nothing beyond what the GitHub App
-          asks for.
+          how you sign in to ForgeOps, and it grants ForgeOps nothing beyond what you allow.
         </p>
-        <Button
-          type="button"
-          data-testid="github-connect"
-          disabled={connect.isPending}
-          onClick={() => connect.mutate()}
+
+        {/*
+          THE TOKEN PATH IS FIRST AND IS THE DEFAULT, because it is the one that stays inside ForgeOps.
+          The authorization flow has to send the person to github.com — that is where consent is given —
+          so it shows GitHub's sign-in and account-selection screens, and on a machine signed into more
+          than one GitHub account that chooser is a way to link the wrong one by accident. Pasting a
+          token avoids the round trip entirely, needs no GitHub App configured on this server, and is
+          verified against GitHub before it is stored, so a wrong value is refused here rather than
+          discovered later as a repository list that fails.
+        */}
+        <form
+          data-testid="github-token-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            linkWithToken.mutate();
+          }}
         >
-          {connect.isPending ? "Opening GitHub…" : "Connect GitHub"}
-        </Button>
+          <label htmlFor="github-token">GitHub token</label>
+          <input
+            id="github-token"
+            data-testid="github-token-input"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder="Paste a token from GitHub → Settings → Developer settings"
+          />
+          <p>
+            This stays on this page — no GitHub sign-in and no account-selection screen. A
+            fine-grained token needs <strong>Contents: read</strong> and{" "}
+            <strong>Metadata: read</strong> on the repositories you want. It is encrypted before it
+            is stored and is never shown again.
+          </p>
+          <Button
+            type="submit"
+            data-testid="github-token-submit"
+            disabled={linkWithToken.isPending || token.trim().length < 8}
+          >
+            {linkWithToken.isPending ? "Checking with GitHub…" : "Link with a token"}
+          </Button>
+        </form>
+
+        {link.configured ? (
+          <details data-testid="github-oauth-alternative">
+            <summary>Or authorise through the GitHub App</summary>
+            <p>
+              This opens github.com, where you sign in if you are not already and choose which
+              account to authorise. Use it if you would rather not create a token.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="github-connect"
+              disabled={connect.isPending}
+              onClick={() => connect.mutate()}
+            >
+              {connect.isPending ? "Opening GitHub…" : "Continue on GitHub"}
+            </Button>
+          </details>
+        ) : (
+          <p data-testid="github-link-hint">
+            The GitHub App route is not set up on this server, so the token above is the way to
+            connect. An administrator can enable it as well: {link.configuration_hint}
+          </p>
+        )}
+
         {error ? (
           <p data-testid="github-link-problem" role="alert">
             {error}

@@ -470,7 +470,11 @@ class TestDisconnect:
             await _connect(client)
             response = await client.delete("/api/v1/integrations/github")
             assert response.status_code == 200, response.text
-            assert response.json() == {"login": "octo-cat", "revoked_at_github": True}
+            assert response.json() == {
+                "login": "octo-cat",
+                "revoked_at_github": True,
+                "credential_kind": "oauth_app",
+            }
 
             after = await client.get("/api/v1/integrations/github")
             assert after.json()["connected"] is False
@@ -512,6 +516,155 @@ class TestDisconnect:
         assert response.json()["type"].endswith("github-link-absent")
 
 
+class TestLinkingWithAPastedToken:
+    """The redirect-free path: no authorize URL, no account chooser, no GitHub UI at all.
+
+    It is the path that works on a deployment with NO GitHub App, which is why `unconfigured_app` is the
+    fixture here rather than `link_app` — proving the capability exactly where the other path cannot
+    work. The fake GitHub is still on loopback, because the token is verified against the real API
+    surface before anything is stored.
+    """
+
+    async def test_a_verified_token_links_without_any_redirect(
+        self, unconfigured_app: Any, fake_github: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The App credentials stay empty; only the API base URL points at the fake, which is the same
+        # setting a GitHub Enterprise deployment sets.
+        unconfigured_app.state.github_link_service._users.api_base_url = fake_github  # noqa: SLF001
+
+        async with await _client(unconfigured_app) as client:
+            response = await client.put(
+                "/api/v1/integrations/github/token", json={"token": ISSUED_TOKEN}
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["connected"] is True
+            assert body["login"] == "octo-cat"
+            assert body["credential_kind"] == "personal_token"
+            # The deployment still has no App, and the screen must keep saying so rather than implying
+            # the link came from one.
+            assert body["configured"] is False
+            assert body["token_link_available"] is True
+            assert ISSUED_TOKEN not in response.text
+
+            # And no authorize URL was ever produced: `/connect` still refuses, which is the proof that
+            # this link did not go through GitHub's UI.
+            begin = await client.post("/api/v1/integrations/github/connect")
+            assert begin.status_code == 503
+
+        async with unconfigured_app.state.sessionmaker() as session:
+            row = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT credential_kind, access_token_sealed, refresh_token_sealed "
+                            "FROM github_account_links WHERE user_id = :u"
+                        ),
+                        {"u": USER_A},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        assert row is not None
+        assert row["credential_kind"] == "personal_token"
+        assert ISSUED_TOKEN.encode("utf-8") not in bytes(row["access_token_sealed"])
+        # No refresh token exists for a pasted one, and inventing one would make a refresh attempt
+        # possible against a credential that cannot be refreshed.
+        assert row["refresh_token_sealed"] is None
+
+    async def test_a_token_github_refuses_is_not_stored(
+        self, unconfigured_app: Any, fake_github: str
+    ) -> None:
+        unconfigured_app.state.github_link_service._users.api_base_url = fake_github  # noqa: SLF001
+
+        async with await _client(unconfigured_app) as client:
+            response = await client.put(
+                "/api/v1/integrations/github/token", json={"token": "a-token-this-server-will-refuse"}
+            )
+
+        assert response.status_code == 502, response.text
+        assert "401" in response.text
+        # The remedy is named: a new token, and what it needs to grant.
+        assert "Contents and Metadata" in response.text
+
+        async with unconfigured_app.state.sessionmaker() as session:
+            stored = (
+                await session.execute(text("SELECT count(*) FROM github_account_links"))
+            ).scalar_one()
+        assert stored == 0
+
+    async def test_pasting_twice_leaves_one_link(self, unconfigured_app: Any, fake_github: str) -> None:
+        unconfigured_app.state.github_link_service._users.api_base_url = fake_github  # noqa: SLF001
+
+        async with await _client(unconfigured_app) as client:
+            first = await client.put("/api/v1/integrations/github/token", json={"token": ISSUED_TOKEN})
+            second = await client.put("/api/v1/integrations/github/token", json={"token": ISSUED_TOKEN})
+
+        assert (first.status_code, second.status_code) == (200, 200)
+        async with unconfigured_app.state.sessionmaker() as session:
+            stored = (
+                await session.execute(text("SELECT count(*) FROM github_account_links"))
+            ).scalar_one()
+        assert stored == 1
+
+    async def test_disconnecting_a_pasted_token_says_it_must_be_deleted_on_github(
+        self, unconfigured_app: Any, fake_github: str
+    ) -> None:
+        """The honest difference: this server cannot revoke a token the person made."""
+        unconfigured_app.state.github_link_service._users.api_base_url = fake_github  # noqa: SLF001
+
+        async with await _client(unconfigured_app) as client:
+            await client.put("/api/v1/integrations/github/token", json={"token": ISSUED_TOKEN})
+            response = await client.delete("/api/v1/integrations/github")
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "login": "octo-cat",
+            "revoked_at_github": False,
+            "credential_kind": "personal_token",
+        }
+        # No revocation was ATTEMPTED, because it cannot succeed and a 404 recorded as "not revoked"
+        # would be true for the wrong reason.
+        assert not any(method == "DELETE" for method, _ in _FakeGitHub.calls)
+
+        async with unconfigured_app.state.sessionmaker() as session:
+            reason = (
+                await session.execute(
+                    text(
+                        "SELECT reason FROM audit_events WHERE action = 'github_account_unlinked' "
+                        "ORDER BY seq DESC LIMIT 1"
+                    )
+                )
+            ).scalar_one()
+        assert "only be deleted on GitHub" in reason
+
+    async def test_a_short_paste_is_refused_before_github_is_called(
+        self, unconfigured_app: Any
+    ) -> None:
+        async with await _client(unconfigured_app) as client:
+            response = await client.put("/api/v1/integrations/github/token", json={"token": "short"})
+
+        assert response.status_code == 422, response.text
+
+    async def test_the_listing_works_through_a_pasted_token(
+        self, unconfigured_app: Any, fake_github: str
+    ) -> None:
+        """The point of linking at all. An unconfigured deployment must still list repositories."""
+        service = unconfigured_app.state.github_link_service
+        service._users.api_base_url = fake_github  # noqa: SLF001
+
+        async with await _client(unconfigured_app) as client:
+            await client.put("/api/v1/integrations/github/token", json={"token": ISSUED_TOKEN})
+            response = await client.get("/api/v1/integrations/github/repositories")
+
+        assert response.status_code == 200, response.text
+        assert [item["full_name"] for item in response.json()["items"]] == [
+            "octo-org/deploy-me",
+            "octo-cat/notes",
+        ]
+
+
 class TestTheUnconfiguredServer:
     async def test_the_status_route_explains_what_to_configure(self, unconfigured_app: Any) -> None:
         """A 200 with instructions, not a 503: this is the route a screen loads to decide what to draw."""
@@ -532,10 +685,21 @@ class TestTheUnconfiguredServer:
         assert "GITHUB_APP_CLIENT_ID" in response.text
         assert "GITHUB_APP_OAUTH_CREDENTIAL" in response.text
 
-    async def test_listing_refuses_with_the_same_explanation(self, unconfigured_app: Any) -> None:
+    async def test_listing_refuses_because_nothing_is_linked_and_names_both_ways_to_link(
+        self, unconfigured_app: Any
+    ) -> None:
+        """A 409, not a 503, and that is a correction.
+
+        The route used to refuse with "the server is not configured", which was false about what the
+        caller asked for: a token pasted into ForgeOps needs no GitHub App, so an unconfigured
+        deployment can hold a working link. What is missing here is a LINK, so that is what the refusal
+        says — and it names both ways to make one, including the one that works right now.
+        """
         async with await _client(unconfigured_app) as client:
             response = await client.get("/api/v1/integrations/github/repositories")
-        assert response.status_code == 503
+        assert response.status_code == 409, response.text
+        assert "No GitHub account is linked" in response.text
+        assert "pasting a GitHub token" in response.text
         assert "GITHUB_APP_CLIENT_ID" in response.text
 
 

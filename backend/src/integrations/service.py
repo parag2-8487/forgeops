@@ -42,9 +42,15 @@ from .github_link import (
 #: never leaves this module's callers as a field.
 PUBLIC_COLUMNS = (
     "user_id, tenant_id, github_login, github_user_id, github_avatar_url, scopes, "
-    "access_token_expires_at, refresh_token_expires_at, created_at, updated_at, "
+    "credential_kind, access_token_expires_at, refresh_token_expires_at, created_at, updated_at, "
     "last_used_at, last_use_ok, last_use_detail"
 )
+
+#: The two ways a link can exist, and the reason the difference is recorded rather than inferred is in
+#: migration `0020`. `OAUTH_APP` is the authorization-code flow; `PERSONAL_TOKEN` is a value the person
+#: pasted, which reaches GitHub's UI not at all.
+CREDENTIAL_OAUTH_APP = "oauth_app"
+CREDENTIAL_PERSONAL_TOKEN = "personal_token"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +63,7 @@ class LinkRecord:
     github_user_id: int
     github_avatar_url: str
     scopes: str
+    credential_kind: str
     access_token_expires_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -73,6 +80,7 @@ class LinkRecord:
             github_user_id=int(row["github_user_id"]),
             github_avatar_url=str(row["github_avatar_url"] or ""),
             scopes=str(row["scopes"] or ""),
+            credential_kind=str(row["credential_kind"] or CREDENTIAL_OAUTH_APP),
             access_token_expires_at=row["access_token_expires_at"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -128,6 +136,55 @@ class GitHubLinkService:
         account = await self._users.account(token.access_token, client=client)
         return await self.store(session, user_id=user_id, tenant_id=tenant_id, token=token, account=account)
 
+    async def link_with_token(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        token: str,
+        client: httpx.AsyncClient | None = None,
+    ) -> LinkRecord:
+        """Link using a token the person pasted, with no browser redirect and no GitHub UI at all.
+
+        WHY THIS EXISTS BESIDE THE AUTHORIZATION FLOW. The authorization-code flow necessarily sends the
+        person to github.com — that is where consent is given — so they see GitHub's account chooser and
+        authorize screen. Some operators do not want that: a shared workstation signed into several
+        GitHub accounts makes the chooser a way to link the wrong one, and an air-gapped-ish deployment
+        may have no registered App at all. This path needs neither an App nor a redirect.
+
+        IT IS NOT A WEAKER LINK, and it is not a trust-me. The token is VERIFIED before anything is
+        stored: `GET /user` is called with it, and the login and account id on the row are GitHub's
+        answer rather than the caller's claim. A token GitHub refuses is refused here, so an unusable
+        credential cannot be stored and discovered later as a listing that fails.
+
+        WHAT IS RECORDED AND WHY. `credential_kind` is `personal_token`, because a disconnect cannot
+        revoke one — GitHub has no API for an owner to revoke their own token — and the screen has to
+        say so rather than claiming a revocation that did not happen. `expires_at` is `None`: a
+        fine-grained token has an expiry GitHub does not report on this endpoint, and inventing one would
+        make a live token look dead. When the token turns out to be expired, the listing fails with
+        GitHub's own reason and the tri-state last-use line says so.
+        """
+        candidate = token.strip()
+        if not candidate:
+            raise GitHubLinkError("a token is required")
+        account = await self._users.account(candidate, client=client)
+        scopes = await self._users.scopes(candidate, client=client)
+        return await self.store(
+            session,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            token=UserToken(
+                access_token=candidate,
+                expires_at=None,
+                refresh_token=None,
+                refresh_expires_at=None,
+                scopes=scopes,
+            ),
+            account=account,
+            credential_kind=CREDENTIAL_PERSONAL_TOKEN,
+        )
+
     # ── write ──────────────────────────────────────────────────────────────────────────────────────
 
     async def store(
@@ -138,6 +195,7 @@ class GitHubLinkService:
         tenant_id: uuid.UUID,
         token: UserToken,
         account: GitHubAccount,
+        credential_kind: str = CREDENTIAL_OAUTH_APP,
     ) -> LinkRecord:
         """Upsert the link. Re-connecting REPLACES rather than accumulating.
 
@@ -152,11 +210,11 @@ class GitHubLinkService:
         result = await session.execute(
             text(
                 "INSERT INTO github_account_links ("
-                "  user_id, tenant_id, github_login, github_user_id, github_avatar_url, scopes,"
+                "  user_id, tenant_id, github_login, github_user_id, github_avatar_url, scopes, credential_kind,"
                 "  access_token_sealed, access_token_expires_at, refresh_token_sealed,"
                 "  refresh_token_expires_at, updated_at"
                 ") VALUES ("
-                "  :user_id, :tenant_id, :login, :github_user_id, :avatar, :scopes,"
+                "  :user_id, :tenant_id, :login, :github_user_id, :avatar, :scopes, :credential_kind,"
                 "  :sealed, :expires_at, :refresh_sealed, :refresh_expires_at, now()"
                 ") ON CONFLICT (user_id) DO UPDATE SET"
                 "  tenant_id = EXCLUDED.tenant_id,"
@@ -164,6 +222,7 @@ class GitHubLinkService:
                 "  github_user_id = EXCLUDED.github_user_id,"
                 "  github_avatar_url = EXCLUDED.github_avatar_url,"
                 "  scopes = EXCLUDED.scopes,"
+                "  credential_kind = EXCLUDED.credential_kind,"
                 "  access_token_sealed = EXCLUDED.access_token_sealed,"
                 "  access_token_expires_at = EXCLUDED.access_token_expires_at,"
                 "  refresh_token_sealed = EXCLUDED.refresh_token_sealed,"
@@ -181,6 +240,7 @@ class GitHubLinkService:
                 "github_user_id": account.account_id,
                 "avatar": account.avatar_url,
                 "scopes": token.scopes,
+                "credential_kind": credential_kind,
                 "sealed": sealed,
                 "expires_at": token.expires_at,
                 "refresh_sealed": refresh_sealed,
@@ -199,16 +259,27 @@ class GitHubLinkService:
         user_id: uuid.UUID,
         tenant_id: uuid.UUID,
         client: httpx.AsyncClient | None = None,
-    ) -> tuple[str, bool]:
-        """Delete the row and ask GitHub to invalidate the token. Returns (login, revoked-at-GitHub).
+    ) -> tuple[str, bool, str]:
+        """Delete the row and, where it is possible, revoke at GitHub.
 
-        THE LOCAL DELETE HAPPENS EVEN IF THE REVOCATION FAILS, and the return value says which. A
-        disconnect that refused because GitHub was unreachable would leave a user unable to do the
-        safe thing during exactly the incident in which they want to.
+        Returns `(login, revoked-at-GitHub, credential-kind)`. The kind is returned rather than left to
+        the caller to look up, because the caller has to say something different for each: an App
+        authorization has been revoked, and a pasted token has not and must be deleted on GitHub.
+
+        THE LOCAL DELETE HAPPENS EITHER WAY, and the return value says what actually happened. A
+        disconnect that refused because GitHub was unreachable would leave a user unable to do the safe
+        thing during exactly the incident in which they want to.
         """
         token = await self._current_access_token(session, user_id=user_id, tenant_id=tenant_id)
+        kind = await self._credential_kind(session, user_id=user_id, tenant_id=tenant_id)
         revoked = False
-        if token is not None:
+        if token is not None and kind == CREDENTIAL_OAUTH_APP:
+            # ONLY AN APP AUTHORIZATION CAN BE REVOKED FROM HERE. GitHub's revocation endpoint
+            # authenticates as the App and invalidates a token the App issued; a token the person
+            # created belongs to them and there is no API for this server to delete it. Attempting it
+            # anyway would answer 404 and be recorded as "not revoked", which is true but for the wrong
+            # reason — so the attempt is not made and the caller is told plainly that they must delete
+            # it on GitHub.
             revoked = await self._oauth.revoke(token, client=client)
         result = await session.execute(
             text(
@@ -220,7 +291,7 @@ class GitHubLinkService:
         row = result.mappings().first()
         if row is None:
             raise GitHubLinkNotFoundError("this user has no GitHub link")
-        return str(row["github_login"]), revoked
+        return str(row["github_login"]), revoked, kind
 
     # ── read ───────────────────────────────────────────────────────────────────────────────────────
 
@@ -324,6 +395,17 @@ class GitHubLinkService:
             ),
         )
         return refreshed.access_token
+
+    async def _credential_kind(self, session: AsyncSession, *, user_id: uuid.UUID, tenant_id: uuid.UUID) -> str:
+        """Which of the two kinds this link is. Defaults to the App kind for a pre-`0020` row."""
+        result = await session.execute(
+            text(
+                "SELECT credential_kind FROM github_account_links WHERE user_id = :user_id AND tenant_id = :tenant_id"
+            ),
+            {"user_id": user_id, "tenant_id": tenant_id},
+        )
+        row = result.mappings().first()
+        return str(row["credential_kind"]) if row is not None else CREDENTIAL_OAUTH_APP
 
     async def _current_access_token(
         self, session: AsyncSession, *, user_id: uuid.UUID, tenant_id: uuid.UUID

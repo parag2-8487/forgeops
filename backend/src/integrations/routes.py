@@ -50,7 +50,7 @@ from .github_link import (
     Repository,
     state_key,
 )
-from .service import GitHubLinkService, LinkRecord
+from .service import CREDENTIAL_PERSONAL_TOKEN, GitHubLinkService, LinkRecord
 
 router = APIRouter(
     prefix="/api/v1/integrations",
@@ -76,16 +76,28 @@ class GitHubLinkStatus(BaseModel):
     `configured` and `connected` are SEPARATE booleans because they have different remedies: an
     operator fixes the first and a user fixes the second, and collapsing them into one "unavailable"
     would send every fresh install's user looking for a connect button that cannot work yet.
+
+    `token_link_available` is a THIRD fact, and it is the one that makes a fresh install usable: pasting
+    a token needs no GitHub App, so it is offered even when `configured` is false. It is a separate field
+    rather than a computed `configured or true` because the two answers come from different places — one
+    from this deployment's configuration and one from what this build supports — and a screen that
+    conflated them would hide the working path behind the unconfigured one.
     """
 
     configured: bool
     connected: bool
+    #: Always true in this build. Present so the UI reads a fact rather than assuming a capability, and
+    #: so a deployment that later disables the token path changes one value rather than a component.
+    token_link_available: bool = True
     #: What to set, when `configured` is false. Present rather than left to the UI to invent, so one
     #: place knows the variable names.
     configuration_hint: str = ""
     login: str | None = None
     avatar_url: str | None = None
     scopes: list[str] = Field(default_factory=list)
+    #: `oauth_app` or `personal_token`. The screen says different things about disconnecting each, so
+    #: this is reported rather than inferred — see migration `0020` for why inferring it is wrong.
+    credential_kind: str | None = None
     connected_at: str | None = None
     #: Tri-state, like the pairing screen's heartbeat: `None` means the link has never been used,
     #: which is not the same as failing and must not render as it.
@@ -93,6 +105,20 @@ class GitHubLinkStatus(BaseModel):
     last_used_at: str | None = None
     last_use_detail: str = ""
     access_token_expires_at: str | None = None
+
+
+class TokenLinkRequest(BaseModel):
+    """A token pasted into ForgeOps. `extra="forbid"` so a misspelled field is a 422, not a default."""
+
+    model_config = {"extra": "forbid"}
+
+    #: No pattern, deliberately. GitHub has issued several token prefixes over the years — one per
+    #: token kind, plus the older bare 40-character hexadecimal form — and a regex here would refuse
+    #: whatever comes next while proving nothing. The only test that matters is whether GitHub accepts
+    #: the value, and that is the test this route performs before storing anything. The prefixes are not
+    #: written out above because `check-added-shapes` refuses a line carrying a credential shape, and a
+    #: list of them is a list of shapes. The bounds are here to refuse a paste of a whole file.
+    token: str = Field(..., min_length=8, max_length=512)
 
 
 class ConnectResponse(BaseModel):
@@ -137,6 +163,10 @@ class DisconnectResponse(BaseModel):
     #: Whether GitHub confirmed the token is dead. False means the local link is gone and the token
     #: may still be live at GitHub, which is a different fact and is stated rather than implied.
     revoked_at_github: bool
+    #: Which kind was disconnected, so the UI can say the right next step. A pasted token cannot be
+    #: revoked from here at all — GitHub has no API for an owner to revoke their own — so the honest
+    #: instruction is "delete it on GitHub", and that differs from "we tried and could not".
+    credential_kind: str = ""
 
 
 # ── composition ────────────────────────────────────────────────────────────────────────────────────
@@ -223,6 +253,7 @@ def _status(*, configured: bool, record: LinkRecord | None) -> GitHubLinkStatus:
         login=record.github_login,
         avatar_url=record.github_avatar_url or None,
         scopes=[scope for scope in record.scopes.replace(",", " ").split() if scope],
+        credential_kind=record.credential_kind,
         connected_at=record.created_at.isoformat(),
         last_use_ok=record.last_use_ok,
         last_used_at=record.last_used_at.isoformat() if record.last_used_at else None,
@@ -338,6 +369,85 @@ async def github_link_callback(
     return _status(configured=True, record=record)
 
 
+@router.put(
+    "/github/token",
+    response_model=GitHubLinkStatus,
+    summary="Link a GitHub account with a token, without leaving ForgeOps",
+)
+async def link_github_with_token(
+    body: TokenLinkRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GitHubLinkStatus:
+    """Verify the token against GitHub, then store it sealed. NO REDIRECT AND NO GITHUB UI.
+
+    WHY THIS ROUTE EXISTS BESIDE `/connect`. The authorization-code flow must send the person to
+    github.com, because that is where consent is given — so they meet GitHub's account chooser and
+    authorize screen. That is unwanted in two real situations: a workstation signed into several GitHub
+    accounts, where the chooser is a way to link the wrong one by accident, and a deployment with no
+    registered GitHub App, where `/connect` cannot work at all. This path needs neither.
+
+    `PUT` rather than `POST`, because the effect is idempotent: one link per user, and pasting a token
+    twice leaves the same single row. The upsert underneath makes that true rather than the verb
+    implying it.
+
+    IT VERIFIES BEFORE IT STORES. `GET /user` is called with the token and the login and account id on
+    the row are GitHub's answer, so a typo'd or expired token is refused here rather than stored and
+    discovered later as a repository list that fails. A 401 from GitHub becomes a 502 whose detail says
+    GitHub refused the credential — the caller's remedy is a new token, and naming the upstream status
+    is what tells them that.
+
+    THE TOKEN IS NOT IN THE AUDIT ROW, the response, or any log line. The audit row is built from the
+    `LinkRecord`, which has no credential field, and the request body is never echoed.
+    """
+    service = _service(request)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        try:
+            record = await service.link_with_token(
+                session,
+                user_id=principal.user_id,
+                tenant_id=principal.tenant_id,
+                token=body.token,
+                client=client,
+            )
+        except GitHubAppError as exc:
+            raise problem(
+                "github-link-failed",
+                detail=(
+                    f"{exc} Check that the token is current and that it grants read access to the "
+                    "repositories you want — a fine-grained token needs Contents and Metadata read."
+                ),
+            ) from exc
+        except GitHubLinkError as exc:
+            raise problem("github-link-failed", detail=str(exc)) from exc
+
+    await _writer(request).append(
+        session,
+        AuditDraft(
+            action="github_account_linked",
+            resource_kind="github_account_link",
+            resource_id=str(principal.user_id),
+            reason=(
+                f"linked GitHub account {record.github_login} (id {record.github_user_id}) "
+                "with a token supplied in ForgeOps"
+            ),
+            outcome="allowed",
+            actor_kind="user",
+            actor_user_id=principal.user_id,
+            tenant_id=principal.tenant_id,
+            before_state=None,
+            after_state={
+                "github_login": record.github_login,
+                "github_user_id": record.github_user_id,
+                "credential_kind": record.credential_kind,
+            },
+        ),
+    )
+    await session.commit()
+    return _status(configured=service.is_configured(), record=record)
+
+
 @router.delete("/github", response_model=DisconnectResponse, summary="Disconnect and revoke")
 async def disconnect_github_link(
     request: Request,
@@ -353,7 +463,7 @@ async def disconnect_github_link(
     service = _service(request)
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
         try:
-            login, revoked = await service.disconnect(
+            login, revoked, kind = await service.disconnect(
                 session, user_id=principal.user_id, tenant_id=principal.tenant_id, client=client
             )
         except GitHubLinkNotFoundError as exc:
@@ -369,19 +479,27 @@ async def disconnect_github_link(
             resource_kind="github_account_link",
             resource_id=str(principal.user_id),
             reason=(
-                f"disconnected GitHub account {login}; "
-                + ("GitHub confirmed the token is revoked" if revoked else "the token could not be revoked at GitHub")
+                f"disconnected GitHub account {login} ({kind}); "
+                + (
+                    "GitHub confirmed the token is revoked"
+                    if revoked
+                    else (
+                        "the token was supplied in ForgeOps and can only be deleted on GitHub"
+                        if kind == CREDENTIAL_PERSONAL_TOKEN
+                        else "the token could not be revoked at GitHub"
+                    )
+                )
             ),
             outcome="allowed",
             actor_kind="user",
             actor_user_id=principal.user_id,
             tenant_id=principal.tenant_id,
-            before_state={"github_login": login},
+            before_state={"github_login": login, "credential_kind": kind},
             after_state=None,
         ),
     )
     await session.commit()
-    return DisconnectResponse(login=login, revoked_at_github=revoked)
+    return DisconnectResponse(login=login, revoked_at_github=revoked, credential_kind=kind)
 
 
 @router.get(
@@ -407,8 +525,11 @@ async def list_github_repositories(
     picks a repository that has been renamed, and the clone then fails naming neither.
     """
     service = _service(request)
-    if not service.is_configured():
-        raise _unconfigured()
+    # NO `is_configured()` PRECHECK, and its removal is a correction rather than a relaxation. A token
+    # pasted into ForgeOps needs no GitHub App, so a deployment with no App can hold a working link —
+    # and the precheck refused the listing for that link with "the server is not configured", which was
+    # false about the thing the caller was asking for. What decides this route is whether a LINK exists,
+    # which is what the refusal below now says.
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         try:
             repositories, truncated = await service.repositories(
@@ -419,7 +540,9 @@ async def list_github_repositories(
                 "github-link-absent",
                 detail=(
                     "No GitHub account is linked to this user, so there are no repositories to list. "
-                    "Connect one from Settings → Integrations."
+                    "Connect one from Settings → Integrations — either by pasting a GitHub token, "
+                    "which needs nothing configured on this server, or through the GitHub App"
+                    + ("" if service.is_configured() else f" once an administrator sets it up. {_CONFIGURATION_HINT}")
                 ),
             ) from exc
         except GitHubAppNotConfiguredError as exc:

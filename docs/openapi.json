@@ -1389,6 +1389,11 @@
       },
       "DisconnectResponse": {
         "properties": {
+          "credential_kind": {
+            "default": "",
+            "title": "Credential Kind",
+            "type": "string"
+          },
           "login": {
             "title": "Login",
             "type": "string"
@@ -1883,7 +1888,7 @@
         "type": "object"
       },
       "GitHubLinkStatus": {
-        "description": "What the screen is told. There is deliberately no token field on this model.\n\n`configured` and `connected` are SEPARATE booleans because they have different remedies: an\noperator fixes the first and a user fixes the second, and collapsing them into one \"unavailable\"\nwould send every fresh install's user looking for a connect button that cannot work yet.",
+        "description": "What the screen is told. There is deliberately no token field on this model.\n\n`configured` and `connected` are SEPARATE booleans because they have different remedies: an\noperator fixes the first and a user fixes the second, and collapsing them into one \"unavailable\"\nwould send every fresh install's user looking for a connect button that cannot work yet.\n\n`token_link_available` is a THIRD fact, and it is the one that makes a fresh install usable: pasting\na token needs no GitHub App, so it is offered even when `configured` is false. It is a separate field\nrather than a computed `configured or true` because the two answers come from different places \u2014 one\nfrom this deployment's configuration and one from what this build supports \u2014 and a screen that\nconflated them would hide the working path behind the unconfigured one.",
         "properties": {
           "access_token_expires_at": {
             "anyOf": [
@@ -1931,6 +1936,17 @@
             ],
             "title": "Connected At"
           },
+          "credential_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Kind"
+          },
           "last_use_detail": {
             "default": "",
             "title": "Last Use Detail",
@@ -1975,6 +1991,11 @@
             },
             "title": "Scopes",
             "type": "array"
+          },
+          "token_link_available": {
+            "default": true,
+            "title": "Token Link Available",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3743,6 +3764,23 @@
           "tiers"
         ],
         "title": "TiersListResponse",
+        "type": "object"
+      },
+      "TokenLinkRequest": {
+        "additionalProperties": false,
+        "description": "A token pasted into ForgeOps. `extra=\"forbid\"` so a misspelled field is a 422, not a default.",
+        "properties": {
+          "token": {
+            "maxLength": 512,
+            "minLength": 8,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "TokenLinkRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -5799,6 +5837,48 @@
           }
         },
         "summary": "The repositories this user's linked account can reach",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/v1/integrations/github/token": {
+      "put": {
+        "description": "Verify the token against GitHub, then store it sealed. NO REDIRECT AND NO GITHUB UI.\n\nWHY THIS ROUTE EXISTS BESIDE `/connect`. The authorization-code flow must send the person to\ngithub.com, because that is where consent is given \u2014 so they meet GitHub's account chooser and\nauthorize screen. That is unwanted in two real situations: a workstation signed into several GitHub\naccounts, where the chooser is a way to link the wrong one by accident, and a deployment with no\nregistered GitHub App, where `/connect` cannot work at all. This path needs neither.\n\n`PUT` rather than `POST`, because the effect is idempotent: one link per user, and pasting a token\ntwice leaves the same single row. The upsert underneath makes that true rather than the verb\nimplying it.\n\nIT VERIFIES BEFORE IT STORES. `GET /user` is called with the token and the login and account id on\nthe row are GitHub's answer, so a typo'd or expired token is refused here rather than stored and\ndiscovered later as a repository list that fails. A 401 from GitHub becomes a 502 whose detail says\nGitHub refused the credential \u2014 the caller's remedy is a new token, and naming the upstream status\nis what tells them that.\n\nTHE TOKEN IS NOT IN THE AUDIT ROW, the response, or any log line. The audit row is built from the\n`LinkRecord`, which has no credential field, and the request body is never echoed.",
+        "operationId": "link_github_with_token_api_v1_integrations_github_token_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubLinkStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Link a GitHub account with a token, without leaving ForgeOps",
         "tags": [
           "integrations"
         ]
