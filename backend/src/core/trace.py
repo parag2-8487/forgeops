@@ -149,7 +149,7 @@ def inject_outbound_headers(ctx: TraceContext, headers: MutableMapping[str, str]
 class NoopTracer:
     """Phase 0 tracer — propagates context but records nothing.
 
-    Phase 3 swaps in the OTel SDK behind the same interface.
+    Phase 2 swaps in the OTel SDK behind the same interface.
     """
 
     def start_span(self, name: str, **kwargs: Any) -> NoopSpan:

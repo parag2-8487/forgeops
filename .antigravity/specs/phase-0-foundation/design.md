@@ -112,7 +112,7 @@ This is the controlling section of the document. If any later section appears to
 | Authentication (the user authentication *system*) | See §15.2 for the precise resolution against 0.5's OIDC requirement |
 | Agent pairing, mTLS handshake, heartbeat, reconnect/backoff, command whitelist, approval verification | Phase 1 §1.1 |
 | Job queue infrastructure (ARQ/Dramatiq/Inngest/Temporal) | Seam only (§7.9) |
-| OTel SDK, Collector, Prometheus, Loki, Tempo, Grafana | Phase 3; Phase 0 ships propagation + interface seams only (§7.8) |
+| OTel SDK, Collector, Prometheus, Loki, Tempo, Grafana | Phase 2; Phase 0 ships propagation + interface seams only (§7.8) |
 | Safe Default Template Library (8 languages × 5 artifacts) | Phase 1 §1.5; Phase 0 provides the terminal cascade slot only (§11.7.3) |
 | Tree-sitter / cAST semantic chunking **and the `tree-sitter/go-tree-sitter` dependency itself** | Phase 1 §1.3, per decision **D-1** (§17.1): CGO conflicts with the `CGO_ENABLED=0` six-target static build. `internal/scanner` is still created in Phase 0 with its interfaces and a real `fsnotify` watcher — a seam, not a stub |
 | Agent auto-update behaviour | Phase 1+; the `minio/selfupdate` dependency is pinned and verified, not wired |
@@ -641,7 +641,7 @@ These are the contracts every later phase inherits. Changing them later is expen
 | Config | 12-factor env vars; typed + validated for local correctness at startup; invalid project config fails fast, dependency reachability affects readiness | §7.1, §4.4 |
 | Logging | Structured JSON; Go = `zap`; Python = stdlib `logging` + JSON formatter + `contextvars` correlation id | Research §A2 (zap); **OQ-3** for Python |
 | DI | Go = **constructor injection**, no `wire`/`uber-fx`; Python = FastAPI `Depends` + `app.state`, no service locator | Research §0 "Constructor DI", PRD §5 |
-| Telemetry | Phase 0 = W3C Trace Context propagation + `Tracer` seam. No OTel SDK, no Collector | phases.md 0.5 vs Phase 3 §3.2 → §7.8 |
+| Telemetry | Phase 0 = W3C Trace Context propagation + `Tracer` seam. No OTel SDK, no Collector | phases.md 0.5 vs Phase 2 §2.10 → §7.8 |
 | Task orchestration | `TaskDispatcher` Protocol from Day 1; Phase 0 ships `InlineDispatcher` only | Research §0 "interface discipline starts at Day 1" |
 | Dependency pinning | Exact versions, lockfiles committed, no floating ranges, CI action SHAs pinned | phases.md Phase 0 risk row: "pin versions" |
 | Multi-tenancy | PostgreSQL RLS (Phase 1); Phase 0 leaves a nullable `tenant_id` column and a transaction-scoped set-local seam | Research §0 |
@@ -800,9 +800,9 @@ Cerbos is a sidecar/service and **cannot** be embedded in a single Go binary (Re
 | **D3** Change-sets & Approvals | `change_sets`, `change_items`, `validations`, `approvals` | Deferred to Phase 1 (§1.6) |
 | **D4** Deployments & Environments | all | Deferred to Phase 2 |
 | **D5** Secret Vault | `secrets` | Deferred to Phase 1 (§1.8). Phase 0 BYO-Keys live in Infisical, not in Postgres |
-| **D6** AI Learning History | `feedback_events`, `skill_files` | Deferred to Phase 3 |
+| **D6** AI Learning History | `feedback_events`, `skill_files` | Deferred to Phase 2 |
 | **D7** Policies | `policies`, `policy_evaluations` | Deferred to Phase 1. Phase 0 gateway policy is a Rego file on disk, not a DB row |
-| **D8** Incidents & Telemetry | all | Deferred to Phase 3 |
+| **D8** Incidents & Telemetry | all | Deferred to Phase 2 |
 
 Rationale: `phases.md` Phase 0 excludes "database migrations beyond initial schema", and the only schema-related completion criterion is *"SQLModel models defined with pgvector column support (HNSW index)"*. Three tables satisfy it with a coherent FK chain and no feature logic.
 
@@ -1147,11 +1147,11 @@ Authority: phases.md Phase 0 risk row mitigation is literally "Use well-establis
 
 ### 7.8 Telemetry seams without an OTel SDK
 
-`phases.md` 0.5 requires **W3C Trace Context propagation across all MCP server calls**, while OTel Collector/Prometheus/Loki/Tempo belong to Phase 3 §3.2. Resolution:
+`phases.md` 0.5 requires **W3C Trace Context propagation across all MCP server calls**, while OTel Collector/Prometheus/Loki/Tempo belong to Phase 2 §2.10. Resolution:
 
 - Phase 0 implements a ~100-line `tracecontext` module in each runtime: parse and validate `traceparent` (version, 32-hex trace-id, 16-hex span-id, 8-bit flags), preserve `tracestate`, mint child span-ids, and inject headers on every outbound MCP/HTTP call.
 - A `Tracer` interface exists with exactly one Phase 0 implementation, `NoopTracer`, which propagates context but records nothing.
-- No exporters, no collector, no `gen_ai.*` semantic conventions, no sampling configuration. Phase 3 swaps in the OTel SDK behind `Tracer` and inherits a codebase that already threads context correctly — which is the expensive half of the work.
+- No exporters, no collector, no `gen_ai.*` semantic conventions, no sampling configuration. Phase 2 swaps in the OTel SDK behind `Tracer` and inherits a codebase that already threads context correctly — which is the expensive half of the work.
 
 Invalid inbound `traceparent` is discarded and a fresh trace started (per the W3C spec), never propagated malformed.
 
@@ -1261,7 +1261,7 @@ Mirrors PRD §9 minus the phases that need features:
 
 The backend job installs `requirements-dev.lock` with `--require-hashes`; its freshness step runs `make lock-backend` and fails if either lock differs. The backend image installs only `requirements.lock`. The OpenTofu integration job runs `tofu init -lockfile=readonly` and validates the six-platform provider lock. The frontend image build supplies a non-default browser URL as a build arg and tests the generated client. Compose smoke evidence starts from no `.env`, runs the direct unprofiled command, and asserts exactly the five default services; optional profile smoke commands are separate and appear only once their owning services exist.
 
-Steps intentionally **absent** in Phase 0 and their owning phase: DeepEval LLM eval (Phase 2), Trivy image scan (Phase 4 §4.4 — `pip-audit`/`govulncheck`/`pnpm audit` cover Phase 0's dependency surface), k6 in CI (Phase 0 ships the k6 script and a `make load` target; wiring it as a CI gate needs a deployed target).
+Steps intentionally **absent** in Phase 0 and their owning phase: DeepEval LLM eval (Phase 2), Trivy image scan (Phase 3 §3.4 — `pip-audit`/`govulncheck`/`pnpm audit` cover Phase 0's dependency surface), k6 in CI (Phase 0 ships the k6 script and a `make load` target; wiring it as a CI gate needs a deployed target).
 
 Concurrency: `group: ci-${{ github.ref }}`, `cancel-in-progress: true`. All actions pinned to commit SHAs (§7.7).
 
@@ -1456,7 +1456,7 @@ func New(cfg *config.Config, bi BuildInfo) (*App, error) {
         return nil, fmt.Errorf("logger: %w", err)
     }
 
-    tracer := telemetry.NewNoopTracer()                       // Phase 3 swaps in OTel behind this iface
+    tracer := telemetry.NewNoopTracer()                       // Phase 2 swaps in OTel behind this iface
     files  := fileops.New(logger.Named("fileops"))
     tofu   := iac.NewTofuRunner(cfg.Tofu, logger.Named("tofu"), tracer)
     gitc   := git.NewClient(cfg.Git, logger.Named("git"), tracer)
@@ -2894,7 +2894,7 @@ AGENT_BACKEND_WSS_URL=                    # EMPTY in Phase 0: connection manager
 AGENT_SHUTDOWN_TIMEOUT_SECONDS=15
 AGENT_MCP_TRANSPORT=stdio                 # stdio | http
 
-# ─── Telemetry (propagation only in Phase 0; OTel SDK is Phase 3) ──────────
+# ─── Telemetry (propagation only in Phase 0; OTel SDK is Phase 2) ──────────
 TRACE_PROPAGATION_ENABLED=true
 
 # ─── Frontend (NEXT_PUBLIC_* is shipped to the browser: never a secret) ────
@@ -3200,11 +3200,11 @@ Each conflict is recorded with the resolution and its consequence for Phase 0.
 
 ### 15.1 Phase placement of FR-97, FR-99, FR-100
 
-**Conflict.** PRD §3.17 assigns FR-97 (Rollback Visualization & Release Timeline), FR-99 (Notification Center) and FR-100 (Local Development Tools) to Phase 4. `phases.md` §2.3, §2.6 and §2.8 assign the same capabilities to Phase 2.
+**Conflict (RESOLVED 2026-09-11).** PRD §3.17 assigned FR-97 (Rollback Visualization & Release Timeline), FR-99 (Notification Center) and FR-100 (Local Development Tools) to a later phase, while `phases.md` §2.3, §2.6 and §2.8 assign the same capabilities to Phase 2.
 
-**Resolution.** `phases.md` governs. It is the newer, more specific document (PRD is v2.0 dated 24 July 2026; `phases.md` carries the per-phase deliverable checklists that the build follows), and `phases.md` §2.3/§2.6/§2.8 list them as concrete Phase 2 deliverables with completion criteria. The PRD §3.17 rows should be read as "deferred beyond Phase 1", not as a binding phase number.
+**Resolution.** `phases.md` governs, and PRD §3.17 has now been corrected to agree with it rather than being left to be read charitably: those three rows read Phase 2. The reasoning stands — `phases.md` carries the per-phase deliverable checklists that the build follows, and §2.3/§2.6/§2.8 list them as concrete Phase 2 deliverables with completion criteria.
 
-**Phase 0 consequence.** None. Recorded so the Phase 2 spec does not relitigate it. Recommended follow-up (not a Phase 0 task): annotate PRD §3.17 when that phase is specced.
+**Phase 0 consequence.** None. The recommended follow-up ("annotate PRD §3.17 when that phase is specced") was carried out during the Phase 2/Phase 3 merge; the note in PRD §3.17 states why the three rows differ from their neighbours.
 
 ### 15.2 Authentication in Phase 0 — "excluded" vs the OIDC requirement
 
@@ -3238,7 +3238,7 @@ Consequence: the completion criterion is tested by asserting `401` for (a) no to
 
 **Conflict.** PRD §5 lists D2 at `0.7+`; the `Tech-Stack-Analysis.md` final table lists D2 at `2.x` and its §17 narrative says D2 "has reached major v2+".
 
-**Resolution.** Not a Phase 0 concern — D2 is first needed by the AI Architecture Diagram Generator (Phase 4 §4.2), and the research §I34/§6 even recommends deferring that feature. Recorded as **OQ-10** to be settled by the phase that adopts it. This design uses **Mermaid** for its own diagrams, which both documents agree is the appropriate fallback/documentation choice.
+**Resolution.** Not a Phase 0 concern — D2 is first needed by the AI Architecture Diagram Generator (Phase 3 §3.2), and the research §I34/§6 even recommends deferring that feature. Recorded as **OQ-10** to be settled by the phase that adopts it. This design uses **Mermaid** for its own diagrams, which both documents agree is the appropriate fallback/documentation choice.
 
 **Phase 0 consequence.** No D2 dependency is added anywhere.
 
@@ -3332,7 +3332,7 @@ Tooling: `golangci-lint` 1.62+ (GPL-3.0, used as a tool, not linked), GoReleaser
 
 `pyproject.toml` is the sole dependency source of truth. `requirements.lock` contains runtime plus transitive hash pins; `requirements-dev.lock` contains runtime + `dev` extra plus transitive hash pins. They are generated with `pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml` and `pip-compile --generate-hashes --extra dev --output-file=requirements-dev.lock pyproject.toml`. Docker installs only the runtime lock with `--require-hashes`; CI installs the dev lock with `--require-hashes`. `make lock-backend` runs both commands, and CI regenerates both and requires a clean diff before tests.
 
-**Deliberately absent:** `sse-starlette` (Research §0 — redundant), `celery` (Research §0 — banned), `arq`/`dramatiq`/`temporalio`/`inngest` (Phase 1/2 behind the §7.9 seam), `opentelemetry-*` (Phase 3), `structlog` (OQ-3), `langchain`/`langgraph`/`llama-index` (Phase 1), and native Anthropic/Google SDKs/codecs (Phase 1; unsupported protocols are data, not stubs).
+**Deliberately absent:** `sse-starlette` (Research §0 — redundant), `celery` (Research §0 — banned), `arq`/`dramatiq`/`temporalio`/`inngest` (Phase 1/2 behind the §7.9 seam), `opentelemetry-*` (Phase 2), `structlog` (OQ-3), `langchain`/`langgraph`/`llama-index` (Phase 1), and native Anthropic/Google SDKs/codecs (Phase 1; unsupported protocols are data, not stubs).
 
 ### 16.3 Frontend
 
@@ -3474,7 +3474,7 @@ These are places where the four authoritative documents are silent, ambiguous, o
 | **OQ-4** | No authority names property-based testing libraries, yet the correctness properties in Appendix B need them. | Three new dev dependencies across three ecosystems. | `hypothesis` (Python), `pgregory.net/rapid` (Go), `fast-check` (TypeScript) — all permissively licensed, all standard in their ecosystems. | No, but confirm before Appendix B is implemented |
 | **OQ-6** | Windows process-tree termination for the OpenTofu runner. `Setpgid` is Unix-only; `taskkill /T /F` is a pragmatic equivalent but weaker than a Windows Job Object. | A leaked provider plugin process on Windows holds state locks. | Ship `taskkill` in Phase 0 and record Job Objects as a Phase 1 hardening item. | No |
 | **OQ-7** | PRD §6 mandates a **GitHub App** (short-lived installation tokens), but registering and minting App tokens is auth-adjacent work that Phase 0 excludes. | Determines whether Phase 0's PR flow uses a PAT. | Phase 0 uses `EnvTokenSource` reading `GITHUB_TOKEN`; Phase 1 adds `AppInstallationTokenSource` behind the same interface. Confirm this is acceptable for the 0.6 completion check. | No |
-| **OQ-10** | D2 version: `0.7+` (PRD §5) vs `2.x` (Tech-Stack final table). | Only matters from Phase 4 §4.2. | Leave open; resolve in the phase that adopts D2. Phase 0 adds no D2 dependency. | No |
+| **OQ-10** | D2 version: `0.7+` (PRD §5) vs `2.x` (Tech-Stack final table). | Only matters from Phase 3 §3.2. | Leave open; resolve in the phase that adopts D2. Phase 0 adds no D2 dependency. | No |
 | **OQ-11** | `DEEP_RESEARCH_SYNTHESIS.md` is cited seven times in Research §0 and is not in this workspace. | Details beyond the available documents and this review correction cannot be checked against that source. | The task-plan review's explicit gateway ordering and other corrections are authoritative and implemented here; for any remaining unspecified detail, use PRD §2.1a/phases.md 0.5 only unless the missing file is supplied. | No |
 | **OQ-13** | No authority names a JWT/JWKS library for the gateway's OIDC verification. | Required by 0.5. | `pyjwt[crypto]` with a small JWKS cache keyed by issuer. `python-jose` is less actively maintained. | No |
 | **OQ-15** | Should the initial migration include the nullable `tenant_id` seam (§6.5), or stay strictly minimal? | Adding it now avoids a Phase 1 backfill; omitting it keeps Phase 0 literally minimal. | Include it, nullable, with **no RLS policies**. It is a foundation decision, not a feature. Flagged in case strict minimality is preferred. | No |

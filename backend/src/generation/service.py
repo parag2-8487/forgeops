@@ -878,7 +878,7 @@ class GenerationService:
             copy_forward = ["COPY --from=builder /app/node_modules /app/node_modules", "COPY . ."]
             health = (
                 "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n"
-                f'  CMD node -e "fetch(\'http://127.0.0.1:{port}/\')'
+                f"  CMD node -e \"fetch('http://127.0.0.1:{port}/')"
                 '.then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
             )
         else:

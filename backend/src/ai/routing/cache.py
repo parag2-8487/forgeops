@@ -92,7 +92,6 @@ def cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     return dot / (left_norm * right_norm)
 
 
-
 class TieredSemanticCache:
     """L1 exact-match plus optional L2 semantic-similarity cache backed by Redis.
 

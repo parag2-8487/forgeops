@@ -366,9 +366,9 @@ Derived exclusions, each with its owning phase and the reason it is not pulled f
 |:---|:---|:---|
 | **DeepEval** | Phase 2 | Tech-Stack places LLM evaluation in CI at Phase 2. Phase 1's §1.5 evaluation pipeline is deterministic checks + an advisory rubric, which needs no eval framework. The golden dataset DeepEval would score does not exist yet (Research §C8) |
 | **LangFuse** | Phase 2 | Production AI observability; Research §0 lists it at Phase 2. Phase 1 records `attempts`, tier, cache tier and judge scores in its own tables, which is what the phase's decisions need |
-| **OTel SDK and Collector** | Phase 3 | `phases.md` §3.2. Phase 1 continues Phase 0's W3C propagation + `Tracer` seam and adds no exporter (§7.9, inherited) |
+| **OTel SDK and Collector** | Phase 2 | `phases.md` §2.10. Phase 1 continues Phase 0's W3C propagation + `Tracer` seam and adds no exporter (§7.9, inherited) |
 | **ArgoCD, Argo Rollouts** | Phase 2 | GitOps deployment and progressive delivery are deployment automation, excluded verbatim above |
-| **Cilium** | Phase 3 | Service mesh; Research §0 "New Technologies" places it at Phase 3. Phase 1 has no mesh-shaped problem |
+| **Cilium** | Phase 2 | Service mesh; Research §0 "New Technologies" places it at Phase 2. Phase 1 has no mesh-shaped problem |
 | **Kyverno** | Phase 2+ | Kubernetes admission control. Phase 0 §5.4 already fixed the placement table; Phase 1 owns only the OPA rows |
 | **Novu** | Phase 2 | Notification centre; `phases.md` §2.6. Phase 1 surfaces state through SSE and the audit viewer |
 | **Temporal / Inngest** | Phase 2 | Exactly one durable engine at the P2 boundary, behind the existing seam. OQ-16 stays open; Phase 1 must not assume either (D-32) |
@@ -438,7 +438,7 @@ One row per inherited seam. `as-is` means Phase 1 consumes it without modificati
 | **Backend** — `TaskDispatcher` + `InlineDispatcher` (§7.9) | **extend** | `ArqDispatcher` is added; `InlineDispatcher` stays for tests and dev. No engine concept enters the Protocol | **D-32** |
 | **Backend** — SSE event vocabulary (`core/sse.py`) | **as-is** | Exactly six types. Phase 1 producers use only these; a seventh would need its own decision, and none is proposed | Q-26 |
 | **Backend** — RFC 9457 primitives with traceback redaction (§11.2, D-27) | **extend** | ~26 new problem-type suffixes under the same registry base URI; `detail` still never carries secrets, tokens, connection strings or tracebacks | Appendix C |
-| **Backend** — W3C trace context (§7.8) | **as-is** | Propagation only. No exporter is added (Phase 3) | — |
+| **Backend** — W3C trace context (§7.8) | **as-is** | Propagation only. No exporter is added (Phase 2) | — |
 | **Backend** — middleware stack, row 6 reserved for `TenantContextMiddleware` (§4.3) | **extend** | Phase 1 fills row 6. RLS policies stay deferred | **D-35** |
 | **Data** — `Project`, `FileTreeEntry`, `Embedding` with HNSW at DIM 1536 (§6.2, D-2) | **extend** | Additive columns and eight new tables. `embeddings.embedding` stays `vector(1536)` and `model_id` stays `NOT NULL`. Self-hosted 1024-d vectors get their own table rather than sharing the column — this is D-2's deferred multi-model decision, now made | **D-48** |
 | **Data** — nullable `tenant_id`, no RLS (D-2, OQ-15) | **extend** | Every new table carries the same nullable `tenant_id` seam, for consistency and to avoid a Phase 2 backfill | D-35 |
@@ -1332,9 +1332,9 @@ Cerbos remains a sidecar and is **not** embedded in the agent (Research §B7). T
 | **D3** Change-sets & Approvals | `change_sets`, `change_items`, `validations`, `approvals` | **all four**, plus `[+] rollback_handles` |
 | **D4** Deployments & Environments | all | **deferred to Phase 2** — deployment automation is excluded verbatim |
 | **D5** Secret Vault | `secrets` | **added**, with the `environment_id` reference resolved (§6.6) |
-| **D6** AI Learning History | `feedback_events`, `skill_files` | deferred to Phase 3 (learning history excluded verbatim) |
+| **D6** AI Learning History | `feedback_events`, `skill_files` | deferred to Phase 2 (learning history excluded verbatim) |
 | **D7** Policies | `policies`, `policy_evaluations` | **both**, plus `[+] policy_bundles` |
-| **D8** Incidents & Telemetry | all | deferred to Phase 3 |
+| **D8** Incidents & Telemetry | all | deferred to Phase 2 |
 | — | `[+] audit_events` | **added** — §1.9 has no PRD §7 table, so one is defined here |
 | — | `[+] generation_runs` | **added** — §1.5's iteration/judge/cache provenance has no PRD table and is needed for NFR-04 evidence |
 
@@ -1869,7 +1869,7 @@ An integration test asserts the variable is visible to `current_setting('app.ten
 
 ### 6.8 What is deliberately not modelled
 
-No `environments`, `deployments`, `deployment_logs`, `health_checks` (D4, Phase 2). No `feedback_events`, `skill_files` (D6, Phase 3). No `incidents`, `auto_actions`, `metrics` (D8, Phase 3). No `teams`, `team_members` (D-40, Phase 2). Nothing in Phase 1 reads any of them, and creating them empty would make the migration numbering claim ownership of work this phase does not do.
+No `environments`, `deployments`, `deployment_logs`, `health_checks` (D4, Phase 2). No `feedback_events`, `skill_files` (D6, Phase 2). No `incidents`, `auto_actions`, `metrics` (D8, Phase 2). No `teams`, `team_members` (D-40, Phase 2). Nothing in Phase 1 reads any of them, and creating them empty would make the migration numbering claim ownership of work this phase does not do.
 
 
 ---
@@ -2013,7 +2013,7 @@ One convention worth adding explicitly because Phase 1 has many more collaborato
 
 ### 7.9 Telemetry seams
 
-Unchanged. W3C trace-context propagation continues across the new surfaces — the WSS session carries `traceparent` in `command.execute` params so an agent-side operation joins the request's trace, and `audit_events.trace_id` records it. Still no OTel SDK, no collector, no exporter, no `gen_ai.*` semantic conventions (Phase 3). The `Tracer` interface still has exactly one implementation, `NoopTracer`.
+Unchanged. W3C trace-context propagation continues across the new surfaces — the WSS session carries `traceparent` in `command.execute` params so an agent-side operation joins the request's trace, and `audit_events.trace_id` records it. Still no OTel SDK, no collector, no exporter, no `gen_ai.*` semantic conventions (Phase 2). The `Tracer` interface still has exactly one implementation, `NoopTracer`.
 
 ### 7.10 Task orchestration
 
@@ -3137,7 +3137,7 @@ class ReadinessEngine:
 
 The Phase 1 check set covers `phases.md`'s named examples and PRD FR-20: Dockerfile exists / is multi-stage / declares a non-root user / pins a base image digest / has a `HEALTHCHECK`; `.dockerignore` exists; CI workflow exists / runs tests / pins actions by SHA; K8s manifests exist / declare resource requests and limits / declare probes / avoid `latest`; `.env.example` exists / no hardcoded secrets found by the scan; IaC present / state backend configured. Around 30 checks.
 
-**Plain-language "why it matters" (FR-19)** comes from a committed template table keyed by check id — `report_templates.yaml` with `title`, `why_it_matters`, `how_to_fix`, `severity` per check. No LLM writes the report, for the same reason no LLM computes the score: the report is what the user acts on, and it must say the same thing twice for the same input. An LLM may later *rephrase* a report for tone; that is Phase 3's learning-history territory and it is not in this phase.
+**Plain-language "why it matters" (FR-19)** comes from a committed template table keyed by check id — `report_templates.yaml` with `title`, `why_it_matters`, `how_to_fix`, `severity` per check. No LLM writes the report, for the same reason no LLM computes the score: the report is what the user acts on, and it must say the same thing twice for the same input. An LLM may later *rephrase* a report for tone; that is Phase 2's learning-history territory and it is not in this phase.
 
 ### 11.5 `generation` — RAG, routing, evaluation, bounded loop, templates (§1.5)
 

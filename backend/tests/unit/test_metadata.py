@@ -79,13 +79,13 @@ class TestPyprojectMetadata:
             assert "celery" not in dep.lower(), f"Disallowed dependency found: {dep}. Celery is permanently banned."
 
     def test_disallowed_dependency_opentelemetry(self):
-        """opentelemetry-* must not appear — OTel SDK is Phase 3."""
+        """opentelemetry-* must not appear — OTel SDK is Phase 2."""
         data = _load_pyproject()
         all_deps = data["project"]["dependencies"]
         all_deps += data["project"]["optional-dependencies"].get("dev", [])
         for dep in all_deps:
             assert not dep.lower().startswith("opentelemetry"), (
-                f"Disallowed dependency found: {dep}. OTel SDK is Phase 3."
+                f"Disallowed dependency found: {dep}. OTel SDK is Phase 2."
             )
 
     def test_disallowed_dependency_structlog(self):

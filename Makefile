@@ -56,6 +56,11 @@ lint-chokepoint: ## Assert the mutation chokepoint is unbypassable (design §2.2
 	@printf '==> lint-chokepoint: reachability over both runtimes\n'
 	@bash scripts/check-chokepoint.sh
 
+.PHONY: check-phase-references
+check-phase-references: ## Assert no document names a phase or subsection phases.md does not have
+	@printf '==> check-phase-references: every phase reference must resolve against phases.md\n'
+	@python scripts/check-phase-references.py
+
 lint-agent: ## Lint Go agent with golangci-lint
 	@printf '==> lint-agent: golangci-lint v1.62.2 from agent/tools (checksum-verified)\n'
 	@cd agent && bash ../scripts/go-tool.sh github.com/golangci/golangci-lint/cmd/golangci-lint run ./...

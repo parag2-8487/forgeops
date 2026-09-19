@@ -14,10 +14,14 @@ exactly `completed`, `in-progress`, `not-started` or `blocked`.
 | :---- | :---------------------------------------- | :---------- |
 | 0     | Foundation & Project Scaffolding          | completed   |
 | 1     | MVP Core — Analysis, Generation, Approval | in-progress |
-| 2     | Deploy, Manage & Command                  | not-started |
-| 3     | Observe, Troubleshoot & Self-Heal         | not-started |
-| 4     | Scale, Collaborate & Polish               | not-started |
-| 5     | Advanced & Ecosystem                      | not-started |
+| 2     | Deploy, Manage, Observe & Self-Heal       | not-started |
+| 3     | Scale, Collaborate & Polish               | not-started |
+| 4     | Advanced & Ecosystem                      | not-started |
+
+The former Phase 2 (Deploy, Manage & Command) and Phase 3 (Observe, Troubleshoot & Self-Heal) are one
+phase: self-healing reads what the observability stack reports and acts through the deployment and
+rollback machinery, so neither half is shippable alone. The former Phase 4 became Phase 3 and the
+former Phase 5 became Phase 4. 126 boxes became 123, with three combined pairs named in `phases.md`.
 
 Phase 0 is `completed`: all 108 executable task leaves are implemented, all 18 completion
 criteria carry real evidence, and P-01 through P-15 are all present and passing. The work
@@ -35,6 +39,150 @@ owner's decision and has deliberately not been done here.
 | **CI (Phase 1 code gate)**         | **run `32289535507`, commit `30f74f4`**                                               | **all 12 jobs pass: changes, pre-commit, lock-integrity, backend, frontend, agent, supply, audit, compose-smoke, and the three Phase 1 additions auth, secrets and policy**                                                                                                                                                                      |
 | **CI (Phase 1 sibling workflows)** | **commit `30f74f4`**                                                                  | **`e2e-ci`, `k8s-ci`, `mutation-ci` and `templates-validation` all green; `mutation-ci` is the gate that `scripts/check-mutation-manifest.py` backs, so 31 of 31 properties having a verified control is enforced rather than recorded**                                                                                                         |
 | CI (post-Phase-1 re-verification)  | commit `b97b6e3`, run on a mirror of this repository                                  | all 5 branch workflows green, `ci` 12 of 12 jobs. Cited separately and honestly: this account's Actions minutes are exhausted, so `30f74f4` is the last signal on the primary remote, and `b97b6e3` — which adds the criterion 14 wiring — was verified by pushing to a private mirror instead. The commit is identical; only the remote differs |
+
+## Baseline measurement — one full cycle on the demo project (2026-09-11)
+
+Taken because the previous pass changed the template library and the renderers and nothing had been
+measured since; a score that is not recorded before the next phase lands on top of it is unrecoverable.
+**It is a measurement, not a work item.** Everything it exposed is in the Phase 2 backlog below rather
+than fixed here.
+
+**How it was run**, on a stack rebuilt from commit `11abe08` (`docker compose build backend frontend
+worker backend-agent` then `up -d --wait`, every service reporting healthy):
+
+```
+backend/.venv/Scripts/python ../scripts/ci/materialise-demo-project.py C:\forgeops-cycle\demo
+docker compose exec -T backend python /tmp/seed_host_apply.py C:\forgeops-cycle\demo
+forgeops-agent.exe pair --code <code> --backend ws://localhost:18000/api/v1/ws/agent
+forgeops-agent.exe scan --project <project-id>
+docker compose exec -T backend python /tmp/cycle_drive.py score    <project-id> <user-id>
+docker compose exec -T backend python /tmp/cycle_drive.py generate <project-id> <user-id>
+forgeops-agent.exe scan --project <project-id>
+docker compose exec -T backend python /tmp/cycle_drive.py score    <project-id> <user-id>
+```
+
+The demo project is `demo_project_before()` from `backend/tests/unit/test_reachable_score_contract.py`,
+materialised onto the host by `scripts/ci/materialise-demo-project.py` so the one definition is used
+rather than a second copy. `scripts/ci/cycle_drive.py` drives the REAL routes — readiness, the
+generation SSE stream, the approvals surface — overriding only `require_principal`, which is the same
+substitution `seed_host_apply.py` already argues for.
+
+**Before**, `GET /projects/{id}/readiness` after a real host-agent scan of 19 files:
+
+```json
+{
+  "score": 89,
+  "level": "production_ready",
+  "indexed": true,
+  "evaluated_paths": 19,
+  "reachable_score": 100,
+  "categories": {
+    "containerization_score": 100,
+    "ci_config_score": 100,
+    "orchestration_score": 41,
+    "env_config_score": 85,
+    "security_policy_score": 100,
+    "iac_score": 100
+  },
+  "short_checks": [
+    "compose_file_present 0/25",
+    "kubernetes_resource_limits_declared 0/35",
+    "kubernetes_probes_declared 0/25",
+    "kubernetes_image_tags_pinned 0/20",
+    "kubernetes_containers_unprivileged 0/20",
+    "kubernetes_manifests_are_valid 0/25",
+    "every_imported_package_is_declared 0/25"
+  ]
+}
+```
+
+**After** generation, auto-approval under `environment=staging`, a real apply onto the host filesystem
+by the paired host agent (`change_sets.status = applied`, three files on disk) and a rescan of 22 files:
+
+```json
+{
+  "score": 92,
+  "level": "production_ready",
+  "indexed": true,
+  "evaluated_paths": 22,
+  "reachable_score": 100,
+  "categories": {
+    "containerization_score": 100,
+    "ci_config_score": 100,
+    "orchestration_score": 61,
+    "env_config_score": 85,
+    "security_policy_score": 100,
+    "iac_score": 100
+  },
+  "short_checks": [
+    "kubernetes_resource_limits_declared 0/35",
+    "kubernetes_probes_declared 0/25",
+    "kubernetes_image_tags_pinned 0/20",
+    "kubernetes_containers_unprivileged 0/20",
+    "every_imported_package_is_declared 0/25"
+  ]
+}
+```
+
+**89 → 92.** The score moved, honestly and in the right direction, and four facts about that number are
+worth more than the number:
+
+1. **The unit test's 90 is not the real 89.** `TestTheAcceptanceCase` asserts the same fixture reads
+   exactly 90, using a hand-written `DEPENDENCY_SPECIFIERS` tuple in place of a scan. A real agent scan
+   of the same bytes fails `every_imported_package_is_declared` (0/25), so the real reading is 89. The
+   fixture's evidence and the agent's evidence disagree by one check.
+2. **Predicted was 100; achieved was 92.** `reachable_score` committed to 100 before the run, from the
+   template renderer. The run delivered three of four artifacts.
+3. **`k8s/deployment.yaml` was withheld by the gate**, twice for the same two reasons —
+   `kubernetes_image_tags_pinned` and `kubernetes_probes_declared` still failing on the artifact
+   generated to satisfy them. That is D-106's per-file machinery working: three artifacts were
+   delivered and the bad one was not. It is also why the ceiling for this run was 92.
+4. **No model was called.** `served_from: "l2"`, `token_frames: 0`, `completion_tokens: 81` — the L2
+   cache replayed a stored completion for an identical compiled prompt. So this cycle measures the
+   scoring, gating, governance and apply chain end to end, and does NOT measure the model.
+
+Two defects the run exposed, both recorded rather than fixed:
+
+- **`forgeops-agent run` ignores the endpoint the backend stated at pairing.** `credentials-public.json`
+  holds `session_ws_url = wss://localhost:18443/api/v1/ws/agent`, and `connect` and the codebase
+  indexer resolve it through `session.SessionURL(stored, cfg.BackendWSSURL)` — but `App.Session()`
+  builds the manager from `cfg.BackendWSSURL` alone. So a freshly paired host agent started with `run`
+  serves no session, exits 0, and logs nothing but `agent starting`; `doctor` then reports "no backend
+  configured (AGENT_BACKEND_WSS_URL is unset)" immediately after a pairing that stored one. The cycle
+  above had to pass `AGENT_BACKEND_WSS_URL` explicitly. `scripts/ci/host-apply-proof.py` deliberately
+  removes that variable and calls `run`, so the same gap is reachable from CI.
+- **The rescan reported 0 dependency edges where the first scan reported 10**, over a superset of the
+  same files. `every_imported_package_is_declared` fails in both readings, so it did not move the
+  score, but a full scan losing its import graph is not a difference the index should have.
+
+## Phase 2 backlog carried forward
+
+Explicit, so none of it is lost when the merged Phase 2 is built on top of it. Each line is a
+measurement or a gap somebody has already paid for, not a nice-to-have.
+
+- [ ] **Strengthen `automated_tests_present` and `centralised_configuration` beyond presence.**
+      `core/source_analysis.py` made both read content rather than filenames, and both are still
+      satisfiable by a file that names the right thing — the checks must measure the work.
+- [ ] **Lockfile and provider-lock generation by real tool execution.** Both are refused today because
+      a lockfile is a resolver's output; an agent operation that runs the real resolver would make them
+      reachable instead of permanently unreachable.
+- [ ] **No change set may lower the score.** `core/content_regression.py` refuses a per-file trade of a
+      satisfied property for an unsatisfied one. The set-level property — the score after an approved
+      apply is never below the score before it — is not asserted anywhere.
+- [ ] **Predicted-equals-achieved reporting on a real run.** The unit test compares the prediction with
+      the template renderer. The baseline above predicted 100 and achieved 92 and nothing reported the
+      gap; the product should state it where a user can see it.
+- [ ] **A real `served_from='provider'` run on current code.** The baseline was served from L2. A
+      measured model run on the current prompt-and-gate contract does not exist.
+- [ ] **The artifact cap derived from measured model output**, rather than chosen.
+- [ ] **Cache-key versioning for the prompt-and-gate contract.** `GENERATION_CONTRACT_VERSION` is in the
+      key; the rule for bumping it is prose, and the baseline's L2 hit shows how much rests on it.
+- [ ] **`backend-coverage` must skip itself via `needs.backend.result != 'skipped'`** rather than by a
+      path filter, so the combine job cannot report on a partial shard set.
+- [ ] **Linux watch mode.**
+- [ ] **`App.Session()` must resolve the pairing-stated endpoint** (the defect above), with a test that
+      pairs, drops `AGENT_BACKEND_WSS_URL`, runs, and requires a live session.
+- [ ] **A full rescan must not lose the import graph** (the defect above).
 
 ## Current phase task list — Phase 1
 

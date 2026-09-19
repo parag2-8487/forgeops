@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: FSL-1.1-ALv2
+# SPDX-License-Identifier: FSL-1.1-ALv2
 """The generated artifacts must describe the REAL project (design.md Â§11.5, Â§12.6).
 
 WHY THESE ARE ASSERTED

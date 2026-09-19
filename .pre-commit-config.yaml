@@ -86,6 +86,17 @@ repos:
         language: system
         pass_filenames: false
         files: ^(\.github/workflows/ci\.yml|\.antigravity/specs/phase-1-mvp-core/design\.md)$
+      # The merge of the former Phase 3 into Phase 2 renumbered two whole phases, and every "deferred
+      # to the former Phase 5" note in the tree then pointed at a phase that no longer exists. A stale
+      # phase reference is not cosmetic: a five-phase plan whose 2.x and 3.x sections overlap misleads
+      # the next reader more effectively than a missing note would. `always_run`, because a reference
+      # can go stale by an edit to `phases.md` alone — the file that defines what is valid.
+      - id: check-phase-references
+        name: no phase reference may name a phase or subsection phases.md lacks
+        entry: python scripts/check-phase-references.py
+        language: system
+        pass_filenames: false
+        always_run: true
       # Debt D4 (design §0.5). A floating tool version means two builds of the same
       # commit can use different tools, and Phase 0 installed its own vulnerability
       # scanner that way.

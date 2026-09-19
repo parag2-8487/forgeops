@@ -5,7 +5,7 @@
 # lint → test → build → e2e → audit → supply.
 #
 # Deliberately ABSENT in Phase 0, with the owning phase: Trivy image scan
-# (Phase 4 §4.4), DeepEval LLM eval (Phase 2), k6 as a gate (needs a deployed
+# (Phase 3 §3.4), DeepEval LLM eval (Phase 2), k6 as a gate (needs a deployed
 # target). No job calls a vendor model API or needs a real LLM key.
 #
 # The four authoritative root documents match NO component path filter, so
@@ -1675,7 +1675,6 @@ jobs:
           count="$(find dist -type f -name 'forgeops-agent*' \( -perm -u+x -o -name '*.exe' \) | wc -l)"
           echo "binaries: $count"
           test "$count" -ge 6
-
 
   # ── A green tick has to mean the gates ran ─────────────────────────────────
   #

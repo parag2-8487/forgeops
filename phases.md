@@ -393,11 +393,23 @@
 
 ---
 
-## Phase 2: Deploy, Manage & Command
+## Phase 2: Deploy, Manage, Observe & Self-Heal
 
-**Goal:** Add deployment automation, environment management, Docker dashboard, AI Command Center, and notifications.
+**Goal:** Add deployment automation, environment management, Docker and Kubernetes dashboards, durable
+workflows, the AI Command Center, notifications, GitOps and progressive delivery, the OTel two-tier
+observability stack, AI troubleshooting and root-cause analysis, guard-railed self-healing, AI learning
+memory, and knowledge base mode.
 
-**Estimated Duration:** 8-12 weeks
+**Estimated Duration:** 18-26 weeks
+
+> **This phase is the merger of the former Phase 2 (Deploy, Manage & Command — 74 boxes, 11
+> subsections) and the former Phase 3 (Observe, Troubleshoot & Self-Heal — 52 boxes, 6 subsections).**
+> The former Phase 4 became Phase 3 and the former Phase 5 became Phase 4. The merge is not a
+> convenience: self-healing reads what the observability stack reports and acts through the deployment
+> and rollback machinery, so shipping one without the other produces either a dashboard nothing acts on
+> or an actor with nothing to read. 126 boxes became 123 — three pairs were combined into single boxes
+> that satisfy both, and every combination is named where it appears. The duration is the honest sum of
+> the two estimates rather than the larger of them.
 
 ### Deliverables
 
@@ -430,11 +442,11 @@
 
 #### 2.4 Docker Management Dashboard
 - [ ] Agent: Docker Engine API wrapper (containers, images, volumes, networks)
-- [ ] Backend: Docker operation proxy (via agent MCP server)
+- [ ] Backend: **Agent operation proxy for Docker AND Kubernetes named operations** (via agent MCP server) — *combined box: former 2.4 "Docker operation proxy" + former 3.1 "K8s operation proxy", which were the same mechanism over two resource families. One whitelist, one signing path, one chokepoint transit for every mutating call; satisfies both.*
 - [ ] Frontend: Container list with status, logs, resource stats
 - [ ] Frontend: Container create/start/stop/restart/delete
 - [ ] Frontend: Image list with build/pull/push/remove
-- [ ] Frontend: Live resource monitoring (CPU, memory, network)
+- [ ] Frontend: **Resource utilisation view** — live container CPU/memory/network from the Docker probe AND cluster/application series from the metrics tier, distinguishing "never reported" from "stale" from "healthy" — *combined box: former 2.4 "Live resource monitoring (CPU, memory, network)" + former 3.2 "Resource utilization charts". Two panels showing the same quantity from two sources is how a stale number gets read as a live one; satisfies both.*
 
 #### 2.4a Inngest Integration (Deployment Workflows)
 - [ ] Backend: Set up Inngest for event-driven durable function execution
@@ -486,6 +498,70 @@
 - [ ] Backend: Dev-tools command proxy
 - [ ] Frontend: Dev-tools panel in project dashboard
 
+#### 2.9 Kubernetes Management Dashboard *(former 3.1)*
+- [ ] Agent: K8s API wrapper for pods, deployments, services, namespaces, ingress, ConfigMaps, HPA
+- [ ] Frontend: Pod list with status, logs, events
+- [ ] Frontend: Deployment management (scale, restart, rollback)
+- [ ] Frontend: Namespace explorer
+- [ ] Frontend: Cluster info and node status
+- [ ] Frontend: HPA configuration viewer
+
+> The former 3.1 "Backend: K8s operation proxy (via agent MCP server)" is not missing: it is the
+> combined box in 2.4. Scale, restart and rollback are mutations and travel the chokepoint.
+
+#### 2.10 OTel-Native Monitoring (Two-Tier Deployment) *(former 3.2)*
+- [ ] Deploy **OTel Collector two-tier architecture**:
+  - **Tier 1 (Sidecar)**: Per-pod collectors — PII redaction, local buffering (`memory_limiter`), 50-100MB overhead
+  - **Tier 2 (Gateway)**: Cluster-level collectors — **tail-based sampling** (stateful), load balancing (consistent hash), batch processing
+- [ ] Backend: Configure OTel metrics, logs, traces instrumentation with **gen_ai.\* semantic conventions**
+- [ ] Backend: Implement **hybrid sampling**: head-based 10% for routine traffic + tail-based 100% for errors/outliers
+- [ ] Backend: Implement **per-tenant cost tracking** via OTel custom metrics (`gen_ai.cost.total`)
+- [ ] Prometheus: Metrics storage and PromQL queries
+- [ ] **Grafana Mimir**: Long-term metrics storage with retention policies
+- [ ] Loki: Log aggregation
+- [ ] Grafana: Embedded dashboards (data sources: Prometheus/Mimir + Loki + Tempo)
+- [ ] Frontend: Unified monitoring dashboard with exemplar support
+- [ ] Frontend: Infrastructure health overview
+- [ ] Frontend: Application metrics (request rate, latency, errors) with trace correlation
+- [ ] Frontend: **AI cost dashboard** per tenant per model
+
+> The former 3.2 "Frontend: Resource utilization charts" is not missing: it is the combined
+> resource-utilisation box in 2.4.
+
+#### 2.11 AI Troubleshooting / Root-Cause Analysis *(former 3.3)*
+- [ ] Backend: Incident ingestion from build failures, deployment errors, K8s events, logs
+- [ ] Backend: AI-powered log analysis (Gemini 3 Flash for high throughput, through the §0.5 routing cascade)
+- [ ] Backend: Root cause identification pipeline
+- [ ] Backend: Fix suggestion generation (enters approval pipeline)
+- [ ] Frontend: Incident list and detail view
+- [ ] Frontend: RCA display (problem → location → fix)
+- [ ] Frontend: Suggested fix with diff preview
+
+#### 2.12 Self-Healing (Guard-Railed) *(former 3.4)*
+- [ ] Backend: Health monitoring (failed containers, crash-looping pods, high resource usage)
+- [ ] Backend: Two-tier action model
+  - Safe: auto-execute (restart crashed container), logged + reported
+  - Risky: require approval (rollback, scaling, config changes)
+- [ ] Backend: AI post-incident summary generation
+- [ ] Backend: Long-term recommendation generation
+- [ ] Frontend: Self-healing activity log
+- [ ] Frontend: Post-incident summary display
+
+#### 2.13 AI Learning History (Per-Project Memory) *(former 3.5)*
+- [ ] Backend: Feedback event logging (accepted/rejected suggestions)
+- [ ] Backend: Two-tier memory architecture
+  - Short-term: conversation history within session
+  - Long-term: preference graph synthesized by Reflector Agent
+- [ ] Backend: Periodic Reflector Agent that synthesizes Skill Files
+- [ ] Backend: Skill file injection into LLM context
+- [ ] Frontend: Learning history viewer (inspectable, editable)
+- [ ] Frontend: Preference display (what AI has learned about this project)
+
+#### 2.14 Knowledge Base Mode *(former 3.6)*
+- [ ] Backend: Question-answering pipeline with RAG from codebase, deployments, incidents
+- [ ] Implemented topics: "Explain this Dockerfile", "Explain this error", "Best practices for..."
+- [ ] Always uses current project as example (not generic)
+
 ### Completion Criteria
 - [ ] User can promote from dev → staging → production
 - [ ] Deployment with real image build + push + apply works
@@ -497,87 +573,6 @@
 - [ ] End-to-end test: scan project → deploy to staging → verify health → rollback
 - [ ] Inngest workflows functional: deployment pipeline with approval gates completes end-to-end
 - [ ] ArgoCD Application manifests generated and synced successfully
-- [ ] Test coverage ≥ 70%
-
-### Excluded (for this phase)
-- ❌ K8s management dashboard
-- ❌ Monitoring/observability dashboards
-- ❌ AI troubleshooting / RCA
-- ❌ Self-healing
-- ❌ Learning history
-- ❌ Visual pipeline designer
-
----
-
-## Phase 3: Observe, Troubleshoot & Self-Heal
-
-**Goal:** Add full observability, AI-powered troubleshooting, self-healing with guard-rails, and AI learning memory.
-
-**Estimated Duration:** 10-14 weeks
-
-### Deliverables
-
-#### 3.1 Kubernetes Management Dashboard
-- [ ] Agent: K8s API wrapper for pods, deployments, services, namespaces, ingress, ConfigMaps, HPA
-- [ ] Backend: K8s operation proxy (via agent MCP server)
-- [ ] Frontend: Pod list with status, logs, events
-- [ ] Frontend: Deployment management (scale, restart, rollback)
-- [ ] Frontend: Namespace explorer
-- [ ] Frontend: Cluster info and node status
-- [ ] Frontend: HPA configuration viewer
-
-#### 3.2 OTel-Native Monitoring (Two-Tier Deployment)
-- [ ] Deploy **OTel Collector two-tier architecture**:
-  - **Tier 1 (Sidecar)**: Per-pod collectors — PII redaction, local buffering (`memory_limiter`), 50-100MB overhead
-  - **Tier 2 (Gateway)**: Cluster-level collectors — **tail-based sampling** (stateful), load balancing (consistent hash), batch processing
-- [ ] Backend: Configure OTel metrics, logs, traces instrumentation with **gen_ai.* semantic conventions**
-- [ ] Backend: Implement **hybrid sampling**: head-based 10% for routine traffic + tail-based 100% for errors/outliers
-- [ ] Backend: Implement **per-tenant cost tracking** via OTel custom metrics (`gen_ai.cost.total`)
-- [ ] Prometheus: Metrics storage and PromQL queries
-- [ ] **Grafana Mimir**: Long-term metrics storage with retention policies
-- [ ] Loki: Log aggregation
-- [ ] Grafana: Embedded dashboards (data sources: Prometheus/Mimir + Loki + Tempo)
-- [ ] Frontend: Unified monitoring dashboard with exemplar support
-- [ ] Frontend: Infrastructure health overview
-- [ ] Frontend: Application metrics (request rate, latency, errors) with trace correlation
-- [ ] Frontend: Resource utilization charts
-- [ ] Frontend: **AI cost dashboard** per tenant per model
-
-#### 3.3 AI Troubleshooting / Root-Cause Analysis
-- [ ] Backend: Incident ingestion from build failures, deployment errors, K8s events, logs
-- [ ] Backend: AI-powered log analysis (Gemini 3 Flash for high throughput)
-- [ ] Backend: Root cause identification pipeline
-- [ ] Backend: Fix suggestion generation (enters approval pipeline)
-- [ ] Frontend: Incident list and detail view
-- [ ] Frontend: RCA display (problem → location → fix)
-- [ ] Frontend: Suggested fix with diff preview
-
-#### 3.4 Self-Healing (Guard-Railed)
-- [ ] Backend: Health monitoring (failed containers, crash-looping pods, high resource usage)
-- [ ] Backend: Two-tier action model
-  - Safe: auto-execute (restart crashed container), logged + reported
-  - Risky: require approval (rollback, scaling, config changes)
-- [ ] Backend: AI post-incident summary generation
-- [ ] Backend: Long-term recommendation generation
-- [ ] Frontend: Self-healing activity log
-- [ ] Frontend: Post-incident summary display
-
-#### 3.5 AI Learning History (Per-Project Memory)
-- [ ] Backend: Feedback event logging (accepted/rejected suggestions)
-- [ ] Backend: Two-tier memory architecture
-  - Short-term: conversation history within session
-  - Long-term: preference graph synthesized by Reflector Agent
-- [ ] Backend: Periodic Reflector Agent that synthesizes Skill Files
-- [ ] Backend: Skill file injection into LLM context
-- [ ] Frontend: Learning history viewer (inspectable, editable)
-- [ ] Frontend: Preference display (what AI has learned about this project)
-
-#### 3.6 Knowledge Base Mode
-- [ ] Backend: Question-answering pipeline with RAG from codebase, deployments, incidents
-- [ ] Implemented topics: "Explain this Dockerfile", "Explain this error", "Best practices for..."
-- [ ] Always uses current project as example (not generic)
-
-### Completion Criteria
 - [ ] K8s dashboard shows real pods, deployments, namespaces
 - [ ] Metrics flowing from OTel → Prometheus → Grafana
 - [ ] AI can analyze a failed deployment and identify root cause
@@ -587,18 +582,38 @@
 - [ ] Knowledge base answers questions using project context
 - [ ] End-to-end test: deploy → inject failure → AI detects → AI suggests fix → human approves
 - [ ] Grafana Mimir storing long-term metrics with configured retention period
-- [ ] Test coverage ≥ 75%
+- [ ] Test coverage ≥ 75% — *combined criterion: former Phase 2 asked ≥ 70% and former Phase 3 asked ≥ 75%. Resolved to the STRICTER of the two, because a merged phase that shipped at the looser threshold would be a coverage reduction dressed as a merge. Backend, agent and frontend keep their existing higher gates (86%/77%/96-97-94-86); this is the phase floor, not a target.*
 
 ### Excluded (for this phase)
+
+Recomputed rather than concatenated. Every exclusion the former Phase 2 carried for Kubernetes
+dashboards, monitoring, RCA, self-healing and learning history is **gone**, because all five are now
+in-phase (2.9–2.13). What remains excluded is exactly what belongs to Phase 3 and Phase 4.
+
+Deferred to Phase 3 (Scale, Collaborate & Polish):
+
 - ❌ Visual pipeline designer
-- ❌ Architecture diagram generator
-- ❌ Dependency health scanner
-- ❌ Cost analysis
-- ❌ Team collaboration (review requests)
+- ❌ AI architecture diagram generator
+- ❌ Dependency health scanner (full, multi-ecosystem)
+- ❌ Supply-chain & CI/CD security dashboard (VEX)
+- ❌ Cost analysis (Infracost / Kubecost)
+- ❌ Team collaboration — review requests, comment threads, full RBAC
+- ❌ Backup & disaster recovery
+- ❌ API Explorer
+- ❌ Deployment analytics (DORA metrics)
+
+Deferred to Phase 4 (Advanced & Ecosystem):
+
+- ❌ Multi-agent collaboration and human orchestrator mode
+- ❌ Air-gapped mode
+- ❌ Backstage plugin
+- ❌ Enterprise SSO (SAML/LDAP) and SOC2 compliance features
+- ❌ "Deploy to…" one-click templates
+- ❌ Platform SDK, webhooks and plugin architecture
 
 ---
 
-## Phase 4: Scale, Collaborate & Polish
+## Phase 3: Scale, Collaborate & Polish
 
 **Goal:** Add visual tools, team features, advanced analytics, and polish.
 
@@ -606,7 +621,7 @@
 
 ### Deliverables
 
-#### 4.1 Visual Pipeline Designer
+#### 3.1 Visual Pipeline Designer
 - [ ] Frontend: React Flow integration for drag-and-drop pipeline editing
 - [ ] Frontend: Stage nodes (Build, Test, Scan, Deploy, Health Check, Notify)
 - [ ] Frontend: Connection edges between stages
@@ -614,7 +629,7 @@
 - [ ] Backend: Pipeline YAML generator from visual graph
 - [ ] Backend: GitHub Actions / Jenkins file export
 
-#### 4.2 AI Architecture Diagram Generator
+#### 3.2 AI Architecture Diagram Generator
 - [ ] Backend: Dependency graph builder from codebase index
 - [ ] Backend: D2 markup generator from dependency graph + infra state
 - [ ] Frontend: D2 rendering to SVG via D2 CLI (server-side)
@@ -622,7 +637,7 @@
 - [ ] Frontend: Export to SVG/PNG
 - [ ] Frontend: Simple diagram editing (Mermaid fallback)
 
-#### 4.3 Dependency Health Scanner (Full)
+#### 3.3 Dependency Health Scanner (Full)
 - [ ] Agent: Multi-ecosystem dependency parsing (npm, pip, Go, Maven, etc.)
 - [ ] Agent: Trivy scan for vulnerabilities, outdated, deprecated, unused packages
 - [ ] Backend: AI analysis of scan results
@@ -630,7 +645,7 @@
 - [ ] Frontend: Dependency health dashboard with filterable list
 - [ ] Frontend: License compliance view
 
-#### 4.4 Supply-Chain & CI/CD Security
+#### 3.4 Supply-Chain & CI/CD Security
 - [ ] Agent: **SLSA Build Level 2+** compliance (signed provenance for every build)
 - [ ] CI: Generate **CycloneDX SBOM** for every release via Syft
 - [ ] CI: **Cosign keyless signing** via Sigstore (Fulcio/Rekor)
@@ -639,14 +654,14 @@
 - [ ] CI: **Binary transparency** (all release artifacts logged to Rekor)
 - [ ] Frontend: VEX (Vulnerability Exploitability Exchange) dashboard for end users
 
-#### 4.5 Cost Analysis
+#### 3.5 Cost Analysis
 - [ ] Backend: Infracost integration for pre-deployment cost estimation
 - [ ] Backend: Kubecost integration for runtime cost visibility
 - [ ] Backend: AI cost optimization suggestions
 - [ ] Frontend: Cost estimate display pre-deployment
 - [ ] Frontend: Cost savings recommendations with estimated savings
 
-#### 4.6 Team Collaboration
+#### 3.6 Team Collaboration
 - [ ] Backend: Full RBAC (Owner, Admin, Developer, Viewer)
 - [ ] Backend: Cerbos integration for fine-grained permissions
 - [ ] Backend: Review request system with threaded comments
@@ -655,7 +670,7 @@
 - [ ] Frontend: Comment threads on diffs
 - [ ] Frontend: Approval dashboard (pending, approved, rejected)
 
-#### 4.7 Backup & Disaster Recovery
+#### 3.7 Backup & Disaster Recovery
 - [ ] Agent: Velero integration for K8s backup
 - [ ] Agent: Docker volume backup script
 - [ ] Backend: Backup schedule management with retention policies
@@ -663,13 +678,13 @@
 - [ ] Backend: Workspace restore from export
 - [ ] Frontend: Backup management UI
 
-#### 4.8 API Explorer
+#### 3.8 API Explorer
 - [ ] Agent: Codebase scanning for API route definitions
 - [ ] Backend: OpenAPI spec generation from scanned routes
 - [ ] Frontend: Stoplight Elements integration for API viewer
 - [ ] Frontend: GraphiQL for GraphQL APIs
 
-#### 4.9 Deployment Analytics
+#### 3.9 Deployment Analytics
 - [ ] Backend: DORA metrics computation (deployment frequency, lead time, MTTR, change failure rate)
 - [ ] Backend: Trend analysis (success rates, failure patterns)
 - [ ] Frontend: Analytics dashboard with charts (ECharts)
@@ -688,13 +703,19 @@
 - [ ] Test coverage ≥ 80%
 
 ### Excluded (for this phase)
-- ❌ Multi-agent team rooms (humans + AI collaborating) — deferred
-- ❌ Air-gapped mode — deferred
-- ❌ Backstage plugin — deferred
+
+Deferred to Phase 4 (Advanced & Ecosystem):
+
+- ❌ Multi-agent team rooms (humans + AI collaborating)
+- ❌ Air-gapped mode
+- ❌ Backstage plugin
+- ❌ Enterprise SSO (SAML/LDAP) and SOC2 compliance features
+- ❌ "Deploy to…" one-click templates
+- ❌ Platform SDK, webhooks and plugin architecture
 
 ---
 
-## Phase 5: Advanced & Ecosystem
+## Phase 4: Advanced & Ecosystem
 
 **Goal:** Enterprise features, ecosystem integration, and advanced AI capabilities.
 
@@ -702,31 +723,31 @@
 
 ### Deliverables
 
-#### 5.1 Multi-Agent Collaboration
+#### 4.1 Multi-Agent Collaboration
 - [ ] Multiple AI agents working on same project with coordination
 - [ ] Specialized agents: Analyzer, Generator, Safety Reviewer, Deployment Manager
 - [ ] Human orchestrator mode
 
-#### 5.2 Air-Gapped Mode
+#### 4.2 Air-Gapped Mode
 - [ ] Fully offline platform operation
 - [ ] Local models only (Qwen3-Coder via Ollama)
 - [ ] No cloud backend dependency
 
-#### 5.3 Backstage Plugin
+#### 4.3 Backstage Plugin
 - [ ] Platform as a Backstage plugin
 - [ ] Integration with Backstage catalog and software templates
 
-#### 5.4 Enterprise SSO & Compliance
+#### 4.4 Enterprise SSO & Compliance
 - [ ] SAML, LDAP integration
 - [ ] SOC2 compliance features
 - [ ] Audit export for compliance
 - [ ] Data retention policies
 
-#### 5.5 "Deploy to..." One-Click Templates
+#### 4.5 "Deploy to..." One-Click Templates
 - [ ] Pre-built deployment profiles for popular stacks
 - [ ] Next.js → Vercel, Django → Railway, Spring Boot → ECS
 
-#### 5.6 Platform SDK
+#### 4.6 Platform SDK
 - [ ] REST API for third-party integration
 - [ ] Webhook system for external triggers
 - [ ] Plugin architecture for community extensions
@@ -754,27 +775,39 @@ Phase 0: Foundation (Scaffolding + GoReleaser + MCP Gateway + Model Routing + Ci
 Phase 1: MVP Core (Analysis → Generation → Approval)
     │  └── P1.5 AI Generation depends on P0.5 Model Routing
     │
-    ├──► Phase 2: Deploy & Manage (Environments, Docker, Command Center, Inngest, KEDA)
+    ├──► Phase 2: Deploy, Manage, Observe & Self-Heal
+    │          (Environments, Deployment, Rollback, Docker + K8s dashboards, Inngest, KEDA,
+    │           Command Center, Notifications, ArgoCD, Argo Rollouts, Service Mesh, Dev Tools,
+    │           OTel two-tier, Prometheus/Mimir/Loki/Grafana, RCA, Self-Healing, Learning, KB)
     │               │
+    │               │  ORDER WITHIN THE PHASE, which is why the merge was made:
+    │               │    2.1 Environments ─► 2.2 Deployment ─► 2.3 Rollback ─► 2.7a Progressive delivery
+    │               │    2.10 Observability ─► 2.11 RCA ─► 2.12 Self-Healing ─► 2.13 Learning
+    │               │    2.12 Self-Healing needs BOTH chains: it reads 2.10 and acts through 2.2/2.3
+    │               │    2.7a canary gating reads 2.10's error-rate and latency series
+    │               │    2.4a Inngest can start in parallel with 2.2
     │               ▼
-    │          Phase 3: Observe & Heal (OTel two-tier, K8s dashboard, Self-Healing, Learning)
-    │               │  └── P3.2 OTel depends on P2.4a Inngest for workflow orchestration
+    │          Phase 3: Scale & Polish (Visual Tools, Diagrams, Dependencies, Supply Chain,
+    │               │                   Cost, Team, Backups, API Explorer, DORA Analytics)
+    │               │  └── P3.4 Supply Chain depends on P0.2 GoReleaser foundation
+    │               │  └── P3.9 DORA Analytics depends on P2.3 deployment history
     │               ▼
-    │          Phase 4: Scale & Polish (Visual Tools, Team, Analytics, Cost, Backups)
-    │               │  └── P4.4 Supply Chain depends on P0.2 GoReleaser foundation
-    │               ▼
-    │          Phase 5: Advanced (Ecosystem, Enterprise, Air-Gapped, MCP Apps)
+    │          Phase 4: Advanced (Ecosystem, Enterprise, Air-Gapped, MCP Apps)
     │
     └──► (Alternative path)
-         P3 can be partially parallelized if observability is critical earlier
-         P4/P5 are sequential — each builds on the previous
+         Within Phase 2 the observability chain (2.9–2.14) can be started in parallel with the
+         deployment chain (2.1–2.8) if observability is needed earlier; only 2.12 requires both.
+         P3/P4 are sequential — each builds on the previous
 ```
 
 **Key dependency notes:**
 - P0.5 (Model Routing) is a **hard prerequisite** for P1.5 (AI Generation Pipeline with 6-tier routing)
-- P0.2 (GoReleaser/Cosign/Syft/SLSA) is a **hard prerequisite** for P4.4 (Supply-Chain dashboard)
-- P4.9 (DORA Analytics) depends on P3.3 (Deployment history) being available
+- P0.2 (GoReleaser/Cosign/Syft/SLSA) is a **hard prerequisite** for P3.4 (Supply-Chain dashboard)
+- P3.9 (DORA Analytics) depends on P2.3 (Deployment history) being available
 - P2.4a (Inngest) can be started in parallel with P2.2 (Deployment Automation)
+- P2.10 (OTel two-tier) depends on P2.4a (Inngest) for workflow orchestration
+- P2.12 (Self-Healing) depends on P2.10 (what it reads) **and** on P2.2/P2.3 (what it acts through);
+  it is the reason the two former phases are one phase
 
 ---
 
@@ -784,10 +817,9 @@ Phase 1: MVP Core (Analysis → Generation → Approval)
 |:---:|:---:|:---|---:|
 | 0 | Low | Tooling incompatibility, CI configuration issues | Use well-established tools, pin versions |
 | 1 | High | LLM output quality, validation loop reliability, security bugs | Extensive testing, validation-feedback loop, Plan Analyzer |
-| 2 | Medium | Docker/K8s API complexity, deployment state management | Use official SDKs, test with multiple orchestrators |
-| 3 | High | Telemetry pipeline complexity, self-healing safety | Two-tier action model, extensive dry-run testing |
-| 4 | Medium | Feature scope creep, UI complexity | Clear scope boundaries, iterative UX testing |
-| 5 | Low | Community adoption, plugin ecosystem | engagement, documentation |
+| 2 | High | Docker/K8s API complexity, deployment state management, telemetry pipeline complexity, self-healing safety — the merged phase carries both former risk profiles, and the highest of the two governs | Official SDKs, test with multiple orchestrators, two-tier action model, extensive dry-run testing, no auto-execution before the safe/risky split is proven |
+| 3 | Medium | Feature scope creep, UI complexity | Clear scope boundaries, iterative UX testing |
+| 4 | Low | Community adoption, plugin ecosystem | engagement, documentation |
 
 ---
 
@@ -797,7 +829,7 @@ Phase 1: MVP Core (Analysis → Generation → Approval)
 |:---|:---|:---|
 | **Phase 1** | **ARQ or Dramatiq** | Asyncio-native task runner for fire-and-forget AI tasks (analysis, generation); native fit for async FastAPI, no eventlet/gevent workaround (unlike Celery) |
 | **Phase 2** | **Inngest** (single durable engine, introduced once) | Async-native durable functions; ideal for approval-gated deployment/rollback/remediation pipelines; self-hostable |
-| **Phase 3+** | **Temporal** (only if needed) | Stateful workflow-as-code; adopt ONLY if replay/history genuinely outgrows Inngest — not a planned migration |
+| **Phase 3+** | **Temporal** (only if needed) | Stateful workflow-as-code; adopt ONLY if replay/history genuinely outgrows Inngest — not a planned migration. Phase 3 in the merged numbering, i.e. after the whole deploy-observe-heal phase has run on Inngest |
 
 **Migration pattern:**
 - Keep business logic in orchestrator-agnostic functions ("thin wrapper" pattern) from Day 1

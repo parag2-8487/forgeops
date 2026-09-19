@@ -1,7 +1,7 @@
 # ForgeOps — Complete Platform Architecture (All Phases)
 
 > **Scope:** the whole platform as specified across `PRD.md` and `phases.md` — Phase 0
-> through Phase 5. This is the **target architecture**, not the current one.
+> through Phase 4. This is the **target architecture**, not the current one.
 >
 > **Status colouring is load-bearing.** Green boxes exist in the tree today. Grey dashed
 > boxes are specified but unbuilt. Read the legend before reading the diagrams.
@@ -198,17 +198,15 @@ fail, degrade to a verified template'."_
 graph TB
     P0["<b>Phase 0 — Foundation</b><br/>monorepo · Go/FastAPI/Next scaffolds<br/>MCP Gateway · model routing · GoReleaser<br/>OpenTofu runner · plan analyzer<br/><b>COMPLETE — 18 of 18 criteria</b>"]
 
-    P05{{"<b>P0.9 Model Routing</b><br/>6 tiers · circuit breaker<br/>fallback cascade · BYO-key<br/>semantic cache"}}
+    P05{{"<b>P0.5 Model Routing</b><br/>6 tiers · circuit breaker<br/>fallback cascade · BYO-key<br/>semantic cache"}}
 
     P1["<b>Phase 1 — MVP Core</b><br/>pairing · workspace · codebase analysis<br/>readiness scoring · AI generation<br/>approval centre · policy · secrets · audit<br/>governance control plane · auth<br/><b>13 of 14 criteria — C10 open</b>"]
 
-    P2["<b>Phase 2 — Deploy, Manage &amp; Command</b><br/>environments · deployment automation<br/>rollback · Docker dashboard · Inngest<br/>AI command centre · Novu · ArgoCD<br/>Argo Rollouts · service mesh · dev tools<br/><b>NOT STARTED</b>"]
+    P2["<b>Phase 2 — Deploy, Manage, Observe &amp; Self-Heal</b><br/>environments · deployment automation<br/>rollback · Docker + K8s dashboards · Inngest<br/>AI command centre · Novu · ArgoCD<br/>Argo Rollouts · service mesh · dev tools<br/>OTel two-tier · Prometheus/Mimir/Loki/Grafana<br/>RCA · self-healing · learning memory · knowledge base<br/><b>NOT STARTED</b>"]
 
-    P3["<b>Phase 3 — Observe, Troubleshoot &amp; Self-Heal</b><br/>K8s dashboard · OTel two-tier<br/>Prometheus/Mimir/Loki/Grafana<br/>RCA · self-healing · learning memory<br/>knowledge base<br/><b>NOT STARTED</b>"]
+    P3["<b>Phase 3 — Scale, Collaborate &amp; Polish</b><br/>visual pipeline designer · D2 diagrams<br/>dependency health · SLSA supply chain<br/>cost analysis · RBAC · Velero backups<br/>API explorer · DORA metrics<br/><b>NOT STARTED</b>"]
 
-    P4["<b>Phase 4 — Scale, Collaborate &amp; Polish</b><br/>visual pipeline designer · D2 diagrams<br/>dependency health · SLSA supply chain<br/>cost analysis · RBAC · Velero backups<br/>API explorer · DORA metrics<br/><b>NOT STARTED</b>"]
-
-    P5["<b>Phase 5 — Advanced &amp; Ecosystem</b><br/>multi-agent collaboration · air-gapped mode<br/>Backstage plugin · enterprise SSO<br/>one-click templates · platform SDK<br/><b>NOT STARTED</b>"]
+    P4["<b>Phase 4 — Advanced &amp; Ecosystem</b><br/>multi-agent collaboration · air-gapped mode<br/>Backstage plugin · enterprise SSO<br/>one-click templates · platform SDK<br/><b>NOT STARTED</b>"]
 
     GORE{{"<b>P0.2 GoReleaser</b><br/>Cosign · Syft SBOM<br/>SLSA provenance"}}
 
@@ -218,10 +216,8 @@ graph TB
     P1 --> P2
     P2 --> P3
     P3 --> P4
-    P4 --> P5
-    GORE -.->|"HARD PREREQUISITE<br/>P4.4 supply-chain dashboard"| P4
-    P2 -.->|"P2.4a Inngest orchestrates<br/>P3.2 telemetry workflows"| P3
-    P3 -.->|"deployment history feeds<br/>P4.9 DORA metrics"| P4
+    GORE -.->|"HARD PREREQUISITE<br/>P3.4 supply-chain dashboard"| P3
+    P2 -.->|"deployment history feeds<br/>P3.9 DORA metrics"| P3
 
     classDef done fill:#d4edda,stroke:#28a745,stroke-width:3px,color:#000
     classDef current fill:#fff3cd,stroke:#e0a800,stroke-width:3px,color:#000
@@ -230,7 +226,7 @@ graph TB
 
     class P0 done
     class P1 current
-    class P2,P3,P4,P5 todo
+    class P2,P3,P4 todo
     class P05,GORE gate
 ```
 
@@ -433,8 +429,8 @@ erDiagram
 
     CHANGE_SETS o{--|| DEPLOYMENTS : "PHASE 2"
     DEPLOYMENTS }o--|| ENVIRONMENTS : "PHASE 2"
-    DEPLOYMENTS ||--o{ INCIDENTS : "PHASE 3"
-    INCIDENTS ||--o{ LEARNING_EVENTS : "PHASE 3"
+    DEPLOYMENTS ||--o{ INCIDENTS : "PHASE 2"
+    INCIDENTS ||--o{ LEARNING_EVENTS : "PHASE 2"
 
     USERS {
         uuid id PK
