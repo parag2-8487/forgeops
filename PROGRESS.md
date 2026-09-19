@@ -225,12 +225,27 @@ this branch's and are fixed; these six are the ones the BOM had been hiding.
       — the same root cause on the provenance half, plus the gate half, over a real model run. It is also
       the `served_from='provider'` measurement the backlog above asks for, so the two are one task.
 
-**Fixed while chasing these, each a real defect the shard had been hiding:**
+- [ ] **The journey's step 8 fails on the same root cause, which is the strongest evidence for it.**
+      `End-to-End Journey CI` run `35461246025`: seven steps pass, then step 8 reads the change set and
+      finds `["SECURITY.md", "k8s/ingress.yaml", "k8s/service.yaml", "terraform/backend.tf"]` — **no
+      `Dockerfile`**, because the per-file gate withheld it for failing `dockerfile_base_pinned`, the
+      check it was generated to satisfy. Identical in shape to the baseline cycle above, where
+      `k8s/deployment.yaml` was withheld for probes and pinned tags. So the one artifact kind the product
+      is most often asked for is the one its own gate refuses, on a real model run, and that is what
+      caps the achievable score at 92 rather than the promised 100. **This is the first item to fix in
+      Phase 2** — not the gate, which is behaving correctly, but the prompt-and-template path that keeps
+      producing a Dockerfile with an unpinned base image. The journey assertion is deliberately left
+      alone: it is asking for exactly the right thing.
+- [ ] **`shell.spec.ts` and the host-apply proof are fixed** (nav count 13 after the Integrations route;
+      the proof was still globbing `<file>.backup.<timestamp>` after backups moved under
+      `.forgeops-rollback/backups/<timestamp>/<relpath>`, so it reported "no backup was taken" — true
+      about the glob, false about the agent). Both jobs green on run `35461246025`.
 
-- `.github/workflows/build.yml` as GENERATED failed the `yamllint` the agent's own validator runs —
-  one space before a trailing version comment where the config requires two. The library's output failing
-  the validator that produced it is the incident `check-template-readiness.py` exists for, one rule
-  further out.
+**Fixed while chasing these, each a real defect the shard had been hiding:**- `.github/workflows/build.yml` as GENERATED failed the `yamllint` the agent's own validator runs —
+one space before a trailing version comment where the config requires two. The library's output failing
+the validator that produced it is the incident `check-template-readiness.py` exists for, one rule
+further out.
+
 - **A container check is not a check about every manifest.** `unsatisfied_targets` derived an artifact's
   targeted checks from its PATH, so `k8s/configmap.yaml` was held answerable for
   `kubernetes_containers_unprivileged` and `kubernetes_resource_limits_declared` — checks a ConfigMap has
