@@ -42,7 +42,6 @@ from src.audit.models import AuditEvent  # noqa: F401, E402
 from src.auth.device_models import AgentDevice  # noqa: F401, E402
 from src.auth.models import Session, User  # noqa: F401, E402
 from src.generation.models import GenerationRun  # noqa: F401, E402
-from src.integrations.models import GitHubAccountLink  # noqa: F401, E402
 from src.governance.models import (  # noqa: F401, E402
     Approval,
     ChangeItem,
@@ -50,6 +49,7 @@ from src.governance.models import (  # noqa: F401, E402
     RollbackHandle,
     Validation,
 )
+from src.integrations.models import GitHubAccountLink  # noqa: F401, E402
 from src.policies.models import Policy, PolicyBundle, PolicyEvaluation  # noqa: F401, E402
 from src.projects.models import Project, ProjectTag  # noqa: F401, E402
 from src.secrets.models import Secret  # noqa: F401, E402
