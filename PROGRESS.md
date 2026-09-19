@@ -215,6 +215,13 @@ this branch's and are fixed; these six are the ones the BOM had been hiding.
       this file was served from L2, so the read path works and the WRITE path is the suspect.
 - [ ] **`test_semantic_cache::test_l2_near_duplicate`** — the same property at the cache layer, without
       generation in the way. The cheapest place to start.
+- [ ] **`agent (windows-latest host binary)` cannot pass on the mirror at all.** Its first step downloads a
+      PUBLISHED release archive and the step under test installs it; the mirror has no releases, so the
+      download finds nothing and the printed-install assertion fails with "No forgeops-agent zip found".
+      Byte-identical in the pre-branch run (`34604857055`, job `103280740263`), so it is neither a
+      regression nor fixable from a workstation: it needs a release published on whichever remote runs CI.
+      The macOS and Linux variants pass, and the Windows host apply itself is recorded in
+      `docs/connecting-an-agent.md` against a real Windows host.
 
 ## GitHub onboarding — what is built, and what the next session has to build
 
