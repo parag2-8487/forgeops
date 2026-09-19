@@ -57,8 +57,8 @@ lint-chokepoint: ## Assert the mutation chokepoint is unbypassable (design §2.2
 	@bash scripts/check-chokepoint.sh
 
 .PHONY: check-phase-references
-check-phase-references: ## Assert no document names a phase or subsection phases.md does not have
-	@printf '==> check-phase-references: every phase reference must resolve against phases.md\n'
+check-phase-references: ## Assert no document names a phase or subsection the plan does not have
+	@printf '==> check-phase-references: every phase reference must resolve against the phase plan\n'
 	@python scripts/check-phase-references.py
 
 lint-agent: ## Lint Go agent with golangci-lint

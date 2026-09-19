@@ -185,8 +185,14 @@ func TestClone_FetchesAPrivateRepositoryAndLeavesNoCredentialOnDisk(t *testing.T
 	if len(*seenAuth) == 0 {
 		t.Fatal("the server saw no authenticated request; the assertion below would be vacuous")
 	}
-	if report.Path != filepath.Join(root, "private") {
-		t.Errorf("cloned to %q, want %q", report.Path, filepath.Join(root, "private"))
+	// `normaliseDeepestExisting` on the expectation too, for the reason the operation applies it: on
+	// Windows `t.TempDir()` hands out the 8.3 short name (`C:\Users\RUNNER~1\...`) and on macOS a
+	// temporary directory is under the `/var` -> `/private/var` symlink, so the literal comparison
+	// compared two spellings of one directory. That mismatch is exactly the defect this test caught in
+	// CI, and it was in the OPERATION, not here — the operation now normalises both sides.
+	wantPath := normaliseDeepestExisting(filepath.Join(root, "private"))
+	if report.Path != wantPath {
+		t.Errorf("cloned to %q, want %q", report.Path, wantPath)
 	}
 	if !report.Shallow || report.Depth != CloneDepth {
 		t.Errorf("depth = %d shallow = %v, want %d and true", report.Depth, report.Shallow, CloneDepth)
@@ -287,7 +293,7 @@ func TestClone_AcceptsTheRootAndDirectoriesBeneathIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the root itself was refused: %v", err)
 	}
-	if atRoot != filepath.Join(root, "repo") {
+	if atRoot != normaliseDeepestExisting(filepath.Join(root, "repo")) {
 		t.Errorf("resolved to %q", atRoot)
 	}
 
@@ -295,8 +301,42 @@ func TestClone_AcceptsTheRootAndDirectoriesBeneathIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a directory beneath the root was refused: %v", err)
 	}
-	if beneath != filepath.Join(nested, "repo") {
+	if beneath != normaliseDeepestExisting(filepath.Join(nested, "repo")) {
 		t.Errorf("resolved to %q", beneath)
+	}
+}
+
+func TestClone_TwoSpellingsOfOneDirectoryAreTheSameDirectory(t *testing.T) {
+	// THE REGRESSION CI CAUGHT, pinned where it can be read. The parent of a clone does not exist yet,
+	// so `EvalSymlinks` cannot resolve it — and resolving only the root compared `C:\Users\runneradmin`
+	// against `C:\Users\RUNNER~1` on Windows, and `/private/var/...` against `/var/...` on macOS, and
+	// refused a parent that was inside the root. Both platforms hand those spellings out for a temporary
+	// directory, so this is an ordinary operator configuration rather than an exotic one.
+	//
+	// Asserted through the PUBLIC behaviour — a clone into a nested parent must be accepted — with the
+	// normaliser exercised directly beneath it, so the property survives a rewrite of the helper.
+	root := t.TempDir()
+	deep := filepath.Join(root, "a", "b", "c")
+
+	if _, err := resolveCloneTarget(root, deep, "repo"); err != nil {
+		t.Fatalf("a parent several levels below the root, none of it existing, was refused: %v", err)
+	}
+
+	// The deepest existing ancestor is the root, so the remainder is re-appended to the RESOLVED root
+	// rather than left in whatever spelling the caller used.
+	got := normaliseDeepestExisting(deep)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("the root must be resolvable: %v", err)
+	}
+	if want := filepath.Join(resolvedRoot, "a", "b", "c"); got != want {
+		t.Errorf("normaliseDeepestExisting(%q) = %q, want %q", deep, got, want)
+	}
+	// A path with nothing resolvable is returned unchanged: a failure to normalise must not become a
+	// failure to clone.
+	absent := filepath.Join(string(filepath.Separator), "no-such-volume-root-xyz", "nope")
+	if normaliseDeepestExisting(absent) == "" {
+		t.Error("an unresolvable path must be returned as given, not emptied")
 	}
 }
 

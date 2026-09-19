@@ -219,15 +219,21 @@ func resolveCloneTarget(root, parent, name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("executor: unusable parent directory %q: %w", parent, err)
 	}
-	// EvalSymlinks on the root, not on the parent: the parent may not exist yet, and the root always
-	// does. Without this a symlinked root (a bind mount, a Docker Desktop share) compares unequal to
-	// the resolved parent and every clone is refused for a reason that is not true.
-	if resolved, resolveErr := filepath.EvalSymlinks(absRoot); resolveErr == nil {
-		absRoot = resolved
-	}
-	if resolvedParent, resolveErr := filepath.EvalSymlinks(absParent); resolveErr == nil {
-		absParent = resolvedParent
-	}
+	// BOTH SIDES ARE NORMALISED THE SAME WAY, and doing only one was a real defect rather than an
+	// untidiness. `EvalSymlinks` fails on a path that does not exist yet, and the parent of a clone
+	// usually does not — so resolving only the root compared two different spellings of the same
+	// directory and refused every clone:
+	//
+	//   Windows CI: root `C:\Users\runneradmin\...` (expanded) vs parent `C:\Users\RUNNER~1\...`
+	//               (the 8.3 short name `t.TempDir()` and `%TEMP%` both hand out)
+	//   macOS:      root `/private/var/folders/...` vs parent `/var/folders/...`
+	//
+	// Neither is exotic: an operator whose `AGENT_WORKSPACE_ROOT` came from `%TEMP%`, or a macOS agent
+	// under a temporary directory, hits exactly this. The refusal named the root and was wrong, which
+	// is the worst kind — it sends somebody to check a setting that is already correct.
+	absRoot = normaliseDeepestExisting(absRoot)
+	absParent = normaliseDeepestExisting(absParent)
+
 	relative, err := filepath.Rel(absRoot, absParent)
 	if err != nil {
 		return "", fmt.Errorf("%w: %q is not comparable to %q", ErrCloneOutsideRoot, absParent, absRoot)
@@ -239,6 +245,33 @@ func resolveCloneTarget(root, parent, name string) (string, error) {
 				"directory inside it", ErrCloneOutsideRoot, absParent, absRoot)
 	}
 	return filepath.Join(absParent, name), nil
+}
+
+// normaliseDeepestExisting resolves the longest existing prefix of `path` and re-appends the rest.
+//
+// `filepath.EvalSymlinks` refuses a path that does not exist, which is the normal case for a clone
+// target's parent. Walking up to the deepest ancestor that DOES exist gets the same normalisation —
+// symlinks resolved, and on Windows the 8.3 short name expanded — for the part that can be resolved,
+// and leaves the rest as written. Returning `path` unchanged when nothing resolves is deliberate: a
+// failure to normalise must not become a failure to clone.
+func normaliseDeepestExisting(path string) string {
+	remainder := ""
+	current := path
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			if remainder == "" {
+				return resolved
+			}
+			return filepath.Join(resolved, remainder)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached the volume root without resolving anything.
+			return path
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
+	}
 }
 
 // ensureEmptyTarget refuses a non-empty directory by name, and refuses a case-only collision.

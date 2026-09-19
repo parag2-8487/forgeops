@@ -239,6 +239,12 @@ if [ -f "$CONFIG" ]; then
 	#                    deletion-only commit must still be scanned rather than skipped — so
 	#                    `always_run: true` here is the point of the hook rather than an
 	#                    exemption from filtering. It writes nothing.
+	#   check-phase-references  reads the phase plan for the set of phases and subsection ids that
+	#                    exist, then reads every tracked file for references to one that does not.
+	#                    Both halves make it a whole-tree question: a reference can go stale by an
+	#                    edit to the PLAN alone, with the referring file untouched, so a filename
+	#                    list would miss exactly the case the gate exists for. It writes nothing,
+	#                    and `backend/tests/meta/test_check_phase_references.py` drives it.
 	#
 	# Both Phase 1 additions take fixed arguments rather than a filename list, so
 	# `pass_filenames: true` would append paths and break them. Their read-only
@@ -248,7 +254,7 @@ if [ -f "$CONFIG" ]; then
 	#
 	# Adding a name to this list without that evidence reopens the hole the rule
 	# closes, so the list is deliberately short and each entry is justified above.
-	NON_FILENAME_EXEMPT='gitleaks check-ci-jobs check-no-latest check-gitleaks-config check-chokepoint check-added-shapes'
+	NON_FILENAME_EXEMPT='gitleaks check-ci-jobs check-no-latest check-gitleaks-config check-chokepoint check-added-shapes check-phase-references'
 	awk -F'\t' -v exempt=" $NON_FILENAME_EXEMPT " '
 		$1=="hook" && ($3=="always_run" || $3=="pass_filenames") && index(exempt, " " $2 " ")==0 {
 			if (($3=="always_run" && $4=="true") || ($3=="pass_filenames" && $4=="false"))
