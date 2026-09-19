@@ -816,6 +816,47 @@
         "title": "ChunkDetailResponse",
         "type": "object"
       },
+      "CloneDispatchResponse": {
+        "description": "What dispatching the clone reports. The change set is how it is tracked from here on.",
+        "properties": {
+          "audit_seq": {
+            "title": "Audit Seq",
+            "type": "integer"
+          },
+          "change_set_id": {
+            "format": "uuid",
+            "title": "Change Set Id",
+            "type": "string"
+          },
+          "clone_state": {
+            "title": "Clone State",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "change_set_id",
+          "status",
+          "outcome",
+          "audit_seq",
+          "clone_state"
+        ],
+        "title": "CloneDispatchResponse",
+        "type": "object"
+      },
       "CodebaseStatusResponse": {
         "properties": {
           "indexed_files": {
@@ -2003,6 +2044,42 @@
           "connected"
         ],
         "title": "GitHubLinkStatus",
+        "type": "object"
+      },
+      "GitHubProjectRequest": {
+        "additionalProperties": false,
+        "description": "What creating a project from a connected GitHub account needs.\n\nNO INSTALLATION ID, NO OWNER, NO REPO TYPED BY HAND. That was the previous shape and nobody had the\nfirst field; the repository is now identified by the `full_name` the picker listed, and the listing\ncame from the user's own linked account.",
+        "properties": {
+          "branch": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Branch",
+            "type": "string"
+          },
+          "directory_name": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Directory Name",
+            "type": "string"
+          },
+          "parent_directory": {
+            "default": "",
+            "maxLength": 4096,
+            "title": "Parent Directory",
+            "type": "string"
+          },
+          "repo_full_name": {
+            "maxLength": 140,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$",
+            "title": "Repo Full Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_full_name"
+        ],
+        "title": "GitHubProjectRequest",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -6646,6 +6723,48 @@
         ]
       }
     },
+    "/api/v1/projects/from-github": {
+      "post": {
+        "description": "Confirm the repository against the API, then write a project that is awaiting its clone.\n\nTHE ORDERING PROBLEM, RESOLVED IN ONE LINE: the project row is created first with the path it will\nhave, and the clone happens afterwards through `POST /{id}/clone` once an agent is paired for it \u2014\nchosen over \"let an already-paired agent accept a clone for a new project\" because devices are\npaired per project and the policy gate scopes on that, so the alternative would widen device scope\nto save one step of onboarding.\n\nThe project is NOT left looking ordinary while its directory is missing. `settings.clone_state` is\n`awaiting_clone`, which `GET /analysis/codebase/{id}/status` reports as `awaiting_clone` rather than\n`empty` \u2014 the two share \"zero indexed files\" and have different next steps.\n\nTHE REPOSITORY IS RE-READ FROM THE API HERE, not taken from the request. The picker's list could be\nminutes old, and a renamed or newly-private repository must fail now with GitHub's own reason rather\nthan later as a clone that cannot authenticate. The clone URL and the default branch come from that\nread for the same reason: neither is a value this server should guess.",
+        "operationId": "create_project_from_github_api_v1_projects_from_github_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a project from a repository on the caller's linked GitHub account",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/v1/projects/import/github": {
       "post": {
         "description": "Read a repository over the real GitHub API and record it as a project (FR-01).\n\n**This endpoint is new, and its absence was the finding.** `src/projects/github_import.py` has existed\nsince Leaf 12.2 with a `GitHubImporter` and a `GitHubAppTokenSource`, and nothing called either one \u2014\nthe only thing that exercised them was a unit test asserting the fabricated token prefix. So FR-01\n(\"import a repository from GitHub\") was satisfied by a class that no request could reach, returning a\ncredential no API would accept.\n\nRegistered BEFORE `/{project_id}` would match it? No \u2014 `/import/github` is a two-segment path and\n`/{project_id}` is one, so there is no ambiguity to order around. `/tags` sits above for the same\nreason and needs no special placement either.\n\nThe route is deliberately thin. It resolves the repository, writes one row, and audits it. It does\nNOT clone, scan or index: those are the agent's, and coupling them here would make an import fail\nbecause a scan did.",
@@ -6907,6 +7026,50 @@
           }
         },
         "summary": "Archive a project (soft)",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/clone": {
+      "post": {
+        "description": "Send the clone through the governance chokepoint. No other path can reach the operation.\n\nA ROUTE THAT DECIDES NOTHING. It loads the project, fetches a usable credential, and hands both to\n`chokepoint.clone_repository`, which runs admission, policy, the approval gate, the blast-radius\ncheck, the audit record and the rollback handle before minting a signed envelope. \u00a72.2.1 confines\n`send_command` to `governance/` exactly so that this cannot be a route that sends a command.\n\nSEPARATE FROM CREATION, because an agent must be paired for the project before it can be told to do\nanything, and pairing is a step the user performs. A create that tried to clone in the same request\nwould fail for every user who has not paired yet \u2014 which is every user, the first time.",
+        "operationId": "clone_project_repository_api_v1_projects__project_id__clone_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloneDispatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clone the project's GitHub repository onto the paired agent's machine",
         "tags": [
           "projects"
         ]

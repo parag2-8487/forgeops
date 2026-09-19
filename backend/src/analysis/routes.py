@@ -182,9 +182,13 @@ class CodebaseStatusResponse(BaseModel):
     indexed_files: int
     total_chunks: int
     languages: list[str]
-    #: `empty` — nothing indexed. `indexed_without_vectors` — tree and contents stored but
-    #: no embeddings, which is what an unavailable embedding provider honestly looks like
-    #: and which means retrieval is sparse-only. `indexed` — both.
+    #: `empty` — nothing indexed, over a directory that exists. `awaiting_clone` — the directory this
+    #: project points at has not been created yet, because the project was made from a GitHub repository
+    #: and the clone has not run. The two share "zero indexed files" and have different next steps —
+    #: run a scan, versus pair an agent so the clone can happen — which is why they are different words
+    #: rather than one. `indexed_without_vectors` — tree and contents stored but no embeddings, which is
+    #: what an unavailable embedding provider honestly looks like and which means retrieval is
+    #: sparse-only. `indexed` — both.
     status: str
     total_bytes: int = 0
     resolved_dependencies: int = 0
@@ -346,7 +350,22 @@ async def get_codebase_status(
 
     indexed_files = int(file_row["files"] or 0)
     if indexed_files == 0:
-        status = "empty"
+        # `awaiting_clone` RATHER THAN `empty`, and the difference is the one a user acts on: `empty`
+        # means "a scan has not run over a directory that exists", and `awaiting_clone` means "the
+        # directory this project points at has not been created yet". Both have zero indexed files and
+        # completely different next steps — run a scan, versus pair an agent so the clone can happen.
+        #
+        # Read from the project's own settings rather than inferred from the absence of files, because
+        # absence is exactly what the two states share. `projects.settings.clone_state` is written by
+        # `POST /projects/from-github` and cleared when the agent reports the clone complete, so this
+        # extends the existing vocabulary instead of adding a parallel one.
+        settings = await session.execute(
+            text("SELECT settings FROM projects WHERE id = :project_id"),
+            {"project_id": project_id},
+        )
+        stored = settings.scalar() or {}
+        pending = isinstance(stored, dict) and str(stored.get("clone_state") or "") == "awaiting_clone"
+        status = "awaiting_clone" if pending else "empty"
     elif total_chunks == 0:
         status = "indexed_without_vectors"
     else:

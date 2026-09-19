@@ -143,6 +143,17 @@ class _FakeGitHub(BaseHTTPRequestHandler):
         if self.path.startswith("/user/repos"):
             self._json(200, REPOSITORIES)
             return
+        if self.path.startswith("/repos/"):
+            # The single-repository read `POST /projects/from-github` makes before writing anything.
+            # Answered from the same two rows the listing serves, so a test cannot pick a repository
+            # the listing never offered — and an unknown one gets GitHub's own 404.
+            wanted = self.path[len("/repos/") :]
+            for entry in REPOSITORIES:
+                if entry["full_name"] == wanted:
+                    self._json(200, entry)
+                    return
+            self._json(404, {"message": "Not Found"})
+            return
         self._json(404, {"message": "not found"})
 
     def do_DELETE(self) -> None:  # noqa: N802 - the library's naming
@@ -651,6 +662,145 @@ class TestLinkingWithAPastedToken:
             "octo-org/deploy-me",
             "octo-cat/notes",
         ]
+
+
+class TestCreatingAProjectFromAPickedRepository:
+    """`POST /projects/from-github`, which replaced the three typed fields nobody could fill in.
+
+    WHAT THESE PIN: the project points at the path the user chose, it says `awaiting_clone` rather than
+    looking like an ordinary empty project, the repository is CONFIRMED against the API before anything
+    is written, and the credential appears in no row.
+    """
+
+    async def test_it_creates_a_project_awaiting_its_clone(self, link_app: Any) -> None:
+        app, _ = link_app
+        async with await _client(app) as client:
+            await _connect(client)
+
+            created = await client.post(
+                "/api/v1/projects/from-github",
+                json={
+                    "repo_full_name": "octo-org/deploy-me",
+                    "parent_directory": "/srv/workspaces",
+                    "directory_name": "",
+                    "branch": "",
+                },
+            )
+            assert created.status_code == 201, created.text
+            body = created.json()
+            # The name comes from the repository, and the path from the parent plus the repository name.
+            assert body["name"] == "deploy-me"
+            assert body["path"] == "/srv/workspaces/deploy-me"
+            assert body["settings"]["clone_state"] == "awaiting_clone"
+            assert body["settings"]["repo_default_branch"] == "main"
+            assert body["settings"]["repo_private"] is True
+            assert ISSUED_TOKEN not in created.text
+
+            # AND THE INDEX STATUS SAYS SO. `empty` would be the same number of indexed files and a
+            # completely different next step.
+            status = await client.get(f"/api/v1/analysis/codebase/{body['id']}/status")
+            assert status.status_code == 200, status.text
+            assert status.json()["status"] == "awaiting_clone"
+
+    async def test_a_repository_the_account_cannot_read_is_refused_before_anything_is_written(
+        self, link_app: Any
+    ) -> None:
+        app, _ = link_app
+        async with await _client(app) as client:
+            await _connect(client)
+
+            refused = await client.post(
+                "/api/v1/projects/from-github",
+                json={"repo_full_name": "someone-else/private-thing", "parent_directory": "/srv"},
+            )
+
+        assert refused.status_code == 502, refused.text
+        assert "404" in refused.text
+        # The remedy is named rather than left to be guessed.
+        assert "renamed" in refused.text or "private" in refused.text
+
+        async with app.state.sessionmaker() as session:
+            projects = (
+                await session.execute(text("SELECT count(*) FROM projects WHERE name = 'private-thing'"))
+            ).scalar_one()
+        assert projects == 0
+
+    async def test_it_refuses_without_a_linked_account(self, link_app: Any) -> None:
+        app, _ = link_app
+        async with await _client(app) as client:
+            response = await client.post(
+                "/api/v1/projects/from-github",
+                json={"repo_full_name": "octo-org/deploy-me", "parent_directory": "/srv"},
+            )
+        assert response.status_code == 409, response.text
+        assert response.json()["type"].endswith("github-link-absent")
+
+    async def test_the_credential_reaches_no_project_row_or_audit_row(self, link_app: Any) -> None:
+        app, _ = link_app
+        async with await _client(app) as client:
+            await _connect(client)
+            created = await client.post(
+                "/api/v1/projects/from-github",
+                json={"repo_full_name": "octo-org/deploy-me", "parent_directory": "/srv/ws"},
+            )
+            project_id = created.json()["id"]
+
+        async with app.state.sessionmaker() as session:
+            rows = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT to_jsonb(projects) AS p FROM projects WHERE id = :id",
+                        ),
+                        {"id": project_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            audit = (
+                (
+                    await session.execute(
+                        text("SELECT to_jsonb(audit_events) AS a FROM audit_events WHERE project_id = :id"),
+                        {"id": project_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        serialised = json.dumps([dict(r) for r in rows + audit], default=str)
+        assert ISSUED_TOKEN not in serialised
+        # Not vacuous: the row really is there and names the repository.
+        assert "deploy-me" in serialised
+
+    async def test_cloning_a_local_project_is_refused_by_name(self, link_app: Any) -> None:
+        """A project created with a typed path has a directory already; there is nothing to clone."""
+        app, _ = link_app
+        async with await _client(app) as client:
+            local = await client.post(
+                "/api/v1/projects",
+                json={"name": "typed", "path": "/srv/typed", "repo_url": None, "settings": {}},
+            )
+            assert local.status_code == 201, local.text
+
+            response = await client.post(f"/api/v1/projects/{local.json()['id']}/clone")
+
+        assert response.status_code == 502, response.text
+        assert "not created from a GitHub repository" in response.text
+
+    async def test_the_typed_local_path_route_still_works(self, link_app: Any) -> None:
+        """Part 3 keeps the local option alongside; a regression here would break onboarding."""
+        app, _ = link_app
+        async with await _client(app) as client:
+            created = await client.post(
+                "/api/v1/projects",
+                json={"name": "local-one", "path": "/srv/local-one", "repo_url": None, "settings": {}},
+            )
+            assert created.status_code == 201, created.text
+            assert created.json()["path"] == "/srv/local-one"
+            # And it is NOT awaiting a clone: the directory is the user's own statement about their disk.
+            status = await client.get(f"/api/v1/analysis/codebase/{created.json()['id']}/status")
+        assert status.json()["status"] == "empty"
 
 
 class TestTheUnconfiguredServer:

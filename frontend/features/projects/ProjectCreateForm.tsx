@@ -5,6 +5,8 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
+import { GitHubConnection, useGitHubLink } from "@/features/integrations/GitHubConnection";
+import { RepositoryPicker, type RepositoryItem } from "@/features/integrations/RepositoryPicker";
 import type { ProjectResponse } from "./types";
 
 /**
@@ -45,28 +47,29 @@ export function ProjectCreateForm({
   const [source, setSource] = useState<"github" | "local">("github");
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
-  const [installationId, setInstallationId] = useState("");
-  const [owner, setOwner] = useState("");
-  const [repo, setRepo] = useState("");
+  const [repository, setRepository] = useState<RepositoryItem | null>(null);
+  const [parentDirectory, setParentDirectory] = useState("");
+
+  // Whether this user has a GitHub account linked. Read here rather than assumed, because the GitHub
+  // branch of this form is unusable without one and the honest thing is to offer the connect step in
+  // place of a picker that would answer 409.
+  const link = useGitHubLink();
 
   const create = useMutation({
     // TWO ENDPOINTS, because the two sources are genuinely different operations and the backend
     // already models them that way.
     //
-    // THE DEFECT THIS FIXES. `POST /projects/import/github` reads the repository over the real
-    // GitHub API and records it, and this form never called it: choosing "A Git repository" posted
-    // to `POST /projects` with the URL as metadata nothing reads, and still demanded a typed local
-    // path. So the backend could import from GitHub and the only screen that offers to could not.
-    // The same "exists with the right name, nothing calls it" shape the endpoint itself was added
-    // to fix, one layer up.
+    // THE GITHUB BRANCH NO LONGER ASKS FOR AN INSTALLATION ID. It posts the `full_name` the picker
+    // listed, which the backend re-reads from the API with this user's own credential before writing
+    // anything — so a repository renamed or made private since the list was fetched fails there with
+    // GitHub's reason rather than later as a clone that cannot authenticate.
     mutationFn: () =>
       source === "github"
-        ? api.post<ProjectResponse>("/projects/import/github", {
-            // The App INSTALLATION is what grants access; the App model has no notion of a token
-            // that is not scoped to one, so there is no import without it.
-            installation_id: Number(installationId.trim()),
-            owner: owner.trim(),
-            repo: repo.trim(),
+        ? api.post<ProjectResponse>("/projects/from-github", {
+            repo_full_name: repository?.full_name ?? "",
+            parent_directory: parentDirectory.trim(),
+            directory_name: "",
+            branch: "",
           })
         : api.post<ProjectResponse>("/projects", {
             name: name.trim(),
@@ -84,21 +87,19 @@ export function ProjectCreateForm({
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects.all });
       setName("");
       setPath("");
-      setInstallationId("");
-      setOwner("");
-      setRepo("");
+      setRepository(null);
+      setParentDirectory("");
       onCreated?.(project);
     },
   });
 
-  // PER BRANCH, because the two operations need different things. An import takes its name from the
-  // repository the API reports, so asking for one here would offer a value the backend ignores; and
-  // it has no local path to give, which is what made the old single rule wrong — choosing GitHub
-  // still demanded a directory the user had not cloned yet.
+  // PER BRANCH, because the two operations need different things. The GitHub branch needs a chosen
+  // repository and nothing else: the name comes from the repository the API reports, and the parent
+  // directory may legitimately be blank, which means "the agent's workspace root".
   const canSubmit =
     !create.isPending &&
     (source === "github"
-      ? /^\d+$/.test(installationId.trim()) && owner.trim() !== "" && repo.trim() !== ""
+      ? repository !== null && Boolean(link.data?.connected)
       : name.trim() !== "" && path.trim() !== "");
 
   // `GitHubAppNotConfiguredError` maps to a 503 with this type, and it is the state of EVERY fresh
@@ -172,66 +173,75 @@ export function ProjectCreateForm({
 
       {source === "github" ? (
         <>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label htmlFor="project-owner" className="block text-sm font-medium">
-                Owner
-              </label>
-              <input
-                id="project-owner"
-                value={owner}
-                onChange={(event) => setOwner(event.target.value)}
-                required
-                placeholder="octocat"
-                maxLength={39}
-                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-            <div>
-              <label htmlFor="project-repo" className="block text-sm font-medium">
-                Repository
-              </label>
-              <input
-                id="project-repo"
-                value={repo}
-                onChange={(event) => setRepo(event.target.value)}
-                required
-                placeholder="hello-world"
-                maxLength={100}
-                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="project-installation" className="block text-sm font-medium">
-              App installation ID
-            </label>
-            <input
-              id="project-installation"
-              value={installationId}
-              onChange={(event) => setInstallationId(event.target.value)}
-              required
-              inputMode="numeric"
-              pattern="[0-9]*"
-              placeholder="12345678"
-              aria-describedby="project-installation-help"
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <p id="project-installation-help" className="mt-1 text-xs text-muted-foreground">
-              Access is granted to an <em>installation</em> of the ForgeOps GitHub App, not to the
-              app itself, so this identifies which one to read the repository through. It is in the
-              URL of the installation&apos;s settings page on GitHub.
+          {/*
+            WHAT REPLACED THE THREE TYPED FIELDS. This branch used to ask for an App installation id,
+            an owner and a repository name — and nobody has the first of those, so the GitHub path was
+            unusable by the people it was for. It now lists the repositories the signed-in person's
+            linked account can actually reach and they pick one.
+          */}
+          {link.isPending ? (
+            <p data-testid="project-github-checking" className="text-sm text-muted-foreground">
+              Checking your GitHub connection…
             </p>
-          </div>
+          ) : link.data?.connected !== true ? (
+            <div data-testid="project-github-connect" className="space-y-2">
+              <p className="text-sm">
+                Connect a GitHub account to choose a repository. It takes one step and stays on this
+                page — no GitHub sign-in or account-selection screen.
+              </p>
+              <GitHubConnection />
+            </div>
+          ) : (
+            <>
+              <RepositoryPicker selected={repository} onSelect={setRepository} />
 
-          <p className="text-xs text-muted-foreground">
-            The import records the repository and derives the project&apos;s name from it. It does
-            not clone anything: <strong>an agent still needs a local checkout to scan.</strong> The
-            project stores <code>owner/repo</code> as its path, and the agent is pointed at a real
-            directory through <code>AGENT_WORKSPACE_ROOT</code> when you run it. Nothing here reads
-            your disk.
-          </p>
+              <div>
+                <label htmlFor="project-parent" className="block text-sm font-medium">
+                  Clone into
+                </label>
+                <input
+                  id="project-parent"
+                  data-testid="project-parent-directory"
+                  value={parentDirectory}
+                  onChange={(event) => setParentDirectory(event.target.value)}
+                  placeholder="leave blank to use the agent's workspace root"
+                  aria-describedby="project-parent-help"
+                  className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <p
+                  id="project-parent-help"
+                  data-testid="project-parent-help"
+                  className="mt-1 text-xs text-muted-foreground"
+                >
+                  {/*
+                    SAYS WHAT IS HAPPENING, as the local-path field does and for the same reason: a
+                    browser cannot hand over an absolute path, so this is typed. The agent refuses
+                    anything outside the workspace root it was started with, which is why blank is the
+                    normal answer.
+                  */}
+                  This is a directory on the machine <strong>your agent runs on</strong>, not on
+                  this server — a browser cannot read or choose a path on your disk, so it is typed.
+                  The repository is cloned to{" "}
+                  <code data-testid="project-clone-target">
+                    {(parentDirectory.trim() || "<agent workspace root>") +
+                      "/" +
+                      (repository?.name ?? "<repository>")}
+                  </code>{" "}
+                  by the agent, shallow at depth 1. It must be inside the agent&apos;s
+                  <code> AGENT_WORKSPACE_ROOT</code>; anything else is refused by the agent, not by
+                  this form.
+                </p>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                The project is created straight away, pointing at that path, and reports{" "}
+                <strong>awaiting clone</strong> until the agent has fetched it — so a project never
+                silently points at a directory that does not exist. Pair an agent for the project,
+                then start the clone from the project page. After that, scanning, readiness,
+                generation, approval and apply work exactly as for a local directory.
+              </p>
+            </>
+          )}
         </>
       ) : null}
 

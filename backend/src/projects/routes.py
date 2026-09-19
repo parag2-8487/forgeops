@@ -26,6 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Final
 
+import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
@@ -37,6 +38,7 @@ from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
 from ..core.db import get_session
 from ..core.errors import forbidden_problem, problem
+from ..integrations.github_link import GitHubLinkError, GitHubLinkNotFoundError, GitHubUserClient
 from .github_import import (
     GitHubAppError,
     GitHubAppNotConfiguredError,
@@ -987,6 +989,273 @@ async def remove_favourite(
     await session.commit()
     row = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
     return (await hydrate_projects(session, [row], user_id=principal.user_id))[0]
+
+
+class GitHubProjectRequest(BaseModel):
+    """What creating a project from a connected GitHub account needs.
+
+    NO INSTALLATION ID, NO OWNER, NO REPO TYPED BY HAND. That was the previous shape and nobody had the
+    first field; the repository is now identified by the `full_name` the picker listed, and the listing
+    came from the user's own linked account.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    #: `owner/name`, as GitHub spells it. Validated for shape here and then CONFIRMED against the API
+    #: before anything is written, so a value typed by hand cannot name a repository the user cannot see.
+    repo_full_name: str = Field(
+        ...,
+        min_length=3,
+        max_length=140,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$",
+    )
+    #: The absolute directory on the user's machine that will CONTAIN the clone. Typed, because a
+    #: browser cannot return an absolute path — `<input type="file" webkitdirectory>` yields contents
+    #: and relative names by design. The agent refuses anything outside the workspace root it was
+    #: started with, so this is a choice within that root rather than an arbitrary destination.
+    parent_directory: str = Field(default="", max_length=4096)
+    #: The folder to create inside it. Defaults to the repository's own name. Validated by the AGENT as
+    #: well — traversal, separators, reserved Windows device names and case-only collisions are refused
+    #: there, because the agent is the only party that can see the filesystem it is refusing about.
+    directory_name: str = Field(default="", max_length=255)
+    #: Defaults to the repository's default branch, read from the API rather than assumed to be `main`.
+    branch: str = Field(default="", max_length=255)
+
+
+@router.post(
+    "/from-github",
+    response_model=ProjectResponse,
+    status_code=201,
+    summary="Create a project from a repository on the caller's linked GitHub account",
+)
+async def create_project_from_github(
+    body: GitHubProjectRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ProjectResponse:
+    """Confirm the repository against the API, then write a project that is awaiting its clone.
+
+    THE ORDERING PROBLEM, RESOLVED IN ONE LINE: the project row is created first with the path it will
+    have, and the clone happens afterwards through `POST /{id}/clone` once an agent is paired for it —
+    chosen over "let an already-paired agent accept a clone for a new project" because devices are
+    paired per project and the policy gate scopes on that, so the alternative would widen device scope
+    to save one step of onboarding.
+
+    The project is NOT left looking ordinary while its directory is missing. `settings.clone_state` is
+    `awaiting_clone`, which `GET /analysis/codebase/{id}/status` reports as `awaiting_clone` rather than
+    `empty` — the two share "zero indexed files" and have different next steps.
+
+    THE REPOSITORY IS RE-READ FROM THE API HERE, not taken from the request. The picker's list could be
+    minutes old, and a renamed or newly-private repository must fail now with GitHub's own reason rather
+    than later as a clone that cannot authenticate. The clone URL and the default branch come from that
+    read for the same reason: neither is a value this server should guess.
+    """
+    link_service = getattr(request.app.state, "github_link_service", None)
+    if link_service is None:  # pragma: no cover - composition failure, not a caller fact
+        raise RuntimeError("app.state.github_link_service is not composed; project-from-GitHub depends on it")
+
+    owner, _, name = body.repo_full_name.partition("/")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        try:
+            token = await link_service.usable_token(
+                session, user_id=principal.user_id, tenant_id=principal.tenant_id, client=client
+            )
+        except GitHubLinkNotFoundError as exc:
+            raise problem(
+                "github-link-absent",
+                detail=(
+                    "No GitHub account is linked to this user, so a repository cannot be read. Connect "
+                    "one from Settings → Integrations first."
+                ),
+            ) from exc
+        except GitHubLinkError as exc:
+            raise problem("github-link-failed", detail=str(exc)) from exc
+
+        try:
+            repository = await GitHubUserClient(api_base_url=request.app.state.settings.github_api_base_url).repository(
+                token, owner=owner, name=name, client=client
+            )
+        except GitHubAppError as exc:
+            raise problem(
+                "github-link-failed",
+                detail=(
+                    f"{exc} The repository must be one your linked GitHub account can read; it may have "
+                    "been renamed, made private, or removed from the App's access."
+                ),
+            ) from exc
+    await session.commit()
+
+    directory = (body.directory_name or repository.name).strip()
+    parent = body.parent_directory.strip()
+    # The path RECORDED is the path the clone is asked for. The agent reports the absolute path it
+    # actually created and `POST /{id}/clone` writes that back, so a project's path ends up being what
+    # exists on disk rather than what was typed — but it is never blank in between.
+    intended_path = f"{parent.rstrip('/').rstrip(chr(92))}/{directory}" if parent else directory
+    settings_payload = validate_project_settings(
+        {
+            **repository.as_project_settings(),
+            "clone_state": "awaiting_clone",
+            "repo_full_name": repository.full_name,
+            "clone_url": repository.clone_url,
+        }
+    )
+
+    project_id = uuid.uuid4()
+    result = await session.execute(
+        text(
+            "INSERT INTO projects (id, tenant_id, name, path, repo_url, settings) "
+            "VALUES (:id, :tenant_id, :name, :path, :repo_url, CAST(:settings AS jsonb)) "
+            f"RETURNING {_COLUMNS}"
+        ),
+        {
+            "id": project_id,
+            "tenant_id": principal.tenant_id,
+            "name": repository.name,
+            "path": intended_path,
+            "repo_url": repository.html_url,
+            "settings": json.dumps(settings_payload),
+        },
+    )
+    row = result.mappings().first()
+    if row is None:  # pragma: no cover - INSERT ... RETURNING either returns a row or raises
+        raise problem("repository-import-failed", detail="the project row could not be written")
+
+    await _writer(request).append(
+        session,
+        AuditDraft(
+            action="project_imported",
+            resource_kind="project",
+            resource_id=str(project_id),
+            # The repository and the path. No credential: the token was used above and is not a field
+            # of anything this record is built from.
+            reason=(
+                f"created {repository.full_name} as a project awaiting its clone into {intended_path} "
+                f"(default branch {repository.default_branch}, "
+                f"{'private' if repository.private else 'public'})"
+            ),
+            outcome="allowed",
+            actor_kind="user",
+            actor_user_id=principal.user_id,
+            tenant_id=principal.tenant_id,
+            project_id=project_id,
+            before_state=None,
+            after_state={
+                "repo_url": repository.html_url,
+                "default_branch": repository.default_branch,
+                "private": repository.private,
+                "clone_state": "awaiting_clone",
+                "path": intended_path,
+            },
+        ),
+    )
+    await session.commit()
+    loaded = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    return (await hydrate_projects(session, [loaded], user_id=principal.user_id))[0]
+
+
+class CloneDispatchResponse(BaseModel):
+    """What dispatching the clone reports. The change set is how it is tracked from here on."""
+
+    project_id: uuid.UUID
+    change_set_id: uuid.UUID
+    status: str
+    outcome: str
+    audit_seq: int
+    clone_state: str
+
+
+@router.post(
+    "/{project_id}/clone",
+    response_model=CloneDispatchResponse,
+    summary="Clone the project's GitHub repository onto the paired agent's machine",
+)
+async def clone_project_repository(
+    project_id: uuid.UUID,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CloneDispatchResponse:
+    """Send the clone through the governance chokepoint. No other path can reach the operation.
+
+    A ROUTE THAT DECIDES NOTHING. It loads the project, fetches a usable credential, and hands both to
+    `chokepoint.clone_repository`, which runs admission, policy, the approval gate, the blast-radius
+    check, the audit record and the rollback handle before minting a signed envelope. §2.2.1 confines
+    `send_command` to `governance/` exactly so that this cannot be a route that sends a command.
+
+    SEPARATE FROM CREATION, because an agent must be paired for the project before it can be told to do
+    anything, and pairing is a step the user performs. A create that tried to clone in the same request
+    would fail for every user who has not paired yet — which is every user, the first time.
+    """
+    project = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    settings = project.get("settings") or {}
+    if not isinstance(settings, dict) or not settings.get("repo_full_name"):
+        raise problem(
+            "repository-import-failed",
+            detail=(
+                "This project was not created from a GitHub repository, so there is nothing to clone. "
+                "A project created with a local path is already pointing at a directory."
+            ),
+        )
+
+    chokepoint = getattr(request.app.state, "governance_chokepoint", None)
+    if chokepoint is None:  # pragma: no cover - composition failure
+        raise RuntimeError("app.state.governance_chokepoint is not composed")
+    link_service = getattr(request.app.state, "github_link_service", None)
+    if link_service is None:  # pragma: no cover - composition failure
+        raise RuntimeError("app.state.github_link_service is not composed")
+
+    stored_path = str(project.get("path") or "")
+    directory = stored_path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    parent = stored_path[: len(stored_path) - len(directory)].rstrip("/\\")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        try:
+            token = await link_service.usable_token(
+                session, user_id=principal.user_id, tenant_id=principal.tenant_id, client=client
+            )
+        except GitHubLinkNotFoundError as exc:
+            raise problem(
+                "github-link-absent",
+                detail="No GitHub account is linked to this user, so the clone cannot authenticate.",
+            ) from exc
+        except GitHubLinkError as exc:
+            raise problem("github-link-failed", detail=str(exc)) from exc
+
+    submission = await chokepoint.clone_repository(
+        session,
+        project_id=project_id,
+        principal=principal,
+        repo_full_name=str(settings["repo_full_name"]),
+        clone_url=str(settings.get("clone_url") or ""),
+        parent_directory=parent,
+        directory_name=directory,
+        branch=str(settings.get("repo_default_branch") or ""),
+        credential=token,
+        reason=f"requested by {principal.email or principal.user_id}",
+    )
+
+    # `cloning` while the command is in flight, so a second click does not look like a first one and a
+    # screen can say what is happening. The terminal transition — removing the key — happens when the
+    # agent's result arrives, not here: claiming success at dispatch is the defect this vocabulary
+    # exists to prevent.
+    next_state = "cloning" if submission.outcome == "applying" else "awaiting_clone"
+    await session.execute(
+        text(
+            "UPDATE projects SET settings = jsonb_set(settings, '{clone_state}', to_jsonb(:state::text)) WHERE id = :id"
+        ),
+        {"state": next_state, "id": project_id},
+    )
+    await session.commit()
+
+    return CloneDispatchResponse(
+        project_id=project_id,
+        change_set_id=submission.change_set_id,
+        status=submission.status,
+        outcome=submission.outcome,
+        audit_seq=submission.audit_seq,
+        clone_state=next_state,
+    )
 
 
 class GitHubImportRequest(BaseModel):

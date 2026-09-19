@@ -242,6 +242,19 @@ class Repository:
     size_kb: int
     archived: bool
 
+    def as_project_settings(self) -> dict[str, Any]:
+        """The subset a project row records. Deliberately small and deliberately not the whole payload.
+
+        Mirrors `ImportedRepository.as_project_settings` so a project created from the picker and one
+        created by the older import route carry the same keys — the point of Part 3 is that nothing
+        downstream can tell where a project came from.
+        """
+        return {
+            "repo_default_branch": self.default_branch,
+            "repo_private": self.private,
+            "repo_languages": [self.language] if self.language else [],
+        }
+
 
 class GitHubOAuthClient:
     """The authorize URL, the code exchange and the refresh — nothing else.
@@ -456,6 +469,38 @@ class GitHubUserClient:
             if owned:
                 await http.aclose()
         return str(response.headers.get("X-OAuth-Scopes") or "").strip()
+
+    async def repository(
+        self,
+        token: str,
+        *,
+        owner: str,
+        name: str,
+        client: httpx.AsyncClient | None = None,
+    ) -> Repository:
+        """One repository, read fresh at the moment it is being acted on.
+
+        SEPARATE FROM `repositories()` AND NOT A LOOKUP IN ITS RESULT. The picker's list can be minutes
+        old by the time somebody clicks, and a repository that has been renamed, made private or removed
+        from the App's access must fail HERE with GitHub's own status rather than later as a clone that
+        cannot authenticate. It is also what stops a hand-typed `full_name` naming a repository the
+        caller cannot see: this call is made with the caller's own token, so GitHub decides.
+        """
+        owned = client is None
+        http = client or httpx.AsyncClient(timeout=httpx.Timeout(20.0))
+        try:
+            response = await http.get(f"{self.api_base_url}/repos/{owner}/{name}", headers=self._headers(token))
+        except httpx.HTTPError as exc:
+            raise GitHubAppError("read the repository", 502, type(exc).__name__) from exc
+        finally:
+            if owned:
+                await http.aclose()
+        if response.status_code != 200:
+            raise GitHubAppError("read the repository", response.status_code)
+        payload = response.json()
+        if not isinstance(payload, dict) or not payload.get("full_name"):
+            raise GitHubAppError("read the repository", response.status_code, "no repository in the response")
+        return _repository(payload)
 
     async def repositories(
         self, token: str, *, client: httpx.AsyncClient | None = None

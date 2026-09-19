@@ -106,8 +106,62 @@ function serve(
   mockGet.mockImplementation((path: string) => {
     if (path.startsWith("/projects/tags")) return Promise.resolve(tags);
     if (path.startsWith("/projects?")) return Promise.resolve({ projects, next_cursor: null });
+    // THE CREATE FORM LEGITIMATELY READS THIS. Its GitHub branch cannot decide what to render without
+    // knowing whether a GitHub account is linked, so every test that mounts the projects page issues
+    // this request. Rejecting it made twenty unrelated tests time out on a page that was busy
+    // rendering an error for a request the harness had refused — the harness being wrong, not the page.
+    //
+    // A TEST'S OWN STUB WINS. `rest` is tried first and the default only answers when it declines, so
+    // the tests that are ABOUT the picker can serve a linked account and a repository page, while the
+    // twenty that are about something else get the honest default: nothing linked.
+    if (path.startsWith("/integrations/github")) {
+      return Promise.resolve(rest(path)).catch(() =>
+        githubLink({ connected: false, login: null, credential_kind: null }),
+      );
+    }
     return rest(path);
   });
+}
+
+/**
+ * The GitHub link status a connected user has. Built here rather than inline so the create-form tests
+ * state only what they are about — three of them care solely about `connected`.
+ */
+function githubLink(overrides: Record<string, unknown> = {}) {
+  return {
+    configured: true,
+    connected: true,
+    token_link_available: true,
+    configuration_hint: "",
+    login: "octo-cat",
+    avatar_url: null,
+    scopes: [],
+    credential_kind: "personal_token",
+    connected_at: "2026-09-19T10:00:00+00:00",
+    last_use_ok: null,
+    last_used_at: null,
+    last_use_detail: "",
+    access_token_expires_at: null,
+    ...overrides,
+  };
+}
+
+/** One row of the repository picker, shaped as `GET /integrations/github/repositories` returns it. */
+function repositoryRow(overrides: Record<string, unknown> = {}) {
+  return {
+    full_name: "octo-org/deploy-me",
+    owner: "octo-org",
+    name: "deploy-me",
+    private: true,
+    default_branch: "main",
+    language: "Python",
+    pushed_at: "2026-09-18T10:11:12Z",
+    clone_url: "https://github.com/octo-org/deploy-me.git",
+    html_url: "https://github.com/octo-org/deploy-me",
+    size_kb: 1024,
+    archived: false,
+    ...overrides,
+  };
 }
 
 /** The query string of the most recent list request. */
@@ -149,47 +203,108 @@ describe("creating a project", () => {
     );
   });
 
-  it("reaches the IMPORT endpoint when the git source is chosen", async () => {
-    // THE DEFECT THIS PINS. `POST /projects/import/github` reads the repository over the real GitHub
-    // API, and this form never called it: choosing "A Git repository" posted to `POST /projects` with
-    // the URL as metadata nothing reads, and still demanded a typed local path. The backend could
-    // import and the only screen that offers to could not.
-    serve([]);
+  it("offers the connect step, and no picker, when no GitHub account is linked", async () => {
+    // THE STATE EVERY NEW USER IS IN. The picker cannot work without a link, and a 409 rendered as an
+    // error would send somebody looking for a fault. The connect step appears in its place — on this
+    // form rather than only in Settings, because this is the one screen where its absence blocks the
+    // thing the user came to do.
+    serve([], [], (path) =>
+      path.startsWith("/integrations/github")
+        ? Promise.resolve(githubLink({ connected: false, login: null }))
+        : Promise.reject(new Error(`unexpected GET ${path}`)),
+    );
+    renderPage(<ProjectsPage />);
+
+    expect(await screen.findByTestId("project-github-connect")).toBeInTheDocument();
+    expect(screen.queryByTestId("repo-picker-list")).not.toBeInTheDocument();
+    // And the field nobody had is gone for good.
+    expect(screen.queryByLabelText(/app installation id/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create project/i })).toBeDisabled();
+  });
+
+  it("creates the project from the repository picked out of the real listing", async () => {
+    // THE DEFECT THIS PINS. The GitHub branch used to ask for an App installation id, an owner and a
+    // repository typed by hand — and nobody has an installation id, so the path was unusable by the
+    // people it was for. What is asserted is the REQUEST: the full name comes from the row the user
+    // clicked, and the parent directory is passed through as typed.
+    serve([], [], (path) => {
+      if (path.startsWith("/integrations/github/repositories")) {
+        return Promise.resolve({
+          items: [repositoryRow()],
+          total: 1,
+          page: 1,
+          per_page: 10,
+          truncated: false,
+        });
+      }
+      if (path.startsWith("/integrations/github")) return Promise.resolve(githubLink());
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
     mockPost.mockResolvedValue(project());
     renderPage(<ProjectsPage />);
 
-    await userEvent.type(screen.getByLabelText("Owner"), "octocat");
-    await userEvent.type(screen.getByLabelText("Repository"), "hello-world");
-    await userEvent.type(screen.getByLabelText(/app installation id/i), "12345678");
+    await userEvent.click(await screen.findByTestId("repo-option-octo-org/deploy-me"));
+    await userEvent.type(screen.getByTestId("project-parent-directory"), "/srv/workspaces");
     await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/projects/import/github", {
-        // A NUMBER, because the endpoint declares `installation_id: int` with `extra="forbid"`, so a
-        // string is a 422 rather than a coercion.
-        installation_id: 12345678,
-        owner: "octocat",
-        repo: "hello-world",
+      expect(mockPost).toHaveBeenCalledWith("/projects/from-github", {
+        repo_full_name: "octo-org/deploy-me",
+        parent_directory: "/srv/workspaces",
+        // Blank means "use the repository's own name" and "use its default branch". The backend reads
+        // both from the API rather than this form guessing them.
+        directory_name: "",
+        branch: "",
       }),
     );
   });
 
-  it("asks for no local path when importing, because there is none to give", async () => {
-    // The old single rule demanded a directory the user had not cloned yet, which is why choosing
-    // GitHub could never be submitted. The import derives the name from the repository too, so
-    // asking for one here would offer a value the backend ignores.
-    serve([]);
+  it("says on the form where the clone lands and whose machine it is", async () => {
+    // A browser cannot hand over an absolute path, so the parent is typed — and a typed path that is
+    // not explained is how somebody types a directory on the SERVER and waits for a clone that will
+    // never appear there.
+    serve([], [], (path) => {
+      if (path.startsWith("/integrations/github/repositories")) {
+        return Promise.resolve({
+          items: [repositoryRow()],
+          total: 1,
+          page: 1,
+          per_page: 10,
+          truncated: false,
+        });
+      }
+      if (path.startsWith("/integrations/github")) return Promise.resolve(githubLink());
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
     renderPage(<ProjectsPage />);
-    expect(screen.queryByLabelText(/working-tree path/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+
+    await userEvent.click(await screen.findByTestId("repo-option-octo-org/deploy-me"));
+
+    // The target is shown before anything is created, and it is composed from what the user chose.
+    expect(screen.getByTestId("project-clone-target")).toHaveTextContent(
+      "<agent workspace root>/deploy-me",
+    );
+    await userEvent.type(screen.getByTestId("project-parent-directory"), "/srv/ws");
+    expect(screen.getByTestId("project-clone-target")).toHaveTextContent("/srv/ws/deploy-me");
+    // Matched on the containing element, because the sentence is broken up by a `<strong>` — the
+    // emphasis is on "your agent runs on", which is the half a user gets wrong.
+    expect(screen.getByTestId("project-parent-help")).toHaveTextContent(
+      /machine your agent runs on/i,
+    );
+    // And the honest state the project starts in.
+    expect(screen.getByText(/awaiting clone/i)).toBeInTheDocument();
   });
 
-  it("states plainly that an import still needs a local checkout to scan", async () => {
-    // The scan is a local directory walk. An import records the repository and clones nothing, so a
-    // user who is not told this has a project that can never be scanned and no way to know why.
-    serve([]);
+  it("asks for no local path or name when the source is GitHub, because there is none to give", async () => {
+    serve([], [], (path) =>
+      path.startsWith("/integrations/github")
+        ? Promise.resolve(githubLink({ connected: false, login: null }))
+        : Promise.reject(new Error(`unexpected GET ${path}`)),
+    );
     renderPage(<ProjectsPage />);
-    expect(screen.getByText(/an agent still needs a local checkout to scan/i)).toBeInTheDocument();
+    await screen.findByTestId("project-github-connect");
+    expect(screen.queryByLabelText(/working-tree path/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
   });
 
   it("explains why the path is typed rather than chosen with a file picker", async () => {
@@ -219,52 +334,30 @@ describe("creating a project", () => {
     expect(submit).toBeEnabled();
   });
 
-  it("will not submit an import without all three of its fields", async () => {
-    serve([]);
+  it("will not submit the GitHub branch until a repository is chosen", async () => {
+    serve([], [], (path) => {
+      if (path.startsWith("/integrations/github/repositories")) {
+        return Promise.resolve({
+          items: [repositoryRow()],
+          total: 1,
+          page: 1,
+          per_page: 10,
+          truncated: false,
+        });
+      }
+      if (path.startsWith("/integrations/github")) return Promise.resolve(githubLink());
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
     renderPage(<ProjectsPage />);
+
+    await screen.findByTestId("repo-picker-list");
     const submit = screen.getByRole("button", { name: /create project/i });
+    // A linked account is not a chosen repository: submitting here would post an empty full name and
+    // be refused by the backend's pattern, which is a 422 for a mistake the form can prevent.
     expect(submit).toBeDisabled();
 
-    await userEvent.type(screen.getByLabelText("Owner"), "octocat");
-    await userEvent.type(screen.getByLabelText("Repository"), "hello-world");
-    expect(submit).toBeDisabled();
-
-    // A NON-NUMERIC installation id must stay disabled rather than be sent and 422'd: `Number("abc")`
-    // is NaN, which would serialise as null and produce a validation error about the wrong field.
-    await userEvent.type(screen.getByLabelText(/app installation id/i), "abc");
-    expect(submit).toBeDisabled();
-
-    await userEvent.clear(screen.getByLabelText(/app installation id/i));
-    await userEvent.type(screen.getByLabelText(/app installation id/i), "42");
+    await userEvent.click(screen.getByTestId("repo-option-octo-org/deploy-me"));
     expect(submit).toBeEnabled();
-  });
-
-  it("names the two settings to configure instead of surfacing a bare 503", async () => {
-    // `GitHubAppNotConfiguredError` maps to this type, and it is the state of EVERY fresh install:
-    // both settings ship unset. A raw 503 reads as "the server is broken" when the answer is two
-    // environment variables, and it should point at the path that needs no credentials.
-    serve([]);
-    const { ApiProblemError } = await import("@/lib/api");
-    mockPost.mockRejectedValue(
-      new ApiProblemError({
-        type: "repository-import-unconfigured",
-        title: "Repository import is not configured",
-        status: 503,
-        detail: "GITHUB_APP_ID is not set",
-      }),
-    );
-    renderPage(<ProjectsPage />);
-
-    await userEvent.type(screen.getByLabelText("Owner"), "octocat");
-    await userEvent.type(screen.getByLabelText("Repository"), "hello-world");
-    await userEvent.type(screen.getByLabelText(/app installation id/i), "1");
-    await userEvent.click(screen.getByRole("button", { name: /create project/i }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/GITHUB_APP_ID/);
-    expect(alert).toHaveTextContent(/GITHUB_APP_PRIVATE_KEY/);
-    expect(alert).toHaveTextContent(/directory on the machine the agent runs on/i);
-    expect(screen.queryByText(/^Created\./)).not.toBeInTheDocument();
   });
 
   it("renders a refusal from the server rather than claiming success", async () => {

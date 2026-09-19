@@ -104,6 +104,10 @@ __all__ = [
 #: rather than an `operation-unknown` the agent discovers after a signature has been minted.
 APPLY_OPERATION: Final[str] = "changeset.apply"
 REVERT_OPERATION: Final[str] = "changeset.revert"
+#: The clone. A MUTATION like the other two — it puts somebody else's code on the operator's machine —
+#: so it travels the same six stages and the same mint rather than a route of its own. §2.2.1 confines
+#: `send_command` to this package precisely so that a clone trigger has to be a governance decision.
+CLONE_OPERATION: Final[str] = "repository.clone"
 
 #: How long a reserved rollback handle stays usable.
 #:
@@ -741,6 +745,171 @@ class GovernanceChokepoint:
                 "version": 1,
                 "item_count": len(req.items),
                 "entries": await self._apply_entries(session, change_set_id),
+            },
+            status_after_delivery="applying",
+            outcome="applying",
+        )
+
+    async def clone_repository(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        principal: Principal,
+        repo_full_name: str,
+        clone_url: str,
+        parent_directory: str,
+        directory_name: str,
+        branch: str,
+        credential: str,
+        reason: str,
+        environment: str | None = None,
+    ) -> Submission:
+        """Stages 0–6, then the mint, for `repository.clone`.
+
+        A SEVENTH PUBLIC TRANSIT RATHER THAN A ROUTE, because §2.2.1 confines `send_command` to this
+        package: a backend-initiated clone is a governance decision. Putting it here means it cannot
+        skip a stage — admission, policy, the approval gate, the audit row and the rollback handle are
+        the same objects the apply path uses, not a parallel implementation of them.
+
+        WHY IT DOES NOT GO THROUGH `submit`. `MutationRequest` requires at least one
+        `ChangeItemRequest`, and every change item is a FILE with a pre-image hash. A clone has no
+        file items: it creates a directory and fetches into it. Passing a synthetic item — a fake
+        `create` of the directory — would put a row in `change_items` that claims a file write nobody
+        made, which is the defect class this repository keeps finding. So the transit is its own, and
+        the change set it writes carries zero items honestly.
+
+        THE BLAST RADIUS IS COMPUTED, not asserted. The analyser runs over the real (empty) file plan,
+        which is what a clone's file mutations are, and the artifact count the approval gate sees is
+        the one directory this creates. A clone is not destructive: nothing existing is overwritten,
+        because the agent refuses a non-empty target. That is why the verdict is normally `allow` — and
+        it is the ANALYSER saying so over real input rather than this method claiming it.
+
+        WHERE THE CREDENTIAL GOES, and the honest limit of it. The GitHub token travels inside the
+        signed envelope, over mutual TLS, to one device. It is NOT written to Postgres — `_mint_and_sign`
+        persists no envelope, only `agent_devices.last_seq` — and it is not in the audit row, whose
+        `after_state` is built field by field below. It DOES pass through the Redis command stream that
+        carries the envelope to whichever replica owns the socket, where it sits until the stream is
+        trimmed. Redis is inside the backend's own trust boundary and the credential is short-lived, so
+        this is a considered trade rather than an oversight; the refinement — a single-use ticket the
+        agent redeems over its device session, so the stream carries only an opaque id — is recorded in
+        PROGRESS.md as Phase 2 backlog.
+        """
+        admitted = await self._admit(session, project_id=project_id, principal=principal)
+        decision = await self._evaluate_policy(
+            session,
+            principal=principal,
+            admitted=admitted,
+            operation=CLONE_OPERATION,
+            items=(),
+            environment=environment,
+        )
+
+        change_set_id = uuid.uuid4()
+        # The real analyser over the real plan. A clone's file plan is empty, and an empty plan is not
+        # a plan the analyser has to invent a verdict for — it has none of the properties that make a
+        # plan risky, which is the true answer rather than a flattering one.
+        report = self._analyzer.analyse(plan_from_change_items(()))
+        await session.execute(
+            text(
+                "INSERT INTO change_sets (id, project_id, tenant_id, status, created_by, origin, "
+                "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, version) "
+                "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, 0, '', :digest, 1)"
+            ),
+            {
+                "id": change_set_id,
+                "project": project_id,
+                "tenant": admitted.tenant_id,
+                "created_by": principal.user_id if principal.kind == "user" else None,
+                "digest": admitted.bundle_digest,
+            },
+        )
+        await self._store_blast_radius(session, change_set_id, report)
+
+        gate = await self._gate.submit(report, StageContext())
+        if gate == ApprovalDecision.BLOCKED:
+            return await self._blocked(
+                session,
+                principal=principal,
+                admitted=admitted,
+                change_set_id=change_set_id,
+                report=report,
+                reason="the approval gate blocked this clone",
+            )
+
+        if gate == ApprovalDecision.REQUIRES_APPROVAL or decision.result == "require_approval":
+            await self._set_status(session, change_set_id, "pending_approval")
+            event = await self._append_audit(
+                session,
+                principal=principal,
+                admitted=admitted,
+                action=GovernanceAction.APPROVAL_REQUIRED,
+                outcome="pending",
+                resource_kind="change_set",
+                resource_id=str(change_set_id),
+                reason=(
+                    f"human approval required before cloning {repo_full_name}: "
+                    f"gate={gate.value}, policy={decision.result}; {decision.reason}"
+                ),
+                after_state={"repository": repo_full_name, "directory": directory_name},
+            )
+            await session.commit()
+            return Submission(
+                change_set_id=change_set_id,
+                status="pending_approval",
+                outcome="approval-required",
+                audit_seq=int(event.seq),
+                blast_radius_score=report.score,
+                blast_radius_verdict=report.verdict,
+                command=None,
+            )
+
+        await self._set_status(session, change_set_id, "approved")
+        event = await self._append_audit(
+            session,
+            principal=principal,
+            admitted=admitted,
+            action=GovernanceAction.CHANGE_SET_AUTO_APPROVED,
+            outcome="allowed",
+            resource_kind="change_set",
+            resource_id=str(change_set_id),
+            # The repository and the directory, never the credential. Built field by field for that
+            # reason: a `dict(**args)` here would have carried the token into the audit chain.
+            reason=f"auto-approved clone of {repo_full_name}: {decision.reason}; {reason}",
+            after_state={
+                "repository": repo_full_name,
+                "clone_url": clone_url,
+                "parent_directory": parent_directory,
+                "directory": directory_name,
+                "branch": branch,
+            },
+        )
+        # Stage 6. The handle for a clone is the directory the agent is about to create: reserved
+        # before the envelope exists, so a crash between mint and clone cannot leave a directory
+        # nothing knows about.
+        await self._reserve_rollback_handle(session, change_set_id, admitted.device_id)
+        await session.commit()
+
+        return await self._deliver(
+            session,
+            change_set_id=change_set_id,
+            admitted=admitted,
+            approval_id=event.id,
+            audit_seq=int(event.seq),
+            decision=decision,
+            report=report,
+            operation=CLONE_OPERATION,
+            args={
+                "change_set_id": str(change_set_id),
+                "project_id": str(project_id),
+                "repo_full_name": repo_full_name,
+                "clone_url": clone_url,
+                "parent_directory": parent_directory,
+                "directory_name": directory_name,
+                "branch": branch,
+                # The one field that is a credential. See the docstring for where it goes and where
+                # it does not.
+                "token": credential,
             },
             status_after_delivery="applying",
             outcome="applying",
@@ -2006,7 +2175,7 @@ class GovernanceChokepoint:
         (leaf 7.3) asserts the Python half of that mechanically; this docstring is the reason it
         is worth asserting.
         """
-        if operation not in (APPLY_OPERATION, REVERT_OPERATION):
+        if operation not in (APPLY_OPERATION, REVERT_OPERATION, CLONE_OPERATION):
             raise ValueError(f"{operation!r} is not a mutating operation in §7.7's catalogue")
 
         floor = await self._last_seq(session, admitted.device_id)
