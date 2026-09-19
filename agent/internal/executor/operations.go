@@ -46,6 +46,9 @@ const (
 	OpGitBranchCommitPush Operation = "git.branch_commit_push"
 	OpGitOpenPR           Operation = "git.open_pr"
 	OpSecretsInject       Operation = "secrets.inject"
+	// OpRepositoryClone puts a repository on the operator's machine. Mutating, and the only operation
+	// that creates the directory a project points at rather than writing inside one.
+	OpRepositoryClone Operation = "repository.clone"
 )
 
 // allOperations is the declared vocabulary, used only to assert that the dispatch table covers
@@ -61,6 +64,7 @@ var allOperations = []Operation{
 	OpValidateCompose, OpValidateK8s, OpValidateTofu, OpValidateHelm, OpValidateYAML, OpValidateTrivy,
 	OpReadinessInventory, OpSecretScanRun,
 	OpChangeSetApply, OpChangeSetRevert, OpGitBranchCommitPush, OpGitOpenPR, OpSecretsInject,
+	OpRepositoryClone,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).

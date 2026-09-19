@@ -151,6 +151,14 @@ var handlerTable = map[Operation]entry{
 		mutating: true, requiresApproval: true, timeout: timeoutQuick, implemented: true,
 		run: secretsInject,
 	},
+	// A clone is a mutation and needs an approval like every other, even though it writes into a
+	// directory that does not exist yet: it puts somebody else's code on the operator's machine, which
+	// is precisely the decision an approver is being asked about. `timeoutNetwork` rather than
+	// `timeoutWrite`, because the bound that matters is the fetch and not the checkout.
+	OpRepositoryClone: {
+		mutating: true, requiresApproval: true, timeout: timeoutNetwork, implemented: true,
+		run: repositoryClone,
+	},
 }
 
 // unimplemented builds the body of a catalogued operation whose implementation arrives later.

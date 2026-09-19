@@ -2000,6 +2000,7 @@ The `seq` high-water mark is Redis-authoritative (mirrored to `agent_devices.las
 | `changeset.revert` | **yes** | **yes** | Consumes a rollback handle; itself a mutation with its own authority |
 | `git.branch_commit_push` / `git.open_pr` | **yes** | **yes** | Mutates the repository, not the working tree; same envelope rules |
 | `secrets.inject` | **yes** | **yes** | Writes environment material for a process; never writes it to a file |
+| `repository.clone` | **yes** | **yes** | The only operation that CREATES the directory a project points at, rather than writing inside one. Confined to the agent's workspace root like every other write; refuses a non-empty target, a traversal, an absolute or reserved name and a case-only collision; shallow at depth 1, size-bounded, and the credential travels in the envelope and is asserted absent from the cloned tree including `.git/config` |
 
 The Go type is an enum with an exhaustive dispatch table, and a test asserts every enum member has a handler *and* that every handler is reachable only from the dispatch table. There is no `exec`, no `shell`, no `run_command`, and no operation that takes a command string as an argument — a reviewer can verify that claim by reading one file.
 

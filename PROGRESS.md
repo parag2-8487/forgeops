@@ -184,6 +184,57 @@ measurement or a gap somebody has already paid for, not a nice-to-have.
       pairs, drops `AGENT_BACKEND_WSS_URL`, runs, and requires a live session.
 - [ ] **A full rescan must not lose the import graph** (the defect above).
 
+## GitHub onboarding — what is built, and what the next session has to build
+
+Three parts were asked for. Two are complete and exercised; the third is complete on the agent side and
+not started on the backend side. The split is recorded here rather than left to a reader of the diff,
+because an operation in the agent's catalogue that no backend transit can mint is exactly this
+repository's recurring defect class, and the honest position is to name it.
+
+### Done, exercised
+
+- **The per-user GitHub account link** (`backend/src/integrations/`, migration `0019`,
+  `frontend/features/integrations/GitHubConnection.tsx`, Settings → Integrations). Authentik OIDC is
+  untouched: no sign-in route, no cookie, no principal. Evidence: 25 unit tests
+  (`tests/unit/test_github_link_sealing.py`) and 17 integration tests
+  (`tests/integration/test_github_link_routes.py`) against a real app, a real Postgres and a real HTTP
+  server on loopback — the GitHub base URLs are settings the product already has for GitHub Enterprise,
+  so nothing in `src/` knows a test is running. 6 frontend tests
+  (`frontend/__tests__/github-connection.test.tsx`).
+- **Isolation, twice.** Every read predicates on `(user_id, tenant_id)` and the seal's AAD is the user
+  id, so a transplanted row does not open. Three tests: cross-user, cross-tenant, and a hand-copied
+  ciphertext.
+- **`repository.clone`, the agent operation** (`agent/internal/executor/clone.go`). Mutating,
+  approval-required, in §7.7's catalogue. 14 tests, including a REAL fetch from a repository that
+  refuses unauthenticated requests — served by `git http-backend` behind a 401 — with `.git/config`
+  asserted free of the credential, and a negative control that plants a credential in `.git/config` and
+  requires the assertion to find it. Refusals proven: parent outside the workspace root, traversal,
+  separator, colon, absolute, reserved Windows device name, trailing dot, whitespace, case-only
+  collision, non-empty target named in the message, URL carrying userinfo, missing project or URL, size
+  over the ceiling, and a failed clone leaving nothing behind. `go test -race` clean.
+
+### Not started, and what it needs
+
+- [ ] **The backend transit that mints `repository.clone`.** §2.2.1 confines `send_command` to
+      `governance/`, so this is a chokepoint transit and not a route. `MutationRequest` cannot express it
+      as it stands: it requires at least one `ChangeItemRequest`, and every item is a file write with a
+      pre-image hash. What it needs is a `change_sets` row of a new origin whose single item is the clone,
+      a blast-radius score for "one directory created", and a rollback handle that records the directory
+      to remove so a revert can undo it.
+- [ ] **The ordering decision, already made and written down so it is not relitigated:** create the
+      project row first with the intended path and an `awaiting_clone` index state, then pair an agent for
+      it through the existing onboarding flow, then the clone runs and reports the absolute path it
+      created — which the backend writes onto `projects.path`, so the project's path is what exists on
+      disk rather than what somebody typed. This was chosen over "let an already-paired agent accept a
+      clone for a new project in the same tenant" because devices are paired per project and the policy
+      gate scopes on that; the alternative would widen device scope to make onboarding shorter.
+- [ ] **`awaiting_clone` in the index-status vocabulary**, beside `empty` and `indexed`, so a project
+      pointing at a directory that does not exist yet says so.
+- [ ] **The repository picker** (`GET /api/v1/integrations/github/repositories` is built and tested; the
+      UI that consumes it is not) and the replacement of the create form's GitHub branch, which today
+      asks for an App installation id, an owner and a repo name typed by hand.
+- [ ] **The E2E covering connect → pick → clone → project → scan → score.**
+
 ## Current phase task list — Phase 1
 
 Phase 1 is `in-progress`. The plan is `.antigravity/specs/phase-1-mvp-core/tasks.md` and the
