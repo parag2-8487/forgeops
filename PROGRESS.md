@@ -209,12 +209,36 @@ this branch's and are fixed; these six are the ones the BOM had been hiding.
       — the same gate refusal over a real model run. This is also the `served_from='provider'` measurement
       the backlog above asks for, so the two are one task.
 - [ ] **`test_generation_run_rows::test_a_near_duplicate_prompt_stores_l2`** and
-      **`test_self_hosted_generation::test_a_near_duplicate_generation_prompt_is_served_from_l2`** — "the
-      first run stored `...`, so nothing was indexed to match". L2 is not being populated, which is
-      exactly the surface `GENERATION_CONTRACT_VERSION` was added to in `74ad20a`; the baseline cycle in
-      this file was served from L2, so the read path works and the WRITE path is the suspect.
-- [ ] **`test_semantic_cache::test_l2_near_duplicate`** — the same property at the cache layer, without
-      generation in the way. The cheapest place to start.
+      **`test_self_hosted_generation::test_a_near_duplicate_generation_prompt_is_served_from_l2`** —
+      diagnosed: _"the first run stored `'l2'`, so nothing was indexed to match"_. The `_Redis` double is
+      created fresh per test, so nothing earlier polluted it — the run served ITSELF from L2. A run makes
+      up to three attempts; attempt 1 stores its completion in L1 and L2, attempt 2 uses the same prompt,
+      and so attempt 2 is served from the entry attempt 1 just wrote. The run then records
+      `served_from='l2'` although the model was called, which is the same class of wrongness as the
+      baseline cycle's `served_from` above: **the provenance a row reports is not the provenance the run
+      had.** Two candidate fixes, and the choice matters: either L2 must not serve an attempt within the
+      run that populated it, or a run's `served_from` must record its FIRST attempt's source. The second
+      is probably right — a cache hit on a retry is a legitimate saving — but it changes what the column
+      means, so it is a decision rather than a patch. Multi-attempt runs became more common when the gate
+      started withholding artifacts per file, which is why this surfaced now.
+- [ ] **`test_self_hosted_generation::test_a_run_is_served_from_provider_and_the_artifacts_pass_the_gate`**
+      — the same root cause on the provenance half, plus the gate half, over a real model run. It is also
+      the `served_from='provider'` measurement the backlog above asks for, so the two are one task.
+
+**Fixed while chasing these, each a real defect the shard had been hiding:**
+
+- `.github/workflows/build.yml` as GENERATED failed the `yamllint` the agent's own validator runs —
+  one space before a trailing version comment where the config requires two. The library's output failing
+  the validator that produced it is the incident `check-template-readiness.py` exists for, one rule
+  further out.
+- **A container check is not a check about every manifest.** `unsatisfied_targets` derived an artifact's
+  targeted checks from its PATH, so `k8s/configmap.yaml` was held answerable for
+  `kubernetes_containers_unprivileged` and `kubernetes_resource_limits_declared` — checks a ConfigMap has
+  no containers to satisfy — and D-106's per-file rule withheld a correct artifact for failing to be
+  something it is not. The exclusion now reads the document's own `kind:`, is per document rather than
+  per run, and treats an unreadable kind as judgeable so nothing is excused by accident.
+  `test_target_checks_kind_awareness.py` pins all four properties.
+- The backend shard had no `yamllint`, so the validator test failed on a missing tool rather than running.
 - [ ] **`agent (windows-latest host binary)` cannot pass on the mirror at all.** Its first step downloads a
       PUBLISHED release archive and the step under test installs it; the mirror has no releases, so the
       download finds nothing and the printed-install assertion fails with "No forgeops-agent zip found".
