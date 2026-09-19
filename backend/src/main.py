@@ -415,6 +415,30 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # startup and nothing to close at shutdown; it is composed rather than constructed lazily
     # only so §0.4.1's wiring test can see it on `app.state`.
     app.state.audit_writer = AuditWriter(advisory_lock_key=settings.audit_advisory_lock_key)
+    # ── The per-user GitHub account link (Part 2) ──────────────────────────────
+    # Composed here rather than per request for the reason the chokepoint is: the key derivation is
+    # the security property, and a service assembled at a call site could be assembled with a
+    # different key. The derivation reads `ENVELOPE_PEPPER`, which §13.1 already requires to be
+    # non-empty in every environment, so there is no new configuration and nothing to fail here
+    # that would not already have failed.
+    #
+    # UNCONFIGURED IS NOT A COMPOSITION FAILURE. A deployment with no GitHub App client credentials
+    # still gets a service; it answers `configured: false` and the status route reports what to set.
+    # Refusing to compose would turn "the operator has not finished setup" into a broken deployment,
+    # and every fresh install is in that state.
+    from .integrations.github_link import GitHubOAuthClient, GitHubUserClient, derive_link_key
+    from .integrations.service import GitHubLinkService
+
+    app.state.github_link_service = GitHubLinkService(
+        oauth=GitHubOAuthClient(
+            client_id=settings.github_app_client_id,
+            oauth_credential=settings.github_app_oauth_credential.get_secret_value(),
+            oauth_base_url=settings.github_oauth_base_url,
+            api_base_url=settings.github_api_base_url,
+        ),
+        users=GitHubUserClient(api_base_url=settings.github_api_base_url),
+        link_key=derive_link_key(settings.envelope_pepper.get_secret_value()),
+    )
     # ── The governance chokepoint (§2.2, §11.6, leaf 7.5) ─────────────────────
     # Composed here rather than constructed per request, and composed with its collaborators
     # named explicitly, because §2.2's claim is that the six stages "cannot be skipped and
@@ -870,6 +894,18 @@ def create_app() -> FastAPI:
     from .projects.routes import router as projects_router
 
     app.include_router(projects_router)
+
+    # The per-user GitHub account link (Part 2). TWO ROUTERS, and the split is the same one the device
+    # routes make: `router` carries `require_principal` on every route, while `callback_router` holds
+    # the single route a BROWSER REDIRECT FROM GITHUB reaches — which carries no bearer token and is
+    # authenticated instead by a single-use `state` this server minted and bound to the user who asked.
+    # A route whose authentication `require_principal` cannot express must not sit under it and look as
+    # though it does. Neither router adds a way to sign in: Authentik OIDC remains the only one.
+    from .integrations.routes import callback_router as github_callback_router
+    from .integrations.routes import router as integrations_router
+
+    app.include_router(integrations_router)
+    app.include_router(github_callback_router)
 
     from .ai.routes import read_router as ai_read_router
     from .ai.routes import router as ai_router

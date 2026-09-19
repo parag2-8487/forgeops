@@ -104,4 +104,20 @@ export const queryKeys = {
     // would serve one project's references from another's cache entry.
     list: (projectId: string) => [...queryKeys.secrets.all, "list", projectId] as const,
   },
+  /**
+   * Per-user integrations. NOT scoped by user id in the key, deliberately: the key namespace is
+   * per browser session and the server answers for whoever the access token identifies, so putting a
+   * user id here would be a second source of truth about who is signed in. Sign-out clears the cache.
+   */
+  integrations: {
+    all: ["integrations"] as const,
+    github: () => [...queryKeys.integrations.all, "github"] as const,
+    /**
+     * The repository picker. The query and the page are part of the key for the reason the project
+     * filters are: two searches are two different responses, and a key that ignored the term would
+     * serve one from the other's cache entry, which looks exactly like a search that does not work.
+     */
+    githubRepositories: (query: string, page: number, perPage: number) =>
+      [...queryKeys.integrations.all, "github", "repositories", query, page, perPage] as const,
+  },
 } as const;

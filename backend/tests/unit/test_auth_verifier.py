@@ -247,7 +247,7 @@ class TestEveryRejectionIsTheSameProblem:
 
 
 class TestThePublicRouteSet:
-    def test_it_has_exactly_the_design_entries_plus_the_agent_surrender(self) -> None:
+    def test_it_has_exactly_the_design_entries_plus_two_non_oidc_callers(self) -> None:
         """§4.4's table has seven rows; two of them name two paths each
         (`openapi.json`/`docs`, and the four auth endpoints), which is why the tuple is
         longer than the table.
@@ -255,12 +255,29 @@ class TestThePublicRouteSet:
         The eleventh is `POST /agents/self/abandon`, added after `pair` was found to be non-atomic
         across the network and the agent's local credential store. It is "public" only in the sense
         this registry means — no OIDC principal, which an agent can never hold — and is authenticated
-        by `require_device_token` before its handler starts. The count is asserted so that adding a
-        public route stays a deliberate act with a test to update, which is the whole reason this
-        number is written down.
+        by `require_device_token` before its handler starts.
+
+        The twelfth is `GET /integrations/github/callback`, a browser redirect arriving from GitHub. It
+        is public for the same STRUCTURAL reason `/auth/callback` is: the access token lives in the
+        application's memory and is not sent on a cross-site navigation, so `require_principal` cannot
+        be satisfied. It is authenticated by a single-use `state` this server minted for a specific
+        signed-in user.
+
+        The count is asserted so that adding a public route stays a deliberate act with a test to
+        update, which is the whole reason this number is written down.
         """
-        assert len(PUBLIC_ROUTES) == 11
-        assert len(PUBLIC_PATHS) == 11
+        assert len(PUBLIC_ROUTES) == 12
+        assert len(PUBLIC_PATHS) == 12
+
+    def test_the_github_callback_is_public_and_says_it_is_still_authenticated(self) -> None:
+        """Same bar as the agent surrender: a reader auditing this list must not mistake it for open."""
+        entry = next(r for r in PUBLIC_ROUTES if r.path == "/api/v1/integrations/github/callback")
+        assert "NOT unauthenticated" in entry.reason
+        assert "single-use" in entry.reason
+        assert "creates no principal" in entry.reason
+        # The isolation property the route rests on, stated in the entry itself rather than only in
+        # the module: the user id comes from the pending record and never from the request.
+        assert "never from the request" in entry.reason
 
     def test_the_agent_surrender_is_public_and_says_it_is_still_authenticated(self) -> None:
         """The reason must not let a reader think this route is wide open.

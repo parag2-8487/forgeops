@@ -165,6 +165,18 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # code's answer to "no credential" was to fabricate a token, which produced a 200.
     "repository-import-unconfigured": ProblemSpec(503, "Repository import not configured"),
     "repository-import-failed": ProblemSpec(502, "Repository import failed"),
+    # ─── GitHub account link (Part 2) ────────────────────────────────────────
+    #
+    # THREE TYPES, NOT ONE, because they have three different remedies and an operator acts on the
+    # remedy. Unconfigured is 503 and names the two settings to set — it is the state of every fresh
+    # install, so it must read as "finish the setup" rather than as a fault. Absent is 409: the server
+    # is configured and working, and the caller has simply not connected an account yet, which is the
+    # normal state before the first connect and not a 404 (the endpoint exists) nor a 403 (nothing is
+    # being hidden). Refused is 502, on the same reasoning as the import above: the request reached
+    # GitHub and GitHub declined.
+    "github-link-unconfigured": ProblemSpec(503, "GitHub account linking not configured"),
+    "github-link-absent": ProblemSpec(409, "No GitHub account linked"),
+    "github-link-failed": ProblemSpec(502, "GitHub refused the request"),
     # ─── Tenancy (§6.7) ──────────────────────────────────────────────────────
     "tenant-context-missing": ProblemSpec(500, "Tenant context missing"),
 }

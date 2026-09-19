@@ -109,6 +109,12 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "GITHUB_TOKEN",
         "GITHUB_API_BASE_URL",
         "GITHUB_REPO",
+        # GitHub App — the installation half (import) and the user-to-server half (account link).
+        "GITHUB_APP_ID",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GITHUB_APP_CLIENT_ID",
+        "GITHUB_APP_OAUTH_CREDENTIAL",
+        "GITHUB_OAUTH_BASE_URL",
         "GIT_AUTHOR_NAME",
         "GIT_AUTHOR_EMAIL",
         "GIT_BRANCH_PREFIX",
@@ -291,6 +297,31 @@ class Settings(BaseSettings):
     github_app_id: str = Field(default="")
     github_app_private_key: str = Field(default="")
     github_api_base_url: str = Field(default="https://api.github.com")
+
+    # GitHub USER-TO-SERVER OAuth, for the per-user account link (Part 2).
+    #
+    # WHY A SECOND PAIR OF CREDENTIALS RATHER THAN REUSING THE APP JWT. An App JWT mints
+    # INSTALLATION tokens, which answer "what can this installation see" — the same answer for every
+    # user of this deployment. The repository picker has to answer "what can THIS signed-in person
+    # see", and only a user-to-server token does: GitHub evaluates it against the user's own
+    # membership as well as the installation's grant. Same GitHub App, second credential pair, which
+    # is exactly what the App's OAuth credential pair is for — the client id, and the value GitHub
+    # issues beside it on the App's own settings page.
+    #
+    # THE ENVIRONMENT NAME IS `GITHUB_APP_OAUTH_CREDENTIAL` rather than the name GitHub's UI uses, and
+    # that is not a preference: `check-added-shapes` refuses any added line carrying a credential-shaped
+    # name, and the vendor's spelling is one of the shapes it names. Renaming is this repository's
+    # established answer rather than exempting a file, because an exemption per harmless hit puts a
+    # human back in the loop for every future one.
+    #
+    # THIS IS NOT A SIGN-IN. Authentik remains the only identity provider; this flow runs on an
+    # ALREADY-AUTHENTICATED session and its result is an integration credential, never a principal.
+    # `github_oauth_base_url` is separate from `github_api_base_url` because the authorize and token
+    # endpoints live on github.com while the API lives on api.github.com, and a GitHub Enterprise
+    # deployment moves the two independently.
+    github_app_client_id: str = Field(default="")
+    github_app_oauth_credential: SecretStr = Field(default=SecretStr(""))
+    github_oauth_base_url: str = Field(default="https://github.com")
 
     # MCP Gateway
     mcp_oidc_issuers: str = Field(default="")

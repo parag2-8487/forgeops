@@ -5314,6 +5314,9 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `tenant-context-missing` | 500 | A tenant-scoped query ran without `app.tenant_id` | Internal invariant violation; generic detail plus `trace_id` |
 | `repository-import-unconfigured` | 503 | A GitHub import was requested and the server has no App credentials | Names the two environment variables to set |
 | `repository-import-failed` | 502 | GitHub refused a request during an import | Names the action and the upstream status, never the response body |
+| `github-link-unconfigured` | 503 | A GitHub account link was requested and the server has no App client credentials | Names the two environment variables to set and the callback URL to register |
+| `github-link-absent` | 409 | The server is configured and this user has not linked a GitHub account | Says where to connect one; not a 404, because the endpoint exists, and not a 403, because nothing is being hidden |
+| `github-link-failed` | 502 | GitHub refused a link request, or a callback could not be matched to a pending one | Names the action and the upstream status or GitHub's own error code, never the response body — a GitHub error description has carried the submitted authorization code back |
 
 `audit-write-failed` deserves a note. A failed audit write **aborts the mutation**, because §1.9's guarantee is that every action is logged — an action that happened without a record would break Q-04 and, worse, would be invisible. Availability is traded for auditability, deliberately.
 

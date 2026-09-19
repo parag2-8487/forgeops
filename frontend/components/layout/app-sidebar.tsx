@@ -15,6 +15,7 @@ import {
   Rocket,
   Cpu,
   FileSearch,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,9 @@ const NAV_ITEMS = [
   { href: "/analysis", label: "Plan analysis", icon: FileSearch },
   { href: "/models", label: "Model tiers", icon: Cpu },
   { href: "/audit", label: "Audit", icon: ScrollText },
+  // Settings, not a feature: a GitHub link belongs to the person and outlives every project made
+  // with it, so it is inspected and revoked from here rather than from a project screen.
+  { href: "/settings/integrations", label: "Integrations", icon: Plug },
 ] as const;
 
 export function AppSidebar() {

@@ -94,6 +94,21 @@ PUBLIC_ROUTES: Final[tuple[PublicRoute, ...]] = (
         "caller. The worst a stolen token achieves is abandoning a device its holder already "
         "fully controls",
     ),
+    PublicRoute(
+        "/api/v1/integrations/github/callback",
+        frozenset({"GET"}),
+        "A browser redirect arriving FROM GITHUB, which carries no bearer token — the access token "
+        "lives in the application's memory and is not sent on a cross-site navigation, so "
+        "`require_principal` is unsatisfiable here for the same structural reason it is for "
+        "`/auth/callback`. It is NOT unauthenticated: the route is reached only with a `state` this "
+        "server minted for a specific already-signed-in user, held in Redis under a SHA-256 of "
+        "itself for ten minutes and consumed atomically with GETDEL, so it is single-use and a "
+        "replay is refused. The user id the credential attaches to comes from that record and never "
+        "from the request, so a caller cannot direct someone else's GitHub account onto their own "
+        "session or their own onto someone else's. It creates no principal, writes no cookie and "
+        "grants no access to ForgeOps — its entire effect is to store an integration credential "
+        "against the user who asked for it",
+    ),
 )
 
 #: Paths only, for the O(1) membership test the dependency and the checker both need.
