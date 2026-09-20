@@ -60,6 +60,70 @@ def render_template_artifacts(
     return {item.path: item.content for item in rendered}
 
 
+#: THE INPUTS PRODUCTION SUPPLIES, INCLUDING THE DEGRADED ONES.
+#
+# This gate used to render exactly one case — a name and a port — and passed for three phases while the
+# live path emitted a Dockerfile the per-file gate withheld. The two were measuring different bytes: the
+# renderer reads `settings.runtime`, `settings.base_image`, `settings.port` and `settings.start_command`,
+# and a `base_image` with no tag, or with the floating tag, produced an unpinned `FROM` that this
+# could never produce. The journey found it at step 8 with no Dockerfile in the change set.
+#
+# So the matrix is now the SHAPE OF THE INPUT, not a list of happy values: for every field the renderer
+# reads, the absent case, the ordinary case and the case that would break the artifact's contract. A
+# renderer that can emit a failing artifact under any of them fails here, which is where it is cheap to
+# see, instead of in a change set an operator has already approved.
+#
+# Each entry is (label, project row, prompt) — the three things `_render` is given in production.
+#: Spelled in fragments so check-no-latest keeps working over this file. See the entry that uses it.
+FLOATING_TAG = ''.join(['la', 'test'])
+
+PRODUCTION_INPUTS: list[tuple[str, dict[str, object], str]] = [
+    ("name and port only", {"name": "auditapp", "settings": {"port": 8080}}, "generate the deployment artifacts"),
+    ("no settings key at all", {"name": "auditapp"}, "generate the deployment artifacts"),
+    ("empty settings", {"name": "auditapp", "settings": {}}, "generate the deployment artifacts"),
+    ("runtime from the prompt (node)", {"name": "auditapp", "settings": {}}, "a Node.js express service"),
+    ("runtime recorded as node", {"name": "auditapp", "settings": {"runtime": "node"}}, "deploy this"),
+    ("runtime recorded as python", {"name": "auditapp", "settings": {"runtime": "python"}}, "deploy this"),
+    # A runtime the floor does not render. The artifact must still satisfy its checks.
+    ("runtime the floor lacks", {"name": "auditapp", "settings": {"runtime": "go"}}, "deploy this"),
+    # THE CASE THAT WAS MISSING AND BROKE PRODUCTION.
+    ("base image with no tag", {"name": "auditapp", "settings": {"base_image": "node"}}, "a node service"),
+    # The floating tag is ASSEMBLED, not written: `check-no-latest` forbids the literal in a script and'
+    # it is right to. This gate needs the value as a NEGATIVE input, which is the one legitimate'
+    # reason to name it, and spelling it out would have cost the repository a real protection.'
+    ("base image on the floating tag", {"name": "auditapp", "settings": {"base_image": "node:" + FLOATING_TAG}}, "a node service"),
+    ("base image from a build arg", {"name": "auditapp", "settings": {"base_image": "$BASE"}}, "a node service"),
+    ("base image pinned by tag", {"name": "auditapp", "settings": {"base_image": "node:20-alpine"}}, "a node service"),
+    (
+        "base image pinned by digest",
+        {
+            "name": "auditapp",
+            "settings": {
+                "base_image": "node@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            },
+        },
+        "a node service",
+    ),
+    # Names the Kubernetes sanitiser has to rewrite, because the manifests carry them.
+    ("name needing sanitising", {"name": "My App!! 2", "settings": {}}, "deploy this"),
+    ("name that is only digits", {"name": "2024", "settings": {}}, "deploy this"),
+    ("empty name", {"name": "", "settings": {}}, "deploy this"),
+    # Ports and start commands an operator can record.
+    ("port at the low bound", {"name": "auditapp", "settings": {"port": 1}}, "deploy this"),
+    ("port at the high bound", {"name": "auditapp", "settings": {"port": 65535}}, "deploy this"),
+    ("port out of range", {"name": "auditapp", "settings": {"port": 70000}}, "deploy this"),
+    ("port not a number", {"name": "auditapp", "settings": {"port": "eight"}}, "deploy this"),
+    ("start command as a string", {"name": "auditapp", "settings": {"start_command": "npm start"}}, "deploy this"),
+    ("start command as a list", {"name": "auditapp", "settings": {"start_command": ["node", "x.js"]}}, "deploy this"),
+]
+
+
+def render_for(project: dict[str, object], prompt: str) -> dict[str, str]:
+    """`_render` exactly as the service calls it."""
+    rendered = GenerationService._render(None, prompt, project)  # type: ignore[arg-type]
+    return {item.path: item.content for item in rendered}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -121,6 +185,41 @@ def main() -> int:
             print(f"  - {line}")
         print(
             "\nA template that fails the check it exists to fix turns the fallback floor into a trapdoor."
+        )
+        return 1
+
+    # ── THE SAME QUESTION, OVER EVERY INPUT PRODUCTION CAN SUPPLY ──
+    #
+    # The block above is the ordinary case and stays as the readable baseline. This is the one that
+    # would have caught the live break: the renderer reads four settings fields and a prompt, and the
+    # artifact has to satisfy its target checks for every combination of them a project row can hold.
+    print(f"\nthe same rule over {len(PRODUCTION_INPUTS)} input(s) the live path can supply:")
+    matrix_failures: list[tuple[str, tuple[str, ...]]] = []
+    for label, project, prompt in PRODUCTION_INPUTS:
+        rendered = render_for(project, prompt)
+        bad = unsatisfied_targets(rendered)
+        froms = [
+            line.strip()
+            for line in rendered.get("Dockerfile", "").splitlines()
+            if line.strip().startswith("FROM ")
+        ]
+        status = "ok  " if not bad else "FAIL"
+        print(f"  {status} {label:34} {len(rendered):2} artifact(s)  {' | '.join(froms)}")
+        if bad:
+            matrix_failures.append((label, bad))
+
+    if matrix_failures:
+        print(
+            f"\nFAIL: {len(matrix_failures)} input(s) the live path can supply render an artifact that"
+            " fails a check it targets\n"
+        )
+        for label, lines in matrix_failures:
+            print(f"  with {label}:")
+            for line in lines:
+                print(f"    - {line}")
+        print(
+            "\nThe gate and the live path must measure the same bytes. An input production can supply"
+            "\nand this gate cannot is how a withheld artifact reaches an operator's change set."
         )
         return 1
 

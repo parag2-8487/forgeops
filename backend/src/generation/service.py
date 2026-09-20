@@ -30,6 +30,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..core.content_regression import regression_findings
+from ..core.manifest_facts import dockerfile_base_pinned
 from ..core.model_port import ArtifactModelPort
 from ..core.sse import SSEEventType, format_event
 from ..core.target_checks import score_lowering_findings, unsatisfied_targets
@@ -631,6 +632,29 @@ class GenerationService:
                     for artifact in files
                     if not any(finding.startswith(f"{artifact.path}: ") for finding in gate_findings)
                 )
+                # THE FLOOR IS PER ARTIFACT, NOT PER RUN — AND THAT IS THE DEFECT THE JOURNEY CAUGHT.
+                #
+                # Everything below `if not accepted` reaches the template path. So the floor applied
+                # only when the model produced NOTHING usable, and the case it was designed for is the
+                # opposite one: the model returns nine good artifacts and a Dockerfile with
+                # `FROM node:latest`. The bad Dockerfile was withheld, correctly, and nothing put the
+                # known-good one in its place — the change set went out with no Dockerfile at all,
+                # which is what step 8 found. `check-template-readiness.py` had been proving all along
+                # that the floor satisfies its target checks; no runtime path consulted it per kind.
+                #
+                # THIS WEAKENS NOTHING. The model's failing artifact is still never accepted. The
+                # substitute is the template the CI audit gate certifies, and the assembled set is
+                # re-validated through the SAME `_validate` — including the regression and
+                # score-lowering rules — so a substitution that would make the set worse is rejected
+                # and the withholding stands. A floor that cannot satisfy the check is not used.
+                substituted: tuple[str, ...] = ()
+                accepted, substituted = self._apply_floor(
+                    accepted=accepted,
+                    rejected=tuple(artifact.path for artifact in files if artifact not in accepted),
+                    prompt=prompt,
+                    project=project,
+                    existing=existing,
+                )
                 if not accepted:
                     findings = gate_findings
                     continue
@@ -645,6 +669,15 @@ class GenerationService:
                             f"delivering {len(accepted)} artifact(s) that passed the gate; "
                             f"{withheld} rejected artifact(s) were withheld and are not in the "
                             "change set",
+                            *(
+                                [
+                                    "the audited template floor replaced "
+                                    f"{len(substituted)} rejected artifact(s): "
+                                    f"{', '.join(substituted)}"
+                                ]
+                                if substituted
+                                else []
+                            ),
                             *gate_findings,
                         ],
                         "served_from": served_from,
@@ -840,10 +873,42 @@ class GenerationService:
             base, start, port = "python:3.11-slim", ["python", "main.py"], 8000
             install = "pip install --no-cache-dir -r requirements.txt"
 
+        # THE FLOOR KNOWS TWO RUNTIMES, AND SAYS SO WHEN IT IS ASKED FOR A THIRD.
+        #
+        # Everything that is not Node takes the Python branch, so a project whose settings record
+        # `runtime: go` was handed a Python Dockerfile with a `pip wheel` line and no indication that
+        # its recorded runtime had been ignored. The artifact is well formed and passes every target
+        # check, which is what makes it dangerous: nothing in the output or the run row contradicted it,
+        # and the operator would find out from a failed build. Naming the substitution in the file is
+        # the cheap honest fix; teaching the floor more runtimes is a template-library task, and
+        # `template_library.py` already holds Go, Rust, Java, Ruby, PHP and .NET content that no
+        # runtime path reads (recorded in PROGRESS.md).
+        unsupported_runtime = ""
+        if runtime and not runtime.startswith(("node", "python", "py")):
+            unsupported_runtime = runtime
+
         # Configured values win over the runtime default, because an operator who recorded a port
         # knows something this function cannot derive.
+        # AN OPERATOR PREFERENCE MAY NOT BREAK THE FLOOR'S CONTRACT.
+        #
+        # This read `settings["base_image"]` straight into `FROM`. A project whose settings say
+        # `node` or `node:latest` therefore rendered a Dockerfile that fails
+        # `dockerfile_base_pinned` — the very check the artifact is generated to satisfy — so the
+        # per-file gate withheld the floor itself and the operator got no Dockerfile. The audit gate
+        # never caught it because it only ever supplied a name and a port: production has an input
+        # the gate had no case for.
+        #
+        # The pinned runtime default is used instead, and the rejected value is named in a comment in
+        # the file so the substitution is visible in the diff the operator approves. Silently
+        # honouring it would ship a known-failing artifact; silently dropping it would be the kind of
+        # invisible override this codebase keeps having to dig out.
+        rejected_base = ""
         if str(settings.get("base_image") or "").strip():
-            base = str(settings["base_image"]).strip()
+            configured_base = str(settings["base_image"]).strip()
+            if dockerfile_base_pinned(f"FROM {configured_base}"):
+                base = configured_base
+            else:
+                rejected_base = configured_base
         with contextlib.suppress(TypeError, ValueError):
             if settings.get("port") is not None:
                 configured = int(settings["port"])
@@ -904,6 +969,25 @@ class GenerationService:
 
         dockerfile = "\n".join(
             [
+                *(
+                    [
+                        f"# NOTE: the configured runtime {unsupported_runtime!r} is not one this",
+                        "# fallback renders. The Python layout below is what was produced; it is not a",
+                        f"# {unsupported_runtime} image and will not build one.",
+                    ]
+                    if unsupported_runtime
+                    else []
+                ),
+                *(
+                    [
+                        f"# NOTE: the configured base image {rejected_base!r} is not pinned to an exact",
+                        "# version or digest, so it is not used here: it would fail",
+                        "# `dockerfile_base_pinned`, the check this file exists to satisfy. Record a",
+                        f"# pinned image in the project's settings to override {base!r}.",
+                    ]
+                    if rejected_base
+                    else []
+                ),
                 *builder,
                 "",
                 f"FROM {base}",
@@ -969,6 +1053,63 @@ class GenerationService:
         column already contradicts.
         """
         return [content[i : i + size] for i in range(0, len(content), size)] or [""]
+
+    def _apply_floor(
+        self,
+        *,
+        accepted: Sequence[GeneratedFile],
+        rejected: Sequence[str],
+        prompt: str,
+        project: Mapping[str, Any] | None,
+        existing: Mapping[str, str] | None,
+    ) -> tuple[tuple[GeneratedFile, ...], tuple[str, ...]]:
+        """Replace each rejected artifact with the audited template, when the template is better.
+
+        Returns the set to deliver and the paths that were substituted.
+
+        WHY THIS IS A SUBSTITUTION AND NOT A RELAXATION. The rejected artifact is gone either way; the
+        only question is whether the operator gets the known-good template in its place or nothing. The
+        template is the one `scripts/check-template-readiness.py` certifies against every target check,
+        over every input production can supply — so "nothing" was strictly the worse of the two, and it
+        was what the product did.
+
+        THREE CONDITIONS, ALL NECESSARY:
+
+        1. The template must actually render that path. A run that wrote something the floor has no
+           opinion about gets no substitute, because inventing one would be fabricating an artifact.
+        2. The substitute must satisfy its OWN target checks. Verified here at runtime rather than
+           trusted from CI, because the inputs differ per project and a gate that passed on other bytes
+           says nothing about these.
+        3. The assembled set must pass the WHOLE gate — structure, regression against what exists, and
+           the no-lowering rule. A substitution that costs points elsewhere is not an improvement, and
+           this is the check that notices.
+
+        If any fails, the withholding stands and the finding already names it.
+        """
+        if not rejected:
+            return tuple(accepted), ()
+
+        floor = {item.path: item.content for item in self._render(prompt, project)}
+        candidates: dict[str, str] = {}
+        for path in rejected:
+            body = floor.get(path)
+            if body is None:
+                continue
+            # Condition 2, asked of the substitute ALONE, so a sibling cannot carry it.
+            if unsatisfied_targets({path: body}, existing):
+                continue
+            candidates[path] = body
+        if not candidates:
+            return tuple(accepted), ()
+
+        assembled = tuple(accepted) + tuple(
+            GeneratedFile(path=path, content=body) for path, body in sorted(candidates.items())
+        )
+        # Condition 3. `_validate` is the same function the model output answered to.
+        passed, _ = self._validate(assembled, existing)
+        if not passed:
+            return tuple(accepted), ()
+        return assembled, tuple(sorted(candidates))
 
     def _validate(
         self, files: Sequence[GeneratedFile], existing: Mapping[str, str] | None = None
