@@ -266,7 +266,7 @@ class GitHubLinkService:
         session: AsyncSession,
         *,
         user_id: uuid.UUID,
-        tenant_id: uuid.UUID,
+        tenant_id: uuid.UUID | None,
         client: httpx.AsyncClient | None = None,
     ) -> tuple[str, bool, str]:
         """Delete the row and, where it is possible, revoke at GitHub.
@@ -323,7 +323,7 @@ class GitHubLinkService:
         session: AsyncSession,
         *,
         user_id: uuid.UUID,
-        tenant_id: uuid.UUID,
+        tenant_id: uuid.UUID | None,
         client: httpx.AsyncClient | None = None,
     ) -> tuple[tuple[Repository, ...], bool]:
         """The real listing, from GitHub, for this user. Never a cache and never a stand-in.
@@ -351,7 +351,7 @@ class GitHubLinkService:
         session: AsyncSession,
         *,
         user_id: uuid.UUID,
-        tenant_id: uuid.UUID,
+        tenant_id: uuid.UUID | None,
         client: httpx.AsyncClient | None = None,
     ) -> str:
         """The plaintext token, refreshed first if it is near expiry.

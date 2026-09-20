@@ -67,6 +67,19 @@ async def _clone(chokepoint: Any, session: AsyncSession, fixture: Any) -> Any:
     )
 
 
+def _provider(credential: str) -> Any:
+    """A `CloneCredentialProvider` yielding a fixed value.
+
+    A real function rather than a Mock: the protocol is keyword-only, and a Mock would accept any shape —
+    so a change to the protocol would pass here and fail in production, which FO-TD001..004 forbid.
+    """
+
+    async def _yield(session: Any, *, user_id: uuid.UUID, tenant_id: Any) -> str:
+        return credential
+
+    return _yield
+
+
 async def _rows(session: AsyncSession, query: str, **params: Any) -> list[dict[str, Any]]:
     result = await session.execute(text(query), params)
     return [dict(row) for row in result.mappings()]
@@ -239,38 +252,179 @@ class TestTheCloneTransit:
         assert len(nonces) == 2, "two commands shared a nonce"
 
 
-class TestTheApprovalPathRefusesWhatItCannotBuild:
-    """The defect a real clone against a real agent exposed, pinned so it cannot return.
+class TestAHumanApprovedCloneIsDelivered:
+    """The defect a real clone against a real agent exposed, and the design that resolved it.
 
-    `approve()` ends in `_deliver(operation=changeset.apply, args=_apply_entries(...))`. A clone reached
-    the agent through it as an apply with no entries; the agent refused correctly and the change set
-    read `rolled_back`, which looks like an agent fault and was the backend sending the wrong command.
-    Every test passed at the time, because the AUTO-APPROVED clone path mints its own envelope and never
-    goes through `approve()` — so the test that would have caught it is this one.
+    `approve()` used to end unconditionally in `_deliver(operation=changeset.apply,
+    args=_apply_entries(...))`. A clone reached the agent through it as an apply with no entries; the
+    agent refused correctly and the change set read `rolled_back`, which looks like an agent fault and
+    was the backend sending the wrong command. Every test passed at the time, because the AUTO-APPROVED
+    clone path mints its own envelope and never goes through `approve()` — so the test that would have
+    caught it is this one.
+
+    Revision 0021 made it refuse honestly. Revision 0022 made it DELIVER, by splitting the arguments on
+    whether they are a secret: the inert ones persist on the change set, and the credential is read from
+    the requester's link at the moment of delivery. Everything below is a property of that split.
     """
 
-    async def test_a_pending_clone_cannot_be_approved_into_an_apply(
+    async def test_the_approved_clone_reaches_the_agent_as_a_clone(
         self, sessions: Any, redis_client: Any, sink: RecordingSink
     ) -> None:
+        chokepoint = build_chokepoint(
+            policy=ScriptedPolicy(decision=require_approval()),
+            sink=sink,
+            redis_client=redis_client,
+            clone_credential_provider=_provider("ghp-test-credential"),
+        )
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            submission = await _clone(chokepoint, session, fixture)
+            assert submission.status == "pending_approval"
+            assert sink.sent == [], "nothing may be sent before a human approves"
+
+            approved = await chokepoint.approve(
+                session, change_set_id=submission.change_set_id, principal=fixture.principal
+            )
+
+        assert approved.status == "applying"
+        assert len(sink.sent) == 1
+        _, command = sink.sent[0]
+        # THE OPERATION, which is the whole defect: an apply here is the malformed command.
+        assert command.envelope["operation"] == "repository.clone"
+        assert command.envelope["args"]["repo_full_name"] == "octo-org/deploy-me"
+        assert command.envelope["args"]["token"] == "ghp-test-credential"
+
+    async def test_the_credential_is_read_from_the_requester_and_not_the_approver(
+        self, sessions: Any, redis_client: Any, sink: RecordingSink
+    ) -> None:
+        """An approver authorises an action; they do not lend their GitHub account to it."""
+        seen: list[uuid.UUID] = []
+
+        async def _recording(session: Any, *, user_id: uuid.UUID, tenant_id: Any) -> str:
+            seen.append(user_id)
+            return "ghp-test-credential"
+
+        chokepoint = build_chokepoint(
+            policy=ScriptedPolicy(decision=require_approval()),
+            sink=sink,
+            redis_client=redis_client,
+            clone_credential_provider=_recording,
+        )
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            submission = await _clone(chokepoint, session, fixture)
+            await chokepoint.approve(session, change_set_id=submission.change_set_id, principal=fixture.principal)
+
+            requester = await _rows(
+                session,
+                "SELECT created_by FROM change_sets WHERE id = :id",
+                id=submission.change_set_id,
+            )
+
+        assert seen == [requester[0]["created_by"]]
+
+    async def test_the_credential_is_absent_from_every_row_the_transit_writes(
+        self, sessions: Any, redis_client: Any, sink: RecordingSink
+    ) -> None:
+        """The property the whole design exists for, asserted against the database.
+
+        Not "no column called token" — the actual VALUE, searched for across the change set, its
+        persisted operation arguments and every audit row. A credential in any of them outlives the
+        clone, and the tables an operator exports are the ones that would carry it out of the system.
+        """
+        credential = "ghp-a-very-distinctive-credential-value"
+        chokepoint = build_chokepoint(
+            policy=ScriptedPolicy(decision=require_approval()),
+            sink=sink,
+            redis_client=redis_client,
+            clone_credential_provider=_provider(credential),
+        )
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            submission = await _clone(chokepoint, session, fixture)
+            await chokepoint.approve(session, change_set_id=submission.change_set_id, principal=fixture.principal)
+
+            change_sets = await _rows(
+                session,
+                "SELECT id::text, status, operation, operation_args::text AS args FROM change_sets WHERE id = :id",
+                id=submission.change_set_id,
+            )
+            audit = await _rows(
+                session,
+                "SELECT action, reason, before_state::text AS before, after_state::text AS after "
+                "FROM audit_events WHERE resource_id = :rid",
+                rid=str(submission.change_set_id),
+            )
+
+        assert change_sets, "the change set vanished"
+        assert change_sets[0]["operation"] == "repository.clone"
+        # The inert arguments ARE stored — that is what makes delivery possible at all.
+        assert "octo-org/deploy-me" in change_sets[0]["args"]
+        # And the credential is not, anywhere.
+        assert credential not in change_sets[0]["args"]
+        for row in audit:
+            for field in ("reason", "before", "after"):
+                assert credential not in str(row[field] or ""), (row["action"], field)
+
+    async def test_a_revoked_or_expired_link_refuses_honestly_and_leaves_it_pending(
+        self, sessions: Any, redis_client: Any, sink: RecordingSink
+    ) -> None:
+        """The refusal names the cause, and the approval is NOT consumed.
+
+        Leaving it `approved` would give the operator a change set that can never be delivered and no
+        statement of why; leaving it `pending_approval` means reconnecting the account makes the same
+        approval work. That is why the credential is read before the transition rather than after.
+        """
+
+        async def _revoked(session: Any, *, user_id: uuid.UUID, tenant_id: Any) -> str:
+            raise RuntimeError(
+                "the GitHub token has expired and the App issued no refresh token, so the account "
+                "must be connected again"
+            )
+
+        chokepoint = build_chokepoint(
+            policy=ScriptedPolicy(decision=require_approval()),
+            sink=sink,
+            redis_client=redis_client,
+            clone_credential_provider=_revoked,
+        )
+        async with sessions() as session:
+            fixture = await make_fixture(session)
+            submission = await _clone(chokepoint, session, fixture)
+
+            with pytest.raises(Exception) as caught:  # noqa: PT011 - the registered problem type
+                await chokepoint.approve(session, change_set_id=submission.change_set_id, principal=fixture.principal)
+
+            detail = str(getattr(caught.value.problem, "detail", "") or "")
+            assert "expired" in detail, detail
+            assert "reconnect" in detail.lower(), detail
+
+            rows = await _rows(
+                session,
+                "SELECT status FROM change_sets WHERE id = :id",
+                id=submission.change_set_id,
+            )
+
+        assert rows[0]["status"] == "pending_approval", rows
+        assert sink.sent == [], "nothing may reach the agent when the credential could not be read"
+
+    async def test_a_deployment_with_no_integration_says_so(
+        self, sessions: Any, redis_client: Any, sink: RecordingSink
+    ) -> None:
+        """Configuration, not an error: the refusal names the missing piece rather than raising."""
         chokepoint = build_chokepoint(
             policy=ScriptedPolicy(decision=require_approval()), sink=sink, redis_client=redis_client
         )
         async with sessions() as session:
             fixture = await make_fixture(session)
             submission = await _clone(chokepoint, session, fixture)
-            assert submission.status == "pending_approval"
 
             with pytest.raises(Exception) as caught:  # noqa: PT011 - the registered problem type
                 await chokepoint.approve(session, change_set_id=submission.change_set_id, principal=fixture.principal)
 
-            # The refusal NAMES the operation and why, read from the problem DOCUMENT rather than the
-            # exception's string form — `str()` on a `ProblemException` is the registry title, which is
-            # the same sentence for every conflict and would make this assertion pass against any of them.
             detail = str(getattr(caught.value.problem, "detail", "") or "")
-            assert "repository.clone" in detail, detail
-            assert "not stored" in detail, detail
+            assert "no GitHub integration composed" in detail, detail
 
-        # AND NOTHING WAS SENT. The whole point: a malformed command must not reach the agent.
         assert sink.sent == []
 
     async def test_an_apply_still_approves_normally(

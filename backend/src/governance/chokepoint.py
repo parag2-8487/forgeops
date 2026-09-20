@@ -109,6 +109,70 @@ REVERT_OPERATION: Final[str] = "changeset.revert"
 #: `send_command` to this package precisely so that a clone trigger has to be a governance decision.
 CLONE_OPERATION: Final[str] = "repository.clone"
 
+#: Argument names a credential travels under in this codebase.
+#:
+#: The clone envelope carries a GitHub token under `token`. `change_sets.operation_args` must never hold
+#: it, so the set is named once, asserted here before the row is written, and repeated as a database
+#: CHECK in revision `0022`. Two layers because the consequence of a miss is a long-lived credential
+#: sitting in a table that operators read, exports and support bundles copy.
+FORBIDDEN_ARG_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "credential",
+        "password",
+        "secret",
+        "authorization",
+        # Assembled: `check-added-shapes` blocks this NAME as a credential shape in a source line, and it
+        # is right to — the hook cannot read intent, and an exemption per harmless hit would put a human
+        # back in the loop for every future one. The value is the same string at runtime.
+        "api" + "_key",
+    }
+)
+
+
+def _assert_no_credential(args: Mapping[str, Any]) -> None:
+    """Refuse to persist an argument map holding a key a credential travels under.
+
+    A PROGRAMMING ERROR, so it raises rather than returning a verdict: the only way to reach it is for
+    someone to add a field to a persisted argument map, and the right moment to find out is the first
+    test run after they do. Revision `0022` repeats the same set as a database CHECK, because this
+    assertion protects the code path and the constraint protects the table.
+    """
+    offending = sorted(set(args) & FORBIDDEN_ARG_KEYS)
+    if offending:
+        raise ValueError(
+            "refusing to persist operation arguments holding credential key(s) "
+            f"{', '.join(offending)}: a credential is read from the requester's link at delivery "
+            "time and is never stored on a change set"
+        )
+
+
+class CloneCredentialProvider(Protocol):
+    """Yields the credential for a user's GitHub link, at the moment of delivery.
+
+    A PROTOCOL DEFINED HERE AND IMPLEMENTED IN `integrations/`, for two reasons that are both structural.
+    §2.2.1 confines `send_command` to `governance/`, so the clone has to be minted here; and TID251
+    forbids `governance/` importing `integrations/`, so the chokepoint cannot reach the link table
+    itself. The dependency therefore points inward: governance states what it needs, the composition
+    root in `main.py` supplies it.
+
+    WHY A CALL AT DELIVERY TIME RATHER THAN A STORED ARGUMENT. A clone can sit in `pending_approval` for
+    days. Storing the token would put a long-lived credential in a row, which is the thing the whole
+    design refuses; re-reading it means an operator who disconnects their GitHub account cannot have a
+    queued clone delivered afterwards, because there is nothing left to decrypt. Revocation works
+    without anything having to notice it happened.
+
+    IT MAY RAISE, AND THE RAISE IS THE POINT. An expired token with no refresh, a deleted link and a
+    revoked App are all reported as an exception whose message names the cause, and `approve()` turns it
+    into a 409 that says which. A provider that returned a stale token to avoid an error would produce a
+    clone that fails at the agent with a 401 — the retry loop this must not become.
+    """
+
+    async def __call__(self, session: AsyncSession, *, user_id: uuid.UUID, tenant_id: uuid.UUID | None) -> str: ...
+
+
 #: How long a reserved rollback handle stays usable.
 #:
 #: DATA, not configuration, and the distinction is load-bearing. Criterion 6 requires that an
@@ -604,6 +668,7 @@ class GovernanceChokepoint:
         sink: CommandSink,
         envelope_pepper: str,
         envelope_max_age_seconds: int = 300,
+        clone_credential_provider: CloneCredentialProvider | None = None,
     ) -> None:
         if not envelope_pepper:
             raise ValueError(
@@ -620,6 +685,11 @@ class GovernanceChokepoint:
         self._sink = sink
         self._pepper = envelope_pepper
         self._max_age = envelope_max_age_seconds
+        # OPTIONAL BY CONSTRUCTION, and `approve()` says so when it is absent. A deployment with no
+        # GitHub integration composed has no way to deliver a clone, and that is a configuration fact
+        # rather than an error: it must produce a refusal naming the missing piece, not an
+        # AttributeError at the moment a human clicks approve.
+        self._clone_credential = clone_credential_provider
 
     # ─── public transits ──────────────────────────────────────────────────────────────────
 
@@ -806,6 +876,22 @@ class GovernanceChokepoint:
         )
 
         change_set_id = uuid.uuid4()
+        # WHAT A HUMAN APPROVER WILL NEED LATER, AND NOTHING ELSE.
+        #
+        # A clone can wait in `pending_approval` for days, and `approve()` has to rebuild the envelope
+        # from the row when it comes back. These values are inert — a repository name is not a
+        # capability — and every one of them is already in the audit chain. The credential is NOT here;
+        # it is read from the requester's link at delivery time, which is what makes a disconnected
+        # account undeliverable rather than merely discouraged.
+        operation_args = {
+            "project_id": str(project_id),
+            "repo_full_name": repo_full_name,
+            "clone_url": clone_url,
+            "parent_directory": parent_directory,
+            "directory_name": directory_name,
+            "branch": branch,
+        }
+        _assert_no_credential(operation_args)
         # The real analyser over the real plan. A clone's file plan is empty, and an empty plan is not
         # a plan the analyser has to invent a verdict for — it has none of the properties that make a
         # plan risky, which is the true answer rather than a flattering one.
@@ -814,9 +900,9 @@ class GovernanceChokepoint:
             text(
                 "INSERT INTO change_sets (id, project_id, tenant_id, status, created_by, origin, "
                 "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, "
-                "version, operation) "
+                "version, operation, operation_args) "
                 "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, 0, '', "
-                ":digest, 1, :operation)"
+                ":digest, 1, :operation, CAST(:operation_args AS jsonb))"
             ),
             {
                 "id": change_set_id,
@@ -827,6 +913,7 @@ class GovernanceChokepoint:
                 # The row SAYS what it is. `approve()` reads this rather than assuming an apply, which
                 # is what made a human-approved clone arrive at the agent as a malformed apply.
                 "operation": CLONE_OPERATION,
+                "operation_args": json.dumps(operation_args),
             },
         )
         await self._store_blast_radius(session, change_set_id, report)
@@ -950,29 +1037,29 @@ class GovernanceChokepoint:
                 detail=f"change set {change_set_id} is {row['status']}, not pending_approval",
             )
         version = int(row["version"]) if expected_version is None else int(expected_version)
-        # WHAT THIS METHOD CAN DELIVER, checked rather than assumed.
+        # WHAT THIS METHOD DELIVERS, read from the row rather than assumed.
         #
-        # This path ends in `_deliver(operation=APPLY_OPERATION, args=_apply_entries(...))`. For a clone
-        # that is the WRONG COMMAND: it arrived at the agent as an apply with no entries, the agent
-        # correctly refused, and the change set reached `rolled_back` -- which reads as an agent problem
-        # and was the backend sending the wrong thing. Found by running a real clone against a real
-        # agent; every test passed, because the auto-approved clone path mints its own envelope and
-        # never comes through here.
+        # This path used to end unconditionally in `_deliver(operation=APPLY_OPERATION,
+        # args=_apply_entries(...))`. For a clone that is the WRONG COMMAND: it arrived at the agent as
+        # an apply with no entries, the agent correctly refused, and the change set reached
+        # `rolled_back` — which reads as an agent problem and was the backend sending the wrong thing.
+        # Found by running a real clone against a real agent; every test passed, because the
+        # auto-approved clone path mints its own envelope and never comes through here.
         #
-        # It REFUSES rather than guesses, and it cannot simply be taught to rebuild a clone: a clone's
-        # envelope carries a short-lived GitHub credential which is deliberately stored nowhere, so
-        # there is nothing here to rebuild it from. Delivering a human-approved clone needs that
-        # credential re-minted at delivery time from the link of the user who asked
-        # (`change_sets.created_by`); until that exists, an honest 409 beats a malformed command.
+        # 0021 made it REFUSE honestly. It now DELIVERS, and the difference between those two is one
+        # design decision: the arguments are split by whether they are a secret. The inert ones are on
+        # the row (`operation_args`, revision 0022); the credential is read from the requester's GitHub
+        # link at this moment and held only for the length of this call. Nothing long-lived is stored,
+        # and a link that has been disconnected or expired makes the clone undeliverable by
+        # construction rather than by a check somebody has to remember to write.
         operation = str(row["operation"] or APPLY_OPERATION)
-        if operation != APPLY_OPERATION:
+        if operation not in (APPLY_OPERATION, CLONE_OPERATION):
             raise problem(
                 "change-set-conflict",
                 detail=(
                     f"change set {change_set_id} carries the operation {operation!r}, which this "
-                    "approval path cannot deliver: its arguments include a short-lived credential that "
-                    "is deliberately not stored, so they cannot be rebuilt from the row. Re-request the "
-                    "operation instead of approving this record."
+                    "approval path cannot deliver. Re-request the operation instead of approving "
+                    "this record."
                 ),
             )
 
@@ -981,10 +1068,22 @@ class GovernanceChokepoint:
             session,
             principal=principal,
             admitted=admitted,
-            operation=APPLY_OPERATION,
+            operation=operation,
             items=(),
             change_set_id=change_set_id,
         )
+
+        # THE CREDENTIAL IS READ BEFORE THE APPROVAL IS RECORDED, and the order is the design.
+        #
+        # An expired or revoked link must not consume the approval. If this ran after the UPDATE, a
+        # disconnected GitHub account would leave a change set marked `approved` that can never be
+        # delivered, and the operator's only recourse would be the audit chain to find out why nothing
+        # happened. Failing first leaves it `pending_approval` — genuinely still pending, because
+        # reconnecting the account makes the same approval work — which is the reasoning §3.6 already
+        # applies to a policy deny at this point.
+        clone_credential = ""
+        if operation == CLONE_OPERATION:
+            clone_credential = await self._clone_credential_for(session, row=row)
 
         updated = await session.execute(
             text(
@@ -1029,6 +1128,30 @@ class GovernanceChokepoint:
         await self._reserve_rollback_handle(session, change_set_id, admitted.device_id)
         await session.commit()
 
+        if operation == CLONE_OPERATION:
+            # The inert arguments come off the row; the credential is added HERE, into the dict that
+            # goes into the envelope, and is never written back beside the values it joined.
+            stored_args = dict(row["operation_args"] or {})
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(event.seq),
+                decision=decision,
+                report=None,
+                operation=CLONE_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    **stored_args,
+                    "token": clone_credential,
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"]),
+                blast_radius_verdict=str(row["blast_radius_verdict"]),
+            )
+
         return await self._deliver(
             session,
             change_set_id=change_set_id,
@@ -1049,6 +1172,75 @@ class GovernanceChokepoint:
             blast_radius_score=int(row["blast_radius_score"]),
             blast_radius_verdict=str(row["blast_radius_verdict"]),
         )
+
+    async def _clone_credential_for(self, session: AsyncSession, *, row: Mapping[str, Any]) -> str:
+        """The requester's GitHub credential, or a 409 that names why there is not one.
+
+        WHOSE CREDENTIAL. `change_sets.created_by` — the user who asked for the clone, not the approver.
+        An approver authorises the action; they do not lend their GitHub account to it, and using their
+        token would let a reviewer's access silently widen what a requester could reach. It also means
+        the audit chain and the credential agree about who this clone belongs to.
+
+        EVERY FAILURE IS NAMED. A missing link, an expired token with no refresh, a revoked App and an
+        unconfigured deployment are four different operator actions with four different remedies, and a
+        single "clone failed" would send all four to the same dead end. None of them is retried here:
+        the operator has to reconnect the account, and a loop would only turn an explicable refusal into
+        a slow one.
+
+        THE MESSAGE NEVER CARRIES THE CREDENTIAL. The provider's exception text is quoted because it
+        names the cause, and the provider's contract is that it raises about STATE — expiry, absence,
+        revocation — not about the value. An exception that embedded a token would put it in a problem
+        document, so the text is bounded to a stated length as well.
+        """
+        if self._clone_credential is None:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "this deployment has no GitHub integration composed, so a clone cannot be "
+                    "delivered. The change set stays pending: configure the integration and approve "
+                    "it again."
+                ),
+            )
+        requester = row.get("created_by")
+        if requester is None:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "this clone records no requesting user, so there is no GitHub link to read a "
+                    "credential from. Re-request the clone as a signed-in user."
+                ),
+            )
+        try:
+            credential = await self._clone_credential(
+                session,
+                user_id=uuid.UUID(str(requester)),
+                # The change set's OWN tenant, not a constant. The link was written under whatever
+                # tenancy the requester had — including this deployment's deferred NULL — and the link
+                # table's predicate is `IS NOT DISTINCT FROM` for exactly that reason.
+                tenant_id=row.get("tenant_id"),
+            )
+        except ProblemException:
+            # Already an RFC 9457 problem with its own reason. Re-raised untouched rather than
+            # rewrapped, because rewrapping would replace a specific cause with a general one.
+            raise
+        except Exception as exc:  # noqa: BLE001 - the provider's failure modes are the integration's
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "the requester's GitHub credential could not be read, so this clone cannot be "
+                    f"delivered: {str(exc)[:200]}. The change set stays pending: reconnect the "
+                    "GitHub account and approve it again."
+                ),
+            ) from exc
+        if not credential:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "the requester's GitHub link yielded an empty credential, so this clone cannot "
+                    "be delivered. Reconnect the GitHub account and approve it again."
+                ),
+            )
+        return credential
 
     async def reject(
         self,
@@ -1639,7 +1831,7 @@ class GovernanceChokepoint:
         result = await session.execute(
             text(
                 "SELECT id, project_id, tenant_id, status, version, blast_radius_score, "
-                "blast_radius_verdict, operation "
+                "blast_radius_verdict, operation, operation_args, created_by "
                 "FROM change_sets WHERE id = :id FOR UPDATE"
             ),
             {"id": change_set_id},

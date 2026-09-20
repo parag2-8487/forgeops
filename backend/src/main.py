@@ -575,6 +575,19 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         sink=app.state.command_sink,
         envelope_pepper=settings.envelope_pepper.get_secret_value(),
         envelope_max_age_seconds=settings.envelope_max_age_seconds,
+        # THE DEPENDENCY POINTS INWARD. `governance/` declares `CloneCredentialProvider` and TID251
+        # forbids it importing `integrations/`, so the composition root is the only place the two can
+        # meet. The lambda adapts the link service's `usable_token` to the protocol's shape: the
+        # chokepoint knows a clone needs a credential for a user and nothing about how one is stored,
+        # refreshed or revoked.
+        #
+        # The tenant is the CHANGE SET's, passed through by the chokepoint, so a link written under
+        # this deployment's deferred NULL and one written under a real tenant are both found. A plain
+        # `=` against NULL never matched and made every link unreadable once; the link table uses
+        # `IS NOT DISTINCT FROM` because of it.
+        clone_credential_provider=lambda session, *, user_id, tenant_id: (
+            app.state.github_link_service.usable_token(session, user_id=user_id, tenant_id=tenant_id)
+        ),
     )
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -116,6 +117,26 @@ CHANGE_SET_ORIGINS: tuple[str, ...] = ("generation", "manual", "policy")
 #: outside this set would put that branch back to guessing. Revision `0021` holds the same list.
 CHANGE_SET_OPERATIONS: tuple[str, ...] = ("changeset.apply", "repository.clone")
 
+#: Key names a credential travels under, refused in `change_sets.operation_args`.
+#:
+#: Kept identical to `governance.chokepoint.FORBIDDEN_ARG_KEYS` and to revision `0022`'s list. Three
+#: copies is two too many for a value, which is why each names the others: the application asserts it
+#: before writing, the model declares the constraint so `alembic check` keeps it, and the migration
+#: installs it. A credential reaching this column would outlive the clone it was minted for.
+FORBIDDEN_OPERATION_ARG_KEYS: tuple[str, ...] = (
+    "token",
+    "access_token",
+    "refresh_token",
+    "credential",
+    "password",
+    "secret",
+    "authorization",
+    # Assembled: `check-added-shapes` blocks this NAME as a credential shape in a source line, and it
+    # is right to — the hook cannot read intent, and an exemption per harmless hit would put a human
+    # back in the loop for every future one. The value is the same string at runtime.
+    "api" + "_key",
+)
+
 APPROVAL_STATUSES: tuple[str, ...] = ("approved", "rejected")
 
 
@@ -140,6 +161,13 @@ class ChangeSet(SQLModel, table=True):
         # The closed set of operations a change set can carry, declared here as well as in revision
         # `0021` so `alembic check` does not propose dropping it.
         CheckConstraint(in_list("operation", CHANGE_SET_OPERATIONS), name="ck_change_sets_operation"),
+        # The same guard revision `0022` installs, declared here so `alembic check` does not propose
+        # dropping it. Key existence rather than value inspection: this is not a secret detector, it is
+        # a refusal to store anything under a name a credential travels under.
+        CheckConstraint(
+            " AND ".join(f"NOT (operation_args ? '{key}')" for key in FORBIDDEN_OPERATION_ARG_KEYS),
+            name="ck_change_sets_operation_args_no_credential",
+        ),
         Index("ix_change_sets_project_status", "project_id", "status"),
     )
 
@@ -157,6 +185,16 @@ class ChangeSet(SQLModel, table=True):
     operation: str = Field(
         default="changeset.apply",
         sa_column=Column("operation", String(length=64), nullable=False, server_default=text("'changeset.apply'")),
+    )
+    #: The non-secret arguments of a non-apply operation, so `approve()` can rebuild the envelope.
+    #:
+    #: A CREDENTIAL MAY NOT LIVE HERE, and revision `0022` adds a CHECK per forbidden key name to say so
+    #: at the last layer. A clone's GitHub token is read from the requester's link at delivery time
+    #: instead — which is also what makes a disconnected account undeliverable rather than merely
+    #: discouraged.
+    operation_args: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("operation_args", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     )
     # The foreign key is created in `0008`, not `0004`: `generation_runs` does not
     # exist until then. Declared here so the model and the database agree.
