@@ -694,7 +694,20 @@ jobs:
         working-directory: .
         run: bash scripts/check-chokepoint.sh --go
       # PRD §9: -race and -shuffle=on. Linux runners have cgo, so -race works.
+      #
+      # `FORGEOPS_REAL_DOCKER=1` because THIS RUNNER HAS A DOCKER DAEMON, and not using it was a missed
+      # check rather than an unavoidable gap. The opt-in exists so a developer without Docker running does
+      # not get a failing build; a CI runner that has one and skips the suite gets a weaker build for no
+      # reason. It also means the coverage number this job enforces reflects the code paths that actually
+      # talk to the tool, rather than counting them as dead weight — the alternative was a coverage figure
+      # that fell below the gate because real-tool code can only be covered by real-tool tests.
+      #
+      # `FORGEOPS_REAL_CLUSTER` is deliberately NOT set here: this job stands up no cluster, and setting an
+      # opt-in whose infrastructure is absent would turn the suite red for the environment rather than for
+      # the code. Those tests run in `Kubernetes & SPIRE CI`, which does stand one up.
       - name: Test
+        env:
+          FORGEOPS_REAL_DOCKER: "1"
         run: go test -race -shuffle=on ./... -count=1
       # Criterion 11's AGENT third. It was recorded as "`agent` runs `scripts/check-coverage.sh
       # 70` over `./internal/...`" while that script did not exist in the repository at all, so
@@ -709,6 +722,12 @@ jobs:
       # enforces is visible at the call site rather than buried in the script.
       - name: Coverage gate, 70% over ./internal/...
         working-directory: .
+        env:
+          # The same reasoning as the `Test` step above: this runner has a Docker daemon, so the operations
+          # that talk to it are exercised rather than counted as uncoverable. Without this the figure is
+          # 70.2% and with it the real-tool paths are included, which is both a truer number and a margin
+          # that does not sit one line above the gate.
+          FORGEOPS_REAL_DOCKER: "1"
         run: bash scripts/check-coverage.sh 70
       # design.md §0.4.4 and criterion 11 both say the AGENT job runs `check-no-skips.py`.
       # It did not: the only invocation in this workflow was the backend `auth` job's, so the

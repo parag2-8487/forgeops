@@ -343,309 +343,107 @@ func k8sInventory(ctx context.Context, d *dispatcher, v *envelope.Verified, sink
 
 	sink.Progress(15, string(OpKubernetesInventory), "reading namespaces and nodes")
 
-	if raw, err := getJSON(ctx, runner, base, "namespaces"); err != nil {
-		unreadable("namespaces", err)
-	} else {
-		var payload struct {
-			Items []struct {
-				Metadata struct{ Name string } `json:"metadata"`
-			} `json:"items"`
+	// EACH FAMILY INDEPENDENTLY, and a failure in one is RECORDED rather than fatal. A cluster where the
+	// operator may list pods but not ingresses is ordinary; refusing the whole read would make the
+	// dashboard useless for them, and an empty list would tell them they have no ingresses. The decoders
+	// are pure functions in `kubernetes_decode.go` so that what they do with real tool output is testable
+	// without a cluster ? as inline closures they were the least-checked part of the most-broken path.
+	scope := scopeArgs(args.Namespace)
+	read := func(family string, decode func(string) error, getArgs ...string) {
+		document, err := getJSON(ctx, runner, base, getArgs...)
+		if err != nil {
+			unreadable(family, err)
+			return
 		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable("namespaces", err)
-		}
-		for _, item := range payload.Items {
-			inventory.Namespaces = append(inventory.Namespaces, item.Metadata.Name)
+		if err := decode(document); err != nil {
+			unreadable(family, err)
 		}
 	}
 
-	if raw, err := getJSON(ctx, runner, base, "nodes"); err != nil {
-		unreadable("nodes", err)
-	} else {
-		var payload struct {
-			Items []struct {
-				Metadata struct{ Name string } `json:"metadata"`
-				Status   struct {
-					Conditions []struct {
-						Type   string `json:"type"`
-						Status string `json:"status"`
-					} `json:"conditions"`
-					NodeInfo struct {
-						KubeletVersion string `json:"kubeletVersion"`
-						OSImage        string `json:"osImage"`
-					} `json:"nodeInfo"`
-					Allocatable map[string]string `json:"allocatable"`
-				} `json:"status"`
-			} `json:"items"`
+	read("namespaces", func(document string) error {
+		names, err := decodeNamespaces(document)
+		if err != nil {
+			return err
 		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable("nodes", err)
+		inventory.Namespaces = names
+		return nil
+	}, "namespaces")
+
+	read("nodes", func(document string) error {
+		nodes, err := decodeNodes(document)
+		if err != nil {
+			return err
 		}
-		for _, item := range payload.Items {
-			node := K8sNode{
-				Name:    item.Metadata.Name,
-				Version: item.Status.NodeInfo.KubeletVersion,
-				OSImage: item.Status.NodeInfo.OSImage,
-			}
-			node.Allocatable.CPU = item.Status.Allocatable["cpu"]
-			node.Allocatable.Memory = item.Status.Allocatable["memory"]
-			// Only a Ready condition that is actually present sets the pointer. An absent condition
-			// leaves it nil, which the dashboard renders as "the node has not reported" — not as "the
-			// node is down", which would page somebody for a reporting gap.
-			for _, condition := range item.Status.Conditions {
-				if condition.Type != "Ready" {
-					continue
-				}
-				ready := condition.Status == "True"
-				node.Ready = &ready
-			}
-			inventory.Nodes = append(inventory.Nodes, node)
-		}
-	}
+		inventory.Nodes = nodes
+		return nil
+	}, "nodes")
 
 	sink.Progress(40, string(OpKubernetesInventory), "reading pods and workloads")
 
-	scope := scopeArgs(args.Namespace)
-	if raw, err := getJSON(ctx, runner, base, append([]string{"pods"}, scope...)...); err != nil {
-		unreadable("pods", err)
-	} else {
-		var payload struct {
-			Items []struct {
-				Metadata struct {
-					Name      string `json:"name"`
-					Namespace string `json:"namespace"`
-				} `json:"metadata"`
-				Spec struct {
-					NodeName string `json:"nodeName"`
-				} `json:"spec"`
-				Status struct {
-					Phase             string `json:"phase"`
-					StartTime         string `json:"startTime"`
-					ContainerStatuses []struct {
-						Ready        bool `json:"ready"`
-						RestartCount int  `json:"restartCount"`
-						State        struct {
-							Waiting *struct {
-								Reason string `json:"reason"`
-							} `json:"waiting"`
-						} `json:"state"`
-					} `json:"containerStatuses"`
-				} `json:"status"`
-			} `json:"items"`
-		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable("pods", err)
-		}
-		for _, item := range payload.Items {
-			pod := K8sPod{
-				Namespace: item.Metadata.Namespace,
-				Name:      item.Metadata.Name,
-				Phase:     item.Status.Phase,
-				Node:      item.Spec.NodeName,
-				StartedAt: item.Status.StartTime,
-				Total:     len(item.Status.ContainerStatuses),
-			}
-			for _, container := range item.Status.ContainerStatuses {
-				if container.Ready {
-					pod.Ready++
-				}
-				pod.Restarts += container.RestartCount
-				if container.State.Waiting != nil && pod.Reason == "" {
-					pod.Reason = container.State.Waiting.Reason
-				}
-			}
-			inventory.Pods = append(inventory.Pods, pod)
-		}
-	}
-
-	for kind, plural := range map[string]string{
-		"deployment": "deployments", "statefulset": "statefulsets", "daemonset": "daemonsets",
-	} {
-		raw, err := getJSON(ctx, runner, base, append([]string{plural}, scope...)...)
+	read("pods", func(document string) error {
+		pods, err := decodePods(document)
 		if err != nil {
-			unreadable(plural, err)
-			continue
+			return err
 		}
-		var payload struct {
-			Items []struct {
-				Metadata struct {
-					Name      string `json:"name"`
-					Namespace string `json:"namespace"`
-				} `json:"metadata"`
-				Spec struct {
-					Replicas *int `json:"replicas"`
-					Template struct {
-						Spec struct {
-							Containers []struct {
-								Image string `json:"image"`
-							} `json:"containers"`
-						} `json:"spec"`
-					} `json:"template"`
-				} `json:"spec"`
-				Status struct {
-					ReadyReplicas *int `json:"readyReplicas"`
-					// A DaemonSet reports differently: it has no `spec.replicas`, and the number that
-					// matters is how many nodes it should be on. Read both and prefer the one present.
-					DesiredNumberScheduled *int `json:"desiredNumberScheduled"`
-					NumberReady            *int `json:"numberReady"`
-				} `json:"status"`
-			} `json:"items"`
-		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable(plural, err)
-			continue
-		}
-		for _, item := range payload.Items {
-			workload := K8sWorkload{
-				Namespace: item.Metadata.Namespace, Kind: kind, Name: item.Metadata.Name,
-				Desired: item.Spec.Replicas, Ready: item.Status.ReadyReplicas, Images: []string{},
+		inventory.Pods = pods
+		return nil
+	}, append([]string{"pods"}, scope...)...)
+
+	// ORDERED, not map-ranged. Go randomises map iteration, and a workload list whose sections reordered
+	// on every refresh is unusable.
+	for _, family := range []struct{ kind, plural string }{
+		{"deployment", "deployments"},
+		{"statefulset", "statefulsets"},
+		{"daemonset", "daemonsets"},
+	} {
+		kind := family.kind
+		read(family.plural, func(document string) error {
+			workloads, err := decodeWorkloads(kind, document)
+			if err != nil {
+				return err
 			}
-			if workload.Desired == nil && item.Status.DesiredNumberScheduled != nil {
-				workload.Desired = item.Status.DesiredNumberScheduled
-			}
-			if workload.Ready == nil && item.Status.NumberReady != nil {
-				workload.Ready = item.Status.NumberReady
-			}
-			for _, container := range item.Spec.Template.Spec.Containers {
-				workload.Images = append(workload.Images, container.Image)
-			}
-			inventory.Workloads = append(inventory.Workloads, workload)
-		}
+			inventory.Workloads = append(inventory.Workloads, workloads...)
+			return nil
+		}, append([]string{family.plural}, scope...)...)
 	}
 
 	sink.Progress(70, string(OpKubernetesInventory), "reading services, ingresses, config and autoscalers")
 
-	if raw, err := getJSON(ctx, runner, base, append([]string{"services"}, scope...)...); err != nil {
-		unreadable("services", err)
-	} else {
-		var payload struct {
-			Items []struct {
-				Metadata struct {
-					Name      string `json:"name"`
-					Namespace string `json:"namespace"`
-				} `json:"metadata"`
-				Spec struct {
-					Type      string `json:"type"`
-					ClusterIP string `json:"clusterIP"`
-					Ports     []struct {
-						Port     int    `json:"port"`
-						Protocol string `json:"protocol"`
-					} `json:"ports"`
-				} `json:"spec"`
-			} `json:"items"`
+	read("services", func(document string) error {
+		services, err := decodeServices(document)
+		if err != nil {
+			return err
 		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable("services", err)
-		}
-		for _, item := range payload.Items {
-			ports := make([]string, 0, len(item.Spec.Ports))
-			for _, port := range item.Spec.Ports {
-				ports = append(ports, fmt.Sprintf("%d/%s", port.Port, port.Protocol))
-			}
-			inventory.Services = append(inventory.Services, K8sService{
-				Namespace: item.Metadata.Namespace, Name: item.Metadata.Name,
-				Type: item.Spec.Type, ClusterIP: item.Spec.ClusterIP, Ports: strings.Join(ports, ","),
-			})
-		}
-	}
+		inventory.Services = services
+		return nil
+	}, append([]string{"services"}, scope...)...)
 
-	if raw, err := getJSON(ctx, runner, base, append([]string{"ingresses"}, scope...)...); err != nil {
-		unreadable("ingresses", err)
-	} else {
-		var payload struct {
-			Items []struct {
-				Metadata struct {
-					Name      string `json:"name"`
-					Namespace string `json:"namespace"`
-				} `json:"metadata"`
-				Spec struct {
-					IngressClassName string `json:"ingressClassName"`
-					Rules            []struct {
-						Host string `json:"host"`
-					} `json:"rules"`
-				} `json:"spec"`
-			} `json:"items"`
+	read("ingresses", func(document string) error {
+		ingresses, err := decodeIngresses(document)
+		if err != nil {
+			return err
 		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable("ingresses", err)
-		}
-		for _, item := range payload.Items {
-			hosts := make([]string, 0, len(item.Spec.Rules))
-			for _, rule := range item.Spec.Rules {
-				if rule.Host != "" {
-					hosts = append(hosts, rule.Host)
-				}
-			}
-			inventory.Ingresses = append(inventory.Ingresses, K8sIngress{
-				Namespace: item.Metadata.Namespace, Name: item.Metadata.Name,
-				Hosts: hosts, Class: item.Spec.IngressClassName,
-			})
-		}
-	}
+		inventory.Ingresses = ingresses
+		return nil
+	}, append([]string{"ingresses"}, scope...)...)
 
-	if raw, err := getJSON(ctx, runner, base, append([]string{"configmaps"}, scope...)...); err != nil {
-		unreadable("configmaps", err)
-	} else {
-		var payload struct {
-			Items []struct {
-				Metadata struct {
-					Name      string `json:"name"`
-					Namespace string `json:"namespace"`
-				} `json:"metadata"`
-				Data map[string]string `json:"data"`
-			} `json:"items"`
+	read("configmaps", func(document string) error {
+		configMaps, err := decodeConfigMaps(document)
+		if err != nil {
+			return err
 		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable("configmaps", err)
-		}
-		for _, item := range payload.Items {
-			// KEYS ONLY. A ConfigMap regularly holds something that should have been a Secret, and a
-			// dashboard that rendered values would publish it to every viewer of the project.
-			keys := make([]string, 0, len(item.Data))
-			for key := range item.Data {
-				keys = append(keys, key)
-			}
-			inventory.ConfigMaps = append(inventory.ConfigMaps, K8sConfigMap{
-				Namespace: item.Metadata.Namespace, Name: item.Metadata.Name, Keys: keys,
-			})
-		}
-	}
+		inventory.ConfigMaps = configMaps
+		return nil
+	}, append([]string{"configmaps"}, scope...)...)
 
-	if raw, err := getJSON(ctx, runner, base, append([]string{"horizontalpodautoscalers"}, scope...)...); err != nil {
-		unreadable("horizontalpodautoscalers", err)
-	} else {
-		var payload struct {
-			Items []struct {
-				Metadata struct {
-					Name      string `json:"name"`
-					Namespace string `json:"namespace"`
-				} `json:"metadata"`
-				Spec struct {
-					MinReplicas    *int `json:"minReplicas"`
-					MaxReplicas    int  `json:"maxReplicas"`
-					ScaleTargetRef struct {
-						Kind string `json:"kind"`
-						Name string `json:"name"`
-					} `json:"scaleTargetRef"`
-				} `json:"spec"`
-				Status struct {
-					CurrentReplicas *int `json:"currentReplicas"`
-				} `json:"status"`
-			} `json:"items"`
+	read("horizontalpodautoscalers", func(document string) error {
+		autoscalers, err := decodeHPAs(document)
+		if err != nil {
+			return err
 		}
-		if err := decodeFirstJSON(raw, &payload); err != nil {
-			unreadable("horizontalpodautoscalers", err)
-		}
-		for _, item := range payload.Items {
-			inventory.HPAs = append(inventory.HPAs, K8sHPA{
-				Namespace: item.Metadata.Namespace, Name: item.Metadata.Name,
-				Target: fmt.Sprintf("%s/%s", strings.ToLower(item.Spec.ScaleTargetRef.Kind),
-					item.Spec.ScaleTargetRef.Name),
-				MinReplicas: item.Spec.MinReplicas, MaxReplicas: intPtr(item.Spec.MaxReplicas),
-				Current: item.Status.CurrentReplicas,
-			})
-		}
-	}
+		inventory.HPAs = autoscalers
+		return nil
+	}, append([]string{"horizontalpodautoscalers"}, scope...)...)
 
 	encoded, err := json.Marshal(inventory)
 	if err != nil {
@@ -673,10 +471,22 @@ func readWorkloadReplicas(ctx context.Context, runner *validator.Runner, base []
 	if err != nil || !outcome.Passed {
 		return nil
 	}
-	trimmed := strings.TrimSpace(outcome.Output)
+	return parseReplicaField(outcome.Output)
+}
+
+// parseReplicaField turns a `jsonpath={.status.readyReplicas}` result into a count, or nil.
+//
+// EXTRACTED SO IT CAN BE TESTED WITHOUT A CLUSTER, because the case that matters most is the one that looks
+// like a bug and is not: the field is ABSENT for a workload at zero replicas, so kubectl prints nothing.
+// Returning 0 there would make a deliberately scaled-down workload indistinguishable from one whose status
+// nothing has populated yet, and a dashboard would show both as "0 ready" — true of one of them and
+// misleading about the other.
+//
+// A value this cannot parse also yields nil rather than zero: "kubectl said something unexpected" must not
+// render as "the workload has no replicas".
+func parseReplicaField(output string) *int {
+	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
-		// An empty field means the API server has not populated it — a workload scaled to zero reports
-		// nothing here, and so does one that has never been observed. Nil is the honest answer.
 		return nil
 	}
 	value, convErr := strconv.Atoi(trimmed)

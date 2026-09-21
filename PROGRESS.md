@@ -280,6 +280,102 @@ Two defects the run exposed, both recorded rather than fixed:
   same files. `every_imported_package_is_declared` fails in both readings, so it did not move the
   score, but a full scan losing its import graph is not a difference the index should have.
 
+## Phase 2 progress — 16 of 123 boxes, and what closed the three open items
+
+**Box count: 16 done, 107 open.** Up from 8. Every tick carries its evidence inline in `phases.md`; every
+box left open says why in the same place. What landed this session is one vertical slice — the Docker and
+Kubernetes read-and-act surface, 2.4 and 2.9 — plus the three items that had been recorded as open.
+
+### The three open items, all closed
+
+**1. `deployment.apply_manifests` had never touched a cluster.** It now runs against a real one on every
+push. `agent/internal/executor/deployment_cluster_test.go` and `kubernetes_cluster_test.go` execute in
+`Kubernetes & SPIRE CI` against the kind cluster that workflow already stands up: apply, real health
+verification, a `degraded` from an image tag that cannot be pulled, a second `degraded` from a CPU request
+no node can satisfy, a rollback that restores the previous image, the confinement refusal with a reachable
+cluster sitting there ready to accept anything, and the full inventory. Every assertion reads back from the
+cluster with `kubectl get -o jsonpath` rather than from the operation's own report, because a report is the
+code's opinion and the point is to check the opinion against the object. 57s locally, PASS.
+
+That workflow was also, until now, a job that created a cluster and asserted nothing: 29 lines ending in
+`kubectl create namespace spire || true`. The `|| true` made its only assertion unfalsifiable — a namespace
+that cannot be created is the clearest possible signal that the cluster above is unusable, and it swallowed
+exactly that. Removed, and replaced with an idempotent `apply` plus a read-back.
+
+**2 and 3 had ONE root cause, and it was not the one recorded.** `printed-instructions` failing 1 of 7 and
+`ci / agent (windows-latest host binary)` failing forever were both recorded as consequences of the mirror
+having no published releases. The real cause is narrower and fixable: the printed install command installs
+an **archive** — it globs `forgeops-agent_*_<os>_*.tar.gz` (or `.zip`) in the current folder and
+`~/Downloads`, extracts it, and installs the binary from inside — and both checks placed a bare `go build`
+output where the archive should be. The command then did exactly what it promises: reported finding no
+tarball and exited 0, deliberately, because `exit` in an interactive shell closes the user's terminal. So
+`expect(output).toBeDefined()` was satisfied by the words "No forgeops-agent tarball found", nothing was
+installed, and the next line failed with `command not found`. **The product was right the whole time; both
+checks' setup did not match the instructions they were checking.**
+
+`scripts/package-agent.sh` builds the archive by invoking the same `agent/.goreleaser.yaml` the tagged
+release uses, so the file-name template, the archive format and the binary's name inside it are a real
+download's. Nothing here needs a published release — it needs an archive, and one can be built from the
+working tree. Writing `tar czf` instead would have been three lines and would have tested the three lines.
+Verified on this Windows host end to end: package, run the printed command **verbatim**, and resolve the
+bare name against a PATH composed the way a newly opened shell composes it (Machine + User from the
+registry) — `C:\Users\...\AppData\Local\Programs\ForgeOps\forgeops-agent.exe`, and
+`forgeops-agent version` prints one line. The Linux half runs in CI.
+
+### 2.4 and 2.9: five new agent operations, two reads and three actions
+
+Not fifteen verbs. An operation is an AUTHORITY, not a function: `docker.container_action` names "may act on
+one container on this host", and splitting it per verb would quadruple the whitelist while narrowing
+nothing, since anything holding one could ask for the others. What the split DOES buy is the opposite
+direction — the reads are separate operations so that a refreshing panel holds read authority continuously
+and write authority never. Still absent, and checkable by reading one file: no operation takes a docker or
+kubectl command line, none accepts `--privileged` or a bind mount, none can name a resource kind outside the
+workload set, and there is no `exec` into a container.
+
+**The reads are approval-free, and that pairing is the design.** A dashboard refreshes; an approval per
+refresh either stops the refresh or trains an approver to click without reading, and the second is worse.
+What makes it safe is that they mutate nothing — and `read_inventory` still performs admission, still
+evaluates policy, and still sends a signed envelope over mTLS. A policy `deny` **raises** rather than
+returning an empty inventory, because an empty answer renders as "this host has nothing" and a human acts
+on that. No change-set row and no audit row per read: that is a decision with a cost, recorded rather than
+hidden — a read of a cluster's ConfigMap key names is not reconstructible from the audit log. What makes it
+acceptable is that the read cannot change anything and cannot disclose a value.
+
+The read had to be minted by `_mint_and_sign`, because that function is asserted to be the only caller of
+`sign_envelope` and a second signer would defeat the gate. It takes a read branch there and mints **no
+`MutationAuthority`**: an authority names a change set, an approval and an audit sequence, a read has none
+of the three, and `mint_authority` rightly refuses an `audit_seq` below 1 — so minting one would have meant
+inventing all three to satisfy a constructor, which is the defect class this repository keeps digging out.
+A read's `approval_id` travels empty, and a guard refuses a read that carries one.
+
+### Defects this session's own work produced, and how each was caught
+
+- **A version-skew warning made every cluster unreadable.** `kubectl` writes it to stderr, the runner merges
+  the streams, and the buffer is then not a JSON document. The first version ignored the parse failure and
+  refused every inventory on any cluster whose version differed from the operator's client — a warning
+  turned into an unreachable cluster. The second trimmed to the first brace and failed when the warning
+  landed AFTER the document (`invalid character 'W' after top-level value`), which is what actually happens
+  when stdout flushes first. It now decodes the first complete JSON value; four arrangements are pinned.
+  **Only a real cluster surfaced this**, and only because the local kubectl is 1.36 against a 1.32 server.
+- **A frontend test passed while still showing its spinner.** It awaited `k8s-dashboard`, which is present
+  during loading, so the assertion after it was vacuous. It now awaits a data-dependent element.
+- **A credential-shaped literal and mangled Go struct tags**, both caught by `pre-commit` before they could
+  be committed — the DSN is assembled from fragments, and the tags were shell-escaping damage.
+- **Two PowerShell backtick accidents**, each turning a comment into code (`` `r `` became a carriage
+  return) and each caught by `ruff`. Noted because it happened twice: content containing backticks must not
+  go through a double-quoted PowerShell string.
+
+### What is NOT built, stated plainly
+
+107 boxes remain, and they are not small: §2.3's timeline and diff, §2.4a Inngest, §2.5's Command Center,
+§2.6 notifications, §2.7 and §2.7a ArgoCD and Argo Rollouts, §2.7b the service mesh, §2.8 dev tools,
+§2.10's twelve OTel/Mimir/Loki/Grafana boxes, §2.11 RCA, §2.12 self-healing, §2.13 learning history, §2.14
+knowledge base, and the twenty completion criteria. Within the sections touched this session, the specific
+absences are container and pod LOGS and EVENTS (all streams, all needing the §2.2 SSE `log` machinery),
+container CREATE (deliberately — it is the bind-mount-and-privilege authority this catalogue avoids), image
+BUILD and PUSH (§2.2's own box; a push produces the digest a deployment record should pin), and the
+metrics-tier half of the resource-utilisation box, which needs §2.10.
+
 ## Phase 2 backlog carried forward
 
 Explicit, so none of it is lost when the merged Phase 2 is built on top of it. Each line is a

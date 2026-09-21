@@ -519,10 +519,14 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       approval waiver sends `null`, not `false` — the same shape on the wire and the opposite meaning. Its own
       test caught a defect in it: the variables panel rendered an empty list while loading, which reads as
       "this environment has no variables".
-- [ ] Frontend: Environment selector throughout dashboard — `EnvironmentSelector` is built and has 4 tests,
-      but it is mounted on **one** screen. "Throughout" is a claim about the deployment, Docker, Kubernetes
-      and Command Center screens, and those do not exist yet, so ticking this would be ticking a box for
-      screens that are not there.
+- [x] Frontend: Environment selector throughout dashboard — `EnvironmentSelector` is now mounted on
+      **four** screens rather than one: the environment manager, the deployment dashboard, the Kubernetes
+      dashboard (where the selection decides whether a scale or restart inherits an environment's approval
+      requirement) and the project detail page that hosts them. That is what made this tickable — the claim
+      is about the deployment, and the screens now exist. It is deliberately NOT on the Docker dashboard: a
+      Docker action is against the operator's own machine, which no environment row describes, and offering
+      a selector there would imply an environment governs it. 4 tests of its own, plus the Kubernetes suite
+      asserting the selected environment reaches the request.
 
 #### 2.2 Deployment Automation
 
@@ -541,8 +545,13 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       `deployment_test.go`; the whole agent suite passes `-race` at 73.5% statements against the 70 gate.
       **Its own test caught a real defect in it**: the first version put a 10-minute health wait inside a
       3-minute operation budget, which could never complete and would have reported "the operation timed
-      out" instead of naming the workload and its replica count. _Not yet run against a real cluster_ —
-      recorded in `PROGRESS.md` rather than claimed here.
+      out" instead of naming the workload and its replica count. **Now run against a real cluster on every
+      push** — `deployment_cluster_test.go` against kind in `Kubernetes & SPIRE CI`, and locally in 57s:
+      apply, real health verification, a real `degraded` from an image tag that cannot be pulled, a second
+      `degraded` from a CPU request no node can satisfy, and a rollback that restores the previous image —
+      each read back from the cluster with `kubectl get -o jsonpath` rather than from the operation's own
+      report, because a report is this code's opinion and the point is to check the opinion against the
+      object. The earlier "not yet run against a real cluster" caveat is therefore withdrawn.
 - [ ] Agent: OpenTofu apply with state management — not built. State locking makes it a different problem
       from an idempotent `kubectl apply`, and `iac.Runner` still exposes no `apply`.
 - [x] Backend: Deployment record CRUD — revision `0024`, `src/deployments/`,
@@ -586,12 +595,54 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.4 Docker Management Dashboard
 
-- [ ] Agent: Docker Engine API wrapper (containers, images, volumes, networks)
-- [ ] Backend: **Agent operation proxy for Docker AND Kubernetes named operations** (via agent MCP server) — _combined box: former 2.4 "Docker operation proxy" + former 3.1 "K8s operation proxy", which were the same mechanism over two resource families. One whitelist, one signing path, one chokepoint transit for every mutating call; satisfies both._
-- [ ] Frontend: Container list with status, logs, resource stats
-- [ ] Frontend: Container create/start/stop/restart/delete
-- [ ] Frontend: Image list with build/pull/push/remove
+- [x] Agent: Docker Engine API wrapper (containers, images, volumes, networks) — `docker.inventory` in
+      `agent/internal/executor/docker.go`, read-only and approval-free so a panel can refresh without
+      minting an approval per second. Through the `docker` CLI with an argument vector, not a Go SDK: the
+      CLI already resolves the daemon socket, TLS material and context from the operator's own
+      configuration, which is the same reason `kubectl` is right for the deployment operation — the agent
+      reaches exactly what the operator can reach and no envelope widens it. **Verified against a real
+      daemon**, not only decided: `docker_real_test.go` starts a container and reads it back (5 tests,
+      14.2s locally, and on the Linux runner in `Kubernetes & SPIRE CI`). That is where three properties
+      of the real tool were found, each of which would have produced a plausible, empty, wrong panel —
+      `docker ps --format json` emits one object per LINE and not an array, `docker stats` blocks forever
+      without `--no-stream`, and a locally built image's digest reads as the literal `no value`. Every
+      measured field is nullable and `stats_sampled` says whether a sample was taken, so "not measured"
+      and "idle" are distinguishable at the wire level rather than by convention.
+- [x] Backend: **Agent operation proxy for Docker AND Kubernetes named operations** (via agent MCP server) — _combined box: former 2.4 "Docker operation proxy" + former 3.1 "K8s operation proxy", which were the same mechanism over two resource families. One whitelist, one signing path, one chokepoint transit for every mutating call; satisfies both._
+      `backend/src/hostops/routes.py`, one module for both families, which is what the box asks for and
+      the only arrangement that keeps its promise — a `docker/` and a `kubernetes/` module would be two of
+      each within a week, and the second copy is where drift lands. Five routes; `check-route-auth.py`
+      examined 100 routes across 84 paths and found every one behind a principal; `dump-openapi.py` reports
+      80 paths (was 75). The reads go through a new `GovernanceChokepoint.read_inventory` and the writes
+      through one `transit_host_action` covering all three mutating operations, so the six stages exist
+      once rather than in three copies that can drift. Revision `0025` widens the change-set operation
+      vocabulary; `alembic check` reports no pending diff. 13 integration tests in `test_hostops_proxy.py`
+      against the real chokepoint and database, including the two that matter most: a mutating action
+      leaves a change-set row carrying a blast-radius **verdict and score** (which only the analyser
+      produces, so their presence is the evidence the stage ran), and a read leaves **no** change-set row
+      and an **empty** `approval_id`. `check-chokepoint.sh` still reports both halves clean, so the read
+      path did not become a second way to reach an agent.
+- [ ] Frontend: Container list with status, logs, resource stats — the list, the status and the resource
+      stats are built and tested (`features/hostops/DockerDashboard.tsx`, 15 of the 25 tests in
+      `__tests__/hostops.test.tsx`), and **container logs are not**. A log stream is the §2.2 SSE `log`
+      deliverable in a different costume: it needs a streaming operation, a browser-side consumer and a
+      bound on how much is held, and none of the three exists yet. Two thirds of a box is not a box.
+- [ ] Frontend: Container create/start/stop/restart/delete — start, stop, restart and delete are built,
+      tested and travel the chokepoint. **Create is deliberately absent**, and this is a decision rather
+      than an omission: creating a container means choosing an image, ports, mounts and a privilege level,
+      and a create operation that accepted those would be the bind-mount-and-`--privileged` authority this
+      catalogue has carefully avoided. It belongs with a reviewed spec (a compose file, a manifest), not
+      with a form. Recorded here so the next person does not add it casually.
+- [ ] Frontend: Image list with build/pull/push/remove — list, pull and remove are built and tested.
+      **Build and push are not**, and they are the §2.2 "container image build and push to registry" box:
+      a push needs registry credentials and produces the one value a deployment record should pin, an
+      image digest, so doing it badly would put a fabricated digest on a runtime path.
 - [ ] Frontend: **Resource utilisation view** — live container CPU/memory/network from the Docker probe AND cluster/application series from the metrics tier, distinguishing "never reported" from "stale" from "healthy" — _combined box: former 2.4 "Live resource monitoring (CPU, memory, network)" + former 3.2 "Resource utilization charts". Two panels showing the same quantity from two sources is how a stale number gets read as a live one; satisfies both._
+      The Docker-probe half is done, including the tri-state this box names: `freshnessOf` classifies a
+      reading as never-reported, stale-with-its-age, or current, and an unparsable timestamp resolves to
+      never-reported rather than to now — the one mistake that would make a stale panel look live. The
+      **metrics-tier half does not exist**, because §2.10 is not built. Ticking this now would claim a
+      comparison between two sources when only one is there.
 
 #### 2.4a Inngest Integration (Deployment Workflows)
 
@@ -652,12 +703,52 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.9 Kubernetes Management Dashboard _(former 3.1)_
 
-- [ ] Agent: K8s API wrapper for pods, deployments, services, namespaces, ingress, ConfigMaps, HPA
-- [ ] Frontend: Pod list with status, logs, events
-- [ ] Frontend: Deployment management (scale, restart, rollback)
-- [ ] Frontend: Namespace explorer
-- [ ] Frontend: Cluster info and node status
-- [ ] Frontend: HPA configuration viewer
+- [x] Agent: K8s API wrapper for pods, deployments, services, namespaces, ingress, ConfigMaps, HPA —
+      `kubernetes.inventory` in `agent/internal/executor/kubernetes.go`, all seven families, read-only and
+      approval-free. Each family is read INDEPENDENTLY and one that cannot be read is named in
+      `partial_reasons` with its cause, because a cluster where the operator may list pods but not
+      ingresses is ordinary and refusing the whole read would make the dashboard useless for them — while
+      an empty array would say "this cluster has no ingresses", which is the opposite fact.
+      **ConfigMaps report key names only**: a ConfigMap regularly holds what should have been a Secret, and
+      a panel that printed values would publish it to every viewer of the project. Asserted by searching
+      the RAW payload for a value planted in a real cluster, not by inspecting the decoded struct.
+      **Verified against a real cluster** (`kubernetes_cluster_test.go`, kind, in CI on every push), which
+      is where a real defect was found that no decision test could reach: kubectl writes its version-skew
+      warning to stderr, the runner merges the streams, and the buffer is therefore not a JSON document —
+      the first version ignored the parse failure and refused **every** inventory on any cluster whose
+      version differed from the operator's client. The second version trimmed to the first brace and failed
+      when the warning landed AFTER the document. It now decodes the first complete JSON value, and
+      `TestDecodeFirstJSONSurvivesAWarningOnEitherSide` pins all four arrangements.
+- [ ] Frontend: Pod list with status, logs, events — the list and the status are built and tested, with
+      readiness as a RATIO (`1/2` is a broken sidecar and `0/2` is not, and a boolean loses that) and the
+      container's waiting reason surfaced because `ImagePullBackOff` is what an operator acts on. **Logs
+      and events are not built**: both are streams, and they need the same SSE machinery §2.2's `log` box
+      describes. Left open rather than ticked for two thirds.
+- [x] Frontend: Deployment management (scale, restart, rollback) — all three, through
+      `kubernetes.workload_action` and the chokepoint. Confined to the same three pod-bearing kinds the
+      deployment operation can VERIFY, because acting on something unverifiable would report the API
+      server's acceptance as success; a Job, a CronJob and a bare Pod are all refused by name.
+      **A restart is `rollout restart`, not a pod delete** — deleting pods bypasses the workload's own
+      surge and availability settings, which is how a restart becomes an outage — and the real-cluster test
+      asserts the workload's `metadata.generation` CHANGES across a restart, which is the assertion that
+      actually distinguishes the two implementations. A scale is bounded at 100 and the refusal names the
+      bound. Each action waits for convergence and reports `applied` or `degraded`. Verified end to end
+      against kind: scale to 2 (read back from the cluster), **scale to 0** — where
+      `status.readyReplicas` is ABSENT rather than 0, which is exactly why every count is a pointer —
+      restart, and rollback.
+- [x] Frontend: Namespace explorer — `features/hostops/KubernetesDashboard.tsx`. The namespace list comes
+      from the cluster and every panel below re-scopes to the selection, including the cache key, so one
+      namespace's pods can never be served from another's entry. "Every namespace" is an explicit option
+      rather than the absence of a choice.
+- [x] Frontend: Cluster info and node status — context, server version, and each node's kubelet version
+      and allocatable CPU and memory. **Readiness is a tri-state in words**: `ready: null` renders as "has
+      not reported", not as "NotReady". Showing an unreported condition as NotReady would page somebody for
+      a reporting gap, and showing it as Ready would hide a real outage; the test asserts the two strings
+      differ. A cluster reporting no nodes at all is called out as a symptom rather than rendered as a
+      blank table, because a cluster that answered has at least one.
+- [x] Frontend: HPA configuration viewer — target, min, max and current, each through the same
+      `not reported` rule, so an autoscaler whose status the API server has not populated is not displayed
+      as one currently running zero replicas.
 
 > The former 3.1 "Backend: K8s operation proxy (via agent MCP server)" is not missing: it is the
 > combined box in 2.4. Scale, restart and rollback are mutations and travel the chokepoint.

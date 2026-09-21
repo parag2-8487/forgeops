@@ -28,6 +28,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/parag8487/ForgeOps/agent/internal/envelope"
 )
 
 func TestContainerActionSetIsClosedAndComplete(t *testing.T) {
@@ -400,4 +402,89 @@ func TestDecodeFirstJSONSurvivesAWarningOnEitherSide(t *testing.T) {
 	if !strings.Contains(err.Error(), "error: the server") {
 		t.Errorf("the failure does not quote what the tool said: %v", err)
 	}
+}
+
+func TestBothInventoriesRefuseMalformedArgumentsBeforeTouchingATool(t *testing.T) {
+	// The refusal happens before Docker or kubectl is looked for, so it holds on a machine with neither --
+	// and it must report `envelope-malformed` rather than "the daemon did not answer", because a
+	// mis-assembled envelope and an absent daemon send an operator to opposite places.
+	//
+	// THE PAYLOAD IS PER-OPERATION, and the first version of this test got that wrong in an instructive
+	// way: it sent {"stats": "yes please"} to both. Docker refused it, because `stats` is a bool there --
+	// and Kubernetes ACCEPTED it, correctly, because `stats` is not a field it has and Go ignores unknown
+	// keys. A malformed object has to be malformed for the struct being decoded, so each one below carries
+	// a wrong TYPE on a field that operation really declares.
+	d, err := New(Deps{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cases := map[Operation]json.RawMessage{
+		OpDockerInventory:     json.RawMessage(`{"stats": "yes please"}`),
+		OpKubernetesInventory: json.RawMessage(`{"namespace": 12}`),
+	}
+	seq := int64(91)
+	for operation, args := range cases {
+		seq++
+		_, err := d.Execute(context.Background(), verifiedRaw(t, operation, "", args, seq), nil)
+		if err == nil {
+			t.Errorf("%s accepted a malformed argument object", operation)
+			continue
+		}
+		if Code(err) != "envelope-malformed" {
+			t.Errorf("%s refused with code %q, want envelope-malformed: %v", operation, Code(err), err)
+		}
+	}
+}
+
+func TestImageActionRefusesAnEmptyOrUnknownTargetBeforeTouchingADaemon(t *testing.T) {
+	d, err := New(Deps{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cases := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"no image named", map[string]any{"action": "pull", "image": ""}, "no target"},
+		{"only whitespace", map[string]any{"action": "remove", "image": "   "}, "no target"},
+		{"an action outside the set", map[string]any{"action": "build", "image": "nginx:1.27"}, "closed set"},
+		{"push is not reachable", map[string]any{"action": "push", "image": "nginx:1.27"}, "closed set"},
+		{"prune is not reachable", map[string]any{"action": "prune", "image": "nginx:1.27"}, "closed set"},
+	}
+	for index, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := d.Execute(context.Background(),
+				verified(t, OpDockerImageAction, "approval-1", tc.args, int64(92+index)), nil)
+			if err == nil {
+				t.Fatalf("%v was accepted", tc.args)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refused for the wrong reason: %v", err)
+			}
+		})
+	}
+}
+
+func TestWorkloadActionRefusesMalformedArgumentsBeforeTouchingACluster(t *testing.T) {
+	d, err := New(Deps{Root: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = d.Execute(context.Background(),
+		verifiedRaw(t, OpKubernetesWorkloadAction, "approval-1", []byte(`{"replicas": "three"}`), 97), nil)
+	if err == nil {
+		t.Fatal("a malformed workload action was accepted")
+	}
+	if Code(err) != "envelope-malformed" {
+		t.Errorf("refused with code %q, want envelope-malformed: %v", Code(err), err)
+	}
+}
+
+// verifiedRaw is `verified` for an argument object that cannot be produced by marshalling a Go value ?
+// specifically, one whose FIELD TYPES are wrong. Testing the decode failure requires sending bytes the
+// struct cannot accept, and `json.Marshal` of a valid map can never produce them.
+func verifiedRaw(t *testing.T, op Operation, approvalID string, args json.RawMessage, seq int64) *envelope.Verified {
+	t.Helper()
+	return verified(t, op, approvalID, args, seq)
 }

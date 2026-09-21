@@ -10,6 +10,8 @@ import { AsyncState } from "@/components/ui/async-state";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { CodebaseIndexPanel } from "@/features/codebase/CodebaseIndexPanel";
 import { DeploymentDashboard } from "@/features/deployments/DeploymentDashboard";
+import { DockerDashboard } from "@/features/hostops/DockerDashboard";
+import { KubernetesDashboard } from "@/features/hostops/KubernetesDashboard";
 import { EnvironmentManager } from "@/features/environments/EnvironmentManager";
 import { ChangeHistoryTimeline } from "@/features/approvals/ChangeHistoryTimeline";
 import { SecretVault, type SecretRefUI } from "@/features/vault/SecretVault";
@@ -119,6 +121,32 @@ export default function ProjectDetailPage() {
                 and any of the three can demand one.
               </p>
               <DeploymentDashboard projectId={projectId} />
+            </section>
+
+            <section aria-labelledby="docker-heading" className="space-y-3">
+              <h2 id="docker-heading" className="text-lg font-semibold">
+                Docker
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                2.4. Read from the operator&apos;s own daemon through the agent. Every measured
+                figure distinguishes &ldquo;not measured&rdquo; from zero, and the reading carries
+                the time the HOST took it, so a stale panel cannot look live. Actions travel the
+                same chokepoint as a deployment.
+              </p>
+              <DockerDashboard projectId={projectId} />
+            </section>
+
+            <section aria-labelledby="kubernetes-heading" className="space-y-3">
+              <h2 id="kubernetes-heading" className="text-lg font-semibold">
+                Kubernetes
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                2.9. Scale, restart and roll back are mutations and go through the chokepoint;
+                against a recorded environment they inherit that environment&apos;s approval
+                requirement. A family the cluster would not disclose is named as unreadable rather
+                than shown as empty.
+              </p>
+              <KubernetesDashboard projectId={projectId} />
             </section>
 
             <section aria-labelledby="secrets-heading" className="space-y-3">

@@ -144,4 +144,20 @@ export const queryKeys = {
     rollbackTarget: (environmentId: string) =>
       [...queryKeys.deployments.all, "rollback-target", environmentId] as const,
   },
+  /**
+   * 2.4 and 2.9's host inventories, read through the agent.
+   *
+   * THE STATS FLAG IS PART OF THE KEY, and that is not incidental. A list view asks without stats and a
+   * detail view asks with them; a shared key would serve the statless answer ? every measurement null ?
+   * to the panel that asked to measure, which renders as "this host reports nothing" on a host that is
+   * reporting fine. The namespace is in the Kubernetes key for the same reason it is in the environments
+   * key: one namespace's pods must never be served as another's.
+   */
+  hostops: {
+    all: ["hostops"] as const,
+    dockerInventory: (projectId: string, stats: boolean) =>
+      [...queryKeys.hostops.all, "docker", projectId, stats] as const,
+    kubernetesInventory: (projectId: string, namespace: string | null) =>
+      [...queryKeys.hostops.all, "kubernetes", projectId, namespace ?? "all-namespaces"] as const,
+  },
 } as const;
