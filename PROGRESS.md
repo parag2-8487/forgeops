@@ -67,6 +67,56 @@ path confinement, the waitable-kind set, the timeout clamp, the verdict parser �
 manifest to Kubernetes. The e2e stack is where that belongs and it has not been done, so nothing above
 claims it.
 
+### Verification of 2026-09-21, and what it found
+
+**The journey is 13/13 against the real stack** — real Ollama (`qwen2.5-coder:1.5b` and `bge-m3:567m`),
+real Authentik, real paired agent, step 8's assertion untouched. The change set now carries
+`SECURITY.md, k8s/ingress.yaml, k8s/service.yaml, Dockerfile, k8s/deployment.yaml`; the run that opened this
+work carried `SECURITY.md, k8s/ingress.yaml, k8s/service.yaml, terraform/backend.tf` and no Dockerfile.
+Read from `change_items` directly, not inferred from the test result.
+
+E2E locally: **smoke 24/24, journey 13/13, sse-paint 1/1, onboarding 10/10, printed-instructions 5/6.**
+The one printed-instructions failure pairs "this machine" by running the printed **Linux** instructions,
+which cannot work on a Windows host; CI runs that job on `ubuntu-latest`. `onboarding.spec.ts` had never
+been re-run and held a stale assertion — it pinned `step-5-state` as `"Not checked"`, a label the product
+deliberately replaced (one word had been covering "check in flight", "an action with no resting state" and
+"no read route", and read as "broken" in all three), and the policy-bundle step has since become genuinely
+observable. The discipline it was protecting — never a tick for something nothing checked — now lives on
+step 8, and the spec asserts it there.
+
+Agent: `go test -race ./...` clean, **74.1%** statements against the 70 gate. Frontend: **604 tests**,
+95.30 / 84.07 / 92.00 / 95.63 against 90 / 90 / 90 / 80. All 9 repository gates green, `alembic check`
+clean, `dump-openapi.py --check` clean at 75 paths, all 18 pre-commit hooks green.
+
+Backend **unit+property+meta shard: 2292 passed, 2 failed** — both were tests pinning the pre-substitution
+withholding contract, and both are now correct rather than deleted. One of them caught **a provenance
+defect I had introduced**: substituting the floor when NOTHING of the model's output survived would have
+delivered a set of entirely template content on a run row saying `served_from='provider'`. The floor now
+applies only to a mixed result, and the nothing-survived case still goes to the template path and records
+`template`.
+
+Backend **integration shard: 1039 passed, 11 failed**, of which **six were mine and are fixed at their
+cause** rather than by adjusting a number: `environments`, `environment_variables` and `deployments` had
+migrations and no SQLModel declarations, so `alembic check` proposed dropping all three (a migration with no
+model looks exactly like a table somebody forgot to remove) — `src/deployments/models.py` now exists and
+`alembic/env.py` imports all three; the pinned head revision moved `0021` → `0024`; `test_0006_secrets`
+asserted that no `environments` table could exist, which was right when it would have been a Phase 2 stub
+under Phase 1 numbering and is now wrong, so it asserts the property that actually mattered — `secrets` has
+no foreign key to it; and `test_wiring_coverage` demanded a `@wires` declaration for the two new composed
+collaborators, which `test_phase2_wiring.py` supplies by driving both through the real lifespan's graph.
+
+**Three integration failures remain and all three are the pre-existing generation-provenance set** recorded
+above (`test_a_near_duplicate_prompt_stores_l2` and the two `test_self_hosted_generation` cases). A fourth,
+`test_the_generated_workflow_passes_yamllint`, is environmental: it passes locally once `yamllint` is on
+PATH (7 passed), and the backend shard's missing dependency is recorded above.
+
+**What was not re-run, stated rather than implied.** The unit shard takes 1h43m and was run once, before the
+two contract fixes; those two files were then re-run individually (20 and 17 passed). The integration shard
+was run once in full (32m56s) and the six files I changed were re-run afterwards (53 passed). `verify-release.py`
+cannot report a clean set from a local machine: it wants a per-shard `.coverage.*` from all three shards in
+one sitting and workflow conclusions for the pushed commit, so its combined-coverage and workflow lines read
+MISSING until CI has run. Its raw output is quoted in the session report.
+
 Phase 0 is `completed`: all 108 executable task leaves are implemented, all 18 completion
 criteria carry real evidence, and P-01 through P-15 are all present and passing. The work
 lives on the branch `phase-0-implementation`; merging it into `main` is the repository
