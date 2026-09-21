@@ -29,6 +29,13 @@
 // laptop has no cluster, and a suite that fails for the absence of infrastructure trains people to
 // ignore it. `TestRealCluster_TheOptInIsNamedInCI` fails if the workflow stops setting it, so this file
 // cannot quietly become dead code the way Q-19's did.
+//
+// TWO WORKFLOWS PROVIDE THE CLUSTER, and that is not redundancy. `Kubernetes & SPIRE CI` stands one up
+// because it already did. `ci`'s `agent` job stands up its own as well, because §0.4.4's remedy for a
+// CAPABILITY skip is to PROVIDE the capability rather than to declare the skip acceptable — and
+// `check-no-skips.py` enforces that distinction by refusing a capability skip while permitting a platform
+// one. A cluster only in the other workflow would leave this job's record saying these paths never ran,
+// and that record is what the coverage gate and the no-skips gate are both computed from.
 package executor
 
 import (

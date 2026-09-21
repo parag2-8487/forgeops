@@ -12,6 +12,13 @@
 // Opt-in through `FORGEOPS_REAL_DOCKER`, like the keychain and cluster suites. A developer without Docker
 // running is not a failing build; a CI runner that HAS Docker and does not use it is a missed check, which
 // is why the opt-in is set in the workflow and asserted to be.
+//
+// SET IN TWO WORKFLOWS, and the second one is the one that matters. `Kubernetes & SPIRE CI` runs these
+// against its own runner's daemon; `ci`'s `agent` job also sets it, on all three of its `go test`
+// invocations, because that job enforces the coverage gate and produces the `-json` record that
+// `check-no-skips.py` reads. Setting it on the test steps and not on the record was exactly the mistake
+// that made the gate report ten undeclared capability skips: the suites had run twice with a daemon and
+// the evidence said they never ran at all.
 package executor
 
 import (
