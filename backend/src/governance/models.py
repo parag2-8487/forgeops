@@ -122,6 +122,16 @@ CHANGE_SET_OPERATIONS: tuple[str, ...] = (
     # items — which is why its transit renders its manifests as plan items rather than writing
     # `change_items` rows that would claim file writes nobody made.
     "deployment.apply_manifests",
+    # §2.4 and §2.9. The dashboards' MUTATING actions. Each changes what is running on the operator's
+    # host or cluster, so each is a change set and travels the same six stages: an action started from a
+    # panel has exactly the authority an action started from anywhere else has, and no more.
+    #
+    # The READS — `docker.inventory` and `kubernetes.inventory` — are deliberately absent from this
+    # tuple. They mutate nothing, they are what a refreshing panel calls, and a change-set row per
+    # refresh would bury the audit log that matters in one nobody reads.
+    "docker.container_action",
+    "docker.image_action",
+    "kubernetes.workload_action",
 )
 
 #: Key names a credential travels under, refused in `change_sets.operation_args`.

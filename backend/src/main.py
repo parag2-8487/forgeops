@@ -942,6 +942,14 @@ def create_app() -> FastAPI:
 
     app.include_router(deployments_router)
 
+    # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
+    # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory
+    # and its writes through transit_host_action, and there is no third path -- check-chokepoint.sh
+    # asserts that send_command stays confined to governance/, so this router cannot grow one.
+    from .hostops.routes import router as hostops_router
+
+    app.include_router(hostops_router)
+
     from .ai.routes import read_router as ai_read_router
     from .ai.routes import router as ai_router
 

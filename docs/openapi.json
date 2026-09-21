@@ -1,6 +1,53 @@
 {
   "components": {
     "schemas": {
+      "ActionAccepted": {
+        "description": "What a mutating call returns.\n\nThe SAME shape a deployment returns, deliberately: a caller handling one handles both, and the three\noutcomes that matter \u2014 delivered, waiting for a human, blocked \u2014 are named rather than inferred from a\nstatus code.",
+        "properties": {
+          "blast_radius_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blast Radius Score"
+          },
+          "blast_radius_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blast Radius Verdict"
+          },
+          "change_set_id": {
+            "format": "uuid",
+            "title": "Change Set Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "change_set_id",
+          "status",
+          "outcome"
+        ],
+        "title": "ActionAccepted",
+        "type": "object"
+      },
       "ActivityFeedItem": {
         "properties": {
           "action": {
@@ -1105,6 +1152,39 @@
           "detail"
         ],
         "title": "ConnectionTestResponse",
+        "type": "object"
+      },
+      "ContainerActionRequest": {
+        "description": "One action against one named container.\n\nThe action is a `Literal`, so an unknown verb is a 422 from the schema rather than a refusal\ndiscovered three layers down after a signature was minted. The agent enforces the same closed set\nagain \u2014 two layers, because this one is a convenience for the caller and that one is the boundary.",
+        "properties": {
+          "action": {
+            "enum": [
+              "start",
+              "stop",
+              "restart",
+              "remove"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "container": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Container",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "container"
+        ],
+        "title": "ContainerActionRequest",
         "type": "object"
       },
       "CustomEndpointRequest": {
@@ -2225,6 +2305,37 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ImageActionRequest": {
+        "description": "One action against one named image reference.",
+        "properties": {
+          "action": {
+            "enum": [
+              "pull",
+              "remove"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "image": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Image",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "image"
+        ],
+        "title": "ImageActionRequest",
         "type": "object"
       },
       "IndexResult": {
@@ -4055,6 +4166,98 @@
           "value"
         ],
         "title": "VariableWrite",
+        "type": "object"
+      },
+      "WorkloadActionRequest": {
+        "description": "Scale, restart or roll back one named workload.\n\n`environment_id` is optional and its presence changes the governance outcome, which is worth stating:\nan action against a recorded environment inherits that environment's approval requirement, and one\nwithout an environment reaches the policy with the environment absent \u2014 which the bundle already\ntreats as \"ask a human\". Omitting it therefore cannot be a way to need less approval.",
+        "properties": {
+          "action": {
+            "enum": [
+              "scale",
+              "restart",
+              "rollback"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "cluster_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Context"
+          },
+          "environment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment Id"
+          },
+          "health_timeout_seconds": {
+            "default": 0,
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Health Timeout Seconds",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "deployment",
+              "statefulset",
+              "daemonset"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "namespace": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Namespace",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          },
+          "replicas": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Replicas",
+            "type": "integer"
+          },
+          "to_revision": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "To Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "kind",
+          "name",
+          "namespace"
+        ],
+        "title": "WorkloadActionRequest",
         "type": "object"
       }
     }
@@ -7443,6 +7646,172 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/docker/containers/actions": {
+      "post": {
+        "description": "202, because the answer is a governance decision and not the action's outcome.\n\nA container action can be blocked, held for a human, or delivered. Returning 200 with the container's\nnew state would be a lie in two of those three cases.\n\nNO ENVIRONMENT. A Docker action is against the operator's own machine, which no `environments` row\ndescribes. `environment_name=None` reaches the policy as an absent environment \u2014 the branch the bundle\ntreats as \"ask a human\" \u2014 so the absence cannot be a route to less approval.",
+        "operationId": "container_action_api_v1_projects__project_id__docker_containers_actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start, stop, restart or remove one container (through the chokepoint)",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/docker/images/actions": {
+      "post": {
+        "description": "202, for the reason above.",
+        "operationId": "image_action_api_v1_projects__project_id__docker_images_actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pull or remove one image (through the chokepoint)",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/docker/inventory": {
+      "get": {
+        "description": "Read the host's container inventory through the agent.\n\nReturns the agent's own payload, unaltered. Nothing here recomputes, defaults or fills a measurement:\n`stats_sampled` and the nullable figures are the contract that lets a panel distinguish \"not measured\"\nfrom \"idle\", and a backend that helpfully substituted zeros would destroy exactly that.",
+        "operationId": "docker_inventory_api_v1_projects__project_id__docker_inventory_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Sample CPU, memory and network per running container. Costs about a second of wall time, so a list view can omit it; every measured field is null when it is omitted, never zero.",
+            "in": "query",
+            "name": "stats",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Sample CPU, memory and network per running container. Costs about a second of wall time, so a list view can omit it; every measured field is null when it is omitted, never zero.",
+              "title": "Stats",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Docker Inventory Api V1 Projects  Project Id  Docker Inventory Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Containers, images, volumes and networks on the agent's host",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/environments": {
       "get": {
         "description": "Every environment of the project, in promotion order.",
@@ -7918,6 +8287,142 @@
         "summary": "Mark as this caller's favourite",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/kubernetes/inventory": {
+      "get": {
+        "description": "Read the cluster inventory through the agent.\n\nReturned unaltered, for the reason the Docker read gives, plus one specific to clusters:\n`partial_reasons` names each family that could not be read and why. Flattening that into an empty list\nwould tell an operator their cluster has no ingresses when the truth is that they may not list them.",
+        "operationId": "kubernetes_inventory_api_v1_projects__project_id__kubernetes_inventory_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "A single namespace. Absent means every namespace the operator can see.",
+            "in": "query",
+            "name": "namespace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A single namespace. Absent means every namespace the operator can see.",
+              "title": "Namespace"
+            }
+          },
+          {
+            "description": "A kubectl context name.",
+            "in": "query",
+            "name": "cluster_context",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A kubectl context name.",
+              "title": "Cluster Context"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Kubernetes Inventory Api V1 Projects  Project Id  Kubernetes Inventory Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Namespaces, nodes, pods, workloads, services and config",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/kubernetes/workloads/actions": {
+      "post": {
+        "description": "202, for the reason above.\n\nTHE ENVIRONMENT IS READ HERE AND HANDED DOWN, exactly as the deployment route does it and for the same\nreason: the transit lives in `governance/`, TID251 forbids it importing `environments/`, and the\ntransit's job is to ENFORCE an approval requirement rather than to discover one. An unknown\nenvironment id is a 404 naming it rather than a silent fall back to \"no approval needed\".",
+        "operationId": "workload_action_api_v1_projects__project_id__kubernetes_workloads_actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkloadActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scale, restart or roll back one workload (through the chokepoint)",
+        "tags": [
+          "host-operations"
         ]
       }
     },
