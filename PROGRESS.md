@@ -376,6 +376,31 @@ container CREATE (deliberately — it is the bind-mount-and-privilege authority 
 BUILD and PUSH (§2.2's own box; a push produces the digest a deployment record should pin), and the
 metrics-tier half of the resource-utilisation box, which needs §2.10.
 
+### Still open after this session, precisely
+
+- [ ] **`sse-paint` cannot recover a session across Playwright invocations.** The journey is 13/13 in CI
+      and paint runs after it in its own invocation, restores a state file whose refresh token the journey
+      has already rotated — and `test-results/` is cleared between invocations, so the file may not exist at
+      all — then fails at `/generation` with the sign-in screen. **Two repairs were attempted and both
+      failed**, and the reason neither converged is a defect in my own instrumentation: the recovery errors
+      were swallowed with `.catch(() => {})`, so two CI runs produced no information about the cause. The
+      third change is therefore a DIAGNOSTIC, not a third guess — `gotoAsOperator` now collects why each
+      recovery failed and the thrown error carries it. What is known: the same `signIn` succeeds for the
+      journey's step 1 minutes earlier in the same run, so the credentials and the IdP are fine, and the
+      failure is specific to signing in from a context that has restored application cookies. Next step is
+      to read the recovery reason from the next run rather than to reorder anything.
+- [ ] **Three backend integration failures remain, and all three are the pre-existing generation-provenance
+      set** already diagnosed above (`test_a_near_duplicate_prompt_stores_l2` and the two
+      `test_self_hosted_generation` cases): the run serves itself from the L2 it just populated, so
+      `served_from` records `l2` although the model was called. Unchanged by this session and still a
+      decision about what that column means rather than a bug with one obvious fix.
+- [ ] **`check-no-skips.py` caught ten undeclared skips of the new real-tool suites**, which is the gate
+      working exactly as designed: it permits a PLATFORM skip, which cannot be provided for, and refuses a
+      CAPABILITY skip, which can. The remedy it names is to provide the capability, so the `agent` job now
+      stands up a kind cluster and asserts the Docker daemon answers, and both opt-ins are set on all three
+      `go test` invocations — including the `-json` record, which is the one the gate reads and the one I
+      first forgot. Not yet confirmed green in CI: that is the next run's first thing to check.
+
 ## Phase 2 backlog carried forward
 
 Explicit, so none of it is lost when the merged Phase 2 is built on top of it. Each line is a

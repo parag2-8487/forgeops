@@ -208,6 +208,10 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
     }
   }
 
+  // Collected across attempts so the final error can say WHY each recovery failed. Two blind repairs of
+  // this function were made because these strings were being discarded by `.catch(() => {})`.
+  const recoveryFailures: string[] = [];
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     await page.goto(path);
 
@@ -241,40 +245,58 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
           .innerText()
           .catch(() => "")
       ).slice(0, 600);
-      throw new Error(`${path} never rendered for a signed-in operator. What it showed:\n${shown}`);
+      // WHY THE RECOVERIES FAILED, not just that the page shows a sign-in screen.
+      //
+      // The first two repairs of this function were made blind and both were wrong, because the
+      // recovery errors were swallowed with `.catch(() => {})` and the thrown message said only what the
+      // screen displayed. Two CI runs produced no information about the cause. A diagnostic that cannot
+      // distinguish "the IdP refused these credentials" from "the flow executor found no identification
+      // stage" from "the callback returned no cookie" is not worth the run it costs.
+      throw new Error(
+        `${path} never rendered for a signed-in operator.\n` +
+          `What the page showed:\n${shown}\n` +
+          `What each recovery attempt reported:\n${recoveryFailures.join("\n") || "(nothing — every recovery returned without error, so the session was accepted and the route still did not render)"}`,
+      );
     }
 
-    // THE ORDER OF THESE TWO RECOVERIES IS THE WHOLE FIX, and getting it backwards cost a CI run.
+    // TWO RECOVERIES, AND EVERY FAILURE IS RECORDED RATHER THAN SWALLOWED.
     //
     // Resuming via `/login` assumes the browser holds AUTHENTIK'S OWN cookie, so the sign-on button
     // round-trips without a prompt. True inside a spec that signed in; FALSE in a spec that only
     // restored this application's cookies from the state file, because a fresh Playwright context has
-    // no IdP session. That is how `sse-paint.spec.ts` failed in CI while passing locally — it runs in
-    // its own invocation after the journey and restores a session whose refresh token the journey had
-    // already rotated.
+    // no IdP session.
     //
-    // The first repair attempt put `signIn` on the LATER attempts, and it still failed: by then the
-    // resume had left a partial Authentik session, and re-driving the flow executor against a visitor
-    // the IdP already knows returns `ak-stage-identification -> ak-stage-flow-error` — precisely the
-    // failure the original comment here warned about.
-    //
-    // So the authentication comes FIRST, from a deliberately CLEARED context: no IdP cookie, no spent
-    // application cookie, nothing for the flow executor to trip over. The `/login` resume stays as the
-    // second attempt, for the case where an IdP session genuinely does exist and only the application's
-    // cookie went stale.
+    // Two repairs have been attempted here and both failed in CI, which is why the third change is a
+    // DIAGNOSTIC and not another guess. What is known: `sse-paint.spec.ts` runs in its own Playwright
+    // invocation after the journey, `test-results/` is cleared between invocations so the saved state
+    // file may not even exist, and the `signIn` that then runs does not produce a session the
+    // application accepts — while the SAME `signIn` succeeds for the journey's step 1 in the same CI
+    // run, minutes earlier. Until the recovery's own error is visible, any further reordering is
+    // guessing, so both branches now append what went wrong to `recoveryFailures` and the thrown error
+    // carries it.
     //
     // No assertion is weakened and no session is injected: these are real logins with the operator's
     // real credentials, and the criterion that a first-time IdP login works is the journey's step 1,
     // which still does it unaided.
     if (attempt === 1) {
       await page.context().clearCookies();
-      await signIn(page).catch(() => {});
+      try {
+        await signIn(page);
+      } catch (error) {
+        recoveryFailures.push(
+          `attempt ${attempt}: signIn from a cleared context failed: ${String(error)}`,
+        );
+      }
     } else {
-      await page.goto("/login");
-      await page.getByRole("button", { name: /single sign-on/i }).click();
-      await page
-        .waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 })
-        .catch(() => {});
+      try {
+        await page.goto("/login");
+        await page.getByRole("button", { name: /single sign-on/i }).click();
+        await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 });
+      } catch (error) {
+        recoveryFailures.push(
+          `attempt ${attempt}: resuming through /login failed: ${String(error)}`,
+        );
+      }
     }
   }
 }

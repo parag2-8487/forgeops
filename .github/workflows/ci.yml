@@ -576,6 +576,30 @@ jobs:
       - name: Assert tofu is on PATH so the iac integration tests cannot skip
         run: tofu version
 
+      # A REAL CLUSTER, because §0.4.4's remedy for a capability skip is to PROVIDE the capability rather
+      # than to declare the skip acceptable — and `check-no-skips.py` enforces exactly that distinction: a
+      # platform requirement can be declared because it cannot be met, a capability cannot because it can.
+      #
+      # `deployment_cluster_test.go` and `kubernetes_cluster_test.go` need a cluster. They also run in
+      # `Kubernetes & SPIRE CI`, and that is not redundant: THIS job is the one that enforces the coverage
+      # gate and records what ran, so a cluster only in the other workflow means this job's evidence says
+      # those paths never executed. Standing one up costs about a minute on a job that already installs
+      # helm, tofu and four validator toolchains.
+      - name: Create a kind cluster so the real-cluster tests cannot skip
+        uses: helm/kind-action@dda0770415bac9fc20092cacbc54aa298604d140 # v1.8.0
+        with:
+          cluster_name: forgeops-agent-ci
+          node_image: kindest/node:v1.28.0
+      - name: Assert the cluster answers, so a skip cannot be blamed on it
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+          kubectl wait --for=condition=Ready node --all --timeout=120s
+      # And the daemon this runner already has, asserted for the same reason: if `docker version` fails
+      # here, the ten real-daemon tests would skip and the gate would report them rather than this line.
+      - name: Assert the Docker daemon answers, so a skip cannot be blamed on it
+        run: docker version --format '{{.Server.Version}}'
+
       # The validator toolchain (FR-27). `internal/validator` and the six `validate.*` handlers shell
       # out to these, and every one of their tests calls `t.Skip` when its binary is absent — so
       # without these four steps the whole of FR-27 would be advertised as tested while running
@@ -708,6 +732,7 @@ jobs:
       - name: Test
         env:
           FORGEOPS_REAL_DOCKER: "1"
+          FORGEOPS_REAL_CLUSTER: "1"
         run: go test -race -shuffle=on ./... -count=1
       # Criterion 11's AGENT third. It was recorded as "`agent` runs `scripts/check-coverage.sh
       # 70` over `./internal/...`" while that script did not exist in the repository at all, so
@@ -728,6 +753,7 @@ jobs:
           # 70.2% and with it the real-tool paths are included, which is both a truer number and a margin
           # that does not sit one line above the gate.
           FORGEOPS_REAL_DOCKER: "1"
+          FORGEOPS_REAL_CLUSTER: "1"
         run: bash scripts/check-coverage.sh 70
       # design.md §0.4.4 and criterion 11 both say the AGENT job runs `check-no-skips.py`.
       # It did not: the only invocation in this workflow was the backend `auth` job's, so the
@@ -743,6 +769,14 @@ jobs:
       # stops meaning anything: `-tags=integration` widens the selection beyond the step above,
       # so a failure here is a failure nothing else would have caught.
       - name: Record what actually ran
+        env:
+          # THE CAPABILITIES MUST BE PRESENT IN *THIS* STEP, because this is the record
+          # `check-no-skips.py` reads. Setting them on the earlier `go test` steps and not here is
+          # exactly the mistake that produced the first red: the suites ran twice with a daemon and a
+          # cluster, and the third invocation — the one that becomes the evidence — skipped them, so the
+          # gate correctly reported ten undeclared skips.
+          FORGEOPS_REAL_DOCKER: "1"
+          FORGEOPS_REAL_CLUSTER: "1"
         run: |
           set -o pipefail
           go test -json -tags=integration ./... | tee ../agent.jsonl

@@ -3005,48 +3005,43 @@ class GovernanceChokepoint:
         )
         digest = envelope_digest(envelope)
 
-        if is_read:
-            # NO AUTHORITY FOR A READ, and no postcondition to assert.
-            #
-            # A `MutationAuthority` names a change set, an approval and an audit sequence. A read has none
-            # of the three, and `mint_authority` rightly refuses an `audit_seq` below 1 — so minting one
-            # here would mean inventing all three to satisfy a constructor, which is the defect class this
-            # repository keeps digging out. The envelope is still sequenced, nonced, bounded by `not_after`
-            # and signed with the device's own key, so the agent verifies a read exactly as it verifies a
-            # mutation. What it lacks is the claim that a human approved a change, because no human did and
-            # nothing changed.
-            key = await envelope_key(session, device_id=admitted.device_id, pepper=self._pepper)
-            with signing_key_scope(key.get_secret_value()):
-                signature = sign_envelope(envelope)
-            await session.execute(
-                text("UPDATE agent_devices SET last_seq = :seq WHERE id = :id AND last_seq < :seq"),
-                {"seq": seq, "id": admitted.device_id},
-            )
-            return SignedCommand(
-                envelope=envelope.as_canonical_mapping(),
-                signature=signature,
-                digest=digest,
-                device_id=admitted.device_id,
+        # THE AUTHORITY IS CONDITIONAL; THE SIGNING IS NOT.
+        #
+        # A read mints no `MutationAuthority`. An authority names a change set, an approval and an audit
+        # sequence; a read has none of the three, and `mint_authority` rightly refuses an `audit_seq` below
+        # 1 -- so minting one would mean inventing all three to satisfy a constructor, which is the defect
+        # class this repository keeps digging out.
+        #
+        # But the SIGNING stays a single call site, and that is not a stylistic preference. The first
+        # version of the read branch returned early with its own `envelope_key` / `signing_key_scope` /
+        # `sign_envelope` sequence, and three unit tests failed immediately -- `sign_envelope is called from
+        # one place` and its two siblings count call sites across this module, because two places to sign is
+        # two places to get signing wrong and one of them will be the one nobody re-reads. The tests were
+        # right and the branch was wrong. Everything conditional now happens BEFORE the signature, and the
+        # signature happens once.
+        authority: MutationAuthority | None = None
+        if not is_read:
+            assert approval_id is not None  # noqa: S101 - a mutation always carries one; see the guard above
+            authority = mint_authority(
+                change_set_id=change_set_id,
+                approval_id=approval_id,
+                policy_bundle_digest=admitted.bundle_digest,
+                blast_radius=_report_radius(report),
+                audit_seq=audit_seq,
+                envelope_digest=digest,
             )
 
-        blast_radius = _report_radius(report)
-        assert approval_id is not None  # noqa: S101 - a mutation always carries one; see the guard above
-        authority: MutationAuthority = mint_authority(
-            change_set_id=change_set_id,
-            approval_id=approval_id,
-            policy_bundle_digest=admitted.bundle_digest,
-            blast_radius=blast_radius,
-            audit_seq=audit_seq,
-            envelope_digest=digest,
-        )
         key = await envelope_key(session, device_id=admitted.device_id, pepper=self._pepper)
         with signing_key_scope(key.get_secret_value()):
             signature = sign_envelope(envelope)
+
         # The authority is not passed on: nothing downstream of the mint takes one yet, because
-        # the hub is leaf 8.4. It is constructed here because construction IS the check — the
+        # the hub is leaf 8.4. It is constructed above because construction IS the check -- the
         # mint refuses an `audit_seq` below 1 and an empty bundle digest, so an envelope cannot be
-        # signed for a transit that wrote no audit record or named no bundle.
-        assert authority.envelope_digest == digest  # noqa: S101 - the mint's own postcondition
+        # signed for a MUTATING transit that wrote no audit record or named no bundle. A read is
+        # exempt from that check because it makes no such claim, not because the check is optional.
+        if authority is not None:
+            assert authority.envelope_digest == digest  # noqa: S101 - the mint's own postcondition
         await session.execute(
             text("UPDATE agent_devices SET last_seq = :seq WHERE id = :id AND last_seq < :seq"),
             {"seq": seq, "id": admitted.device_id},
