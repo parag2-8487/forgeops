@@ -244,15 +244,31 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
       throw new Error(`${path} never rendered for a signed-in operator. What it showed:\n${shown}`);
     }
 
-    // RESUME rather than re-authenticate. The browser holds Authentik's own cookie by now, so
-    // clicking the application's sign-on button round-trips through the IdP without a prompt and the
-    // callback sets a fresh application cookie. Re-driving the IdP's flow executor here instead fails
-    // with "IdP flow stages seen: ak-stage-identification -> ak-stage-flow-error", because there is
-    // no identification stage to answer when the visitor is already known.
-    await page.goto("/login");
-    await page.getByRole("button", { name: /single sign-on/i }).click();
-    await page
-      .waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 })
-      .catch(() => {});
+    // ATTEMPT 1 RESUMES; ATTEMPT 2 AUTHENTICATES PROPERLY. The difference matters and cost a CI run.
+    //
+    // Resuming assumes the browser holds AUTHENTIK'S OWN cookie, so that clicking the application's
+    // sign-on button round-trips through the IdP without a prompt. That is true inside a spec that
+    // signed in, and FALSE in a spec that only restored this application's cookies from the state
+    // file — a fresh Playwright context has no IdP session, so the round trip lands on the
+    // identification stage with nothing to answer it, and all three attempts then report the sign-in
+    // screen.
+    //
+    // That is exactly how `sse-paint.spec.ts` failed in CI while passing locally: it runs in its own
+    // invocation after the journey, restores a session whose refresh token the journey had already
+    // rotated, and had no way back. It had not been reached for months because the journey was failing
+    // before it.
+    //
+    // So the second attempt performs the genuine login with the operator's real credentials. No
+    // assertion is weakened and no session is injected: the criterion that a real IdP login works is
+    // the journey's step 1, which still does it unaided.
+    if (attempt === 1) {
+      await page.goto("/login");
+      await page.getByRole("button", { name: /single sign-on/i }).click();
+      await page
+        .waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 })
+        .catch(() => {});
+    } else {
+      await signIn(page).catch(() => {});
+    }
   }
 }
