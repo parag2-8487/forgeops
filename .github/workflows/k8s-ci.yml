@@ -24,7 +24,75 @@ jobs:
           kubectl cluster-info
           kubectl get nodes -o wide
 
+      # `|| true` REMOVED. It made the only assertion in this job unfalsifiable: a namespace that cannot be
+      # created is the clearest possible signal that the cluster above is not usable, and this swallowed it.
+      # `create --dry-run=client` first is not the same thing — idempotence is what was wanted, so that is
+      # what is expressed: `apply` of a namespace object succeeds whether or not it already exists, and
+      # still fails when the API server refuses.
       - name: Install SPIRE Attestation Harness
         run: |
+          set -euo pipefail
           echo "Deploying SPIRE server and agent CRDs for workload attestation..."
-          kubectl create namespace spire || true
+          kubectl apply -f - <<'EOF'
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: spire
+          EOF
+          kubectl get namespace spire
+
+  # ── the deployment operation against a real cluster ──────────────────────────────────────────────────
+  #
+  # WHY IT IS HERE and not in `ci.yml`: this workflow already stands up kind, and the agent's deployment
+  # operation needs exactly that and nothing else. Standing up a second cluster in another workflow to run
+  # one test would double the slowest part of the run for no additional coverage.
+  #
+  # WHAT IT CLOSES: `deployment.apply_manifests` shipped with its decisions tested and its effect unrun.
+  # This repository has been burned by that exact shape — six validators sat as `unimplemented(...)` while
+  # a criterion claimed they passed — so the operation is now exercised end to end against a real API
+  # server on every push: apply, real health verification, a real `degraded` from an image that cannot be
+  # pulled, and a rollback that restores the previous image, each read back from the cluster with
+  # `kubectl get` rather than from the operation's own report.
+  agent-real-cluster-deployment:
+    name: agent (deployment against a real cluster)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: agent/go.sum
+
+      - name: Create kind cluster
+        uses: helm/kind-action@dda0770415bac9fc20092cacbc54aa298604d140 # v1.8.0
+        with:
+          cluster_name: forgeops-deploy
+          node_image: kindest/node:v1.28.0
+
+      # PROVE THE CLUSTER IS REACHABLE BEFORE THE TEST RUNS, so "the deployment failed" and "there was no
+      # cluster" cannot arrive as the same red.
+      - name: The cluster answers, and kubectl can see a node
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+          kubectl wait --for=condition=Ready node --all --timeout=120s
+          kubectl get nodes -o wide
+
+      - name: deployment.apply_manifests against the real cluster
+        working-directory: agent
+        env:
+          # The opt-in `deployment_cluster_test.go` requires. `TestRealCluster_TheOptInIsNamedInCI` reads
+          # this file and fails if this line or the `-run` below is removed, so the suite cannot become
+          # dead code by quietly losing its trigger — the failure mode Q-19 had.
+          FORGEOPS_REAL_CLUSTER: "1"
+        run: go test ./internal/executor/ -run TestRealCluster -count=1 -v -timeout 20m
+
+      # WHAT THE CLUSTER LOOKS LIKE AFTERWARDS, on failure only. A rollout that did not converge is
+      # diagnosed from pod events, and those are gone once the job ends.
+      - name: What the cluster held when it failed
+        if: failure()
+        run: |
+          kubectl get namespaces
+          kubectl get all --all-namespaces
+          kubectl get events --all-namespaces --sort-by=.lastTimestamp | tail -50
