@@ -428,10 +428,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # and every fresh install is in that state.
     # §2.1's service. The same pepper every other sealing derives from, under its own HKDF label so a
     # ciphertext from one domain cannot open in another.
+    from .deployments.service import DeploymentService
     from .environments.service import EnvironmentService
     from .integrations.github_link import GitHubOAuthClient, GitHubUserClient, derive_link_key
     from .integrations.service import GitHubLinkService
 
+    app.state.deployment_service = DeploymentService()
     app.state.environment_service = EnvironmentService(pepper=settings.envelope_pepper.get_secret_value())
 
     app.state.github_link_service = GitHubLinkService(
@@ -932,6 +934,13 @@ def create_app() -> FastAPI:
     from .environments.routes import router as environments_router
 
     app.include_router(environments_router)
+
+    # §2.2. The one mutating route here goes through `GovernanceChokepoint.deploy_manifests`, and
+    # `check-chokepoint.sh` asserts mechanically that `send_command` stays confined to `governance/`, so
+    # this router cannot grow a second path to an agent.
+    from .deployments.routes import router as deployments_router
+
+    app.include_router(deployments_router)
 
     from .ai.routes import read_router as ai_read_router
     from .ai.routes import router as ai_router

@@ -182,6 +182,12 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # which environments exist would buy nothing and cost every operator a confusing message.
     "environment-absent": ProblemSpec(404, "No such environment"),
     "environment-invalid": ProblemSpec(422, "The environment request is not valid"),
+    # §2.2's three. `deployment-conflict` is a 409 rather than a 422 because the request was well
+    # formed and the ROW had moved on — command delivery is at-least-once, so a second report for a
+    # settled deployment is an expected event that must be reported as ignored rather than as an error.
+    "deployment-absent": ProblemSpec(404, "No such deployment"),
+    "deployment-invalid": ProblemSpec(422, "The deployment request is not valid"),
+    "deployment-conflict": ProblemSpec(409, "The deployment has already settled"),
     # ─── Tenancy (§6.7) ──────────────────────────────────────────────────────
     "tenant-context-missing": ProblemSpec(500, "Tenant context missing"),
 }

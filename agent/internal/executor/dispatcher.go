@@ -78,6 +78,16 @@ const (
 	timeoutValidate = 5 * time.Minute
 	// A network operation against a forge.
 	timeoutNetwork = 3 * time.Minute
+	// A deployment applies manifests AND waits for the workloads to converge, so its budget has to
+	// cover an image pull on a cold node. 15 minutes, matching the scan budget as the longest thing
+	// this agent is asked to do.
+	//
+	// IT MUST EXCEED `MaxHealthTimeout`, and `deployment_test.go` asserts it: a per-workload wait
+	// longer than the operation's own budget can never complete, so a workload that fails to converge
+	// would surface as `the operation timed out` instead of naming the workload and its replica count.
+	// The first version of this operation reused `timeoutNetwork` (3 minutes) with a 10-minute health
+	// wait, and that assertion is what caught it.
+	timeoutDeploy = 15 * time.Minute
 	// Bookkeeping.
 	timeoutQuick = 30 * time.Second
 )
@@ -158,6 +168,15 @@ var handlerTable = map[Operation]entry{
 	OpRepositoryClone: {
 		mutating: true, requiresApproval: true, timeout: timeoutNetwork, implemented: true,
 		run: repositoryClone,
+	},
+	// A deployment is the largest blast radius in this table: it changes what is RUNNING, and unlike a
+	// file write it cannot be undone by restoring bytes. `timeoutNetwork` because the wait for workloads
+	// to converge dominates, and the per-workload bound inside the handler is clamped below it so a
+	// health timeout reports "the workload did not become ready" rather than "the operation timed out" —
+	// two different facts with two different remedies.
+	OpDeploymentApplyManifests: {
+		mutating: true, requiresApproval: true, timeout: timeoutDeploy, implemented: true,
+		run: applyManifests,
 	},
 }
 

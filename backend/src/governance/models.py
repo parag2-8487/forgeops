@@ -115,7 +115,14 @@ CHANGE_SET_ORIGINS: tuple[str, ...] = ("generation", "manual", "policy")
 #: `approve()` branches on it: it can rebuild an apply's arguments from `change_items` and cannot
 #: rebuild a clone's, whose envelope carries a credential that is deliberately not stored. A value
 #: outside this set would put that branch back to guessing. Revision `0021` holds the same list.
-CHANGE_SET_OPERATIONS: tuple[str, ...] = ("changeset.apply", "repository.clone")
+CHANGE_SET_OPERATIONS: tuple[str, ...] = (
+    "changeset.apply",
+    "repository.clone",
+    # §2.2. A deployment is a change set so it travels the same six stages, and it carries no file
+    # items — which is why its transit renders its manifests as plan items rather than writing
+    # `change_items` rows that would claim file writes nobody made.
+    "deployment.apply_manifests",
+)
 
 #: Key names a credential travels under, refused in `change_sets.operation_args`.
 #:

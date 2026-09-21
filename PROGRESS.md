@@ -23,21 +23,49 @@ phase: self-healing reads what the observability stack reports and acts through 
 rollback machinery, so neither half is shippable alone. The former Phase 4 became Phase 3 and the
 former Phase 5 became Phase 4. 126 boxes became 123, with three combined pairs named in `phases.md`.
 
-**Phase 2 is `in-progress` as of 2026-09-20: 4 of 123 boxes carry evidence.** The build order and the
+**Phase 2 is `in-progress` as of 2026-09-21: 8 of 123 boxes carry evidence.** The build order and the
 dependency reasoning behind it are recorded in `phases.md` under "Build order" — 2.1 first because every
 other deliverable in the phase references an environment, and 2.12 self-healing last because it needs both
-the observability chain it reads and the deployment chain it acts through. What landed: **2.1
-Multi-Environment Management**, backend and management UI, with revision `0023`, `src/environments/`,
-`features/environments/`, 13 integration tests and 14 frontend tests. Two of 2.1's six boxes are
-deliberately NOT ticked and `phases.md` says why in each case — promotion flows need 2.2's deployment to be
-half of anything, and "selector throughout the dashboard" is a claim about screens that do not exist yet.
+the observability chain it reads and the deployment chain it acts through.
 
-The single most useful thing 2.1 produced is not CRUD. It is `requires_approval`:
-`GovernanceChokepoint._evaluate_policy` has accepted an `environment` argument since Phase 1 and **no
-caller ever supplied one** — which is why a clone's policy evaluation fell through to "requires approval
-because `environment` is absent". There is now a row that answers it, it defaults to requiring a human, a
-production environment cannot waive it, and an unknown environment name resolves to "ask a human" rather
-than to "proceed".
+**2.1 Multi-Environment Management** (revision `0023`, `src/environments/`, `features/environments/`, 13
+integration + 14 frontend tests). Two of its six boxes are deliberately not ticked and `phases.md` says why
+in each case. The single most useful thing it produced is not CRUD but `requires_approval`:
+`GovernanceChokepoint._evaluate_policy` has accepted an `environment` argument since Phase 1 and **no caller
+ever supplied one** — which is why a clone's policy evaluation fell through to "requires approval because
+`environment` is absent". There is now a row that answers it, it defaults to requiring a human, a production
+environment cannot waive it, and an unknown environment name resolves to "ask a human".
+
+**2.2 Deployment Automation** (revision `0024`, `agent/internal/executor/deployment.go`,
+`src/deployments/`, `features/deployments/`, 16 integration + 13 frontend tests + the agent's own).
+`deployment.apply_manifests` is the 19th agent operation and the first that changes what is RUNNING rather
+than what is on disk. Four of its ten boxes are ticked; image build/push, OpenTofu apply, the SSE `log`
+stream, Inngest and the circuit breaker are not, and each open box says why in `phases.md`.
+
+Three things from 2.2 are worth carrying forward as facts rather than as claims:
+
+**`applied` and `degraded` are separate statuses, everywhere.** The agent distinguishes them, the
+`deployments` row stores `healthy` as a nullable column (`null` = nothing verified it, `false` = checked and
+not ready), and the dashboard renders three sentences rather than a tick and a cross. This is the coupling
+2.3's timeline and 2.12's self-healing both read, and collapsing it would let a deployment that never came
+up be recorded as one that did.
+
+**`stable` is set on health, not on apply** — enforced by `ck_deployments_stable_implies_healthy` as well as
+by the service, because the service is one writer and a support UPDATE is another. That single choice is
+what makes `GET /rollback-target` trustworthy: a deployment whose workloads never converged is not a state
+to return to, and the endpoint answers `{"target": null}` with a reason rather than offering the
+second-newest row.
+
+**The deployment transit is the first caller that supplies `environment` to the policy**, and a test reads
+the payload the policy was actually handed rather than trusting that the argument arrived. The environment's
+own `requires_approval` is enforced separately from the Rego verdict, and the two can only add caution: the
+bundle is runtime data, so an operator who marked an environment as needing a human must not lose that to a
+bundle change.
+
+**Not yet run against a real cluster.** `deployment.apply_manifests` has unit coverage of its decisions —
+path confinement, the waitable-kind set, the timeout clamp, the verdict parser — and has not applied a
+manifest to Kubernetes. The e2e stack is where that belongs and it has not been done, so nothing above
+claims it.
 
 Phase 0 is `completed`: all 108 executable task leaves are implemented, all 18 completion
 criteria carry real evidence, and P-01 through P-15 are all present and passing. The work
@@ -387,35 +415,43 @@ bind parameter, so the clone dispatch sent Postgres a literal colon.
 
 ### Not finished, and exactly what is left
 
-- [x] **A human-approved clone is delivered.** _(2026-09-20)_ Both paths are now complete. The
-      AUTO-APPROVED path mints and delivers a signed `repository.clone` envelope. The APPROVED path used
-      to end in `_deliver(operation=changeset.apply, args=_apply_entries(...))`, so a clone arrived at the
-      agent as an apply with no entries, the agent refused correctly, and the change set read
-      `rolled_back` — which looks like an agent fault and was the backend sending the wrong command.
-      Revision `0021` made it refuse honestly; **revision `0022` makes it deliver**, and the resolution is
-      one decision: **split the arguments by whether they are a secret.**
+- [x] **A human-approved clone is delivered.** _(2026-09-20)_ Both paths are complete; the design decision
+      and its evidence are below, under "How a human-approved clone is delivered".
 
-      * The inert half — repository, clone URL, parent directory, directory name, branch — persists in
-                `change_sets.operation_args`. A repository name in a row is not a capability, and every one of
-                these values is already in the audit chain.
-              * The credential is read from the requester's `github_account_links` row **at the moment of
-                delivery**, through a `CloneCredentialProvider` protocol that `governance/` declares and
-                `integrations/` implements, wired at the composition root because TID251 forbids the import.
-                Nothing long-lived is stored, and **revocation works without anything having to notice**: an
-                operator who disconnects their GitHub account cannot have a queued clone delivered afterwards,
-                because there is nothing left to decrypt.
-              * The credential is read BEFORE the approval is recorded. An expired link therefore leaves the
-                change set `pending_approval` — genuinely still pending, since reconnecting makes the same
-                approval work — rather than `approved` and undeliverable with no statement of why.
-              * Whose credential: `change_sets.created_by`, the requester, **not the approver**. An approver
-                authorises an action; they do not lend their GitHub account to it.
+#### How a human-approved clone is delivered
 
-              Guarded in three places because the consequence of a credential landing in that column is the worst
-              outcome of the design: a database CHECK per forbidden key name in `0022`, an assertion in the
-              chokepoint before the write, and a test that reads the rows back and searches for the value.
-              13 tests in `test_github_clone_transit.py`, including an expired-link refusal that names the cause
-              and asserts nothing reached the agent, and a no-integration-composed refusal that names the missing
-              configuration rather than raising.
+The AUTO-APPROVED path always minted and delivered a signed `repository.clone` envelope. The APPROVED path
+used to end in `_deliver(operation=changeset.apply, args=_apply_entries(...))`, so a clone arrived at the
+agent as an apply with no entries, the agent correctly refused, and the change set read `rolled_back` —
+which looks like an agent fault and was the backend sending the wrong command. Revision `0021` made it
+refuse honestly; revision `0022` makes it deliver, and the resolution is one decision: **split the
+arguments by whether they are a secret.**
+
+**The inert half** — repository, clone URL, parent directory, directory name, branch — persists in
+`change_sets.operation_args`. A repository name in a row is not a capability, and every one of these values
+is already in the audit chain.
+
+**The credential is not there.** It is read from the requester's `github_account_links` row at the moment
+of delivery, through a `CloneCredentialProvider` protocol that `governance/` declares and `integrations/`
+implements, wired at the composition root because TID251 forbids the import. Nothing long-lived is stored,
+and **revocation works without anything having to notice**: an operator who disconnects their GitHub
+account cannot have a queued clone delivered afterwards, because there is nothing left to decrypt.
+
+**It is read BEFORE the approval is recorded.** An expired link therefore leaves the change set
+`pending_approval` — genuinely still pending, since reconnecting makes the same approval work — rather than
+`approved` and undeliverable with no statement of why.
+
+**Whose credential: the requester's** (`change_sets.created_by`), not the approver's. An approver
+authorises an action; they do not lend their GitHub account to it.
+
+Guarded in three places, because a credential landing in that column is the worst outcome of the whole
+design: a database CHECK per forbidden key name in `0022`, an assertion in the chokepoint before the write,
+and a test that reads the rows back and searches for the value. 13 tests in
+`test_github_clone_transit.py`, including an expired-link refusal that names the cause and asserts nothing
+reached the agent, and a no-integration-composed refusal that names the missing configuration rather than
+raising.
+
+#### Still open on the clone
 
 - [ ] **A policy that has an opinion about clones.** A clone still requires approval only because
       `approval.rego` requires it when `environment` is absent, and a clone has no environment — it is not

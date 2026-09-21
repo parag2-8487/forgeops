@@ -108,6 +108,10 @@ REVERT_OPERATION: Final[str] = "changeset.revert"
 #: so it travels the same six stages and the same mint rather than a route of its own. §2.2.1 confines
 #: `send_command` to this package precisely so that a clone trigger has to be a governance decision.
 CLONE_OPERATION: Final[str] = "repository.clone"
+#: The deployment. §2.2's first mutation of the user's CLUSTER rather than of their filesystem, and the
+#: largest blast radius in the catalogue: a file write can be undone by restoring bytes, and a deployment
+#: cannot. It travels the same six stages and the same mint as the other three.
+DEPLOY_OPERATION: Final[str] = "deployment.apply_manifests"
 
 #: Argument names a credential travels under in this codebase.
 #:
@@ -190,6 +194,14 @@ ROLLBACK_HANDLE_TTL: Final[timedelta] = timedelta(days=30)
 #: no cloud resources, so its blast radius is a function of how many files change and how
 #: destructively, not of a resource class it does not have.
 FILE_RESOURCE_TYPE: Final[str] = "forgeops_file"
+
+#: The synthetic resource type a deployment's manifests are rendered as.
+#:
+#: Deliberately unknown to `SemanticPlanAnalyzer.classify_resource`, exactly like `FILE_RESOURCE_TYPE`:
+#: a Kubernetes manifest is not a cloud resource with a known destruction cost, so it takes the
+#: `unknown` multiplier and the score is driven by how many manifests a deployment carries. Claiming a
+#: known class would put a guessed cost into a number an approval gate reads.
+KUBERNETES_RESOURCE_TYPE: Final[str] = "forgeops_kubernetes_manifest"
 
 
 #: Score a file change set must reach before destruction blocks it.
@@ -1007,6 +1019,213 @@ class GovernanceChokepoint:
             outcome="applying",
         )
 
+    async def deploy_manifests(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        principal: Principal,
+        deployment_id: uuid.UUID,
+        environment_name: str,
+        environment_requires_approval: bool,
+        manifests: Sequence[str],
+        cluster_context: str | None,
+        namespace: str | None,
+        health_timeout_seconds: int,
+        reason: str,
+    ) -> Submission:
+        """Stages 0–6, then the mint, for `deployment.apply_manifests`. §2.2.
+
+        AN EIGHTH PUBLIC TRANSIT, for the reason the clone has its own: §2.2.1 confines `send_command` to
+        this package, so a deployment trigger must be a governance decision. It also cannot go through
+        `submit`, and the reason is the same one the clone gives — `MutationRequest` requires
+        `ChangeItemRequest`s, every change item is a FILE with a pre-image hash, and a deployment writes
+        no file. Passing synthetic items would put rows in `change_items` claiming writes nobody made.
+
+        **THIS IS THE FIRST CALLER THAT SUPPLIES `environment`.** `_evaluate_policy` has accepted the
+        argument since Phase 1 and every existing caller left it absent, which is why `approval.rego`'s
+        "require approval when the environment is unknown" branch was the only one ever taken. A
+        deployment names its environment, so the policy can finally decide on the basis the rule was
+        written for.
+
+        AND THE ENVIRONMENT'S OWN REQUIREMENT IS ALSO ENFORCED, SEPARATELY. `environment_requires_approval`
+        comes from the `environments` row. When it is true this transit does not consult the gate's
+        verdict at all — it goes to `pending_approval` regardless. That is deliberate belt-and-braces: the
+        Rego bundle is data that can be replaced at runtime, and an operator who marked an environment as
+        needing a human should not be able to lose that by a bundle change. The two mechanisms can only
+        add caution, never remove it: nothing here can turn a `REQUIRES_APPROVAL` verdict into an
+        auto-approval.
+
+        THE BLAST RADIUS IS COMPUTED OVER THE REAL MANIFEST SET, not asserted. Each manifest is rendered
+        as a plan item so the analyser's artifact-count sensitivity applies to a deployment exactly as it
+        does to a file change set — which is the coupling PROGRESS.md records: a deployment carrying many
+        manifests scores higher than one carrying few, and that is the analyser's opinion over real input
+        rather than this method's.
+        """
+        admitted = await self._admit(session, project_id=project_id, principal=principal)
+        decision = await self._evaluate_policy(
+            session,
+            principal=principal,
+            admitted=admitted,
+            operation=DEPLOY_OPERATION,
+            items=(),
+            # The value the argument was always for.
+            environment=environment_name,
+        )
+
+        change_set_id = uuid.uuid4()
+        operation_args = {
+            "deployment_id": str(deployment_id),
+            "manifests": list(manifests),
+            "context": cluster_context or "",
+            "namespace": namespace or "",
+            "health_timeout_seconds": int(health_timeout_seconds),
+            "environment_name": environment_name,
+        }
+        # A deployment carries no credential, so this holds today unconditionally. Asserted anyway: the
+        # check costs nothing and the day somebody adds a registry password to this map is the day it
+        # matters.
+        _assert_no_credential(operation_args)
+
+        # THE REAL ANALYSER OVER THE REAL SET, and the plan is built here rather than through
+        # `plan_from_change_items`, because a deployment has no file items. Passing manifests as `update`
+        # change items required inventing a `new_content` for each — a value that does not exist and
+        # would have been fabricated purely to satisfy a type, which is the defect class this repository
+        # keeps digging out. The plan says what a deployment actually is: one cluster resource change per
+        # manifest.
+        #
+        # `KUBERNETES_RESOURCE_TYPE` is not a type `classify_resource` knows, so each manifest takes the
+        # `unknown` class's multiplier — the honest outcome, and the same treatment a file item gets. The
+        # score is therefore a function of HOW MANY manifests a deployment carries, which is the
+        # artifact-set-size coupling PROGRESS.md records: twelve manifests score higher than two, and
+        # that is the analyser's opinion over real input rather than a verdict asserted here.
+        report = self._analyzer.analyse(
+            PlanDocument(
+                raw={},
+                resource_changes=[
+                    {
+                        "address": f"kubernetes.{path}",
+                        "type": KUBERNETES_RESOURCE_TYPE,
+                        "change": {"actions": ["update"]},
+                    }
+                    for path in manifests
+                ],
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO change_sets (id, project_id, tenant_id, status, created_by, origin, "
+                "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, "
+                "version, operation, operation_args) "
+                "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, :score, "
+                ":verdict, :digest, 1, :operation, CAST(:operation_args AS jsonb))"
+            ),
+            {
+                "id": change_set_id,
+                "project": project_id,
+                "tenant": admitted.tenant_id,
+                "created_by": principal.user_id if principal.kind == "user" else None,
+                "score": report.score,
+                "verdict": report.verdict,
+                "digest": admitted.bundle_digest,
+                "operation": DEPLOY_OPERATION,
+                "operation_args": json.dumps(operation_args),
+            },
+        )
+        await self._store_blast_radius(session, change_set_id, report)
+
+        gate = await self._gate.submit(report, StageContext())
+        if gate == ApprovalDecision.BLOCKED:
+            return await self._blocked(
+                session,
+                principal=principal,
+                admitted=admitted,
+                change_set_id=change_set_id,
+                report=report,
+                reason=(
+                    f"the approval gate blocked this deployment to {environment_name}: "
+                    f"{len(manifests)} manifest(s), score {report.score}"
+                ),
+            )
+
+        needs_human = (
+            environment_requires_approval
+            or gate == ApprovalDecision.REQUIRES_APPROVAL
+            or decision.result == "require_approval"
+        )
+        if needs_human:
+            await self._set_status(session, change_set_id, "pending_approval")
+            event = await self._append_audit(
+                session,
+                principal=principal,
+                admitted=admitted,
+                action=GovernanceAction.APPROVAL_REQUIRED,
+                outcome="pending",
+                resource_kind="change_set",
+                resource_id=str(change_set_id),
+                # WHICH mechanism asked for the human, named. Three can, and an operator who cannot tell
+                # them apart cannot act: an environment setting is changed in the UI, a gate verdict by
+                # reducing the manifest set, a policy result by the bundle.
+                reason=(
+                    f"human approval required before deploying to {environment_name}: "
+                    f"environment_requires_approval={environment_requires_approval}, "
+                    f"gate={gate.value}, policy={decision.result}; {decision.reason}"
+                ),
+                after_state={
+                    "environment": environment_name,
+                    "deployment_id": str(deployment_id),
+                    "manifests": list(manifests),
+                },
+            )
+            await session.commit()
+            return Submission(
+                change_set_id=change_set_id,
+                status="pending_approval",
+                outcome="approval-required",
+                audit_seq=int(event.seq),
+                blast_radius_score=report.score,
+                blast_radius_verdict=report.verdict,
+                command=None,
+            )
+
+        await self._set_status(session, change_set_id, "approved")
+        event = await self._append_audit(
+            session,
+            principal=principal,
+            admitted=admitted,
+            action=GovernanceAction.CHANGE_SET_AUTO_APPROVED,
+            outcome="allowed",
+            resource_kind="change_set",
+            resource_id=str(change_set_id),
+            reason=(
+                f"auto-approved deployment to {environment_name}, which does not require human "
+                f"approval: {decision.reason}; {reason}"
+            ),
+            after_state={
+                "environment": environment_name,
+                "deployment_id": str(deployment_id),
+                "manifests": list(manifests),
+                "cluster_context": cluster_context or "",
+                "namespace": namespace or "",
+            },
+        )
+        await self._reserve_rollback_handle(session, change_set_id, admitted.device_id)
+        await session.commit()
+
+        return await self._deliver(
+            session,
+            change_set_id=change_set_id,
+            admitted=admitted,
+            approval_id=event.id,
+            audit_seq=int(event.seq),
+            decision=decision,
+            report=report,
+            operation=DEPLOY_OPERATION,
+            args={"change_set_id": str(change_set_id), **operation_args},
+            status_after_delivery="applying",
+            outcome="applying",
+        )
+
     async def approve(
         self,
         session: AsyncSession,
@@ -1053,7 +1272,7 @@ class GovernanceChokepoint:
         # and a link that has been disconnected or expired makes the clone undeliverable by
         # construction rather than by a check somebody has to remember to write.
         operation = str(row["operation"] or APPLY_OPERATION)
-        if operation not in (APPLY_OPERATION, CLONE_OPERATION):
+        if operation not in (APPLY_OPERATION, CLONE_OPERATION, DEPLOY_OPERATION):
             raise problem(
                 "change-set-conflict",
                 detail=(
@@ -2398,7 +2617,7 @@ class GovernanceChokepoint:
         (leaf 7.3) asserts the Python half of that mechanically; this docstring is the reason it
         is worth asserting.
         """
-        if operation not in (APPLY_OPERATION, REVERT_OPERATION, CLONE_OPERATION):
+        if operation not in (APPLY_OPERATION, REVERT_OPERATION, CLONE_OPERATION, DEPLOY_OPERATION):
             raise ValueError(f"{operation!r} is not a mutating operation in §7.7's catalogue")
 
         floor = await self._last_seq(session, admitted.device_id)

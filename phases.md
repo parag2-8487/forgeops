@@ -13,6 +13,7 @@
 ### Deliverables
 
 #### 0.1 Repository Structure
+
 - [x] Create monorepo layout as defined in PRD Section 8
 - [x] Set up `agent/`, `backend/`, `frontend/`, `docs/`, `.github/` directories
 - [x] Create root `Makefile` with common commands (build, test, lint, clean)
@@ -22,6 +23,7 @@
 - [x] Set up **pre-commit framework** with Gitleaks, Ruff, gofmt hooks
 
 #### 0.2 Go Agent Scaffold
+
 - [x] Initialize Go module: `go mod init github.com/org/ai-devops-agent`
 - [x] Create `cmd/agent/main.go` — thin entry point
 - [x] Create `internal/` subdirectories: connection, docker, k8s, scanner, executor, validator, policy, fileops, iac, devtools, telemetry, mcp
@@ -35,6 +37,7 @@
 - [x] Set up Syft for CycloneDX SBOM generation per release
 
 #### 0.3 Python Backend Scaffold
+
 - [x] Initialize FastAPI project structure in `backend/` using **domain-driven modular monolith** layout
 - [x] Set up `src/core/` with config, logging, **async database session management (expire_on_commit=False)**
 - [x] Create `src/main.py` with health check endpoint, **lifespan events**, **middleware stack**
@@ -46,6 +49,7 @@
 - [x] Set up `pip-audit` in CI for dependency vulnerability scanning
 
 #### 0.4 Next.js Frontend Scaffold
+
 - [x] Initialize Next.js 16 project with App Router
 - [x] Set up shadcn/ui with base theme
 - [x] Create layout with sidebar navigation, header, theme toggle
@@ -59,6 +63,7 @@
 - [x] Set up ESLint and Prettier
 
 #### 0.5 MCP Gateway Integration (Core Architecture — Stateless, July 2026 Final Spec)
+
 - [x] Set up **MCP Gateway** in the backend using `Mcp-Method` + `Mcp-Name` header routing
 - [x] Implement **OAuth 2.1/OIDC auth** with `iss` parameter validation per RFC 9207
 - [x] Implement **OPA policy enforcement** at the gateway (filter tools by agent blast radius)
@@ -70,21 +75,25 @@
 - [x] Implement **MCP Apps** support for sandboxed iframe UIs (approval forms, dashboards)
 
 #### 0.6 GitOps Workflow (P0)
+
 - [x] Set up Git client library in the Go agent
 - [x] Implement PR creation flow (branch → commit → push → PR)
 - [x] Implement PR review status polling
 
 #### 0.7 Plan Analyzer (P0)
+
 - [x] Create validation pipeline skeleton
 - [x] Implement semantic analysis module
 - [x] Connect validation pipeline to approval workflow
 
 #### 0.8 OpenTofu Switch (P0)
+
 - [x] Install OpenTofu in Docker development environment
 - [x] Create OpenTofu runner module in Go agent (with timeout, output streaming, signal handling)
 - [x] Test `tofu validate` and `tofu plan` programmatic execution
 
 #### 0.9 Model Routing Configuration (P0)
+
 - [x] Configure **model routing tier definitions** for all 6 tiers
 - [x] Model tiers: GPT-5.6 Sol (high/coding), Claude Fable 5 (high/analysis), Grok 4.5 (medium), Sonnet 5 & DeepSeek V4 (medium/value), Gemini 3 Flash (low/logs)
 - [x] Implement **fallback cascade** (primary → secondary → cross-vendor → self-hosted → template)
@@ -93,6 +102,7 @@
 - [x] Implement **semantic caching** (L1 exact-match → L2 similarity >0.95 → L3 prefix cache via Redis)
 
 ### Completion Criteria
+
 - [x] `make build` succeeds for all three components
 - [x] `make test` passes (with placeholder tests)
 - [x] `make lint` passes
@@ -122,16 +132,17 @@
 > targets — windows, darwin and linux × amd64 and arm64 — plus `.deb` and `.rpm`, and every artifact has a
 > `.sig`, a `.pem`, a `.sbom.json`, an `.intoto.jsonl` and an `.att.sigstore.json` beside it.
 >
-> * **Signed:** `cosign verify-blob` against `forgeops-agent_0.0.1-rc3_windows_amd64.zip`, with
+> - **Signed:** `cosign verify-blob` against `forgeops-agent_0.0.1-rc3_windows_amd64.zip`, with
 >   `--certificate-identity-regexp` pinned to this repository's `release.yml` on a `v*` tag and
 >   `--certificate-oidc-issuer https://token.actions.githubusercontent.com`, answered **`Verified OK`**.
-> * **SBOM-attested:** that artifact's `.sbom.json` is CycloneDX `specVersion` 1.6 with **91 components**.
-> * **Real binary:** the `.exe` inside the archive runs and reports
+> - **SBOM-attested:** that artifact's `.sbom.json` is CycloneDX `specVersion` 1.6 with **91 components**.
+> - **Real binary:** the `.exe` inside the archive runs and reports
 >   `forgeops-agent 0.0.1-rc3 (commit: 7f5213f65931b80f6abd6a16baa46c808e723e75, built: 2026-07-29T16:15:30Z)`.
 >
 > Criterion 16's self-verification runs before any provenance step, so a provenance failure cannot mask it.
 
 ### Excluded (for this phase)
+
 - ❌ Any feature logic (analysis, generation, deployment)
 - ❌ UI beyond shell layout
 - ❌ Database migrations beyond initial schema
@@ -167,10 +178,10 @@
 > examples of the failure this document's own preamble exists to prevent — a claim that outlived the
 > behaviour it described:
 >
-> * `frontend/app/(shell)/projects/page.tsx` mapped every project to `readinessScore: 0`, a hardcoded
+> - `frontend/app/(shell)/projects/page.tsx` mapped every project to `readinessScore: 0`, a hardcoded
 >   literal, so every project displayed a zero regardless of its real score. The list now reports
 >   whether anything is indexed, in words; the score is computed once, on the detail screen.
-> * the readiness screen's explanatory panel said the score was derived from stored settings "not from
+> - the readiness screen's explanatory panel said the score was derived from stored settings "not from
 >   a walk of its working tree" and described FIVE categories. Both had been false since the engine
 >   moved to index-derived scoring — six categories, computed from `file_tree` and `file_contents`.
 >   The home page's route list and `generation/service.py::_render`'s docstring had drifted the same
@@ -178,21 +189,22 @@
 >
 > The remaining 84 boxes stay unticked, unchanged, for the reason given above.
 >
-> | § | State | Evidence, or the gap |
-> |:--|:--|:--|
-> | 1.1 Agent pairing & connection | verified end to end | The journey pairs a real agent over mTLS and runs signed commands. `session.heartbeat` is a notification, so liveness is a WebSocket **ping** rather than the inbound-silence timeout written below — that timeout dropped every healthy session on a 90-second cycle. |
-> | 1.2 Multi-project workspace | verified, in a browser | Projects created and read through the API in journey steps 2 and 5, and now CREATED BY CLICKING in the onboarding walk's step 1. FR-01 through FR-05 all have a surface: a create form (a browser cannot report a directory's absolute path, so the path is typed and the form says why), server-side search, tags, per-user favourites, and archive plus an honest delete. **Favourites are per USER**, which needed a table: `projects.settings.favourite` has existed since revision `0009` and is per project, so in a tenant with two people one person starring a project would reorder the other's list. Delete counts thirteen cascading tables before it runs and reports them, and the audit rows SURVIVE — revision `0007` gave `audit_events.project_id` no foreign key for exactly that reason, and that intent is now asserted rather than only documented. |
-> | 1.3 Codebase analysis engine | verified | A real scan of `backend/src` persists 141 files, 1857 dependency edges (243 resolved), 977 chunks; the fixture yields 7 files with genuine 1024-d BGE-M3 vectors. **Watch mode now exists and is proven live:** `forgeops-agent watch --project <id>` runs fsnotify → a real debounce → an incremental submit, and one edit of a module two files import gave `submitted 3 file(s) in the closure of depdemo/lib.js`. The fan-out's exact set is pinned deterministically — a change re-indexes the file, both direct importers and the TRANSITIVE one, and not the file that imports nothing. The agent self-triggers rather than waiting to be told, for the same reason `scan` is a verb: §2.2.1 confines `send_command` to `governance/`, so a backend-initiated re-index would be a governance decision per keystroke, and the agent already owns its workspace. Two defects were found by running it: `DebouncedWatcher` accepted a `debounceMs` it never read, and a DELETION produced an empty report the backend refused with 422 (a deleted file is absent from the fresh scan the closure is derived from, so finding its dependants would need the previous graph — deletions now trigger a full re-index). |
-> | 1.4 Deployment readiness | verified | Scored from the index with `projects.settings` empty, over this section's six weighted categories. `settings` may only REFINE, through `ignore_globs`. The six categories now EXPAND in the browser into the individual checks behind each score, each naming the indexed path that satisfied it and FR-19's "why it matters" — a category at 40 with no visible evidence is indistinguishable from a bug in the scorer. Building it found that the two sides spell a category differently: the breakdown's keys are model field names (`containerization_score`) and a check's `category` is the category itself (`containerization`), so the panel rendered twelve rows for six categories until they were reconciled. Caught by the live onboarding walk, not by a fixture — the fixture carried the misconception. |
-> | 1.5 AI generation & validation | verified, with a stated limit | `served_from` reaches `provider`, `l1` and `l2` on real calls, and the browser now observes 149 strictly increasing painted lengths (criterion 13). **The cascade and the circuit breaker are now proven across two GENUINELY SEPARATE live endpoints**, not against doubles: a second model server (`ollama-secondary`, its own container and port, sharing the weights volume) is registered as the `self_hosted` tier's secondary, and stopping the primary produced the full documented lifecycle — four attempts falling through `qwen3-coder-next:error → qwen3-coder-standby:success` with the breaker closed, the **5th failure inside 30 s opening it**, subsequent attempts recording `skipped(circuit_breaker_open)` with latency dropping 4.6 s → 0.7 s because no connection is attempted, **`half_open` after the 60 s cooldown**, and a successful probe closing it and returning traffic to the primary. `generation_runs.endpoint_id` records which endpoint answered. **The limit, stated rather than implied: only self-hosted endpoints have ever served a live call.** `LLM_KEY_*` are placeholders, so the five hosted vendor tiers remain unconfigured pending keys — the cascade is proven across real ENDPOINTS, not across vendors. |
-> | 1.6 Change approval centre | verified | Journey steps 8–9, and 13 for revert. A blocked revert escalates to approval rather than being refused, which is what makes §3.6's `applied → reverted` edge reachable at all. REVERT IS NOW REACHABLE FROM THE UI, which it was not for two reasons rather than one: `ApprovalCenter` narrowed its mutation type to `approve|reject`, AND the list was filtered to `pending_approval`, so an applied change set never appeared on the screen at all. An escalated revert is presented as an outcome rather than an error — `approval-required` is registered at 202, inside the 2xx range, so the body arrives as a success and is narrowed explicitly. A per-project change history timeline explains all thirteen states, keeping `rolled_back` (an apply that undid itself) distinct from `reverted` (a deliberate reversal through the chokepoint). |
-> | 1.7 Policy engine | verified, and one fabrication removed | 102 tests over OPA and the policy-evaluation surface, plus a full editor over the new `GET /api/v1/policies` — a list route that did not exist, which is why a policy screen was unbuildable and `/policies` was a read-only wall of templates. **`POST /policies/{id}/test` used to fabricate its verdict**: with no `opa` on PATH it returned `"allow" if input["action"] == "allow_me" else "deny"`, a decision on a security surface that no policy engine computed. It raises the registered `503 dryrun-unavailable` now, reports the query it evaluated and the evaluator's own version, and distinguishes an UNDEFINED rule from a deny. The test that covered it asserted the synthesised values, so it passed with or without OPA installed; the binary is now in the backend image and in the backend CI job, both by COPY from the digest-pinned image Compose already runs. The policy READ path was also not tenant-scoped — any authenticated caller could read, rewrite or delete another tenant's rules by id — and answers the non-disclosing 403 now. |
-> | 1.8 Secret management | verified | Encryption at rest, redaction before LLM context, deploy-time injection; Q-12, Q-24, Q-28. The vault can now add, rotate and delete, and write-only is STRUCTURAL rather than promised: the value inputs are uncontrolled so no secret enters React state, the DOM node is cleared before the request is awaited so a failed write clears it too, and no response shape in that module carries a value in either direction. Deleting a reference does not reach into Infisical, and the confirmation says so — this platform does not own that store. |
-> | 1.9 Audit logging | verified | Unbroken hash chain asserted in journey step 12. **Known limitation:** `GovernanceAction` is a closed vocabulary with no `applied` action, so an audit reader cannot ask "was this applied?" and must consult `change_sets` — Q-04 allows one row per transit. |
-> | 1.10 Governance control plane | verified | Every mutation passes the chokepoint; `check-chokepoint.sh` proves it over both runtimes by parsing the import graph and reports "both halves clean". |
-> | 1.11 Auth integration | verified | Real Authentik OIDC in journey step 1. The agent authenticates as a DEVICE on both factors, which `require_principal` cannot express. |
+> | §                              | State                                 | Evidence, or the gap                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+> | :----------------------------- | :------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+> | 1.1 Agent pairing & connection | verified end to end                   | The journey pairs a real agent over mTLS and runs signed commands. `session.heartbeat` is a notification, so liveness is a WebSocket **ping** rather than the inbound-silence timeout written below — that timeout dropped every healthy session on a 90-second cycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+> | 1.2 Multi-project workspace    | verified, in a browser                | Projects created and read through the API in journey steps 2 and 5, and now CREATED BY CLICKING in the onboarding walk's step 1. FR-01 through FR-05 all have a surface: a create form (a browser cannot report a directory's absolute path, so the path is typed and the form says why), server-side search, tags, per-user favourites, and archive plus an honest delete. **Favourites are per USER**, which needed a table: `projects.settings.favourite` has existed since revision `0009` and is per project, so in a tenant with two people one person starring a project would reorder the other's list. Delete counts thirteen cascading tables before it runs and reports them, and the audit rows SURVIVE — revision `0007` gave `audit_events.project_id` no foreign key for exactly that reason, and that intent is now asserted rather than only documented.                                                                                                                                                                                                                                                                                                                                                                                     |
+> | 1.3 Codebase analysis engine   | verified                              | A real scan of `backend/src` persists 141 files, 1857 dependency edges (243 resolved), 977 chunks; the fixture yields 7 files with genuine 1024-d BGE-M3 vectors. **Watch mode now exists and is proven live:** `forgeops-agent watch --project <id>` runs fsnotify → a real debounce → an incremental submit, and one edit of a module two files import gave `submitted 3 file(s) in the closure of depdemo/lib.js`. The fan-out's exact set is pinned deterministically — a change re-indexes the file, both direct importers and the TRANSITIVE one, and not the file that imports nothing. The agent self-triggers rather than waiting to be told, for the same reason `scan` is a verb: §2.2.1 confines `send_command` to `governance/`, so a backend-initiated re-index would be a governance decision per keystroke, and the agent already owns its workspace. Two defects were found by running it: `DebouncedWatcher` accepted a `debounceMs` it never read, and a DELETION produced an empty report the backend refused with 422 (a deleted file is absent from the fresh scan the closure is derived from, so finding its dependants would need the previous graph — deletions now trigger a full re-index).                                       |
+> | 1.4 Deployment readiness       | verified                              | Scored from the index with `projects.settings` empty, over this section's six weighted categories. `settings` may only REFINE, through `ignore_globs`. The six categories now EXPAND in the browser into the individual checks behind each score, each naming the indexed path that satisfied it and FR-19's "why it matters" — a category at 40 with no visible evidence is indistinguishable from a bug in the scorer. Building it found that the two sides spell a category differently: the breakdown's keys are model field names (`containerization_score`) and a check's `category` is the category itself (`containerization`), so the panel rendered twelve rows for six categories until they were reconciled. Caught by the live onboarding walk, not by a fixture — the fixture carried the misconception.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+> | 1.5 AI generation & validation | verified, with a stated limit         | `served_from` reaches `provider`, `l1` and `l2` on real calls, and the browser now observes 149 strictly increasing painted lengths (criterion 13). **The cascade and the circuit breaker are now proven across two GENUINELY SEPARATE live endpoints**, not against doubles: a second model server (`ollama-secondary`, its own container and port, sharing the weights volume) is registered as the `self_hosted` tier's secondary, and stopping the primary produced the full documented lifecycle — four attempts falling through `qwen3-coder-next:error → qwen3-coder-standby:success` with the breaker closed, the **5th failure inside 30 s opening it**, subsequent attempts recording `skipped(circuit_breaker_open)` with latency dropping 4.6 s → 0.7 s because no connection is attempted, **`half_open` after the 60 s cooldown**, and a successful probe closing it and returning traffic to the primary. `generation_runs.endpoint_id` records which endpoint answered. **The limit, stated rather than implied: only self-hosted endpoints have ever served a live call.** `LLM_KEY_*` are placeholders, so the five hosted vendor tiers remain unconfigured pending keys — the cascade is proven across real ENDPOINTS, not across vendors. |
+> | 1.6 Change approval centre     | verified                              | Journey steps 8–9, and 13 for revert. A blocked revert escalates to approval rather than being refused, which is what makes §3.6's `applied → reverted` edge reachable at all. REVERT IS NOW REACHABLE FROM THE UI, which it was not for two reasons rather than one: `ApprovalCenter` narrowed its mutation type to `approve                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | reject`, AND the list was filtered to `pending_approval`, so an applied change set never appeared on the screen at all. An escalated revert is presented as an outcome rather than an error — `approval-required`is registered at 202, inside the 2xx range, so the body arrives as a success and is narrowed explicitly. A per-project change history timeline explains all thirteen states, keeping`rolled_back`(an apply that undid itself) distinct from`reverted` (a deliberate reversal through the chokepoint). |
+> | 1.7 Policy engine              | verified, and one fabrication removed | 102 tests over OPA and the policy-evaluation surface, plus a full editor over the new `GET /api/v1/policies` — a list route that did not exist, which is why a policy screen was unbuildable and `/policies` was a read-only wall of templates. **`POST /policies/{id}/test` used to fabricate its verdict**: with no `opa` on PATH it returned `"allow" if input["action"] == "allow_me" else "deny"`, a decision on a security surface that no policy engine computed. It raises the registered `503 dryrun-unavailable` now, reports the query it evaluated and the evaluator's own version, and distinguishes an UNDEFINED rule from a deny. The test that covered it asserted the synthesised values, so it passed with or without OPA installed; the binary is now in the backend image and in the backend CI job, both by COPY from the digest-pinned image Compose already runs. The policy READ path was also not tenant-scoped — any authenticated caller could read, rewrite or delete another tenant's rules by id — and answers the non-disclosing 403 now.                                                                                                                                                                                      |
+> | 1.8 Secret management          | verified                              | Encryption at rest, redaction before LLM context, deploy-time injection; Q-12, Q-24, Q-28. The vault can now add, rotate and delete, and write-only is STRUCTURAL rather than promised: the value inputs are uncontrolled so no secret enters React state, the DOM node is cleared before the request is awaited so a failed write clears it too, and no response shape in that module carries a value in either direction. Deleting a reference does not reach into Infisical, and the confirmation says so — this platform does not own that store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+> | 1.9 Audit logging              | verified                              | Unbroken hash chain asserted in journey step 12. **Known limitation:** `GovernanceAction` is a closed vocabulary with no `applied` action, so an audit reader cannot ask "was this applied?" and must consult `change_sets` — Q-04 allows one row per transit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+> | 1.10 Governance control plane  | verified                              | Every mutation passes the chokepoint; `check-chokepoint.sh` proves it over both runtimes by parsing the import graph and reports "both halves clean".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+> | 1.11 Auth integration          | verified                              | Real Authentik OIDC in journey step 1. The agent authenticates as a DEVICE on both factors, which `require_principal` cannot express.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 #### 1.1 Agent Pairing & Connection (JSON-RPC 2.0 over WSS)
+
 - [x] Implement **JSON-RPC 2.0 protocol** over WSS (structured `method`, `params`, `id`, `error` schema)
 - [x] Implement message types: `session.connect`, `session.heartbeat`, `command.execute`, `command.result`, `command.progress`, `approval.request`, `approval.response`, `agent.error`, `agent.status`
 - [x] Implement WSS connection manager with auto-reconnect (exponential backoff: start 1s, max 60s, jitter 0.5x)
@@ -205,6 +217,7 @@
 - [x] Implement **command envelope schema with HMAC-SHA256 signature** for integrity
 
 #### 1.2 Multi-Project Workspace
+
 - [x] Backend: CRUD API for projects (import from GitHub, local path)
 - [x] Backend: Project settings (LLM budget, policies basic)
 - [x] Frontend: Project list view with search, tags, favorites — `app/(shell)/projects/page.tsx`; every filter is a query parameter on `GET /projects`, asserted on the query string by `__tests__/project-workspace.test.tsx` because that is the only observable distinguishing server-side filtering from the browser-side version
@@ -213,6 +226,7 @@
 - [x] Agent: Register project directory, watch for changes
 
 #### 1.3 Codebase Analysis Engine
+
 - [x] Agent: **Language detection** — tiered detection (package manager → extension → shebang → content heuristics)
 - [x] Agent: **Dependency graph builder** — resolve imports/requires across files for cross-file RAG
 - [x] Agent: Recursive file tree scanner (respects .gitignore + .dockerignore)
@@ -228,6 +242,7 @@
 - [x] Backend: Implement **dependency-graph-aware incremental scanning** (re-index changed files + their dependants)
 
 #### 1.4 Deployment Readiness Analysis
+
 - [x] Backend: Scoring engine with weighted categories
 - [x] Categories: Containerization, CI/CD, Orchestration, Env Config, Security, IaC
 - [x] Backend: Checklist checks (Dockerfile exists, multi-stage, non-root, etc.)
@@ -237,6 +252,7 @@
 - [x] Frontend: Actionable recommendations list
 
 #### 1.5 AI File Generation & Validation Pipeline
+
 - [x] Backend: AI engine with RAG from Codebase Index (hybrid sparse-dense retrieval)
 - [x] Backend: **6-tier model routing** with fallback cascade:
   - High: GPT-5.6 Sol (primary), Claude Fable 5 (backup) — architecture, multi-file generation
@@ -273,6 +289,7 @@
 - [x] Generated artifacts: OpenTofu configs, `.env.example`, README docs
 
 #### 1.6 Change Approval Center
+
 - [x] Backend: Change-set CRUD API (create, validate, approve, reject, apply)
 - [x] Backend: Automatic timestamped backup before apply
 - [x] Backend: Atomic all-or-nothing change application
@@ -283,6 +300,7 @@
 - [x] Agent: Atomic file operations (transactional writes)
 
 #### 1.7 Policy Engine (Basic)
+
 - [x] Backend: OPA integration for policy evaluation
 - [x] Backend: Policy CRUD API
 - [x] Backend: Pre-defined policy templates (scheduling, file restrictions)
@@ -292,6 +310,7 @@
 - [x] Implemented policies: "Never deploy on Fridays", "Never edit package.json", "Require approval for production"
 
 #### 1.8 Secret Management (Basic)
+
 - [x] Backend: Integrate Infisical for encrypted secret storage
 - [x] Backend: Secret CRUD API (per project, per environment)
 - [x] Agent: Secret scanning during codebase analysis (Gitleaks)
@@ -300,18 +319,21 @@
 - [x] Frontend: Secret vault UI (add, edit, delete, list) — `features/vault/SecretVault.tsx`; write-only is structural (uncontrolled inputs, cleared before the request is awaited, no value field in either direction) and `__tests__/vault-write.test.tsx` asserts the shape rather than the screen
 
 #### 1.9 Audit Logging
+
 - [x] Backend: Immutable audit log for all actions
 - [x] Fields: who, what, when, why, before/after state
 - [x] Frontend: Audit log viewer
 - [x] Ensure agent-side operations are also logged
 
 #### 1.10 Agent Governance Control Plane (P1 Architecture)
+
 - [x] Backend: Implement **unified Governance Control Plane** — a single enforced chokepoint routing every mutating action through: policy evaluation → approval gate → change-set compilation → blast-radius check (Semantic Plan Analyzer) → audit record → rollback handle
 - [x] Backend: No agent mutation bypasses this layer — it is the trust moat
 - [x] Agent: OPA compiled to **Wasm** embedded in the Go agent binary for the agent-side half of the double policy evaluation (Cerbos v0.54.0 stays as the backend app RBAC sidecar)
 - [x] Agent: SPIFFE/SPIRE **X.509-SVID + mTLS** with attestation (namespace + service-account + image-digest) for workload identity — no long-lived agent keys; JWT-SVID only for crossing L7 proxies
 
 #### 1.11 Auth Integration
+
 - [x] Set up Authentik or Keycloak container
 - [x] Implement OIDC/OAuth2 login flow
 - [x] Implement JWT token management
@@ -383,6 +405,7 @@
       on the live path: a second journey run costs 1.4 min against 10.7
 
 ### Excluded (for this phase)
+
 - ❌ Multi-environment management
 - ❌ Docker/K8s management dashboards
 - ❌ Deployment automation
@@ -420,7 +443,7 @@ because a phase this size is built over many sittings and the reasoning has to s
 2.13 and 2.14 interleaved where their prerequisites land.**
 
 1. **2.1 Multi-Environment Management is first** because every other deliverable in the phase
-   *references* an environment. A deployment goes TO one, a promotion BETWEEN two, a rollback restores
+   _references_ an environment. A deployment goes TO one, a promotion BETWEEN two, a rollback restores
    what one held, progressive delivery shifts traffic WITHIN one, and the Command Center's "deploy to
    staging" names one. Building any of those first would mean inventing a placeholder for the thing they
    all point at — and a placeholder on a runtime path is this repository's most-repeated defect. There is
@@ -462,6 +485,7 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 ### Deliverables
 
 #### 2.1 Multi-Environment Management
+
 - [x] Backend: Environment CRUD API (Dev, Test, Staging, Prod + custom) — revision `0023`, `src/environments/`,
       `GET/POST /projects/{id}/environments`, `PATCH`/`DELETE /{environment_id}`. `dump-openapi.py` reports 72
       paths (was 68); `check-route-auth.py` examined 91 routes across 76 paths and found every one behind a
@@ -501,18 +525,59 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       screens that are not there.
 
 #### 2.2 Deployment Automation
-- [ ] Agent: Container image build and push to registry (OCI-compliant)
-- [ ] Agent: K8s manifest apply with health check verification
-- [ ] Agent: OpenTofu apply with state management
-- [ ] Backend: Deployment record CRUD
-- [ ] Backend: Stable-state snapshot per successful deploy
-- [ ] Backend: Live log streaming during deployment (SSE with `log` event type)
-- [ ] Backend: **Durable execution** for deployment workflows (one durable engine at P2 — Inngest, or Temporal if replay/history demands; not a multi-hop migration)
-- [ ] Backend: **Circuit breaker** pattern for deployment pipeline (fail-fast on validation errors)
-- [ ] Frontend: Deployment dashboard with progress indicators
-- [ ] Frontend: Deployment results with structured logs
+
+- [ ] Agent: Container image build and push to registry (OCI-compliant) — not built. Separate credentials
+      and separate failure modes, and a registry push produces the one value a deployment record should pin
+      (an image digest); doing it badly would put a fabricated digest on a runtime path.
+- [x] Agent: K8s manifest apply with health check verification — `agent/internal/executor/deployment.go`,
+      operation `deployment.apply_manifests`, mutating and approval-required, `timeoutDeploy` 15 minutes.
+      `kubectl` through an argument vector: no shell, and no `--prune` — pruning is an unbounded delete
+      driven by a label selector nobody reviewed, and it belongs in 2.7's GitOps box where the diff is
+      visible first. **The verification half is why this is one operation and not two**: it applies, then
+      waits for every pod-bearing workload to converge, and reports `applied` or `degraded`, which are
+      separate facts because "the API server accepted the objects" is not "anything is running". Only
+      Deployment, StatefulSet and DaemonSet are waited on — `rollout status` on a Service exits non-zero,
+      so treating one as waitable would fail every manifest set containing a Service. Tests in
+      `deployment_test.go`; the whole agent suite passes `-race` at 73.5% statements against the 70 gate.
+      **Its own test caught a real defect in it**: the first version put a 10-minute health wait inside a
+      3-minute operation budget, which could never complete and would have reported "the operation timed
+      out" instead of naming the workload and its replica count. _Not yet run against a real cluster_ —
+      recorded in `PROGRESS.md` rather than claimed here.
+- [ ] Agent: OpenTofu apply with state management — not built. State locking makes it a different problem
+      from an idempotent `kubectl apply`, and `iac.Runner` still exposes no `apply`.
+- [x] Backend: Deployment record CRUD — revision `0024`, `src/deployments/`,
+      `GET/POST /projects/{id}/deployments`, `GET /{deployment_id}`, `GET /rollback-target`.
+      `check-route-auth.py` examined 95 routes across 79 paths and found every one behind a principal;
+      `dump-openapi.py` reports 75 paths. The row is written **before** the chokepoint is asked, so a
+      deployment blocked at the gate still has a record saying so — writing it only on success is how
+      "nothing happened and nothing says why" gets built. `healthy` is nullable deliberately: `null` means
+      nothing verified it, `false` means the workloads were checked and were not ready.
+- [x] Backend: Stable-state snapshot per successful deploy — `deployments.stable`, set on **health** and
+      not on apply, with `ck_deployments_stable_implies_healthy` enforcing it below the service because the
+      service is one writer and a support UPDATE is another. `GET /rollback-target` answers with the newest
+      stable deployment, or `{"target": null}` and a reason. 16 tests in `test_deployments.py`, including
+      one that applies a healthy deployment, then a degraded one, and asserts the rollback target is still
+      the earlier healthy one — the invariant the whole of 2.3 rests on. A second report for a settled
+      deployment is refused, because delivery is at-least-once and a redelivered `degraded` must not
+      un-stable a row a rollback is targeting.
+- [ ] Backend: Live log streaming during deployment (SSE with `log` event type) — not built. The agent's
+      progress sink exists and the operation emits through it; carrying that to a browser as an SSE `log`
+      stream is the missing half.
+- [ ] Backend: **Durable execution** for deployment workflows (one durable engine at P2 - Inngest, or Temporal if replay/history demands; not a multi-hop migration)
+- [ ] Backend: **Circuit breaker** pattern for deployment pipeline (fail-fast on validation errors) — not
+      built. A breaker chosen before there is a pipeline to break is a guess about which failures repeat.
+- [x] Frontend: Deployment dashboard with progress indicators —
+      `features/deployments/DeploymentDashboard.tsx`, mounted on the project route and using
+      `EnvironmentSelector`, so §2.1's selector is now on a second screen. 13 tests; full suite 604 passed
+      at 95.3/84.07/92/95.63. **`degraded` is rendered as its own state**, and `healthy: null` as "no
+      workload has been verified yet" rather than as a failure — an interface that showed those alike would
+      tell an operator that a rollout still in flight had already failed. The rollback panel renders the
+      absence of a stable state as an absence, with no button: offering a rollback to a degraded deployment
+      would restore a broken state while reporting success.
+- [ ] Frontend: Deployment results with structured logs — waits on the SSE `log` stream above.
 
 #### 2.3 Rollback & Release Timeline
+
 - [ ] Backend: Deployment history with full version metadata
 - [ ] Backend: Diff between any two deployments (image, manifests, configs)
 - [ ] Backend: Rollback to any previous deployment
@@ -520,14 +585,16 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Frontend: Side-by-side deployment comparison
 
 #### 2.4 Docker Management Dashboard
+
 - [ ] Agent: Docker Engine API wrapper (containers, images, volumes, networks)
-- [ ] Backend: **Agent operation proxy for Docker AND Kubernetes named operations** (via agent MCP server) — *combined box: former 2.4 "Docker operation proxy" + former 3.1 "K8s operation proxy", which were the same mechanism over two resource families. One whitelist, one signing path, one chokepoint transit for every mutating call; satisfies both.*
+- [ ] Backend: **Agent operation proxy for Docker AND Kubernetes named operations** (via agent MCP server) — _combined box: former 2.4 "Docker operation proxy" + former 3.1 "K8s operation proxy", which were the same mechanism over two resource families. One whitelist, one signing path, one chokepoint transit for every mutating call; satisfies both._
 - [ ] Frontend: Container list with status, logs, resource stats
 - [ ] Frontend: Container create/start/stop/restart/delete
 - [ ] Frontend: Image list with build/pull/push/remove
-- [ ] Frontend: **Resource utilisation view** — live container CPU/memory/network from the Docker probe AND cluster/application series from the metrics tier, distinguishing "never reported" from "stale" from "healthy" — *combined box: former 2.4 "Live resource monitoring (CPU, memory, network)" + former 3.2 "Resource utilization charts". Two panels showing the same quantity from two sources is how a stale number gets read as a live one; satisfies both.*
+- [ ] Frontend: **Resource utilisation view** — live container CPU/memory/network from the Docker probe AND cluster/application series from the metrics tier, distinguishing "never reported" from "stale" from "healthy" — _combined box: former 2.4 "Live resource monitoring (CPU, memory, network)" + former 3.2 "Resource utilization charts". Two panels showing the same quantity from two sources is how a stale number gets read as a live one; satisfies both._
 
 #### 2.4a Inngest Integration (Deployment Workflows)
+
 - [ ] Backend: Set up Inngest for event-driven durable function execution
 - [ ] Backend: Define deployment pipeline as Inngest functions (build → push → apply → verify)
 - [ ] Backend: Implement approval-gated stages in Inngest workflows
@@ -535,6 +602,7 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Backend: Wrap business logic in orchestrator-agnostic functions ("thin wrapper" pattern)
 
 #### 2.5 AI Command Center
+
 - [ ] Backend: Intent classifier (router: deploy, diagnostic, generate, policy, chat)
 - [ ] Backend: NL → structured command pipeline (function calling)
 - [ ] Backend: Multi-agent orchestrator (deploy agent, diagnostic agent, etc.)
@@ -545,6 +613,7 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Supported commands: "Deploy to staging", "Show pods", "Check logs", "Scale to 3 replicas", "Generate Dockerfile"
 
 #### 2.6 Notification Center (Basic)
+
 - [ ] Backend: Novu integration for multi-channel notifications
 - [ ] Backend: Notification templates (deploy completed, failed, policy violated)
 - [ ] Frontend: Notification bell with dropdown
@@ -552,23 +621,27 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Integration: Slack webhook, Discord webhook, Email (SMTP)
 
 #### 2.7 ArgoCD GitOps Integration
+
 - [ ] Backend: ArgoCD Application manifest generation (AI creates App of Apps pattern)
 - [ ] Agent: Support `argocd app sync` via subprocess
 - [ ] Agent: ArgoCD ApplicationSet template generation
 - [ ] Backend: ArgoCD webhook integration for auto-sync
 
 #### 2.7a Argo Rollouts — Progressive Delivery
+
 - [ ] Backend: **Argo Rollouts** integration for canary and blue-green rollouts (progressive delivery is NOT native to ArgoCD)
 - [ ] Backend: Gate canary promotions on **error-rate AND latency** (analysis templates backed by OTel/Prometheus metrics)
 - [ ] Backend: Automatic rollback on either signal breaching its threshold
 - [ ] Frontend: Progressive rollout visualization (canary weight, metrics, promotion history)
 
 #### 2.7b Service Mesh
+
 - [ ] Infra: Prefer **Cilium** (eBPF, sidecarless, Hubble observability) for the 10k-agent self-host fleet — lowest-overhead option
 - [ ] Infra: **Istio Ambient** as fallback when rich L7/multi-cluster is needed
 - [ ] Note: Linkerd stable releases are behind a Buoyant subscription — avoid for an OSS-values project
 
 #### 2.8 Local Development Tools
+
 - [ ] Agent: Run tests (npm test, pytest, go test)
 - [ ] Agent: Run linters
 - [ ] Agent: Build project
@@ -577,7 +650,8 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Backend: Dev-tools command proxy
 - [ ] Frontend: Dev-tools panel in project dashboard
 
-#### 2.9 Kubernetes Management Dashboard *(former 3.1)*
+#### 2.9 Kubernetes Management Dashboard _(former 3.1)_
+
 - [ ] Agent: K8s API wrapper for pods, deployments, services, namespaces, ingress, ConfigMaps, HPA
 - [ ] Frontend: Pod list with status, logs, events
 - [ ] Frontend: Deployment management (scale, restart, rollback)
@@ -588,7 +662,8 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 > The former 3.1 "Backend: K8s operation proxy (via agent MCP server)" is not missing: it is the
 > combined box in 2.4. Scale, restart and rollback are mutations and travel the chokepoint.
 
-#### 2.10 OTel-Native Monitoring (Two-Tier Deployment) *(former 3.2)*
+#### 2.10 OTel-Native Monitoring (Two-Tier Deployment) _(former 3.2)_
+
 - [ ] Deploy **OTel Collector two-tier architecture**:
   - **Tier 1 (Sidecar)**: Per-pod collectors — PII redaction, local buffering (`memory_limiter`), 50-100MB overhead
   - **Tier 2 (Gateway)**: Cluster-level collectors — **tail-based sampling** (stateful), load balancing (consistent hash), batch processing
@@ -607,7 +682,8 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 > The former 3.2 "Frontend: Resource utilization charts" is not missing: it is the combined
 > resource-utilisation box in 2.4.
 
-#### 2.11 AI Troubleshooting / Root-Cause Analysis *(former 3.3)*
+#### 2.11 AI Troubleshooting / Root-Cause Analysis _(former 3.3)_
+
 - [ ] Backend: Incident ingestion from build failures, deployment errors, K8s events, logs
 - [ ] Backend: AI-powered log analysis (Gemini 3 Flash for high throughput, through the §0.5 routing cascade)
 - [ ] Backend: Root cause identification pipeline
@@ -616,7 +692,8 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Frontend: RCA display (problem → location → fix)
 - [ ] Frontend: Suggested fix with diff preview
 
-#### 2.12 Self-Healing (Guard-Railed) *(former 3.4)*
+#### 2.12 Self-Healing (Guard-Railed) _(former 3.4)_
+
 - [ ] Backend: Health monitoring (failed containers, crash-looping pods, high resource usage)
 - [ ] Backend: Two-tier action model
   - Safe: auto-execute (restart crashed container), logged + reported
@@ -626,7 +703,8 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Frontend: Self-healing activity log
 - [ ] Frontend: Post-incident summary display
 
-#### 2.13 AI Learning History (Per-Project Memory) *(former 3.5)*
+#### 2.13 AI Learning History (Per-Project Memory) _(former 3.5)_
+
 - [ ] Backend: Feedback event logging (accepted/rejected suggestions)
 - [ ] Backend: Two-tier memory architecture
   - Short-term: conversation history within session
@@ -636,12 +714,14 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Frontend: Learning history viewer (inspectable, editable)
 - [ ] Frontend: Preference display (what AI has learned about this project)
 
-#### 2.14 Knowledge Base Mode *(former 3.6)*
+#### 2.14 Knowledge Base Mode _(former 3.6)_
+
 - [ ] Backend: Question-answering pipeline with RAG from codebase, deployments, incidents
 - [ ] Implemented topics: "Explain this Dockerfile", "Explain this error", "Best practices for..."
 - [ ] Always uses current project as example (not generic)
 
 ### Completion Criteria
+
 - [ ] User can promote from dev → staging → production
 - [ ] Deployment with real image build + push + apply works
 - [ ] Rollback restores previous stable state
@@ -661,7 +741,7 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 - [ ] Knowledge base answers questions using project context
 - [ ] End-to-end test: deploy → inject failure → AI detects → AI suggests fix → human approves
 - [ ] Grafana Mimir storing long-term metrics with configured retention period
-- [ ] Test coverage ≥ 75% — *combined criterion: former Phase 2 asked ≥ 70% and former Phase 3 asked ≥ 75%. Resolved to the STRICTER of the two, because a merged phase that shipped at the looser threshold would be a coverage reduction dressed as a merge. Backend, agent and frontend keep their existing higher gates (86%/77%/96-97-94-86); this is the phase floor, not a target.*
+- [ ] Test coverage ≥ 75% — _combined criterion: former Phase 2 asked ≥ 70% and former Phase 3 asked ≥ 75%. Resolved to the STRICTER of the two, because a merged phase that shipped at the looser threshold would be a coverage reduction dressed as a merge. Backend, agent and frontend keep their existing higher gates (86%/77%/96-97-94-86); this is the phase floor, not a target._
 
 ### Excluded (for this phase)
 
@@ -701,6 +781,7 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 ### Deliverables
 
 #### 3.1 Visual Pipeline Designer
+
 - [ ] Frontend: React Flow integration for drag-and-drop pipeline editing
 - [ ] Frontend: Stage nodes (Build, Test, Scan, Deploy, Health Check, Notify)
 - [ ] Frontend: Connection edges between stages
@@ -709,6 +790,7 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 - [ ] Backend: GitHub Actions / Jenkins file export
 
 #### 3.2 AI Architecture Diagram Generator
+
 - [ ] Backend: Dependency graph builder from codebase index
 - [ ] Backend: D2 markup generator from dependency graph + infra state
 - [ ] Frontend: D2 rendering to SVG via D2 CLI (server-side)
@@ -717,6 +799,7 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 - [ ] Frontend: Simple diagram editing (Mermaid fallback)
 
 #### 3.3 Dependency Health Scanner (Full)
+
 - [ ] Agent: Multi-ecosystem dependency parsing (npm, pip, Go, Maven, etc.)
 - [ ] Agent: Trivy scan for vulnerabilities, outdated, deprecated, unused packages
 - [ ] Backend: AI analysis of scan results
@@ -725,6 +808,7 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 - [ ] Frontend: License compliance view
 
 #### 3.4 Supply-Chain & CI/CD Security
+
 - [ ] Agent: **SLSA Build Level 2+** compliance (signed provenance for every build)
 - [ ] CI: Generate **CycloneDX SBOM** for every release via Syft
 - [ ] CI: **Cosign keyless signing** via Sigstore (Fulcio/Rekor)
@@ -734,6 +818,7 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 - [ ] Frontend: VEX (Vulnerability Exploitability Exchange) dashboard for end users
 
 #### 3.5 Cost Analysis
+
 - [ ] Backend: Infracost integration for pre-deployment cost estimation
 - [ ] Backend: Kubecost integration for runtime cost visibility
 - [ ] Backend: AI cost optimization suggestions
@@ -741,6 +826,7 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 - [ ] Frontend: Cost savings recommendations with estimated savings
 
 #### 3.6 Team Collaboration
+
 - [ ] Backend: Full RBAC (Owner, Admin, Developer, Viewer)
 - [ ] Backend: Cerbos integration for fine-grained permissions
 - [ ] Backend: Review request system with threaded comments
@@ -750,6 +836,7 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 - [ ] Frontend: Approval dashboard (pending, approved, rejected)
 
 #### 3.7 Backup & Disaster Recovery
+
 - [ ] Agent: Velero integration for K8s backup
 - [ ] Agent: Docker volume backup script
 - [ ] Backend: Backup schedule management with retention policies
@@ -758,18 +845,21 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 - [ ] Frontend: Backup management UI
 
 #### 3.8 API Explorer
+
 - [ ] Agent: Codebase scanning for API route definitions
 - [ ] Backend: OpenAPI spec generation from scanned routes
 - [ ] Frontend: Stoplight Elements integration for API viewer
 - [ ] Frontend: GraphiQL for GraphQL APIs
 
 #### 3.9 Deployment Analytics
+
 - [ ] Backend: DORA metrics computation (deployment frequency, lead time, MTTR, change failure rate)
 - [ ] Backend: Trend analysis (success rates, failure patterns)
 - [ ] Frontend: Analytics dashboard with charts (ECharts)
 - [ ] Frontend: Deployment timeline with success/failure indicators
 
 ### Completion Criteria
+
 - [ ] Visual pipeline designer generates valid GitHub Actions YAML
 - [ ] Architecture diagrams are generated from real codebase analysis
 - [ ] Dependency health scanner finds vulnerabilities across ecosystems
@@ -803,35 +893,42 @@ Deferred to Phase 4 (Advanced & Ecosystem):
 ### Deliverables
 
 #### 4.1 Multi-Agent Collaboration
+
 - [ ] Multiple AI agents working on same project with coordination
 - [ ] Specialized agents: Analyzer, Generator, Safety Reviewer, Deployment Manager
 - [ ] Human orchestrator mode
 
 #### 4.2 Air-Gapped Mode
+
 - [ ] Fully offline platform operation
 - [ ] Local models only (Qwen3-Coder via Ollama)
 - [ ] No cloud backend dependency
 
 #### 4.3 Backstage Plugin
+
 - [ ] Platform as a Backstage plugin
 - [ ] Integration with Backstage catalog and software templates
 
 #### 4.4 Enterprise SSO & Compliance
+
 - [ ] SAML, LDAP integration
 - [ ] SOC2 compliance features
 - [ ] Audit export for compliance
 - [ ] Data retention policies
 
 #### 4.5 "Deploy to..." One-Click Templates
+
 - [ ] Pre-built deployment profiles for popular stacks
 - [ ] Next.js → Vercel, Django → Railway, Spring Boot → ECS
 
 #### 4.6 Platform SDK
+
 - [ ] REST API for third-party integration
 - [ ] Webhook system for external triggers
 - [ ] Plugin architecture for community extensions
 
 ### Completion Criteria
+
 - [ ] Multiple AI agents can collaborate on a single project
 - [ ] Platform operates fully offline with local models
 - [ ] Backstage plugin is published
@@ -880,6 +977,7 @@ Phase 1: MVP Core (Analysis → Generation → Approval)
 ```
 
 **Key dependency notes:**
+
 - P0.5 (Model Routing) is a **hard prerequisite** for P1.5 (AI Generation Pipeline with 6-tier routing)
 - P0.2 (GoReleaser/Cosign/Syft/SLSA) is a **hard prerequisite** for P3.4 (Supply-Chain dashboard)
 - P3.9 (DORA Analytics) depends on P2.3 (Deployment history) being available
@@ -892,25 +990,26 @@ Phase 1: MVP Core (Analysis → Generation → Approval)
 
 ## Phase Risk Assessment
 
-| Phase | Risk Level | Key Risks | Mitigation |
-|:---:|:---:|:---|---:|
-| 0 | Low | Tooling incompatibility, CI configuration issues | Use well-established tools, pin versions |
-| 1 | High | LLM output quality, validation loop reliability, security bugs | Extensive testing, validation-feedback loop, Plan Analyzer |
-| 2 | High | Docker/K8s API complexity, deployment state management, telemetry pipeline complexity, self-healing safety — the merged phase carries both former risk profiles, and the highest of the two governs | Official SDKs, test with multiple orchestrators, two-tier action model, extensive dry-run testing, no auto-execution before the safe/risky split is proven |
-| 3 | Medium | Feature scope creep, UI complexity | Clear scope boundaries, iterative UX testing |
-| 4 | Low | Community adoption, plugin ecosystem | engagement, documentation |
+| Phase | Risk Level | Key Risks                                                                                                                                                                                           |                                                                                                                                                 Mitigation |
+| :---: | :--------: | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------: |
+|   0   |    Low     | Tooling incompatibility, CI configuration issues                                                                                                                                                    |                                                                                                                   Use well-established tools, pin versions |
+|   1   |    High    | LLM output quality, validation loop reliability, security bugs                                                                                                                                      |                                                                                                 Extensive testing, validation-feedback loop, Plan Analyzer |
+|   2   |    High    | Docker/K8s API complexity, deployment state management, telemetry pipeline complexity, self-healing safety — the merged phase carries both former risk profiles, and the highest of the two governs | Official SDKs, test with multiple orchestrators, two-tier action model, extensive dry-run testing, no auto-execution before the safe/risky split is proven |
+|   3   |   Medium   | Feature scope creep, UI complexity                                                                                                                                                                  |                                                                                                               Clear scope boundaries, iterative UX testing |
+|   4   |    Low     | Community adoption, plugin ecosystem                                                                                                                                                                |                                                                                                                                  engagement, documentation |
 
 ---
 
 ## Appendix A: Job Queue Evolution Strategy
 
-| Phase | Queue | Rationale |
-|:---|:---|:---|
-| **Phase 1** | **ARQ or Dramatiq** | Asyncio-native task runner for fire-and-forget AI tasks (analysis, generation); native fit for async FastAPI, no eventlet/gevent workaround (unlike Celery) |
-| **Phase 2** | **Inngest** (single durable engine, introduced once) | Async-native durable functions; ideal for approval-gated deployment/rollback/remediation pipelines; self-hostable |
-| **Phase 3+** | **Temporal** (only if needed) | Stateful workflow-as-code; adopt ONLY if replay/history genuinely outgrows Inngest — not a planned migration. Phase 3 in the merged numbering, i.e. after the whole deploy-observe-heal phase has run on Inngest |
+| Phase        | Queue                                                | Rationale                                                                                                                                                                                                        |
+| :----------- | :--------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase 1**  | **ARQ or Dramatiq**                                  | Asyncio-native task runner for fire-and-forget AI tasks (analysis, generation); native fit for async FastAPI, no eventlet/gevent workaround (unlike Celery)                                                      |
+| **Phase 2**  | **Inngest** (single durable engine, introduced once) | Async-native durable functions; ideal for approval-gated deployment/rollback/remediation pipelines; self-hostable                                                                                                |
+| **Phase 3+** | **Temporal** (only if needed)                        | Stateful workflow-as-code; adopt ONLY if replay/history genuinely outgrows Inngest — not a planned migration. Phase 3 in the merged numbering, i.e. after the whole deploy-observe-heal phase has run on Inngest |
 
 **Migration pattern:**
+
 - Keep business logic in orchestrator-agnostic functions ("thin wrapper" pattern) from Day 1
 - ARQ/Dramatiq handles P1 non-durable tasks; Inngest becomes the single durable engine at P2 — no multi-hop engine migration of the safety-critical path
 - Temporal remains an optional escape hatch behind the same interface, never a scheduled rewrite
@@ -928,4 +1027,4 @@ Phase 1: MVP Core (Analysis → Generation → Approval)
 
 ---
 
-*End of Phases Document — Build phases in order, complete each before starting the next.*
+_End of Phases Document — Build phases in order, complete each before starting the next._

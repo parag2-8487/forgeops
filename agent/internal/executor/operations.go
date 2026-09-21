@@ -49,6 +49,10 @@ const (
 	// OpRepositoryClone puts a repository on the operator's machine. Mutating, and the only operation
 	// that creates the directory a project points at rather than writing inside one.
 	OpRepositoryClone Operation = "repository.clone"
+	// OpDeploymentApplyManifests applies Kubernetes manifests to a real cluster AND waits for the
+	// workloads to converge. Mutating: it changes what is running, which is the largest blast radius
+	// any operation here has.
+	OpDeploymentApplyManifests Operation = "deployment.apply_manifests"
 )
 
 // allOperations is the declared vocabulary, used only to assert that the dispatch table covers
@@ -64,7 +68,7 @@ var allOperations = []Operation{
 	OpValidateCompose, OpValidateK8s, OpValidateTofu, OpValidateHelm, OpValidateYAML, OpValidateTrivy,
 	OpReadinessInventory, OpSecretScanRun,
 	OpChangeSetApply, OpChangeSetRevert, OpGitBranchCommitPush, OpGitOpenPR, OpSecretsInject,
-	OpRepositoryClone,
+	OpRepositoryClone, OpDeploymentApplyManifests,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).

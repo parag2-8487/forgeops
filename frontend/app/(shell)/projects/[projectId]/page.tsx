@@ -9,6 +9,7 @@ import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { CodebaseIndexPanel } from "@/features/codebase/CodebaseIndexPanel";
+import { DeploymentDashboard } from "@/features/deployments/DeploymentDashboard";
 import { EnvironmentManager } from "@/features/environments/EnvironmentManager";
 import { ChangeHistoryTimeline } from "@/features/approvals/ChangeHistoryTimeline";
 import { SecretVault, type SecretRefUI } from "@/features/vault/SecretVault";
@@ -105,6 +106,19 @@ export default function ProjectDetailPage() {
                 in words on every row rather than left to a checkbox.
               </p>
               <EnvironmentManager projectId={projectId} />
+            </section>
+
+            <section aria-labelledby="deployments-heading" className="space-y-3">
+              <h2 id="deployments-heading" className="text-lg font-semibold">
+                Deployments
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                §2.2. A deployment is a mutation, so it goes through the same governance chokepoint
+                as every other: policy, approval, blast radius, audit, rollback handle. Whether it
+                waits for a human is decided by the environment, the approval gate and the policy —
+                and any of the three can demand one.
+              </p>
+              <DeploymentDashboard projectId={projectId} />
             </section>
 
             <section aria-labelledby="secrets-heading" className="space-y-3">

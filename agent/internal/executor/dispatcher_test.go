@@ -128,7 +128,7 @@ func TestEveryDeclaredOperationHasAHandlerAndViceVersa(t *testing.T) {
 	if len(handlerTable) != len(allOperations) {
 		t.Errorf("table has %d rows, %d operations declared", len(handlerTable), len(allOperations))
 	}
-	if len(allOperations) != 18 {
+	if len(allOperations) != 19 {
 		t.Errorf("§7.7's catalogue has 18 operations; this build declares %d. If that is "+
 			"deliberate, change this number in the same commit as the table.", len(allOperations))
 	}
@@ -146,6 +146,9 @@ func TestTheMutatingSetIsExactlySevenSevensSecondColumn(t *testing.T) {
 		// A clone creates the directory a project points at, which is a mutation on the operator's
 		// machine even though nothing inside an existing tree changes.
 		OpRepositoryClone: true,
+		// A deployment changes what is RUNNING. The largest blast radius in the table, and unlike a
+		// file write it cannot be undone by restoring bytes.
+		OpDeploymentApplyManifests: true,
 	}
 	for op, row := range handlerTable {
 		if row.mutating != want[op] {
@@ -625,12 +628,12 @@ func TestOperations_IsDerivedFromTheTable(t *testing.T) {
 	//
 	// Named individually rather than counted alone, because a count that matches for the wrong reason
 	// is the failure this pin exists to catch.
-	const expectedImplemented = 16
+	const expectedImplemented = 17
 	if implemented != expectedImplemented {
 		t.Errorf("%d operations report Implemented, expected %d: changeset.apply, changeset.revert, "+
 			"the six validate.* operations, readiness.inventory, secretscan.run, secrets.inject, "+
 			"project.register, project.unregister, git.branch_commit_push, git.open_pr and "+
-			"repository.clone. "+
+			"repository.clone and deployment.apply_manifests. "+
 			"Update this number in the same commit as the new handler.", implemented, expectedImplemented)
 	}
 	for _, op := range []Operation{

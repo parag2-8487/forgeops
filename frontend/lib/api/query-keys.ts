@@ -133,4 +133,15 @@ export const queryKeys = {
     promotion: (environmentId: string) =>
       [...queryKeys.environments.all, "promotion", environmentId] as const,
   },
+  /** §2.2. Scoped by project for the history, by environment for the rollback target. */
+  deployments: {
+    all: ["deployments"] as const,
+    list: (projectId: string) => [...queryKeys.deployments.all, "list", projectId] as const,
+    /**
+     * Keyed by ENVIRONMENT, not by project: the rollback target is per environment, and a key that
+     * ignored it would offer staging's stable deployment as production's rollback target.
+     */
+    rollbackTarget: (environmentId: string) =>
+      [...queryKeys.deployments.all, "rollback-target", environmentId] as const,
+  },
 } as const;

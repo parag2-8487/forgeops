@@ -1245,6 +1245,65 @@
         "title": "DeletionReport",
         "type": "object"
       },
+      "DeploymentRequest": {
+        "description": "What an operator asks for.",
+        "properties": {
+          "cluster_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Context"
+          },
+          "environment_id": {
+            "format": "uuid",
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "health_timeout_seconds": {
+            "default": 0,
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Health Timeout Seconds",
+            "type": "integer"
+          },
+          "manifests": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Manifests",
+            "type": "array"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment_id",
+          "manifests"
+        ],
+        "title": "DeploymentRequest",
+        "type": "object"
+      },
       "DevicePage": {
         "properties": {
           "devices": {
@@ -7170,6 +7229,217 @@
         "summary": "Clone the project's GitHub repository onto the paired agent's machine",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/deployments": {
+      "get": {
+        "description": "\u00a72.3's timeline source: this project's deployments, newest first.",
+        "operationId": "list_deployments_api_v1_projects__project_id__deployments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Deployments Api V1 Projects  Project Id  Deployments Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Deployments",
+        "tags": [
+          "deployments"
+        ]
+      },
+      "post": {
+        "description": "Record the intent, then ask the chokepoint.\n\n202 rather than 201: what this returns is a decision, and in the common case the decision is \"a human\nmust approve this first\". A 201 would imply the deployment is happening.",
+        "operationId": "request_deployment_api_v1_projects__project_id__deployments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeploymentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Request Deployment Api V1 Projects  Project Id  Deployments Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Deployment",
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/deployments/rollback-target": {
+      "get": {
+        "description": "The newest STABLE deployment of an environment \u2014 what a rollback would restore.\n\nReturns `{\"target\": null}` with a reason rather than a 404 when there is not one. An environment whose\nonly deployment was degraded genuinely has nothing to roll back to, and that is an answer; a 404 would\nread as \"this endpoint is wrong\".\n\n`stable` is set on HEALTH, not on apply, which is what makes this trustworthy: a deployment whose\nworkloads never converged is not a state to return to.",
+        "operationId": "rollback_target_api_v1_projects__project_id__deployments_rollback_target_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rollback Target Api V1 Projects  Project Id  Deployments Rollback Target Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rollback Target",
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/deployments/{deployment_id}": {
+      "get": {
+        "operationId": "read_deployment_api_v1_projects__project_id__deployments__deployment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "deployment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Deployment Api V1 Projects  Project Id  Deployments  Deployment Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Deployment",
+        "tags": [
+          "deployments"
         ]
       }
     },
