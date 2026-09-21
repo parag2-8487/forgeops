@@ -41,6 +41,11 @@ from src.analysis.models import (  # noqa: F401, E402
 from src.audit.models import AuditEvent  # noqa: F401, E402
 from src.auth.device_models import AgentDevice  # noqa: F401, E402
 from src.auth.models import Session, User  # noqa: F401, E402
+from src.deployments.models import Deployment  # noqa: F401, E402
+from src.environments.models import (  # noqa: F401, E402
+    Environment,
+    EnvironmentVariable,
+)
 from src.generation.models import GenerationRun  # noqa: F401, E402
 from src.governance.models import (  # noqa: F401, E402
     Approval,

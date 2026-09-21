@@ -419,19 +419,26 @@ class TestTheTemplateIsReachedOnlyAfterTheProviderFails:
         assert outcome.status == "template_fallback"
         assert any("Dockerfile" in finding for finding in payloads[-1]["provider_findings"])
 
-    async def test_output_that_fails_the_gate_is_retried_and_the_bad_artifact_withheld(self) -> None:
-        """A root-running Dockerfile is refused, retried, and then WITHHELD — not delivered, and not
-        allowed to discard its valid siblings.
+    async def test_output_that_fails_the_gate_is_retried_and_then_replaced_by_the_floor(self) -> None:
+        """A root-running Dockerfile is refused, retried, and then REPLACED by the audited template.
 
-        THE BEHAVIOUR THIS REPLACED, AND WHY. The gate was all-or-nothing over the whole set, so one
-        malformed artifact sent the run to the template path — which writes canned files addressing none
-        of the user's findings. This fixture is exactly that shape: four artifacts, of which only the
-        Dockerfile is rootful. The old contract delivered zero correct files; the new one delivers the
-        three valid manifests and keeps the Dockerfile out of the change set.
+        THE TWO BEHAVIOURS THIS HAS REPLACED, in order, because the progression is the point.
 
-        The gate is not relaxed. An artifact it rejects is still never accepted — the check is now per
-        file rather than per set, which is strictly more precise. What changed is the alternative to
-        rejection: withholding one file instead of discarding four.
+        First the gate was all-or-nothing over the whole set, so one malformed artifact sent the run to
+        the template path and delivered canned files addressing none of the user's findings. That was
+        fixed by withholding per file: the three valid manifests were delivered and the Dockerfile was
+        kept out of the change set.
+
+        Then the thirteen-step journey failed at step 8 with **no Dockerfile in the change set at all** -
+        because withholding was the whole answer, and `scripts/check-template-readiness.py` had been
+        certifying a known-good template Dockerfile the entire time that no runtime path consulted per
+        kind. So the floor now applies per ARTIFACT: the rejected Dockerfile is replaced by the
+        template's, which is verified at runtime to satisfy its own target checks and to leave the whole
+        assembled set passing the gate.
+
+        THE GATE IS STILL NOT RELAXED, and that is what the assertions establish. The model's rootful
+        Dockerfile is never delivered; what is delivered is a different file that passes. An artifact the
+        gate rejects is still never accepted.
         """
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -443,17 +450,19 @@ class TestTheTemplateIsReachedOnlyAfterTheProviderFails:
         validations = [p for e, p in zip(events, payloads, strict=True) if e == SSEEventType.VALIDATION.value]
         assert any("USER" in finding for v in validations for finding in v["findings"])
 
-        # The offending artifact is NOT in the change set.
-        delivered = {artifact.path for artifact in outcome.files}
-        assert "Dockerfile" not in delivered, "a Dockerfile the gate rejected was delivered"
+        delivered = {artifact.path: artifact.content for artifact in outcome.files}
+        # A Dockerfile IS delivered now - and it is not the model's.
+        assert "Dockerfile" in delivered
+        assert delivered["Dockerfile"] not in ROOTFUL_OUTPUT, "the rejected Dockerfile itself was delivered"
+        # The property the gate rejected the model's Dockerfile for: it must run as a non-root user.
+        assert "USER" in delivered["Dockerfile"], delivered["Dockerfile"]
 
-        # Its valid siblings are.
-        assert delivered, "every artifact was discarded because one of them failed"
-        assert all(path.startswith("k8s/") for path in delivered), delivered
+        # Its valid siblings are still there.
+        assert any(path.startswith("k8s/") for path in delivered), delivered
 
-        # And the withholding is stated rather than silent, so the user is not left wondering why the
-        # Dockerfile recommendation did not move.
+        # Both facts are stated rather than silent: what was withheld, and that the floor stood in.
         assert any("withheld" in finding for v in validations for finding in v["findings"])
+        assert any("template floor replaced" in finding for v in validations for finding in v["findings"])
 
     async def test_the_template_is_still_reached_when_no_artifact_passes(self) -> None:
         """The fallback must remain reachable, or "withhold the bad ones" becomes "accept anything".

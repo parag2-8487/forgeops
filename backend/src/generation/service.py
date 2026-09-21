@@ -648,13 +648,25 @@ class GenerationService:
                 # score-lowering rules — so a substitution that would make the set worse is rejected
                 # and the withholding stands. A floor that cannot satisfy the check is not used.
                 substituted: tuple[str, ...] = ()
-                accepted, substituted = self._apply_floor(
-                    accepted=accepted,
-                    rejected=tuple(artifact.path for artifact in files if artifact not in accepted),
-                    prompt=prompt,
-                    project=project,
-                    existing=existing,
-                )
+                # ONLY WHEN SOMETHING OF THE MODEL'S SURVIVED, and the reason is provenance.
+                #
+                # If NOTHING passed, substituting the floor for every artifact would deliver a set that is
+                # entirely template content while the run row said `served_from='provider'`. That is the
+                # same class of wrongness as the `served_from` defects already recorded in PROGRESS.md: a
+                # row reporting a provenance the run did not have. The template path below already handles
+                # the nothing-survived case correctly and records `template`, so it is left to do so.
+                #
+                # Caught by `test_the_template_is_still_reached_when_no_artifact_passes`, which asserted
+                # `served_from == 'template'` and got `'provider'`. The fix for a mixed result had
+                # silently changed the answer for a total failure.
+                if accepted:
+                    accepted, substituted = self._apply_floor(
+                        accepted=accepted,
+                        rejected=tuple(artifact.path for artifact in files if artifact not in accepted),
+                        prompt=prompt,
+                        project=project,
+                        existing=existing,
+                    )
                 if not accepted:
                     findings = gate_findings
                     continue

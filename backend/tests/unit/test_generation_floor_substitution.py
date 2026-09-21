@@ -103,7 +103,15 @@ class TestTheFloorReplacesAWithheldArtifact:
         assert unsatisfied_targets({item.path: item.content for item in delivered}) == ()
 
     def test_several_rejected_artifacts_are_all_replaced(self) -> None:
-        """The journey withheld two: the Dockerfile and the Deployment."""
+        """The journey withheld two: the Dockerfile and the Deployment.
+
+        NOTE ON `accepted=()` HERE. This exercises `_apply_floor` directly, and the method is willing to
+        substitute for everything. The CASCADE deliberately does not call it when nothing of the model's
+        survived — that case belongs to the template path, which records `served_from='template'`, and
+        substituting there would have produced a set of entirely template content on a run row claiming
+        `provider`. `test_generation_routing.py::test_the_template_is_still_reached_when_no_artifact_passes`
+        is what caught that and is what holds the line.
+        """
         service = _service()
 
         delivered, substituted = service._apply_floor(
