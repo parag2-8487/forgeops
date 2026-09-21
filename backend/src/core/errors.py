@@ -177,6 +177,11 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "github-link-unconfigured": ProblemSpec(503, "GitHub account linking not configured"),
     "github-link-absent": ProblemSpec(409, "No GitHub account linked"),
     "github-link-failed": ProblemSpec(502, "GitHub refused the request"),
+    # §2.1's two. `environment-absent` is a 404 rather than a 403 because an environment is not a
+    # hidden resource — the caller is already authorised for the project that owns it, so concealing
+    # which environments exist would buy nothing and cost every operator a confusing message.
+    "environment-absent": ProblemSpec(404, "No such environment"),
+    "environment-invalid": ProblemSpec(422, "The environment request is not valid"),
     # ─── Tenancy (§6.7) ──────────────────────────────────────────────────────
     "tenant-context-missing": ProblemSpec(500, "Tenant context missing"),
 }

@@ -426,8 +426,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # still gets a service; it answers `configured: false` and the status route reports what to set.
     # Refusing to compose would turn "the operator has not finished setup" into a broken deployment,
     # and every fresh install is in that state.
+    # §2.1's service. The same pepper every other sealing derives from, under its own HKDF label so a
+    # ciphertext from one domain cannot open in another.
+    from .environments.service import EnvironmentService
     from .integrations.github_link import GitHubOAuthClient, GitHubUserClient, derive_link_key
     from .integrations.service import GitHubLinkService
+
+    app.state.environment_service = EnvironmentService(pepper=settings.envelope_pepper.get_secret_value())
 
     app.state.github_link_service = GitHubLinkService(
         oauth=GitHubOAuthClient(
@@ -919,6 +924,14 @@ def create_app() -> FastAPI:
 
     app.include_router(integrations_router)
     app.include_router(github_callback_router)
+
+    # §2.1. Every route under `require_principal` at the router, and every mutation audited. It is NOT a
+    # chokepoint transit and the module docstring says why: an environment row changes this platform's
+    # own configuration and sends nothing to an agent, so a change item for it would be a row claiming a
+    # file write nobody made.
+    from .environments.routes import router as environments_router
+
+    app.include_router(environments_router)
 
     from .ai.routes import read_router as ai_read_router
     from .ai.routes import router as ai_router

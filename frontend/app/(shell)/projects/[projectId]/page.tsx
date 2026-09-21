@@ -9,6 +9,7 @@ import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { CodebaseIndexPanel } from "@/features/codebase/CodebaseIndexPanel";
+import { EnvironmentManager } from "@/features/environments/EnvironmentManager";
 import { ChangeHistoryTimeline } from "@/features/approvals/ChangeHistoryTimeline";
 import { SecretVault, type SecretRefUI } from "@/features/vault/SecretVault";
 import {
@@ -92,6 +93,18 @@ export default function ProjectDetailPage() {
                 means. Read from <code>GET /api/v1/approvals?project_id=…</code>.
               </p>
               <ChangeHistoryTimeline projectId={projectId} />
+            </section>
+
+            <section aria-labelledby="environments-heading" className="space-y-3">
+              <h2 id="environments-heading" className="text-lg font-semibold">
+                Environments
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                §2.1. The deployment targets of this project, in promotion order. Whether a
+                deployment here waits for a human is a property of the environment, and it is stated
+                in words on every row rather than left to a checkbox.
+              </p>
+              <EnvironmentManager projectId={projectId} />
             </section>
 
             <section aria-labelledby="secrets-heading" className="space-y-3">

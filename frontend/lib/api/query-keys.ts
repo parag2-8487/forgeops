@@ -120,4 +120,17 @@ export const queryKeys = {
     githubRepositories: (query: string, page: number, perPage: number) =>
       [...queryKeys.integrations.all, "github", "repositories", query, page, perPage] as const,
   },
+  /**
+   * §2.1's environments. Scoped by project id for the same reason `secrets` is: environments belong to
+   * a project, and a key that ignored it would serve one project's pipeline from another's cache entry
+   * — which in a deployment UI means offering to deploy to an environment that is not there.
+   */
+  environments: {
+    all: ["environments"] as const,
+    list: (projectId: string) => [...queryKeys.environments.all, "list", projectId] as const,
+    variables: (environmentId: string) =>
+      [...queryKeys.environments.all, "variables", environmentId] as const,
+    promotion: (environmentId: string) =>
+      [...queryKeys.environments.all, "promotion", environmentId] as const,
+  },
 } as const;

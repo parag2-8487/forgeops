@@ -5318,6 +5318,8 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `github-link-unconfigured` | 503 | A GitHub account link was requested and the server has no App client credentials | Names the two environment variables to set and the callback URL to register |
 | `github-link-absent` | 409 | The server is configured and this user has not linked a GitHub account | Says where to connect one; not a 404, because the endpoint exists, and not a 403, because nothing is being hidden |
 | `github-link-failed` | 502 | GitHub refused a link request, or a callback could not be matched to a pending one | Names the action and the upstream status or GitHub's own error code, never the response body — a GitHub error description has carried the submitted authorization code back |
+| `environment-absent` | 404 | An environment id or name was given and no such environment exists in the project | Names the identifier that missed; a 404 rather than a 403 because an environment is not a hidden resource, and the caller is already authorised for the project |
+| `environment-invalid` | 422 | An environment request is internally inconsistent — an unknown kind, an empty name, or an attempt to waive human approval on a production environment | Names the field and the closed set it must come from; for the approval waiver it names the alternative (`custom`), because a refusal without a route forward reads as a bug |
 
 `audit-write-failed` deserves a note. A failed audit write **aborts the mutation**, because §1.9's guarantee is that every action is logged — an action that happened without a record would break Q-04 and, worse, would be invisible. Availability is traded for auditability, deliberately.
 

@@ -411,15 +411,94 @@ memory, and knowledge base mode.
 > that satisfy both, and every combination is named where it appears. The duration is the honest sum of
 > the two estimates rather than the larger of them.
 
+### Build order
+
+The order below is derived from what reads what, not from the section numbering. It is recorded here
+because a phase this size is built over many sittings and the reasoning has to survive between them.
+
+**Chosen order: 2.1 → 2.2 → 2.3 → 2.4 → 2.7a → 2.10 → 2.11 → 2.12, with 2.4a, 2.5, 2.6, 2.7, 2.8, 2.9,
+2.13 and 2.14 interleaved where their prerequisites land.**
+
+1. **2.1 Multi-Environment Management is first** because every other deliverable in the phase
+   *references* an environment. A deployment goes TO one, a promotion BETWEEN two, a rollback restores
+   what one held, progressive delivery shifts traffic WITHIN one, and the Command Center's "deploy to
+   staging" names one. Building any of those first would mean inventing a placeholder for the thing they
+   all point at — and a placeholder on a runtime path is this repository's most-repeated defect. There is
+   a second, sharper reason: `requires_approval` decides whether a later mutation needs a human. Every
+   deployment guard in the phase inherits that value, so if it defaulted the wrong way, every one of them
+   would inherit the hole.
+2. **2.2 Deployment Automation** next, because it is the first actual mutation of the user's machine in
+   this phase and therefore the first new chokepoint transit. The agent operations it needs — image build
+   and push, manifest apply with health verification, OpenTofu apply — are the vocabulary 2.3, 2.4, 2.7a
+   and 2.12 all call. Its durable-execution and circuit-breaker boxes belong WITH it rather than after:
+   retry semantics chosen once a pipeline exists are retrofitted onto something that already assumed they
+   were absent.
+3. **2.3 Rollback & Release Timeline** third, because it reads deployment history, which does not exist
+   until 2.2 writes it. Ordering it earlier would produce a timeline of nothing.
+4. **2.4 Docker/Kubernetes Management** fourth. Its operation proxy is the same signing path 2.2 opens, so
+   it is cheap once 2.2 is real and speculative before it. Its resource-utilisation view is the first
+   place the "never reported / stale / healthy" tri-state must be got right, and 2.10's panels copy it.
+5. **2.7a Argo Rollouts progressive delivery** fifth: it needs a deployment to make progressive and a
+   rollback to abort into. Both arrive in 2.2 and 2.3.
+6. **2.10 Observability (OTel, Prometheus/Mimir, Loki, Grafana)** sixth, and deliberately not earlier even
+   though it is independent of 2.2. It is what 2.11 and 2.12 READ; building a reader before its source
+   produces a diagnostic surface with nothing behind it, which is the shape that most invites a fabricated
+   number.
+7. **2.11 AI troubleshooting and RCA** seventh, because it reads 2.10's series and logs.
+8. **2.12 Guard-railed self-healing is last, and last for a reason.** It needs BOTH chains: it reads what
+   2.10/2.11 report and acts through 2.2/2.3's deployment and rollback machinery. It is also the only
+   deliverable in the phase that mutates the user's infrastructure with no human in the loop for its safe
+   tier, so it must be built when both the thing it reads and the thing it acts through are real and
+   exercised — never against either one's placeholder. The two-tier split is a safety boundary, not a
+   feature flag: which actions are safe has to be settled before anything auto-executes.
+
+The remainder attach where their inputs land: **2.4a Inngest** with 2.2 (it IS the durable engine that
+deliverable needs); **2.5 AI Command Center** after 2.2 and 2.4, since its supported commands are exactly
+those operations and it must not grow a second path to them; **2.6 Notifications** after 2.2, so there is
+an event worth sending; **2.7 ArgoCD**, **2.8 service mesh** and **2.9 local dev tools** after 2.2's agent
+vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose outcomes it learns from; and
+**2.14 knowledge base mode** last, since it depends on nothing in the phase and blocks nothing in it.
+
 ### Deliverables
 
 #### 2.1 Multi-Environment Management
-- [ ] Backend: Environment CRUD API (Dev, Test, Staging, Prod + custom)
-- [ ] Backend: Environment-specific variables, secrets, K8s contexts
-- [ ] Backend: Environment-specific approval requirements
-- [ ] Backend: Promotion flows between environments
-- [ ] Frontend: Environment management UI
-- [ ] Frontend: Environment selector throughout dashboard
+- [x] Backend: Environment CRUD API (Dev, Test, Staging, Prod + custom) — revision `0023`, `src/environments/`,
+      `GET/POST /projects/{id}/environments`, `PATCH`/`DELETE /{environment_id}`. `dump-openapi.py` reports 72
+      paths (was 68); `check-route-auth.py` examined 91 routes across 76 paths and found every one behind a
+      principal. Kinds are a closed set enforced by a database CHECK, not a free-text column.
+- [x] Backend: Environment-specific variables, secrets, K8s contexts — `environment_variables` with a CHECK
+      that a secret's clear column is NULL and a plain variable's sealed column is NULL, so the database
+      refuses a row that claims protection and is readable. Sealing is AES-256-GCM under HKDF label
+      `forgeops-environment-secret-v1` with the **environment id as the AAD**, asserted by
+      `test_environments.py::test_a_sealed_value_does_not_open_under_another_environment`: a value lifted from
+      staging's row into production's fails to open rather than decrypting into the wrong context. A read
+      reports `value: null, is_secret: true` — withheld is distinguishable from absent.
+- [x] Backend: Environment-specific approval requirements — `requires_approval`, defaulting to **true** in the
+      schema and in the service, and a production environment cannot waive it at all (the refusal names
+      `custom` as the alternative, because a refusal with no route forward reads as a bug). This is what
+      finally gives `GovernanceChokepoint._evaluate_policy`'s `environment` argument a value: it has existed
+      since Phase 1 with no caller ever supplying one. `requirement_for` returns **true for an unknown name**
+      — a typo, a deleted environment or a Command Center instruction naming something that never existed all
+      land on "ask a human". 13 tests in `tests/integration/test_environments.py`, all passing against the
+      real database.
+- [ ] Backend: Promotion flows between environments — the RULE is built and tested
+      (`promote_from`, `GET /{environment_id}/promotion`): ordered by `position`, each environment promotes to
+      the next, the target's approval requirement governs, a delete closes the gap so "the next one" cannot
+      depend on deletion history, and the last environment refuses with a reason instead of succeeding
+      emptily. The DEPLOYMENT a promotion authorises is 2.2 and is not built, so this box stays open: a
+      promotion that cannot deploy is half the deliverable.
+- [x] Frontend: Environment management UI — `features/environments/EnvironmentManager.tsx`, mounted on the
+      project detail route. 14 tests in `__tests__/environments.test.tsx`; full suite 591 passed at
+      95.29/84.2/91.94/95.63 against the 90/90/90/80 gate. Three properties are pinned rather than assumed:
+      the approval consequence is rendered **in words** on every row and in every selector option (never as a
+      bare checkbox state); "none configured" and "could not load" are different sentences; and an untouched
+      approval waiver sends `null`, not `false` — the same shape on the wire and the opposite meaning. Its own
+      test caught a defect in it: the variables panel rendered an empty list while loading, which reads as
+      "this environment has no variables".
+- [ ] Frontend: Environment selector throughout dashboard — `EnvironmentSelector` is built and has 4 tests,
+      but it is mounted on **one** screen. "Throughout" is a claim about the deployment, Docker, Kubernetes
+      and Command Center screens, and those do not exist yet, so ticking this would be ticking a box for
+      screens that are not there.
 
 #### 2.2 Deployment Automation
 - [ ] Agent: Container image build and push to registry (OCI-compliant)
