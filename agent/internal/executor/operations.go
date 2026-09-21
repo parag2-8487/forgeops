@@ -53,6 +53,25 @@ const (
 	// workloads to converge. Mutating: it changes what is running, which is the largest blast radius
 	// any operation here has.
 	OpDeploymentApplyManifests Operation = "deployment.apply_manifests"
+
+	// ── Phase 2 ──
+	//
+	// OpDockerInventory and OpKubernetesInventory are READS. They exist as their own operations, rather
+	// than as a mode of the action operations below, so that "may look" is never a route to "may act":
+	// the dashboards hold the read authority continuously and the write authority never.
+	OpDockerInventory     Operation = "docker.inventory"
+	OpKubernetesInventory Operation = "kubernetes.inventory"
+
+	// OpDockerContainerAction and OpDockerImageAction act on ONE named container or image with an action
+	// from a closed set. Not one operation per verb: the authority is the same and the whitelist would
+	// grow without narrowing. Not a docker command line either — there is no such operation here.
+	OpDockerContainerAction Operation = "docker.container_action"
+	OpDockerImageAction     Operation = "docker.image_action"
+
+	// OpKubernetesWorkloadAction scales, restarts or rolls back ONE named workload, and then verifies
+	// it converged. Confined to the same three pod-bearing kinds the deployment operation can verify,
+	// because acting on something unverifiable would report the API server's acceptance as success.
+	OpKubernetesWorkloadAction Operation = "kubernetes.workload_action"
 )
 
 // allOperations is the declared vocabulary, used only to assert that the dispatch table covers
@@ -69,6 +88,8 @@ var allOperations = []Operation{
 	OpReadinessInventory, OpSecretScanRun,
 	OpChangeSetApply, OpChangeSetRevert, OpGitBranchCommitPush, OpGitOpenPR, OpSecretsInject,
 	OpRepositoryClone, OpDeploymentApplyManifests,
+	OpDockerInventory, OpKubernetesInventory,
+	OpDockerContainerAction, OpDockerImageAction, OpKubernetesWorkloadAction,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).

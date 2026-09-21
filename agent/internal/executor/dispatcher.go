@@ -178,6 +178,43 @@ var handlerTable = map[Operation]entry{
 		mutating: true, requiresApproval: true, timeout: timeoutDeploy, implemented: true,
 		run: applyManifests,
 	},
+
+	// ── Phase 2: the read surface the Docker and Kubernetes dashboards need ──
+	//
+	// READ-ONLY AND APPROVAL-FREE, and that pairing is deliberate. A dashboard refreshes; requiring an
+	// approval per refresh would either stop the refresh or train operators to approve without reading,
+	// and the second is worse than the first. What makes it safe to leave unapproved is that neither
+	// operation can change anything: they run `docker ps`/`docker stats` and `kubectl get`, and the
+	// mutating actions live in separate operations with separate authority.
+	//
+	// `timeoutValidate` rather than `timeoutQuick`: a cluster with many namespaces answers nine `get`
+	// calls in seconds when it is healthy and in tens of seconds when it is not, and the unhealthy case
+	// is exactly when somebody is looking at the dashboard.
+	OpDockerInventory:     {timeout: timeoutValidate, implemented: true, run: dockerInventory},
+	OpKubernetesInventory: {timeout: timeoutValidate, implemented: true, run: k8sInventory},
+
+	// ── Phase 2: the mutating actions those dashboards offer ──
+	//
+	// Each changes what is RUNNING on the operator's host or cluster, so each is mutating and each
+	// requires an approval. They are separate operations from the inventory above for one reason: an
+	// operation is an authority, and "may look at containers" must never be a path to "may delete one".
+	OpDockerContainerAction: {
+		mutating: true, requiresApproval: true, timeout: timeoutNetwork, implemented: true,
+		run: dockerContainerAction,
+	},
+	// `timeoutDeploy`, because a pull of a large image over a slow link is the normal case and the
+	// alternative is a partial pull reported as a failure.
+	OpDockerImageAction: {
+		mutating: true, requiresApproval: true, timeout: timeoutDeploy, implemented: true,
+		run: dockerImageAction,
+	},
+	// `timeoutDeploy` for the same reason `deployment.apply_manifests` has it: this operation waits for
+	// the workload to converge after acting, and a scale the cluster cannot satisfy takes the full wait
+	// to establish.
+	OpKubernetesWorkloadAction: {
+		mutating: true, requiresApproval: true, timeout: timeoutDeploy, implemented: true,
+		run: k8sWorkloadAction,
+	},
 }
 
 // unimplemented builds the body of a catalogued operation whose implementation arrives later.

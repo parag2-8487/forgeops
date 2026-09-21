@@ -88,6 +88,19 @@ jobs:
           FORGEOPS_REAL_CLUSTER: "1"
         run: go test ./internal/executor/ -run TestRealCluster -count=1 -v -timeout 20m
 
+      # THE LINUX RUNNER HAS A DOCKER DAEMON, so not using it would be a missed check rather than an
+      # unavoidable gap. These are the properties of the real tool that no decision test can reach:
+      # `docker ps --format json` emits one object per line and not an array, `docker stats` blocks
+      # forever without `--no-stream`, and a locally built image's digest reads as `no value`. Each would
+      # have produced a plausible, empty, wrong dashboard.
+      - name: The docker operations against the real daemon
+        working-directory: agent
+        env:
+          # `TestRealDocker_TheOptInIsNamedInCI` reads this file and fails if this line or the `-run`
+          # below is removed.
+          FORGEOPS_REAL_DOCKER: "1"
+        run: go test ./internal/executor/ -run TestRealDocker -count=1 -v -timeout 15m
+
       # WHAT THE CLUSTER LOOKS LIKE AFTERWARDS, on failure only. A rollout that did not converge is
       # diagnosed from pod events, and those are gone once the job ends.
       - name: What the cluster held when it failed
