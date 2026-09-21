@@ -112,10 +112,41 @@ PATH (7 passed), and the backend shard's missing dependency is recorded above.
 
 **What was not re-run, stated rather than implied.** The unit shard takes 1h43m and was run once, before the
 two contract fixes; those two files were then re-run individually (20 and 17 passed). The integration shard
-was run once in full (32m56s) and the six files I changed were re-run afterwards (53 passed). `verify-release.py`
-cannot report a clean set from a local machine: it wants a per-shard `.coverage.*` from all three shards in
-one sitting and workflow conclusions for the pushed commit, so its combined-coverage and workflow lines read
-MISSING until CI has run. Its raw output is quoted in the session report.
+was run once in full (32m56s) and the six files I changed were re-run afterwards (53 passed).
+`verify-release.py` cannot report a clean set from a local machine: it wants a per-shard `.coverage.*` from
+all three shards in one sitting and workflow conclusions for the pushed commit, so its combined-coverage and
+workflow lines read MISSING until CI has run. Its raw output is quoted in the session report.
+
+### CI on the mirror, for `c6b7e5d`
+
+| Workflow                                | Result                                                                                                                                                                                                                                                                                                                                                                                                            |
+| :-------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Kubernetes & SPIRE CI`                 | success                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Templates Library Validation Pipeline` | success                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Mutation Testing CI Pipeline`          | success                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `ci`                                    | **failure — one job**: `agent (windows-latest host binary)`, which installs a PUBLISHED RELEASE ARCHIVE and cannot pass on a mirror with no releases. Byte-identical failure in the pre-branch run `34604857055`. Every other job green, including `audit`, which had caught a real defect first: the agent's Go files require `SPDX-License-Identifier: Apache-2.0` and the two new ones carried `FSL-1.1-ALv2`. |
+| `End-to-End Journey CI`                 | **failure — one test.** The journey is **13/13** (8.7m) and `sse-paint` passes (7.2s). `printed-instructions` fails one of its seven: after the printed `sudo install` the login shell reports `bash: forgeops-agent: command not found`.                                                                                                                                                                         |
+
+**Two E2E defects were newly EXPOSED rather than newly caused, and the distinction is the point.** That job
+had been dying at journey step 8 for months, so nothing after the journey had run. With step 8 fixed, the two
+specs behind it executed for the first time in a long while:
+
+- `sse-paint` failed at sign-in, and the cause was in the shared helper. It restores the journey's saved
+  session, whose refresh token the journey had already rotated, and the recovery path assumed the browser
+  still held AUTHENTIK'S OWN cookie — true inside a spec that signed in, false in a fresh Playwright context
+  that only restored this application's cookies. The first repair put the real login on the LATER attempts
+  and still failed, because by then the `/login` resume had left a partial IdP session and re-driving the
+  flow executor against a visitor the IdP already knows returns `ak-stage-flow-error`. **The order was the
+  fix**: clear the context and authenticate first, resume second. Fixed and green in CI.
+- [ ] **`printed-instructions` cannot find `forgeops-agent` after following its own printed install command.**
+      Six of its seven assertions hold; the failing one runs the printed
+      `sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent` and then `forgeops-agent version`
+      through `bash -lc`, and the login shell reports `command not found`. Either the install did not place
+      the binary or the login shell's PATH does not include `/usr/local/bin` on that runner — and which of
+      those it is matters, because the spec's whole subject is that the instructions printed to a user
+      actually work. **Not fixed**, and not worked around: the evidence is in run `35609449724`, job
+      `106364603656`. Locally the same test fails for a different and honest reason — it installs a Linux
+      archive, and this host is Windows.
 
 Phase 0 is `completed`: all 108 executable task leaves are implemented, all 18 completion
 criteria carry real evidence, and P-01 through P-15 are all present and passing. The work
