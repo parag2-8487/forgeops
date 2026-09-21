@@ -14,7 +14,7 @@ exactly `completed`, `in-progress`, `not-started` or `blocked`.
 | :---- | :---------------------------------------- | :---------- |
 | 0     | Foundation & Project Scaffolding          | completed   |
 | 1     | MVP Core — Analysis, Generation, Approval | in-progress |
-| 2     | Deploy, Manage, Observe & Self-Heal       | not-started |
+| 2     | Deploy, Manage, Observe & Self-Heal       | in-progress |
 | 3     | Scale, Collaborate & Polish               | not-started |
 | 4     | Advanced & Ecosystem                      | not-started |
 
@@ -22,6 +22,22 @@ The former Phase 2 (Deploy, Manage & Command) and Phase 3 (Observe, Troubleshoot
 phase: self-healing reads what the observability stack reports and acts through the deployment and
 rollback machinery, so neither half is shippable alone. The former Phase 4 became Phase 3 and the
 former Phase 5 became Phase 4. 126 boxes became 123, with three combined pairs named in `phases.md`.
+
+**Phase 2 is `in-progress` as of 2026-09-20: 4 of 123 boxes carry evidence.** The build order and the
+dependency reasoning behind it are recorded in `phases.md` under "Build order" — 2.1 first because every
+other deliverable in the phase references an environment, and 2.12 self-healing last because it needs both
+the observability chain it reads and the deployment chain it acts through. What landed: **2.1
+Multi-Environment Management**, backend and management UI, with revision `0023`, `src/environments/`,
+`features/environments/`, 13 integration tests and 14 frontend tests. Two of 2.1's six boxes are
+deliberately NOT ticked and `phases.md` says why in each case — promotion flows need 2.2's deployment to be
+half of anything, and "selector throughout the dashboard" is a claim about screens that do not exist yet.
+
+The single most useful thing 2.1 produced is not CRUD. It is `requires_approval`:
+`GovernanceChokepoint._evaluate_policy` has accepted an `environment` argument since Phase 1 and **no
+caller ever supplied one** — which is why a clone's policy evaluation fell through to "requires approval
+because `environment` is absent". There is now a row that answers it, it defaults to requiring a human, a
+production environment cannot waive it, and an unknown environment name resolves to "ask a human" rather
+than to "proceed".
 
 Phase 0 is `completed`: all 108 executable task leaves are implemented, all 18 completion
 criteria carry real evidence, and P-01 through P-15 are all present and passing. The work
@@ -160,29 +176,90 @@ Two defects the run exposed, both recorded rather than fixed:
 Explicit, so none of it is lost when the merged Phase 2 is built on top of it. Each line is a
 measurement or a gap somebody has already paid for, not a nice-to-have.
 
-- [ ] **Strengthen `automated_tests_present` and `centralised_configuration` beyond presence.**
-      `core/source_analysis.py` made both read content rather than filenames, and both are still
-      satisfiable by a file that names the right thing — the checks must measure the work.
+- [x] **Strengthen `automated_tests_present` and `centralised_configuration` beyond presence.**
+      _(verified 2026-09-20, not newly built)_ `core/source_analysis.py` makes both read content, and this
+      pass confirmed they are on the LIVE path rather than merely present — `readiness.py:679` gates the
+      35 points on `test_substance(...).passed` and `readiness.py:1057` on `config_flow.passed`, so an
+      empty `tests/test_placeholder.py` no longer earns anything. One caveat found and recorded rather
+      than closed: `ReadinessEngine.evaluate_project(project_data)` honours a caller-supplied
+      `has_tests` boolean, which bypasses the substance check. **It has no caller anywhere in `src/`**
+      (grep for `evaluate_project` returns only its own definition), so it is not reachable from a live
+      path — but it is a compatibility entry point that exists for tests, and by the project's own rule
+      about test seams it should be removed rather than trusted to stay uncalled.
 - [ ] **Lockfile and provider-lock generation by real tool execution.** Both are refused today because
       a lockfile is a resolver's output; an agent operation that runs the real resolver would make them
       reachable instead of permanently unreachable.
 - [ ] **No change set may lower the score.** `core/content_regression.py` refuses a per-file trade of a
-      satisfied property for an unsatisfied one. The set-level property — the score after an approved
-      apply is never below the score before it — is not asserted anywhere.
+      satisfied property for an unsatisfied one, and `score_lowering_findings` is now also applied to the
+      **assembled** set when the template floor substitutes for a withheld artifact (see below), which is
+      the first place the set-level rule actually decides something. The property "the score after an
+      approved apply is never below the score before it" is still not asserted end to end.
 - [ ] **Predicted-equals-achieved reporting on a real run.** The unit test compares the prediction with
-      the template renderer. The baseline above predicted 100 and achieved 92 and nothing reported the
-      gap; the product should state it where a user can see it.
+      the template renderer. The baseline predicted 100 and achieved 92 and nothing reported the gap.
+      **The reason for that gap is now known and fixed** — see the withheld-artifact entry below — so this
+      item is now measurable rather than mysterious, and re-running the cycle is the way to close it.
 - [ ] **A real `served_from='provider'` run on current code.** The baseline was served from L2. A
       measured model run on the current prompt-and-gate contract does not exist.
 - [ ] **The artifact cap derived from measured model output**, rather than chosen.
 - [ ] **Cache-key versioning for the prompt-and-gate contract.** `GENERATION_CONTRACT_VERSION` is in the
       key; the rule for bumping it is prose, and the baseline's L2 hit shows how much rests on it.
 - [ ] **`backend-coverage` must skip itself via `needs.backend.result != 'skipped'`** rather than by a
-      path filter, so the combine job cannot report on a partial shard set.
+      path filter, so the combine job cannot report on a partial shard set. **This pass produced direct
+      evidence of why it matters**: `ci` reported success on `8278dbe`, a documentation-only commit, with
+      only five jobs run — the path filter skipped every test shard, and `gates-actually-ran` passed. A
+      green `ci` and an enforced coverage gate are not the same statement, and nothing outside the
+      filtered jobs asserts the difference.
 - [ ] **Linux watch mode.**
-- [ ] **`App.Session()` must resolve the pairing-stated endpoint** (the defect above), with a test that
-      pairs, drops `AGENT_BACKEND_WSS_URL`, runs, and requires a live session.
+- [ ] **`App.Session()` must resolve the pairing-stated endpoint**, with a test that pairs, drops
+      `AGENT_BACKEND_WSS_URL`, runs, and requires a live session. **Correction to the earlier note in this
+      file**: CI's own host-apply job reports "doctor verified the listener against the CA issued at
+      pairing" and "the host agent holds an active session over mutual TLS", so `run` DOES establish a
+      session in CI. The defect is narrower than recorded — it is about which endpoint is used when the
+      environment variable is absent, not about `run` being broken.
 - [ ] **A full rescan must not lose the import graph** (the defect above).
+- [ ] **Phase 2.1 left two boxes open deliberately, and they are the next two to close.** Promotion flows
+      (the rule is built and tested; the deployment it authorises is 2.2) and "environment selector
+      throughout the dashboard" (the selector is built and has 4 tests, but the deployment, Docker,
+      Kubernetes and Command Center screens it belongs on do not exist). Neither was ticked.
+- [ ] **`ReadinessEngine.evaluate_project` should be removed.** See the caveat on the first item above: a
+      compatibility entry point with no production caller that can bypass a strengthened check is exactly
+      the shape the project's own "no test seam on a production path" rule exists to prevent.
+
+### The withheld-artifact defect, and the two halves of its fix _(2026-09-20)_
+
+**The journey's step 8 failed because the change set carried no `Dockerfile`.** Root cause, found by
+reading the cascade rather than by guessing: **the template floor applied per RUN, not per ARTIFACT.**
+The only route to it was `if not accepted`, which needs EVERY artifact to have failed the gate. The case
+it was built for is the opposite one — the model returns several good artifacts and one Dockerfile with
+an unpinned `FROM`. That Dockerfile was withheld, correctly, and nothing put the known-good template in
+its place, so the operator got no Dockerfile at all.
+
+`scripts/check-template-readiness.py` had been certifying that floor against every target check the whole
+time. **A thing that exists with the right name, is audited in CI, and is read by no live path in the
+situation it was designed for** — this codebase's recurring defect, once more.
+
+- **The live path**: `_apply_floor` substitutes the audited template for each withheld artifact, under
+  three conditions that are all necessary — the floor must actually render that path (no invention), the
+  substitute must satisfy its own target checks (verified at runtime, not trusted from CI), and the
+  assembled set must pass the WHOLE gate including the regression and no-lowering rules. The model's
+  failing artifact is still never delivered, and the substitution is reported in an SSE finding so an
+  approver can see the floor was used. 7 unit tests + 5 cascade tests.
+- **A second, independent defect in the floor itself**: `settings.base_image` went into `FROM`
+  unvalidated, so a project recording `node` or the floating tag rendered a Dockerfile that fails
+  `dockerfile_base_pinned` — the check the artifact exists to satisfy. The pinned runtime default is used
+  instead and **the rejected value is named in a comment in the file**, so the override is visible in the
+  diff the operator approves rather than being silently applied.
+- **The audit gate was measuring different bytes from production.** It rendered exactly ONE case — a name
+  and a port — and passed for three phases. It now runs the same rule over **21 inputs the live path can
+  supply**, organised by the SHAPE of the input rather than by a list of happy values: for every field the
+  renderer reads, the absent case, the ordinary case, and the case that would break the artifact's
+  contract. Two of the 21 failed before the fix; all 21 pass after it.
+- **A third honesty gap the probe exposed**: `settings.runtime: go` silently rendered a Python Dockerfile
+  with a `pip wheel` line. The artifact was well formed and passed every check, which is what made it
+  dangerous — nothing contradicted it and the operator would find out from a failed build. The
+  substitution is now named in the file. `template_library.py` holds Go, Rust, Java, Ruby, PHP and .NET
+  templates that **no runtime path reads** (only tests and a mutation config), and one of them pins its
+  runtime stage to the floating tag — recorded, not fixed, because it is not reachable.
 
 ### Six integration failures that had been invisible, and why they surfaced now
 
@@ -310,32 +387,53 @@ bind parameter, so the clone dispatch sent Postgres a literal colon.
 
 ### Not finished, and exactly what is left
 
-- [ ] **A human-approved clone cannot be delivered.** The clone transit's AUTO-APPROVED path is complete
-      — it mints and delivers a signed `repository.clone` envelope, proven by nine tests including one
-      that asserts the credential reaches no database row. The APPROVED path is not: `approve()` ends in
-      `_deliver(operation=changeset.apply, args=_apply_entries(...))`, so a clone arrived at the agent as
-      an apply with no entries, the agent refused correctly, and the change set read `rolled_back` —
-      which looks like an agent fault and was the backend sending the wrong command. **It now refuses
-      honestly instead**: `change_sets.operation` (migration `0021`) records what a change set is, and
-      `approve()` answers 409 naming the operation and the reason. It cannot simply be taught to rebuild
-      a clone: the envelope carries a short-lived GitHub credential that is deliberately stored nowhere.
-      The fix is to re-mint that credential at delivery time from the link of the user who asked
-      (`change_sets.created_by`) — which is a design decision about credential lifetime, not a patch.
-- [ ] **Or: a policy that has an opinion about clones.** The refusal above is only reached because
-      `approval.rego` requires approval when `environment` is absent, and a clone has no environment —
-      it is not a deployment. Passing a synthetic environment to make it auto-approve would be gaming
-      the policy in the fail-open direction; the honest change is a Rego rule about `repository.clone`,
-      with its own `opa test` case.
-- [ ] **The clone credential should travel as a single-use ticket.** It is in the signed envelope today,
-      which means it crosses the Redis command stream on its way to the socket owner and sits there until
-      the stream is trimmed. Postgres never sees it and no audit row carries it. The refinement is an
-      opaque id in the envelope that the agent redeems over its device session.
+- [x] **A human-approved clone is delivered.** _(2026-09-20)_ Both paths are now complete. The
+      AUTO-APPROVED path mints and delivers a signed `repository.clone` envelope. The APPROVED path used
+      to end in `_deliver(operation=changeset.apply, args=_apply_entries(...))`, so a clone arrived at the
+      agent as an apply with no entries, the agent refused correctly, and the change set read
+      `rolled_back` — which looks like an agent fault and was the backend sending the wrong command.
+      Revision `0021` made it refuse honestly; **revision `0022` makes it deliver**, and the resolution is
+      one decision: **split the arguments by whether they are a secret.**
+
+      * The inert half — repository, clone URL, parent directory, directory name, branch — persists in
+                `change_sets.operation_args`. A repository name in a row is not a capability, and every one of
+                these values is already in the audit chain.
+              * The credential is read from the requester's `github_account_links` row **at the moment of
+                delivery**, through a `CloneCredentialProvider` protocol that `governance/` declares and
+                `integrations/` implements, wired at the composition root because TID251 forbids the import.
+                Nothing long-lived is stored, and **revocation works without anything having to notice**: an
+                operator who disconnects their GitHub account cannot have a queued clone delivered afterwards,
+                because there is nothing left to decrypt.
+              * The credential is read BEFORE the approval is recorded. An expired link therefore leaves the
+                change set `pending_approval` — genuinely still pending, since reconnecting makes the same
+                approval work — rather than `approved` and undeliverable with no statement of why.
+              * Whose credential: `change_sets.created_by`, the requester, **not the approver**. An approver
+                authorises an action; they do not lend their GitHub account to it.
+
+              Guarded in three places because the consequence of a credential landing in that column is the worst
+              outcome of the design: a database CHECK per forbidden key name in `0022`, an assertion in the
+              chokepoint before the write, and a test that reads the rows back and searches for the value.
+              13 tests in `test_github_clone_transit.py`, including an expired-link refusal that names the cause
+              and asserts nothing reached the agent, and a no-integration-composed refusal that names the missing
+              configuration rather than raising.
+
+- [ ] **A policy that has an opinion about clones.** A clone still requires approval only because
+      `approval.rego` requires it when `environment` is absent, and a clone has no environment — it is not
+      a deployment. That is the right answer by accident. Passing a synthetic environment to make it
+      auto-approve would be gaming the policy in the fail-open direction; the honest change is a Rego rule
+      about `repository.clone` with its own `opa test` case. **Phase 2.1's `requires_approval` is the first
+      real input for that rule** — see below.
+- [ ] **The clone credential should travel as a single-use ticket.** It is in the signed envelope, so it
+      crosses the Redis command stream on its way to the socket owner and sits there until the stream is
+      trimmed. Postgres never sees it and no audit row carries it. The refinement is an opaque id in the
+      envelope that the agent redeems over its device session.
 - [ ] **The E2E covering connect → pick → clone → project → scan → score.** The first four steps are
-      demonstrated above against real GitHub; the last two need the clone to land, so the spec waits on
-      the item above rather than being written against a flow that stops.
+      demonstrated against real GitHub; the delivery half is now built but has not been re-run end to end
+      against the live host agent, so the spec is still unwritten. **This is the first thing to run next
+      session** — the backend change is proven by tests and by the envelope the sink received, not by a
+      live agent actually cloning.
 - [ ] **`onboarding.spec.ts` and `printed-instructions.spec.ts` were not re-run.** They need the e2e
-      compose overlay and a provisioned IdP; the create form they drive changed, so they are the first
-      thing the next session should run.
+      compose overlay and a provisioned IdP; the create form they drive changed.
 
 ## Current phase task list — Phase 1
 
