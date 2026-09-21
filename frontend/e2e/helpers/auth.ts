@@ -244,31 +244,37 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
       throw new Error(`${path} never rendered for a signed-in operator. What it showed:\n${shown}`);
     }
 
-    // ATTEMPT 1 RESUMES; ATTEMPT 2 AUTHENTICATES PROPERLY. The difference matters and cost a CI run.
+    // THE ORDER OF THESE TWO RECOVERIES IS THE WHOLE FIX, and getting it backwards cost a CI run.
     //
-    // Resuming assumes the browser holds AUTHENTIK'S OWN cookie, so that clicking the application's
-    // sign-on button round-trips through the IdP without a prompt. That is true inside a spec that
-    // signed in, and FALSE in a spec that only restored this application's cookies from the state
-    // file — a fresh Playwright context has no IdP session, so the round trip lands on the
-    // identification stage with nothing to answer it, and all three attempts then report the sign-in
-    // screen.
+    // Resuming via `/login` assumes the browser holds AUTHENTIK'S OWN cookie, so the sign-on button
+    // round-trips without a prompt. True inside a spec that signed in; FALSE in a spec that only
+    // restored this application's cookies from the state file, because a fresh Playwright context has
+    // no IdP session. That is how `sse-paint.spec.ts` failed in CI while passing locally — it runs in
+    // its own invocation after the journey and restores a session whose refresh token the journey had
+    // already rotated.
     //
-    // That is exactly how `sse-paint.spec.ts` failed in CI while passing locally: it runs in its own
-    // invocation after the journey, restores a session whose refresh token the journey had already
-    // rotated, and had no way back. It had not been reached for months because the journey was failing
-    // before it.
+    // The first repair attempt put `signIn` on the LATER attempts, and it still failed: by then the
+    // resume had left a partial Authentik session, and re-driving the flow executor against a visitor
+    // the IdP already knows returns `ak-stage-identification -> ak-stage-flow-error` — precisely the
+    // failure the original comment here warned about.
     //
-    // So the second attempt performs the genuine login with the operator's real credentials. No
-    // assertion is weakened and no session is injected: the criterion that a real IdP login works is
-    // the journey's step 1, which still does it unaided.
+    // So the authentication comes FIRST, from a deliberately CLEARED context: no IdP cookie, no spent
+    // application cookie, nothing for the flow executor to trip over. The `/login` resume stays as the
+    // second attempt, for the case where an IdP session genuinely does exist and only the application's
+    // cookie went stale.
+    //
+    // No assertion is weakened and no session is injected: these are real logins with the operator's
+    // real credentials, and the criterion that a first-time IdP login works is the journey's step 1,
+    // which still does it unaided.
     if (attempt === 1) {
+      await page.context().clearCookies();
+      await signIn(page).catch(() => {});
+    } else {
       await page.goto("/login");
       await page.getByRole("button", { name: /single sign-on/i }).click();
       await page
         .waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 })
         .catch(() => {});
-    } else {
-      await signIn(page).catch(() => {});
     }
   }
 }
