@@ -605,8 +605,12 @@ jobs:
       # once carried `scan --path`, a flag that has never existed.
       #
       # This reads the commands out of the DOM and runs them unmodified. Go is needed because the
-      # published archive is not available in CI, but the INSTALL and CONNECT commands are the printed
-      # ones — what is under test is whether they run, not where the binary came from.
+      # published archive is not available in CI — and GoReleaser with it, because the printed install
+      # command installs an ARCHIVE, not a binary. That distinction is what kept this spec red: it placed
+      # a bare `go build` output where the command looks for `forgeops-agent_*_linux_*.tar.gz`, the command
+      # correctly reported finding no tarball and exited 0, and the next line failed with `command not
+      # found`. `scripts/package-agent.sh` builds the archive through the release's own configuration, so
+      # what gets installed here has a real download's layout.
       #
       # Runs last because it pairs a device of its own and leaves an agent resident, and the specs
       # above are stateful about which devices exist.
@@ -614,6 +618,13 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: agent/go.sum
+      # `install-only`: nothing is released here. The spec needs the packaging tool so the archive the
+      # printed install command finds is built the way a real download is.
+      - uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          install-only: true
+          distribution: goreleaser
+          version: "v2.17.1"
       - name: Follow the onboarding screen's printed instructions literally
         # BOUNDED, because this step once consumed the whole job. `connect` is resident by design, and a
         # SYNCHRONOUS spawn of it blocked Node's event loop — which is where Playwright enforces its own
@@ -629,7 +640,6 @@ jobs:
           E2E_API_BASE_URL: http://localhost:8000/api/v1
           E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: cd frontend && npx playwright test --project=printed-instructions
-
       # ?8.3.2: "Playwright traces and the agent's logs are uploaded on failure, because an e2e
       # failure with no artifacts is a rerun rather than a diagnosis."
       - name: Collect the agent and service logs

@@ -25,7 +25,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -187,24 +187,49 @@ test.describe("Part F: the printed instructions, run verbatim", () => {
   test("step 3 — the install command puts the binary on PATH, run exactly as printed", async () => {
     requireOperator();
 
-    // The published archive is not available in CI, so the binary is built here — but the INSTALL step
-    // that follows is the printed one, unmodified. What is under test is whether the printed command
-    // installs a binary onto PATH, not where the binary came from.
+    // THE ARCHIVE, NOT A BARE BINARY — and this is the whole repair.
+    //
+    // The printed command searches for `forgeops-agent_*_<os>_*.tar.gz` here and in `~/Downloads`,
+    // extracts it into a temporary directory and installs the binary from inside it. This step used to
+    // place a bare `go build` output in the directory instead, so the printed command found no archive,
+    // SAID SO, and exited 0 — a deliberate design decision recorded in `commands.ts`, because `exit` in
+    // an interactive shell closes the user's terminal. `expect(output).toBeDefined()` was therefore
+    // satisfied by the message "No forgeops-agent tarball found here or in ~/Downloads", nothing was
+    // installed, and the next line failed with `command not found`. The spec's setup did not match the
+    // instructions it was checking, and the product was right throughout.
+    //
+    // `scripts/package-agent.sh` produces the archive by running the same GoReleaser configuration the
+    // tagged release uses, so the name template, the archive format and the binary's name inside it are
+    // the ones a real download has. Tarring a binary here instead would assert this spec's own idea of
+    // the layout and would keep passing after the real layout changed.
     printed.binDir = mkdtempSync(join(tmpdir(), "forgeops-bin-"));
-    execFileSync("go", ["build", "-o", join(printed.binDir, "forgeops-agent"), "./cmd/agent"], {
-      cwd: join(REPO_ROOT, "agent"),
+    execFileSync("bash", [join(REPO_ROOT, "scripts", "package-agent.sh"), printed.binDir], {
+      cwd: REPO_ROOT,
       stdio: "inherit",
       // Bounded like every other synchronous spawn here. `inherit` means Node holds no pipe to wait
       // on, so this one was never the hang — but an unbounded blocking call cannot be timed out by
-      // Playwright at all, so none of them is left unbounded.
-      timeout: 600_000,
+      // Playwright at all, so none of them is left unbounded. Six cross-compiled targets and their
+      // archives take about 100 seconds on a runner.
+      timeout: 900_000,
       env: { ...process.env, CGO_ENABLED: "0" },
     });
 
-    // The printed command is `sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent`,
-    // run from the directory holding the download — so that is exactly how it is run.
+    // Fail here, loudly, rather than let the printed command report an absent archive as a success.
+    const archives = readdirSync(printed.binDir).filter(
+      (f) => f.endsWith(".tar.gz") || f.endsWith(".zip"),
+    );
+    expect(
+      archives.length,
+      `packaging produced no archive for this platform; the directory holds ${JSON.stringify(readdirSync(printed.binDir))}`,
+    ).toBeGreaterThan(0);
+
+    // Run from the directory holding the download, which is what the instructions assume — exactly as
+    // printed, with no substitution.
     const output = runPrinted(printed.installCommand!, { cwd: printed.binDir });
     expect(output).toBeDefined();
+    // The one message that means the command ran and installed nothing. Asserted explicitly, because
+    // it exits 0 on purpose and every later assertion would otherwise blame the wrong thing.
+    expect(output).not.toContain("No forgeops-agent tarball found");
 
     // THE POINT OF THE INSTALL STEP: the bare command now works, from anywhere, with no prefix.
     const version = runPrinted("forgeops-agent version", { cwd: tmpdir() });

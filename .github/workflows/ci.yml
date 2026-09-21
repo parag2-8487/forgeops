@@ -447,6 +447,17 @@ jobs:
         with:
           node-version: "22"
 
+      # `install-only`, because nothing is released here: the step below needs the same packaging tool the
+      # release uses so that the archive it installs has the real layout, and a second way to build an
+      # archive is how the printed command and the thing it installs drift apart.
+      - name: Install GoReleaser (Windows, to package the archive the printed command installs)
+        if: runner.os == 'Windows'
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          install-only: true
+          distribution: goreleaser
+          version: "v2.17.1"
+
       - name: The printed install command really does put the binary on PATH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -460,11 +471,26 @@ jobs:
           if (-not $command) { throw 'could not render the install command' }
           Write-Host "rendered: $command"
 
-          # A download directory holding the binary, exactly as a user has after unzipping the archive.
+          # THE ARCHIVE THE COMMAND ACTUALLY LOOKS FOR, and the reason this job could never pass.
+          #
+          # The printed Windows command globs `forgeops-agent_*_windows_*.zip` in the current folder and
+          # in ~\Downloads, expands it, and installs the binary from inside. This step used to copy the
+          # bare `forgeops-agent.exe` into the download directory instead, so the command found no zip and
+          # threw `No forgeops-agent zip found` — on every commit, forever. It was recorded as "installs a
+          # published release archive and the mirror has no releases", which was the right diagnosis of
+          # the symptom and the wrong one of the cause: nothing here needs a PUBLISHED release, it needs
+          # an ARCHIVE, and one can be built from the working tree.
+          #
+          # `scripts/package-agent.sh` builds it through the same GoReleaser configuration the tagged
+          # release uses, so the file-name template, the zip layout and the binary's name inside it are a
+          # real download's. Zipping the exe here would have asserted this step's own guess at the layout.
           $dl = Join-Path $env:RUNNER_TEMP 'fo-download'
           New-Item -ItemType Directory -Force $dl | Out-Null
-          # The binary the previous step built, which lands in the working directory.
-          Copy-Item './forgeops-agent.exe' (Join-Path $dl 'forgeops-agent.exe') -Force
+          bash ../scripts/package-agent.sh "$dl"
+          if ($LASTEXITCODE -ne 0) { throw "packaging the agent archive failed" }
+          $archives = Get-ChildItem $dl -Filter '*.zip'
+          if (-not $archives) { throw "packaging produced no Windows archive in $dl" }
+          Write-Host "packaged: $($archives.Name -join ', ')"
 
           # Run it VERBATIM from that directory, in a child shell, exactly as a user would.
           Push-Location $dl
