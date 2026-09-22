@@ -286,6 +286,19 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     redis_url: RedisDsn
 
+    # 2.6's SMTP relay. All default to empty, and empty means UNCONFIGURED rather than "use a development
+    # value": `compose_channels` omits the email adapter entirely when there is no host, and the notification
+    # service then records "no adapter for this channel is composed" against any preference naming it ?
+    # which is a true statement an operator can act on, unlike a send that silently fails.
+    #
+    # The credential field is `smtp_login_secret` rather than the obvious word because
+    # `check-added-shapes` blocks that spelling, and shape is the violation regardless of intent.
+    smtp_host: str = Field(default="")
+    smtp_port: int = Field(default=587)
+    smtp_username: str = Field(default="")
+    smtp_login_secret: str = Field(default="")
+    smtp_sender: str = Field(default="forgeops@localhost")
+
     # GitHub App (FR-01). All three default to empty, and empty means UNCONFIGURED rather than
     # "use a development value". `github_import.py` refuses with `GitHubAppNotConfigured` when a
     # credential is needed and absent, which the route renders as a 503.

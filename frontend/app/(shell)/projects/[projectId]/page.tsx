@@ -11,6 +11,10 @@ import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { CodebaseIndexPanel } from "@/features/codebase/CodebaseIndexPanel";
 import { DeploymentDashboard } from "@/features/deployments/DeploymentDashboard";
 import { DevToolsPanel } from "@/features/devtools/DevToolsPanel";
+import {
+  NotificationBell,
+  NotificationPreferences,
+} from "@/features/notifications/NotificationBell";
 import { DockerDashboard } from "@/features/hostops/DockerDashboard";
 import { ReleaseTimeline } from "@/features/releases/ReleaseTimeline";
 import { KubernetesDashboard } from "@/features/hostops/KubernetesDashboard";
@@ -135,6 +139,19 @@ export default function ProjectDetailPage() {
                 workloads converged can be rolled back to.
               </p>
               <ReleaseTimeline projectId={projectId} />
+            </section>
+
+            <section aria-labelledby="notifications-heading" className="space-y-3">
+              <h2 id="notifications-heading" className="text-lg font-semibold">
+                Notifications
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                2.6. Every notification records what reached each channel, so one rejected by Slack
+                says so rather than appearing delivered. A webhook URL is a credential and is never
+                shown again.
+              </p>
+              <NotificationBell projectId={projectId} />
+              <NotificationPreferences projectId={projectId} />
             </section>
 
             <section aria-labelledby="devtools-heading" className="space-y-3">

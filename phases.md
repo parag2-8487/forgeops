@@ -697,11 +697,29 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.6 Notification Center (Basic)
 
-- [ ] Backend: Novu integration for multi-channel notifications
-- [ ] Backend: Notification templates (deploy completed, failed, policy violated)
-- [ ] Frontend: Notification bell with dropdown
-- [ ] Frontend: Notification preferences per user
-- [ ] Integration: Slack webhook, Discord webhook, Email (SMTP)
+- [ ] Backend: Novu integration for multi-channel notifications — deliberately NOT ticked. Novu is a hosted
+      or self-hosted service needing an API key this deployment does not have, and composing an unreachable
+      client would put a placeholder on a runtime path. What exists instead is the same shape behind a
+      `Channel` Protocol, so a Novu adapter is a new class rather than a rewrite. Named here rather than
+      quietly satisfied by the in-house dispatcher.
+- [x] Backend: Notification templates (deploy completed, failed, policy violated) — five templates in
+      `src/notifications/service.py`, one per kind, each declaring the fields it REQUIRES. A render with a
+      field missing raises rather than emitting the literal `{deployment_id}` to somebody's Slack channel —
+      the quiet version of this repository's fabrication problem. Plain text, because a Slack webhook, a
+      Discord webhook and an SMTP body have three markup dialects and render prose identically.
+- [x] Frontend: Notification bell with dropdown — `features/notifications/NotificationBell.tsx`. The unread
+      count is ABSENT while loading rather than shown as zero, and each row states where it actually got to:
+      "delivered to in_app; slack failed" instead of a badge implying it went out. 10 tests.
+- [x] Frontend: Notification preferences per user — the same component. A webhook URL is a credential, so
+      the server returns `target_configured` and never the value, asserted by searching the rendered DOM. An
+      enabled channel with no target is refused BEFORE the attempt, because a setting that silently does
+      nothing leaves a user believing they are covered.
+- [x] Integration: Slack webhook, Discord webhook, Email (SMTP) — `src/notifications/channels.py`. Each
+      raises on failure so the per-channel outcome recorded against the notification is true; a channel with
+      no adapter composed is recorded as UNDELIVERED rather than skipped, because silence would let an
+      operator believe Slack was told. One channel's failure does not stop another. Discord's 2000-character
+      limit is handled by truncating WITH A MARK rather than letting Discord reject the whole payload.
+      11 integration tests.
 
 #### 2.7 ArgoCD GitOps Integration
 

@@ -177,6 +177,7 @@ def build_chokepoint(
     redis_client: Any,
     analyzer: SemanticPlanAnalyzer | None = None,
     clone_credential_provider: Any = None,
+    change_set_settler: Any = None,
 ) -> GovernanceChokepoint:
     """A chokepoint over the real collaborators, with a per-instance Redis key prefix.
 
@@ -201,6 +202,7 @@ def build_chokepoint(
         # looks like. A harness that always supplied one could not express the refusal that
         # configuration has to produce, and every apply test would carry a collaborator it never uses.
         clone_credential_provider=clone_credential_provider,
+        change_set_settler=change_set_settler,
     )
 
 

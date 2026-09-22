@@ -432,6 +432,14 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     from .environments.service import EnvironmentService
     from .integrations.github_link import GitHubOAuthClient, GitHubUserClient, derive_link_key
     from .integrations.service import GitHubLinkService
+    from .notifications.channels import compose_channels
+    from .notifications.service import NotificationService
+
+    # 2.6. Channels whose configuration is absent are ABSENT from the map rather than present and broken:
+    # the service records "no adapter for this channel is composed" against a preference that names one,
+    # which is a true statement an operator can act on.
+    app.state.notification_service = NotificationService(channels=compose_channels(settings))
+    from .deployments.settler import DeploymentSettler
 
     app.state.deployment_service = DeploymentService()
     app.state.environment_service = EnvironmentService(pepper=settings.envelope_pepper.get_secret_value())
@@ -594,6 +602,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # `IS NOT DISTINCT FROM` because of it.
         clone_credential_provider=lambda session, *, user_id, tenant_id: (
             app.state.github_link_service.usable_token(session, user_id=user_id, tenant_id=tenant_id)
+        ),
+        # 2.2 and 2.6. Without this, `DeploymentService.complete` had no production caller at all: a real
+        # deployment stayed `applying` for ever and `rollback_target` never found anything. Composed here
+        # because `governance/` may not import `deployments/` and must not learn what a deployment is.
+        change_set_settler=DeploymentSettler(
+            deployments=app.state.deployment_service,
+            notifications=app.state.notification_service,
         ),
     )
     app.state.mcp_task_store = mcp_task_store
@@ -954,6 +969,10 @@ def create_app() -> FastAPI:
     # asserts that send_command stays confined to governance/, so this router cannot grow one.
     # 2.1's promotion box and 2.3. Promotion and rollback are DEPLOYMENTS: both travel deploy_manifests,
     # so the target environment's approval requirement applies without anyone having to remember it.
+    from .notifications.routes import router as notifications_router
+
+    app.include_router(notifications_router)
+
     from .releases.routes import router as releases_router
 
     app.include_router(releases_router)

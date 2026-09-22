@@ -55,6 +55,10 @@ from src.governance.models import (  # noqa: F401, E402
     Validation,
 )
 from src.integrations.models import GitHubAccountLink  # noqa: F401, E402
+from src.notifications.models import (  # noqa: F401, E402
+    Notification,
+    NotificationPreference,
+)
 from src.policies.models import Policy, PolicyBundle, PolicyEvaluation  # noqa: F401, E402
 from src.projects.models import Project, ProjectTag  # noqa: F401, E402
 from src.secrets.models import Secret  # noqa: F401, E402

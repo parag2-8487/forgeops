@@ -596,6 +596,26 @@ class Submission:
 
 
 @runtime_checkable
+class ChangeSetSettler(Protocol):
+    """Settles whatever a change set was FOR, once the change set itself has settled.
+
+    Declared here and implemented by the domain that owns the settled thing, because `governance/` may not
+    import `deployments/` (TID251) and must not learn what a deployment is. Without this hook
+    `deployments.healthy` and `deployments.stable` had no production writer at all -- only tests called
+    `complete` -- so a real deployment stayed `applying` for ever and `rollback_target` never found one.
+    """
+
+    async def settle(
+        self,
+        session: Any,
+        *,
+        change_set_id: uuid.UUID,
+        succeeded: bool,
+        report: Mapping[str, Any] | None,
+    ) -> None: ...
+
+
+@runtime_checkable
 class PendingCommand(Protocol):
     """The pending result of one delivered command.
 
@@ -755,6 +775,7 @@ class GovernanceChokepoint:
         envelope_pepper: str,
         envelope_max_age_seconds: int = 300,
         clone_credential_provider: CloneCredentialProvider | None = None,
+        change_set_settler: ChangeSetSettler | None = None,
     ) -> None:
         if not envelope_pepper:
             raise ValueError(
@@ -776,6 +797,7 @@ class GovernanceChokepoint:
         # rather than an error: it must produce a refusal naming the missing piece, not an
         # AttributeError at the moment a human clicks approve.
         self._clone_credential = clone_credential_provider
+        self._settler = change_set_settler
 
     # ─── public transits ──────────────────────────────────────────────────────────────────
 
@@ -2813,6 +2835,46 @@ class GovernanceChokepoint:
             # and re-reporting is a legitimate consequence of at-least-once delivery.
             await session.commit()
             return "ignored"
+
+        # WHATEVER THIS CHANGE SET WAS FOR NOW SETTLES TOO.
+        #
+        # Until this existed, `deployments.healthy` and `deployments.stable` had no production writer at
+        # all: `DeploymentService.complete` was called only by tests, so a real deployment stayed
+        # `applying` for ever and `rollback_target` could never find anything. That is this repository's
+        # recurring defect — a correct mechanism with no runtime path into it — and it is the reason this
+        # hook exists rather than a route somebody has to remember to call.
+        #
+        # Through a Protocol the settler implements, because `governance/` may not import `deployments/`
+        # (TID251) and must not learn what a deployment is.
+        #
+        # IN A SAVEPOINT, and the first version was wrong about this in a way worth recording: it wrapped
+        # the call in `contextlib.suppress`, which swallows the exception and leaves the TRANSACTION
+        # aborted, so the next statement failed with `InFailedSQLTransactionError` — an error about the
+        # wrong thing, several lines away from its cause. A nested transaction rolls back only the
+        # settler's own work and leaves the change-set transition intact, which is the actual intent:
+        # a notification that could not be raised must not undo a result that was recorded.
+        if self._settler is not None:
+            try:
+                async with session.begin_nested():
+                    await self._settler.settle(
+                        session,
+                        change_set_id=change_set_id,
+                        succeeded=succeeded,
+                        report=backup_manifest if isinstance(backup_manifest, dict) else None,
+                    )
+            except Exception as error:  # noqa: BLE001 - see above; the transition must survive this
+                # Recorded on the change set rather than logged: this module deliberately has no logger,
+                # and an operator reading the row is who needs to know the follow-up did not happen.
+                await session.execute(
+                    text(
+                        "UPDATE change_sets SET operation_args = "
+                        "COALESCE(operation_args, '{}'::jsonb) || CAST(:note AS jsonb) WHERE id = :id"
+                    ),
+                    {
+                        "note": json.dumps({"settlement_error": f"{type(error).__name__}: {error}"[:500]}),
+                        "id": change_set_id,
+                    },
+                )
 
         if succeeded and backup_manifest is not None:
             # The manifest is what makes the apply reversible, so it is stored on the reserved

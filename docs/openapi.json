@@ -1384,6 +1384,40 @@
         "title": "DeploymentRequest",
         "type": "object"
       },
+      "DevToolRequest": {
+        "description": "Run one of the project's own tools, named by KIND.\n\nA `Literal`, so an unknown kind is a 422 from the schema. There is deliberately no command, argument or\nflag field: the agent chooses the vector from the kind and the workspace's own manifests, which is what\nkeeps this from being an arbitrary-execution route.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "tests",
+              "lint",
+              "build",
+              "compose",
+              "migrations"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 0,
+            "maximum": 1500.0,
+            "minimum": 0.0,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "DevToolRequest",
+        "type": "object"
+      },
       "DevicePage": {
         "properties": {
           "devices": {
@@ -2771,6 +2805,55 @@
         "title": "PolicyUpdate",
         "type": "object"
       },
+      "PreferenceRequest": {
+        "description": "One user's setting for one channel and one kind.",
+        "properties": {
+          "channel": {
+            "enum": [
+              "in_app",
+              "slack",
+              "discord",
+              "email"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "deploy_completed",
+              "deploy_failed",
+              "policy_violated",
+              "approval_required",
+              "self_healed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "channel",
+          "kind"
+        ],
+        "title": "PreferenceRequest",
+        "type": "object"
+      },
       "ProjectCreateRequest": {
         "properties": {
           "name": {
@@ -3371,6 +3454,7 @@
           "status",
           "token",
           "progress",
+          "log",
           "validation",
           "complete",
           "error"
@@ -7714,6 +7798,110 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/deployments/{deployment_id}/logs": {
+      "get": {
+        "description": "Stream one deployment's agent output.\n\nRefuses before opening a stream when the deployment has not been delivered: a stream that opened on a\n`pending_approval` deployment would show an empty log, and an operator would read that as \"the\ndeployment is doing nothing\" rather than \"a human has not approved it yet\".",
+        "operationId": "deployment_logs_api_v1_projects__project_id__deployments__deployment_id__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "deployment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deployment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Live deployment output as SSE `log` events",
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/devtools/run": {
+      "post": {
+        "description": "202, and approval-required like every other mutation.\n\n\"Run the tests\" sounds read-only and is not: the command is code the repository controls. That is why\nthis travels `transit_host_action` rather than `read_inventory`.",
+        "operationId": "run_dev_tool_api_v1_projects__project_id__devtools_run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevToolRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run the project's own tests, linters, build, compose stack or migrations",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/docker/containers/actions": {
       "post": {
         "description": "202, because the answer is a governance decision and not the action's outcome.\n\nA container action can be blocked, held for a human, or delivered. Returning 200 with the container's\nnew state would be a lie in two of those three cases.\n\nNO ENVIRONMENT. A Docker action is against the operator's own machine, which no `environments` row\ndescribes. `environment_name=None` reaches the policy as an absent environment \u2014 the branch the bundle\ntreats as \"ask a human\" \u2014 so the absence cannot be a route to less approval.",
@@ -7763,6 +7951,85 @@
           }
         },
         "summary": "Start, stop, restart or remove one container (through the chokepoint)",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/docker/containers/{container}/logs": {
+      "get": {
+        "description": "Returned unaltered, including `truncated`.\n\nA tail that is not marked as a tail lets a reader conclude an error never happened when it fell off the\ntop, so the applied bounds and the truncation flag travel outward as the agent reported them.",
+        "operationId": "container_logs_api_v1_projects__project_id__docker_containers__container__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "container",
+            "required": true,
+            "schema": {
+              "title": "Container",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tail_lines",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Tail Lines",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since_seconds",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 86400,
+              "minimum": 0,
+              "title": "Since Seconds",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Container Logs Api V1 Projects  Project Id  Docker Containers  Container  Logs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One container's recent output",
         "tags": [
           "host-operations"
         ]
@@ -8440,6 +8707,126 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/kubernetes/namespaces/{namespace}/pods/{pod}": {
+      "get": {
+        "description": "Logs and events together, because for a pod that never scheduled the events are the whole answer.\n\nAn empty log list with populated events is a meaningful result rather than a failure, which is why one\noperation returns both instead of this route asking twice and choosing which absence to believe.",
+        "operationId": "pod_detail_api_v1_projects__project_id__kubernetes_namespaces__namespace__pods__pod__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pod",
+            "required": true,
+            "schema": {
+              "title": "Pod",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "container_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Container Name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tail_lines",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Tail Lines",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since_seconds",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 86400,
+              "minimum": 0,
+              "title": "Since Seconds",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cluster_context",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Context"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Pod Detail Api V1 Projects  Project Id  Kubernetes Namespaces  Namespace  Pods  Pod  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One pod's logs AND its events",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/kubernetes/workloads/actions": {
       "post": {
         "description": "202, for the reason above.\n\nTHE ENVIRONMENT IS READ HERE AND HANDED DOWN, exactly as the deployment route does it and for the same\nreason: the transit lives in `governance/`, TID251 forbids it importing `environments/`, and the\ntransit's job is to ENFORCE an approval requirement rather than to discover one. An unknown\nenvironment id is a 404 naming it rather than a silent fall back to \"no approval needed\".",
@@ -8491,6 +8878,216 @@
         "summary": "Scale, restart or roll back one workload (through the chokepoint)",
         "tags": [
           "host-operations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/notifications": {
+      "get": {
+        "description": "Each row carries its per-channel delivery outcome, so the bell can show what did NOT get through.",
+        "operationId": "list_notifications_api_v1_projects__project_id__notifications_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Notifications Api V1 Projects  Project Id  Notifications Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "This project's notifications, newest first",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/notifications/preferences": {
+      "get": {
+        "description": "`target_configured` rather than the target itself: a webhook URL is a credential.",
+        "operationId": "read_preferences_api_v1_projects__project_id__notifications_preferences_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Preferences Api V1 Projects  Project Id  Notifications Preferences Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "This user's channel preferences for this project",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "put": {
+        "operationId": "set_preference_api_v1_projects__project_id__notifications_preferences_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set Preference Api V1 Projects  Project Id  Notifications Preferences Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set one channel-and-kind preference",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/notifications/{notification_id}/read": {
+      "post": {
+        "operationId": "mark_read_api_v1_projects__project_id__notifications__notification_id__read_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Notification Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Mark Read Api V1 Projects  Project Id  Notifications  Notification Id  Read Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark one notification read",
+        "tags": [
+          "notifications"
         ]
       }
     },

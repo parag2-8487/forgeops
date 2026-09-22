@@ -160,6 +160,13 @@ export const queryKeys = {
     diff: (projectId: string, leftId: string, rightId: string) =>
       [...queryKeys.releases.all, "diff", projectId, leftId, rightId] as const,
   },
+  /** 2.6. Scoped by project: one project's bell must never show another's. */
+  notifications: {
+    all: ["notifications"] as const,
+    list: (projectId: string) => [...queryKeys.notifications.all, "list", projectId] as const,
+    preferences: (projectId: string) =>
+      [...queryKeys.notifications.all, "preferences", projectId] as const,
+  },
   hostops: {
     all: ["hostops"] as const,
     dockerInventory: (projectId: string, stats: boolean) =>

@@ -188,6 +188,12 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "deployment-absent": ProblemSpec(404, "No such deployment"),
     "deployment-invalid": ProblemSpec(422, "The deployment request is not valid"),
     "deployment-conflict": ProblemSpec(409, "The deployment has already settled"),
+    # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
+    # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
+    # raised for one specific case worth naming -- an enabled channel with no target, which would be a
+    # setting that silently does nothing.
+    "notification-absent": ProblemSpec(404, "No such notification"),
+    "notification-preference-invalid": ProblemSpec(422, "The notification preference is not valid"),
     # ─── Tenancy (§6.7) ──────────────────────────────────────────────────────
     "tenant-context-missing": ProblemSpec(500, "Tenant context missing"),
 }
