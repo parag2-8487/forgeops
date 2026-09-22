@@ -942,6 +942,12 @@ def create_app() -> FastAPI:
 
     app.include_router(deployments_router)
 
+    # 2.2's live log stream. A separate module from the deployment routes because it is the only SSE
+    # producer here and its lifecycle is a subscription rather than a request.
+    from .deployments.logs import router as deployment_logs_router
+
+    app.include_router(deployment_logs_router)
+
     # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
     # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory
     # and its writes through transit_host_action, and there is no third path -- check-chokepoint.sh

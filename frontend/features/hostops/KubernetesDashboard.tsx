@@ -34,6 +34,7 @@ import { useState } from "react";
 
 import { EnvironmentSelector } from "@/features/environments/EnvironmentManager";
 import { freshnessOf } from "@/features/hostops/DockerDashboard";
+import { PodDetail } from "@/features/hostops/LogPanel";
 import { api, queryKeys } from "@/lib/api";
 
 export type K8sPod = {
@@ -103,6 +104,7 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
   const [scaleTo, setScaleTo] = useState<Record<string, number>>({});
+  const [openPod, setOpenPod] = useState<string | null>(null);
 
   const inventory = useQuery<K8sInventory>({
     queryKey: queryKeys.hostops.kubernetesInventory(projectId, namespace),
@@ -375,6 +377,7 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
               <th scope="col">Restarts</th>
               <th scope="col">Node</th>
               <th scope="col">Waiting because</th>
+              <th scope="col">Output</th>
             </tr>
           </thead>
           <tbody>
@@ -389,6 +392,18 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
                 <td data-testid={`k8s-pod-restarts-${pod.name}`}>{pod.restarts}</td>
                 <td>{pod.node || "not scheduled"}</td>
                 <td data-testid={`k8s-pod-reason-${pod.name}`}>{pod.reason || "—"}</td>
+                <td>
+                  <button
+                    type="button"
+                    data-testid={`k8s-pod-logs-${pod.name}`}
+                    onClick={() => setOpenPod(openPod === pod.name ? null : pod.name)}
+                  >
+                    {openPod === pod.name ? "hide logs and events" : "logs and events"}
+                  </button>
+                  {openPod === pod.name && (
+                    <PodDetail projectId={projectId} namespace={pod.namespace} pod={pod.name} />
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

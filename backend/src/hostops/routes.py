@@ -46,7 +46,9 @@ from ..governance.chokepoint import (
     DOCKER_CONTAINER_OPERATION,
     DOCKER_IMAGE_OPERATION,
     DOCKER_INVENTORY_OPERATION,
+    DOCKER_LOGS_OPERATION,
     KUBERNETES_INVENTORY_OPERATION,
+    KUBERNETES_POD_DETAIL_OPERATION,
     KUBERNETES_WORKLOAD_OPERATION,
     GovernanceChokepoint,
     Submission,
@@ -352,3 +354,70 @@ async def workload_action(
         reason=body.reason or f"{body.action} {body.kind}/{body.name} in {body.namespace}",
     )
     return _accepted(submission)
+
+
+@router.get("/docker/containers/{container}/logs", summary="One container's recent output")
+async def container_logs(
+    project_id: uuid.UUID,
+    container: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    tail_lines: Annotated[int, Query(ge=1, le=2000)] = 200,
+    since_seconds: Annotated[int, Query(ge=0, le=86400)] = 0,
+) -> dict[str, Any]:
+    """Returned unaltered, including `truncated`.
+
+    A tail that is not marked as a tail lets a reader conclude an error never happened when it fell off the
+    top, so the applied bounds and the truncation flag travel outward as the agent reported them.
+    """
+    return dict(
+        await _chokepoint(request).read_inventory(
+            session,
+            project_id=project_id,
+            principal=principal,
+            operation=DOCKER_LOGS_OPERATION,
+            args={"container": container, "tail_lines": tail_lines, "since_seconds": since_seconds},
+            timeout_seconds=_READ_TIMEOUT_SECONDS,
+        )
+    )
+
+
+@router.get("/kubernetes/namespaces/{namespace}/pods/{pod}", summary="One pod's logs AND its events")
+async def pod_detail(
+    project_id: uuid.UUID,
+    namespace: str,
+    pod: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    container_name: Annotated[str | None, Query()] = None,
+    tail_lines: Annotated[int, Query(ge=1, le=2000)] = 200,
+    since_seconds: Annotated[int, Query(ge=0, le=86400)] = 0,
+    cluster_context: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """Logs and events together, because for a pod that never scheduled the events are the whole answer.
+
+    An empty log list with populated events is a meaningful result rather than a failure, which is why one
+    operation returns both instead of this route asking twice and choosing which absence to believe.
+    """
+    args: dict[str, Any] = {
+        "namespace": namespace,
+        "pod": pod,
+        "tail_lines": tail_lines,
+        "since_seconds": since_seconds,
+    }
+    if container_name:
+        args["container_name"] = container_name
+    if cluster_context:
+        args["context"] = cluster_context
+    return dict(
+        await _chokepoint(request).read_inventory(
+            session,
+            project_id=project_id,
+            principal=principal,
+            operation=KUBERNETES_POD_DETAIL_OPERATION,
+            args=args,
+            timeout_seconds=_READ_TIMEOUT_SECONDS,
+        )
+    )

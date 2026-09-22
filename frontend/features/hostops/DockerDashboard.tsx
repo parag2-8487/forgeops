@@ -37,6 +37,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import { ContainerLogs } from "@/features/hostops/LogPanel";
 import { api, queryKeys } from "@/lib/api";
 
 /** How old a sample may be before the panel calls it stale. */
@@ -160,6 +161,7 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [withStats, setWithStats] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
+  const [showLogs, setShowLogs] = useState<string | null>(null);
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
 
   const inventory = useQuery<DockerInventory>({
@@ -308,6 +310,16 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                     </button>
                   ))}
                   {/* The irreversible one, and the only one that asks. */}
+                  <button
+                    type="button"
+                    data-testid={`docker-logs-${container.name}`}
+                    onClick={() => setShowLogs(showLogs === container.name ? null : container.name)}
+                  >
+                    {showLogs === container.name ? "hide logs" : "logs"}
+                  </button>
+                  {showLogs === container.name && (
+                    <ContainerLogs projectId={projectId} container={container.name} />
+                  )}
                   {pendingRemoval === container.name ? (
                     <>
                       <span data-testid={`docker-remove-confirm-${container.name}`}>

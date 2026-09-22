@@ -28,6 +28,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
+import {
+  DeploymentLogStream,
+  DeploymentResult,
+  type DeploymentReport,
+} from "@/features/deployments/DeploymentResult";
 import { EnvironmentSelector } from "@/features/environments/EnvironmentManager";
 import { api, queryKeys } from "@/lib/api";
 
@@ -190,6 +195,15 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
                   a stable state a rollback can return to
                 </span>
               ) : null}
+              <DeploymentResult
+                report={deployment.report as DeploymentReport | null}
+                status={deployment.status}
+              />
+              <DeploymentLogStream
+                projectId={projectId}
+                deploymentId={deployment.id}
+                deliverable={deployment.change_set_id !== null && deployment.status === "applying"}
+              />
             </li>
           ))}
         </ol>

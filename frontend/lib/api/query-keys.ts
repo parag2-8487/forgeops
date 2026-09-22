@@ -166,5 +166,9 @@ export const queryKeys = {
       [...queryKeys.hostops.all, "docker", projectId, stats] as const,
     kubernetesInventory: (projectId: string, namespace: string | null) =>
       [...queryKeys.hostops.all, "kubernetes", projectId, namespace ?? "all-namespaces"] as const,
+    containerLogs: (projectId: string, container: string) =>
+      [...queryKeys.hostops.all, "container-logs", projectId, container] as const,
+    podDetail: (projectId: string, namespace: string, pod: string) =>
+      [...queryKeys.hostops.all, "pod-detail", projectId, namespace, pod] as const,
   },
 } as const;

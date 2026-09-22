@@ -190,7 +190,10 @@ var handlerTable = map[Operation]entry{
 	// `timeoutValidate` rather than `timeoutQuick`: a cluster with many namespaces answers nine `get`
 	// calls in seconds when it is healthy and in tens of seconds when it is not, and the unhealthy case
 	// is exactly when somebody is looking at the dashboard.
-	OpDockerInventory:     {timeout: timeoutValidate, implemented: true, run: dockerInventory},
+	OpDockerInventory: {timeout: timeoutValidate, implemented: true, run: dockerInventory},
+	// Reads of output, approval-free for the reason the inventories are: a log panel refreshes.
+	OpDockerContainerLogs: {timeout: timeoutValidate, implemented: true, run: dockerContainerLogs},
+	OpKubernetesPodDetail: {timeout: timeoutValidate, implemented: true, run: k8sPodDetail},
 	OpKubernetesInventory: {timeout: timeoutValidate, implemented: true, run: k8sInventory},
 
 	// ── Phase 2: the mutating actions those dashboards offer ──

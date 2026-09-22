@@ -134,7 +134,18 @@ KUBERNETES_WORKLOAD_OPERATION: Final[str] = "kubernetes.workload_action"
 #: reason rather than a condition at a call site.
 DOCKER_INVENTORY_OPERATION: Final[str] = "docker.inventory"
 KUBERNETES_INVENTORY_OPERATION: Final[str] = "kubernetes.inventory"
-READ_OPERATIONS: Final[frozenset[str]] = frozenset({DOCKER_INVENTORY_OPERATION, KUBERNETES_INVENTORY_OPERATION})
+#: Output reads. Bounded by the agent in lines and in time window, and the applied bounds travel with the
+#: answer so a tail is never mistaken for a whole log.
+DOCKER_LOGS_OPERATION: Final[str] = "docker.container_logs"
+KUBERNETES_POD_DETAIL_OPERATION: Final[str] = "kubernetes.pod_detail"
+READ_OPERATIONS: Final[frozenset[str]] = frozenset(
+    {
+        DOCKER_INVENTORY_OPERATION,
+        KUBERNETES_INVENTORY_OPERATION,
+        DOCKER_LOGS_OPERATION,
+        KUBERNETES_POD_DETAIL_OPERATION,
+    }
+)
 HOST_ACTION_OPERATIONS: Final[frozenset[str]] = frozenset(
     {DOCKER_CONTAINER_OPERATION, DOCKER_IMAGE_OPERATION, KUBERNETES_WORKLOAD_OPERATION}
 )
@@ -2580,6 +2591,14 @@ class GovernanceChokepoint:
             args=args,
         )
         await self._sink.send_command(device_id=admitted.device_id, command=command)
+        # WHICH COMMAND CARRIED THIS, recorded after a successful send. §2.2's live-log stream needs it to
+        # subscribe to the agent's per-command progress channel, and the audit chain gains a correlation it
+        # previously left to matching timestamps. After the send, like the status, so a failed delivery
+        # does not claim a command that never left.
+        await session.execute(
+            text("UPDATE change_sets SET command_id = :command WHERE id = :id"),
+            {"command": str(command.envelope.get("command_id") or ""), "id": change_set_id},
+        )
         await self._set_status(session, change_set_id, status_after_delivery)
         await session.commit()
         return Submission(

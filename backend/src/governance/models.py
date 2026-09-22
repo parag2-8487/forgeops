@@ -209,6 +209,9 @@ class ChangeSet(SQLModel, table=True):
     #: at the last layer. A clone's GitHub token is read from the requester's link at delivery time
     #: instead — which is also what makes a disconnected account undeliverable rather than merely
     #: discouraged.
+    #: The agent command this change set was delivered as, or None when it has not been delivered.
+    #: `null` means "not delivered", which is why it is nullable rather than a blank string.
+    command_id: str | None = Field(default=None, max_length=64)
     operation_args: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column("operation_args", JSONB, nullable=False, server_default=text("'{}'::jsonb")),

@@ -130,7 +130,7 @@ func TestEveryDeclaredOperationHasAHandlerAndViceVersa(t *testing.T) {
 	}
 	// 24: Phase 1's 19 plus Phase 2's five — two reads (docker.inventory, kubernetes.inventory) and
 	// three actions (docker.container_action, docker.image_action, kubernetes.workload_action).
-	if len(allOperations) != 24 {
+	if len(allOperations) != 26 {
 		t.Errorf("§7.7's catalogue has 24 operations; this build declares %d. If that is "+
 			"deliberate, change this number in the same commit as the table.", len(allOperations))
 	}
@@ -636,13 +636,14 @@ func TestOperations_IsDerivedFromTheTable(t *testing.T) {
 	//
 	// Named individually rather than counted alone, because a count that matches for the wrong reason
 	// is the failure this pin exists to catch.
-	const expectedImplemented = 22
+	const expectedImplemented = 24
 	if implemented != expectedImplemented {
 		t.Errorf("%d operations report Implemented, expected %d: changeset.apply, changeset.revert, "+
 			"the six validate.* operations, readiness.inventory, secretscan.run, secrets.inject, "+
 			"project.register, project.unregister, git.branch_commit_push, git.open_pr and "+
 			"repository.clone, deployment.apply_manifests, docker.inventory, kubernetes.inventory, "+
-			"docker.container_action, docker.image_action and kubernetes.workload_action. "+
+			"docker.container_action, docker.image_action, kubernetes.workload_action, "+
+			"docker.container_logs and kubernetes.pod_detail. "+
 			"Update this number in the same commit as the new handler.", implemented, expectedImplemented)
 	}
 	for _, op := range []Operation{

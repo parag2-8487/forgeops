@@ -72,6 +72,14 @@ const (
 	// it converged. Confined to the same three pod-bearing kinds the deployment operation can verify,
 	// because acting on something unverifiable would report the API server's acceptance as success.
 	OpKubernetesWorkloadAction Operation = "kubernetes.workload_action"
+
+	// OpDockerContainerLogs and OpKubernetesPodDetail are READS of output. Bounded by line count and time
+	// window, and the applied bounds travel with the answer so a tail is never mistaken for a whole log.
+	// Two operations rather than one: a container with no logs and a pod that never scheduled are different
+	// facts, and the pod read returns EVENTS alongside logs because for an unscheduled pod the events are
+	// the entire explanation.
+	OpDockerContainerLogs Operation = "docker.container_logs"
+	OpKubernetesPodDetail Operation = "kubernetes.pod_detail"
 )
 
 // allOperations is the declared vocabulary, used only to assert that the dispatch table covers
@@ -90,6 +98,7 @@ var allOperations = []Operation{
 	OpRepositoryClone, OpDeploymentApplyManifests,
 	OpDockerInventory, OpKubernetesInventory,
 	OpDockerContainerAction, OpDockerImageAction, OpKubernetesWorkloadAction,
+	OpDockerContainerLogs, OpKubernetesPodDetail,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).
