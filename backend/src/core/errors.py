@@ -192,6 +192,12 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # declining to attempt it after repeated validation failures. A 422 would blame the manifests in
     # THIS request, which is not what happened.
     "deployment-circuit-open": ProblemSpec(503, "Deployments to this environment are stopped"),
+    # 2.2 and 2.4a. A 503 rather than a 500: the deployment is configured without a durable engine, so
+    # the capability is absent rather than broken, and the detail names the setting that enables it.
+    "pipeline-engine-absent": ProblemSpec(503, "No durable execution engine is configured"),
+    # A 422: the request named a step that is not gated. Releasing it would do nothing while appearing
+    # to succeed, which for an approval mechanism is the worst available outcome.
+    "pipeline-step-not-gated": ProblemSpec(422, "That pipeline step has no approval gate"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a

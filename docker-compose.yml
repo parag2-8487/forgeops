@@ -505,6 +505,41 @@ services:
       postgres: { condition: service_started }
       redis: { condition: service_started }
 
+  # 2.2 and 2.4a: the durable execution engine.
+  #
+  # WHY INNGEST AND NOT TEMPORAL. Temporal needs a server, a database of its own and a worker fleet;
+  # this is ONE container that discovers functions by calling an HTTP endpoint the backend already
+  # serves. For a product an operator runs on their own machine that difference is the whole argument --
+  # Temporal would be a second stateful system to operate before the first deployment.
+  #
+  # `-u` points the dev server at the backend's discovery endpoint. It CALLS IN rather than the backend
+  # registering out, which is why `host.docker.internal` appears here: the backend may be running on the
+  # host during development, and a URL naming the compose service would only work when it is not.
+  inngest:
+    image: inngest/inngest:v1.13.1@sha256:7d7e691b28537800b847bc38d0b6a998638fced100111653746120c9f0eaeb3a
+    env_file: *service-env
+    command:
+      - "inngest"
+      - "dev"
+      - "--no-discovery"
+      - "-u"
+      - "${INNGEST_DISCOVERY_URL:-http://host.docker.internal:8000/api/inngest}"
+    ports:
+      - "127.0.0.1:${INNGEST_PORT:-8288}:8288"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      # The dev server answers `/health` once it is listening. Without a healthcheck, `up --wait`
+      # returns before discovery has happened and the first enqueue fails against a server that is
+      # still binding its port -- a failure that reads like a misconfiguration.
+      # `curl` and not `wget`: this image has curl and no wget, which the first version of this
+      # healthcheck discovered by reporting the container unhealthy while the server was serving
+      # happily -- a healthcheck that fails for its own reasons is worse than none, because it stops
+      # `up --wait` on a service that is working.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8288/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
   # Added by task 9.5: devtools container for OpenTofu integration tests.
   # Only starts with `docker compose --profile tools up -d --wait`.
   agent-dev:

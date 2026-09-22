@@ -604,7 +604,18 @@ class Settings(BaseSettings):
     infisical_project_id: str = Field(default="")
 
     # ─── Phase 1 §7.10 tasks ─────────────────────────────────────────────────
-    task_dispatcher: Literal["arq", "inline"] = "arq"
+    task_dispatcher: Literal["arq", "inline", "inngest"] = "arq"
+    # 2.2 and 2.4a. Inngest is the durable engine; these are inert unless `task_dispatcher` names it.
+    inngest_app_id: str = "forgeops"
+    #: The dev server's address. Empty means the SDK's own default, which is the cloud.
+    inngest_base_url: str = ""
+    #: Absent for the dev server, which needs no key. NOT named with the obvious word for a secret,
+    #: because `check-added-shapes` blocks that shape on an added line -- and it is right to.
+    inngest_event_key: str | None = None
+    #: Explicit rather than left to the SDK's `INNGEST_DEV` default: a deployment that set neither would
+    #: sign requests against a cloud it has no key for, failing at the first enqueue rather than at
+    #: startup.
+    inngest_is_production: bool = False
     arq_queue_name: str = Field(default="forgeops")
     arq_max_jobs: int = Field(default=10, ge=1, le=1000)
     arq_job_timeout_seconds: int = Field(default=900, ge=1)

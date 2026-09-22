@@ -338,6 +338,26 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # only the request that needs it, and leaves an unreachable Redis as a readiness matter (§4.4).
     app.state.arq_pool = None
 
+    # --- 2.2 and 2.4a: the durable deployment pipeline ------------------------
+    #
+    # The pipeline's steps are engine-agnostic handlers in `deployments/pipeline.py`; they need a session
+    # factory, the chokepoint and a way to load the principal they act as. Composed HERE because that is
+    # where all three are in scope, and because a step reaching for `app.state` itself would be
+    # untestable without a running app.
+    #
+    # The chokepoint is passed as a CALLABLE. It is composed further down this same lifespan, so reading
+    # it eagerly here would capture `None` and every pipeline apply would fail with an error about the
+    # chokepoint rather than about anything real.
+    from .deployments.pipeline import compose_pipeline
+
+    compose_pipeline(_PipelineContext(sessionmaker, lambda: getattr(app.state, "governance_chokepoint", None)))
+
+    # The engine's functions are served only when the engine is the configured dispatcher. Registering
+    # them unconditionally would publish an endpoint that answers for a client this deployment never
+    # built, and Inngest's discovery would then list functions nothing can enqueue.
+    if getattr(settings, "task_dispatcher", "inline") == "inngest":
+        _serve_inngest(app, settings)
+
     # --- MCP Gateway collaborators (§11.1, §11.4) ---------------------------
     # All constructed non-destructively: the shared HTTP client, the JWKS-caching
     # verifier, the OPA client and the Redis-backed cache/task store each validate
@@ -968,6 +988,13 @@ def create_app() -> FastAPI:
 
     app.include_router(deployment_logs_router)
 
+    # 2.2 and 2.4a. Starting a durable run and releasing its gate. Mounted unconditionally even though
+    # the engine may not be configured: the routes answer a 503 naming the setting, which is a better
+    # failure than a 404 on a route that exists in the product's documentation.
+    from .deployments.pipeline_routes import router as pipeline_router
+
+    app.include_router(pipeline_router)
+
     # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
     # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory
     # and its writes through transit_host_action, and there is no third path -- check-chokepoint.sh
@@ -1135,3 +1162,95 @@ def create_app() -> FastAPI:
         )
 
     return app
+
+
+class _PipelineContext:
+    """What a durable pipeline step needs from the application. 2.2, 2.4a.
+
+    Satisfies `deployments.pipeline.PipelineContext` structurally. Each step opens its OWN session from
+    the factory, because a durable step may run hours after the one before it and a session held across
+    that gap is a connection leaked for the duration.
+    """
+
+    def __init__(self, sessionmaker: Any, chokepoint: Callable[[], Any]) -> None:
+        self._sessionmaker = sessionmaker
+        self._chokepoint = chokepoint
+
+    @property
+    def sessions(self) -> Any:
+        return self._sessionmaker
+
+    @property
+    def chokepoint(self) -> Any:
+        resolved = self._chokepoint()
+        if resolved is None:
+            raise RuntimeError(
+                "the governance chokepoint is not composed yet, so a pipeline step cannot run; "
+                "every mutating step goes through it and there is no path that skips it"
+            )
+        return resolved
+
+    async def principal_for(self, session: Any, user_id: uuid.UUID) -> Any:
+        """Load the principal a step acts as, from the database, at the moment the step runs.
+
+        RE-READ AND NOT CARRIED IN THE EVENT. A principal serialised into a durable payload is an
+        authorisation snapshot that outlives the human's access: a run suspended overnight would apply in
+        the morning with permissions revoked at midnight. Re-reading means a revoked user's suspended
+        pipeline fails, which is the correct outcome.
+        """
+        from sqlalchemy import text as _text
+
+        from .auth.principal import Principal
+
+        row = (
+            (
+                await session.execute(
+                    _text("SELECT id, email, tenant_id, oidc_subject FROM users WHERE id = :id"),
+                    {"id": str(user_id)},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            raise RuntimeError(f"user {user_id} no longer exists, so the suspended pipeline has nobody to act as")
+        return Principal(
+            subject=str(row["oidc_subject"] or row["id"]),
+            email=row["email"],
+            user_id=row["id"],
+            tenant_id=row["tenant_id"],
+        )
+
+
+def _serve_inngest(app: FastAPI, settings: Any) -> None:
+    """Mount the engine's discovery endpoint. 2.4a.
+
+    The import lives inside this function because `core/tasks.py` is the only module permitted to import
+    the engine SDK, and `inngest.fast_api.serve` is framework glue rather than business logic -- it is
+    here, at the composition edge, and reaches nothing but the translator.
+    """
+    # THE ENGINE'S ENDPOINT IS NOT BEHIND A PRINCIPAL, and it is the one route in this application that
+    # is not. It cannot be: the engine calls it to invoke functions and holds no user session. What
+    # authenticates it is a SIGNING KEY the SDK verifies on every request -- and a deployment that
+    # enabled the engine in production without one would expose an endpoint that runs deployment
+    # pipelines to anybody who can reach the port. So that combination is refused at startup, loudly,
+    # rather than left as a configuration mistake nobody notices.
+    if bool(getattr(settings, "inngest_is_production", False)) and not getattr(settings, "inngest_event_key", None):
+        raise RuntimeError(
+            "TASK_DISPATCHER=inngest with INNGEST_IS_PRODUCTION=true requires INNGEST_EVENT_KEY: "
+            "without it the /api/inngest endpoint is unauthenticated, and anyone who can reach it "
+            "can start a deployment pipeline. Set the key, or run the dev server with "
+            "INNGEST_IS_PRODUCTION=false."
+        )
+
+    from .core.tasks import build_inngest_client, inngest_functions
+
+    client = build_inngest_client(settings)
+    functions = inngest_functions(client)
+    app.state.inngest_client = client
+    # Kept so a route can send the approval event that releases a gated step without rebuilding a client.
+    app.state.inngest_functions = functions
+
+    import inngest.fast_api
+
+    inngest.fast_api.serve(app, client, functions)

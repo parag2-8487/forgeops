@@ -613,7 +613,14 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       `log` event, so an operator's log does not gain a blank line every fifteen seconds. 5 tests,
       including one holding the channel name equal to the hub's — if those drift the stream subscribes
       to nobody and renders an empty log for a working deployment, the quietest possible failure.
-- [ ] Backend: **Durable execution** for deployment workflows (one durable engine at P2 - Inngest, or Temporal if replay/history demands; not a multi-hop migration)
+- [x] Backend: **Durable execution** for deployment workflows — **Inngest**, resolving OQ-16, and the
+      reason is self-hosting rather than features: Temporal needs a server, a database of its own and a
+      worker fleet, while Inngest's dev server is ONE container that discovers functions by calling an
+      HTTP endpoint the backend already serves. For a product an operator runs on their own machine that
+      is the whole argument. `src/deployments/pipeline.py` declares `build → push → apply → verify`;
+      `src/core/tasks.py` is still the only module that imports the SDK, and `InngestDispatcher` leaks
+      no engine concept — a test asserts both dispatchers expose `enqueue` and nothing else, because a
+      caller that could poll or cancel through an engine API would need rewriting when the engine changed.
 - [x] Backend: **Circuit breaker** pattern for deployment pipeline (fail-fast on validation errors) —
       `src/deployments/breaker.py`, migration `0031` with its model. The box said a breaker chosen
       before there is a pipeline to break is a guess about which failures repeat; now there is one, and
@@ -728,11 +735,47 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.4a Inngest Integration (Deployment Workflows)
 
-- [ ] Backend: Set up Inngest for event-driven durable function execution
-- [ ] Backend: Define deployment pipeline as Inngest functions (build → push → apply → verify)
-- [ ] Backend: Implement approval-gated stages in Inngest workflows
-- [ ] Backend: Integration with the Phase 1 async task runner (Inngest can enqueue ARQ/Dramatiq fire-and-forget tasks where needed)
-- [ ] Backend: Wrap business logic in orchestrator-agnostic functions ("thin wrapper" pattern)
+- [x] Backend: Set up Inngest for event-driven durable function execution — `inngest` service in
+      `docker-compose.yml`, pinned by tag AND digest, discovered over `host.docker.internal` because the
+      backend may run on the host in development. `/api/inngest` is served only when the engine is the
+      configured dispatcher. **It is the one route in this application not behind a principal and it
+      cannot be** — the engine calls it and holds no user session — so startup REFUSES
+      `INNGEST_IS_PRODUCTION=true` without `INNGEST_EVENT_KEY`, because that combination exposes an
+      endpoint that starts deployment pipelines to anyone who can reach the port.
+- [x] Backend: Define deployment pipeline as Inngest functions (build → push → apply → verify) — four
+      steps, each a `step.run` checkpoint, so a run that fails at apply RESUMES AT APPLY rather than
+      rebuilding and re-pushing an image already in the registry. Step output threads forward, which is
+      how the digest a push produces reaches the apply that pins it. `verify` READS THE DEPLOYMENT ROW
+      BACK rather than trusting the apply's own report, and reports `healthy: null` as unverified rather
+      than as failure. **Every mutating step goes through the chokepoint** — `transit_host_action` for
+      build and push, `deploy_manifests` for apply — so the engine decides WHEN a step runs and has no
+      say in whether it may.
+- [x] Backend: Implement approval-gated stages in Inngest workflows — the apply step waits on an event,
+      so the run SUSPENDS and holds no worker while a human thinks; a gate built from a sleep loop would
+      occupy a process for hours and lose its place on restart. Only apply is gated: a build writes
+      nothing outside the workspace and a push writes an immutable tag, and gating cheap steps trains
+      operators to click through the gate. An EXPIRED gate stops the pipeline and says so — continuing
+      would mean the gate had no effect, which is worse than not having one. The approval's own data
+      reaches the step, so who released it is recorded. `POST .../pipelines/deployment/release` refuses
+      a step that is not gated, because sending an event nothing waits for would leave the run suspended
+      while the operator believed they had released it. **It does not replace the environment's own
+      `requires_approval`**, which is still evaluated when the apply runs.
+- [x] Backend: Integration with the Phase 1 async task runner — `build_dispatcher` gained an `inngest`
+      branch beside `inline` and `arq`, behind the unchanged `TaskDispatcher` Protocol, so no caller
+      branches on the engine. Every `@register_task` handler becomes an Inngest function too, not just
+      the workflows: without that, switching engines would silently change which names are enqueueable
+      and a caller would get a handle for work nothing runs. Idempotency is preserved across all three
+      dispatchers — the key becomes the event id, as it becomes ARQ's `_job_id` — so switching cannot
+      change whether a retry double-executes.
+- [x] Backend: Wrap business logic in orchestrator-agnostic functions ("thin wrapper" pattern) — a
+      workflow is DATA: `WorkflowDefinition` names steps and marks which wait for a human, and carries
+      no engine type at all, so `deployments/` declares a pipeline without importing an SDK.
+      `inngest_functions()` is the only place a description becomes engine code, which is what keeps the
+      engine decision reversible — a Temporal translator would read the same descriptions. The registry
+      REFUSES a workflow naming an unregistered step at import rather than at run time, because such a
+      workflow would otherwise fail midway through a real deployment after already building and pushing.
+      Verified with `inngest.experimental.mocked`, the SDK's own execution harness, plus a reachability
+      and translation check against the real dev server. 11 tests.
 
 #### 2.5 AI Command Center
 
