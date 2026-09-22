@@ -995,6 +995,13 @@ def create_app() -> FastAPI:
 
     app.include_router(pipeline_router)
 
+    # 2.7. ArgoCD manifest rendering, the governed sync, and the webhook that RECORDS rather than
+    # syncing -- an unauthenticated request causing a production deployment would be a hole straight
+    # through the chokepoint.
+    from .argocd.routes import router as argocd_router
+
+    app.include_router(argocd_router, prefix=settings.api_prefix)
+
     # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
     # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory
     # and its writes through transit_host_action, and there is no third path -- check-chokepoint.sh

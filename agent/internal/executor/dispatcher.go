@@ -209,6 +209,12 @@ var handlerTable = map[Operation]entry{
 		mutating: true, requiresApproval: true, timeout: timeoutDeploy, implemented: true,
 		run: iacApply,
 	},
+	// 2.7. A sync applies whatever Git currently holds to a live cluster. That a human wrote it in a
+	// repository earlier is not an approval of applying it now.
+	OpArgoAppAction: {
+		mutating: true, requiresApproval: true, timeout: timeoutDeploy, implemented: true,
+		run: argoAppAction,
+	},
 	OpKubernetesInventory: {timeout: timeoutValidate, implemented: true, run: k8sInventory},
 
 	// ── Phase 2: the mutating actions those dashboards offer ──

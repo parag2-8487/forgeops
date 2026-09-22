@@ -139,6 +139,8 @@ CHANGE_SET_OPERATIONS: tuple[str, ...] = (
     # 2.2. OpenTofu apply, from a plan made inside the same approval, so the approved diff is the
     # applied diff.
     "iac.apply",
+    # 2.7. A sync applies whatever Git holds to a live cluster.
+    "argocd.app_action",
 )
 
 #: Key names a credential travels under, refused in `change_sets.operation_args`.

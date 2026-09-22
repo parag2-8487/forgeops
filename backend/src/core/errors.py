@@ -198,6 +198,16 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # A 422: the request named a step that is not gated. Releasing it would do nothing while appearing
     # to succeed, which for an approval mechanism is the worst available outcome.
     "pipeline-step-not-gated": ProblemSpec(422, "That pipeline step has no approval gate"),
+    # 2.7's three. `argocd-webhook-unconfigured` is a 503 because the capability is absent rather than
+    # broken: with no secret, no payload can be authenticated, so the endpoint accepts NOTHING rather
+    # than accepting anything, and the detail names the setting.
+    "argocd-webhook-unconfigured": ProblemSpec(503, "No ArgoCD webhook secret is configured"),
+    # A 422: the payload is well formed JSON that names no repository, so there is nothing to record.
+    # Recording it anyway would put an entry in the history that matches no Application.
+    "argocd-webhook-unrecognised": ProblemSpec(422, "The webhook payload names no repository"),
+    # A 422: the render request omits a field its kind requires, which is a caller error and not a
+    # server one -- an ApplicationSet with no environments generates no Applications.
+    "argocd-manifest-incomplete": ProblemSpec(422, "The manifest request is missing a required field"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a

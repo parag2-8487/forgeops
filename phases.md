@@ -816,16 +816,91 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.7 ArgoCD GitOps Integration
 
-- [ ] Backend: ArgoCD Application manifest generation (AI creates App of Apps pattern)
-- [ ] Agent: Support `argocd app sync` via subprocess
-- [ ] Agent: ArgoCD ApplicationSet template generation
-- [ ] Backend: ArgoCD webhook integration for auto-sync
+- [x] Backend: ArgoCD Application manifest generation (AI creates App of Apps pattern) —
+      `src/argocd/renderers.py` plus `POST /projects/{id}/argocd/manifests`, which RENDERS and returns
+      the YAML rather than writing to the operator's repository: a manifest they review before
+      committing is the point of GitOps. **Three safety defaults, each asserted on the PARSED document**
+      because an `automated:` block nested one level too deep reads correctly and is silently ignored:
+      no `automated` key at all (an automated sync bypasses the approval chokepoint), and `prune` and
+      `selfHeal` false when it is enabled — `prune` lets ArgoCD delete anything no longer in Git, so a
+      misplaced kustomization becomes a deleted StatefulSet, and `selfHeal` reverts an operator's manual
+      change mid-incident with no explanation on the dashboard they are watching. The resources
+      finalizer IS on, and the asymmetry is deliberate: deleting an Application is explicit, while
+      orphaning everything it deployed leaves objects nothing manages and nothing lists. The App of Apps
+      root is never automated, because its `prune` would delete APPLICATIONS and each deletion cascades.
+      Prerequisites travel in the response, since a Rollout naming an absent AnalysisTemplate reports as
+      progressing for ever with no error naming the missing object. 18 unit + 10 integration tests.
+- [x] Agent: Support `argocd app sync` via subprocess — `agent/internal/executor/argocd.go`, operation
+      `argocd.app_action`, mutating and approval-required (that a human wrote it in a repository earlier
+      is not an approval of applying it now). One authority, closed verb set: `sync`, `refresh`, `wait`.
+      **What is absent is the point** — no `delete`, because deleting an Application cascades through the
+      finalizer to everything it deployed, which is a fleet-scale delete behind one verb; no `rollback`,
+      because `argocd app rollback` deploys a previous revision WITHOUT changing Git so the next sync
+      undoes it, and §2.3's rollback is a deployment of the previous manifests through the chokepoint;
+      and no `--force`, which replaces rather than patches and so deletes and recreates a StatefulSet.
+      `--prune=false` is stated explicitly rather than relying on a default that could change. Sync
+      status, health and the deployed revision are READ BACK with `argocd app get -o json` — even after a
+      failure, because a sync that applied four of six manifests still moved things. A failed sync is a
+      RESULT with ArgoCD's own diagnostic. Migration `0032`; catalogue re-pinned at 29 operations, 27
+      implemented.
+- [x] Agent: ArgoCD ApplicationSet template generation — rendered in the BACKEND
+      (`src/argocd/renderers.py`) and applied by the agent, and the placement is a decision rather than a
+      convenience: nothing in this codebase generates on the agent, so a renderer there would sit outside
+      the template-readiness audit, the artifact checks and the no-lowering rule. A **list generator, not
+      a git directory generator** — a directory generator creates an Application for every directory it
+      finds, so a developer experimenting in `k8s/scratch/` ships to the cluster. Environments exist
+      because somebody named them. `preserveResourcesOnDeletion: true`, because removing one line from a
+      list is a small edit with an enormous default consequence and recovery is far harder than cleanup.
+      An empty environment list is refused: it generates nothing while looking like a deployment.
+- [x] Backend: ArgoCD webhook integration for auto-sync — **and the webhook deliberately does NOT sync.**
+      The obvious implementation (receive a repository change, sync the Application) is an
+      unauthenticated HTTP request causing a production deployment, which is a hole straight through
+      everything §3 exists to do: anyone who can reach the endpoint, or replay a captured payload, would
+      deploy. So it RECORDS into `argocd_repository_events` and a human syncs through the governed route,
+      producing a change set, an approval and an audit row. **The auto-sync is real and lives where it
+      belongs**: `automated:` in the Application manifest, which the renderer supports, defaults off, and
+      whose consequences the render response states. The signature is verified anyway — HMAC over the raw
+      body, compared in constant time — because an unauthenticated endpoint that writes rows is a spam
+      and storage amplifier and a forged payload would put a false entry in somebody's history. With no
+      secret configured it accepts NOTHING rather than anything. It is the second entry in
+      `PUBLIC_ROUTES` of its kind, added because `check-route-auth` refused it — a git forge cannot hold
+      a user session. A test asserts a delivery creates no change set, and another that a replayed
+      signature over a substituted repository is refused. 10 integration tests.
 
 #### 2.7a Argo Rollouts — Progressive Delivery
 
-- [ ] Backend: **Argo Rollouts** integration for canary and blue-green rollouts (progressive delivery is NOT native to ArgoCD)
-- [ ] Backend: Gate canary promotions on **error-rate AND latency** (analysis templates backed by OTel/Prometheus metrics)
-- [ ] Backend: Automatic rollback on either signal breaching its threshold
+- [x] Backend: **Argo Rollouts** integration for canary and blue-green rollouts (progressive delivery is
+      NOT native to ArgoCD) — `src/argocd/rollout_renderers.py`. ArgoCD decides WHAT is in the cluster;
+      Rollouts decides HOW a new version replaces the old one, and a Rollout and a Deployment cannot both
+      own the same pods — which the render response states as a prerequisite. Canary weights must rise
+      and stay between 1 and 99: 0 is not a canary and 100 is the finished rollout, which Rollouts
+      reaches by completing the steps. Blue-green promotion is manual by default, because auto-promotion
+      turns it into a slower rolling update with extra resources, and the old ReplicaSet is kept for half
+      an hour so an undo is instant. A canary with no AnalysisTemplate emits a timed pause AND SAYS IT IS
+      NOT A GATE, because a pause is a human's chance to notice and a reader must not mistake one for a
+      check.
+- [x] Backend: Gate canary promotions on **error-rate AND latency** (analysis templates backed by
+      OTel/Prometheus metrics) — both conditions are always emitted and a template missing either cannot
+      be rendered. **This is the assertion the subsection exists for:** a release can be fast and broken
+      — 500s returned in two milliseconds look excellent on a latency panel — or correct and unusable,
+      every response a 200 after nine seconds. Gating on one signal admits exactly one of those failures,
+      and which one depends on whichever signal somebody happened to pick; a half-gated canary is more
+      dangerous than an ungated one because it is believed. Analysis runs at EVERY weight, not once at
+      the start, because a release that fails only under load passes a 20% canary and breaks at 80%. An
+      idle service makes the error ratio 0/0 = NaN, which Rollouts treats as inconclusive rather than as
+      a pass — left deliberate, because an unmeasured canary must not be promoted. A non-positive
+      threshold is refused: it can never be satisfied, so every rollout would abort and look like a
+      broken release. The Prometheus address §2.10 stands up is a stated prerequisite, not an assumption.
+- [x] Backend: Automatic rollback on either signal breaching its threshold — **and there is deliberately
+      no rollback code anywhere for it.** Argo Rollouts aborts a rollout when an analysis run fails, and
+      an aborted rollout returns traffic to the stable ReplicaSet by itself, in milliseconds. A backend
+      reacting to a webhook would be slower, would need the cluster reachable to work at all, and would
+      be a second mechanism able to disagree with the first. What this product contributes is the
+      condition: `failureLimit: 1` on both metrics, because a canary is already a small sample over a
+      short window and allowing a second failure doubles the time a broken release serves traffic;
+      `abortScaleDownDelaySeconds: 30`, so an aborted canary's pods are not destroyed before anyone can
+      read their logs. Asserted on the parsed manifest: both metrics carry a success condition and a
+      failure limit, because a metric with no success condition is collected and never evaluated.
 - [ ] Frontend: Progressive rollout visualization (canary weight, metrics, promotion history)
 
 #### 2.7b Service Mesh

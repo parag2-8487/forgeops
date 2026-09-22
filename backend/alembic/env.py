@@ -38,6 +38,7 @@ from src.analysis.models import (  # noqa: F401, E402
     FileDependency,
     FileTreeEntry,
 )
+from src.argocd.models import ArgocdRepositoryEvent  # noqa: F401, E402
 from src.audit.models import AuditEvent  # noqa: F401, E402
 from src.auth.device_models import AgentDevice  # noqa: F401, E402
 from src.auth.models import Session, User  # noqa: F401, E402

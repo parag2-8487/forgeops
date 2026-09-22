@@ -616,6 +616,10 @@ class Settings(BaseSettings):
     #: sign requests against a cloud it has no key for, failing at the first enqueue rather than at
     #: startup.
     inngest_is_production: bool = False
+    # 2.7. The ArgoCD webhook's HMAC secret. Empty means the endpoint accepts NOTHING rather than
+    # accepting anything: an unauthenticated webhook that writes rows and raises notifications is a spam
+    # and storage amplifier, and a forged payload would put a false entry in somebody's history.
+    argocd_webhook_login_secret: str = ""
     arq_queue_name: str = Field(default="forgeops")
     arq_max_jobs: int = Field(default=10, ge=1, le=1000)
     arq_job_timeout_seconds: int = Field(default=900, ge=1)

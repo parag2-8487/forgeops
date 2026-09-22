@@ -88,6 +88,14 @@ const (
 	// free to move between them, which defeats the reason an apply runs from a SAVED PLAN.
 	OpIacApply Operation = "iac.apply"
 
+	// OpArgoAppAction acts on ONE ArgoCD Application. 2.7.
+	//
+	// One authority with a closed verb set. `delete` is NOT among them: deleting an Application cascades
+	// through the resources finalizer to everything it deployed, which is a fleet-scale delete behind a
+	// single verb. Neither is `rollback`: `argocd app rollback` deploys a previous revision without
+	// changing Git, so the cluster and the repository disagree and the next sync undoes it.
+	OpArgoAppAction Operation = "argocd.app_action"
+
 	// OpDevToolsRun runs the PROJECT'S OWN tests, linters, build, compose stack or migrations. The argument
 	// is a KIND from a closed set, never a command line: this is where an arbitrary-shell operation would
 	// most naturally appear and it deliberately does not. Mutating and approval-required, because a
@@ -115,6 +123,7 @@ var allOperations = []Operation{
 	OpDockerContainerLogs, OpKubernetesPodDetail,
 	OpDevToolsRun,
 	OpIacApply,
+	OpArgoAppAction,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).

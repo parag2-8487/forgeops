@@ -55,6 +55,17 @@ PUBLIC_ROUTES: Final[tuple[PublicRoute, ...]] = (
         "Schema document; contains no data",
     ),
     PublicRoute("/api/v1/docs", frozenset({"GET"}), "Documentation UI; contains no data"),
+    # 2.7. A git forge cannot hold a user session, so this cannot require a principal. What
+    # authenticates it is an HMAC over the raw body, verified in constant time, and the endpoint refuses
+    # EVERY payload when no secret is configured rather than accepting any. It also does not sync:
+    # it records a repository change and raises a notification, so the worst a forged-but-signed payload
+    # could do is add a row. An implementation that synced here would be an unauthenticated request
+    # causing a production deployment.
+    PublicRoute(
+        "/api/v1/argocd/webhook",
+        frozenset({"POST"}),
+        "Git forge webhook; authenticated by HMAC over the body, records only and never syncs (2.7)",
+    ),
     PublicRoute(
         "/api/v1/auth/login",
         frozenset({"GET", "POST"}),

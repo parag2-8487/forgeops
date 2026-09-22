@@ -125,6 +125,9 @@ DEPLOY_OPERATION: Final[str] = "deployment.apply_manifests"
 #: the audit records an operator reads after an incident.
 DOCKER_CONTAINER_OPERATION: Final[str] = "docker.container_action"
 DOCKER_IMAGE_OPERATION: Final[str] = "docker.image_action"
+#: 2.7. One authority over one ArgoCD Application, with a closed verb set. `delete` is not among them:
+#: deleting an Application cascades through the resources finalizer to everything it deployed.
+ARGO_APP_OPERATION: Final[str] = "argocd.app_action"
 KUBERNETES_WORKLOAD_OPERATION: Final[str] = "kubernetes.workload_action"
 #: The two READ operations the dashboards poll. §2.4, §2.9.
 #:
@@ -154,6 +157,7 @@ HOST_ACTION_OPERATIONS: Final[frozenset[str]] = frozenset(
     {
         DOCKER_CONTAINER_OPERATION,
         DOCKER_IMAGE_OPERATION,
+        ARGO_APP_OPERATION,
         KUBERNETES_WORKLOAD_OPERATION,
         DEVTOOLS_OPERATION,
     }
