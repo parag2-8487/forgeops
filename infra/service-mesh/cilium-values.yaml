@@ -1,0 +1,52 @@
+# Cilium — the default service mesh for a ForgeOps cluster. §2.7b
+#
+# Applied with:
+#   helm install cilium cilium/cilium --version 1.16.5 --namespace kube-system -f cilium-values.yaml
+#
+# Pinned to an exact chart version rather than a range, for the reason every other tool version in this
+# repository is pinned: a mesh that upgrades itself changes the datapath under running workloads.
+
+# Sidecarless is the whole reason this is the default: the datapath is eBPF in the kernel, so a 10,000-agent
+# fleet does not pay a proxy per pod.
+kubeProxyReplacement: true
+
+# Hubble gives flow visibility without a second proxy to scrape. The relay and the UI are separate on
+# purpose: the relay is what a metrics pipeline reads, the UI is for a human, and a cluster that wants the
+# first does not have to expose the second.
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    # Off by default. It is a web UI with no authentication of its own, so enabling it is a decision that
+    # needs an ingress and an authenticating proxy in front — not a default.
+    enabled: false
+  metrics:
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - icmp
+      - http
+
+# L7 policy without a waypoint, which is what keeps the sidecarless property while still allowing HTTP-aware
+# rules where they are needed.
+l7Proxy: true
+
+# Encryption between nodes. WireGuard rather than IPsec: fewer moving parts, and the kernel module is
+# present on every distribution this platform supports.
+encryption:
+  enabled: true
+  type: wireguard
+
+operator:
+  # Two replicas so a node drain does not remove the operator. Anti-affinity is Cilium's own default.
+  replicas: 2
+
+# Prometheus scraping of the agent and operator, so the §2.10 metrics tier has something to read when it
+# arrives. Declared here rather than later because turning it on is a restart of every agent pod.
+prometheus:
+  enabled: true
+operator_prometheus:
+  enabled: true

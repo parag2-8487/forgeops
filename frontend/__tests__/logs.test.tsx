@@ -19,9 +19,11 @@ import {
 } from "@/features/deployments/DeploymentResult";
 import {
   CONTAINER_LOG_READ_FAILED,
+  ContainerLogs,
   LogPanel,
   type LogReport,
   POD_DETAIL_READ_FAILED,
+  PodDetail,
 } from "@/features/hostops/LogPanel";
 
 const get = vi.fn();
@@ -73,7 +75,11 @@ function failingWith(message: string) {
   };
 }
 
-beforeEach(() => get.mockReset());
+beforeEach(() => {
+  // Braces matter: an arrow returning `mockReset()` hands vitest the mock as the hook's result, and the
+  // hook then times out waiting on it. That cost two runs to see.
+  get.mockReset();
+});
 
 describe("the log panel", () => {
   it("marks a tail as a tail", () => {
@@ -177,5 +183,58 @@ describe("the deployment result", () => {
     expect(screen.getByTestId("workload-api")).toHaveTextContent("after 45s");
     expect(screen.getByTestId("workload-api")).toHaveTextContent("timed out");
     expect(screen.getByTestId("deployment-result-client")).toHaveTextContent("v1.28.0");
+  });
+});
+
+describe("the fetchers on a successful read", () => {
+  it("renders a container's log through the panel, bounds and all", async () => {
+    get.mockResolvedValue(report({ truncated: true, tail_lines: 100 }));
+    mount(<ContainerLogs projectId="p1" container="api" />);
+    expect(await screen.findByTestId("container-logs-api-lines")).toHaveTextContent(
+      "listening on 8080",
+    );
+    expect(screen.getByTestId("container-logs-api-bounds")).toHaveTextContent("this is a tail");
+    expect(get).toHaveBeenCalledWith("/projects/p1/docker/containers/api/logs");
+  });
+
+  it("shows loading rather than an empty log while the read is in flight", () => {
+    get.mockReturnValue(new Promise(() => {}));
+    mount(<ContainerLogs projectId="p1" container="api" />);
+    // Synchronously: loading is the INITIAL state, so `findBy` would wait for a change that never comes
+    // and fail on the timeout rather than on the assertion.
+    expect(screen.getByTestId("container-logs-loading-api")).toBeInTheDocument();
+  });
+
+  it("renders a pod's events when it has no logs, which is the unscheduled case", async () => {
+    get.mockResolvedValue(
+      report({
+        target: "default/api-abc",
+        lines: [],
+        events: [
+          {
+            type: "Warning",
+            reason: "FailedScheduling",
+            message: "0/1 nodes are available: insufficient cpu",
+            count: 3,
+            last_seen: "2026-09-22T08:00:00Z",
+          },
+        ],
+      }),
+    );
+    mount(<PodDetail projectId="p1" namespace="default" pod="api-abc" />);
+    // The events are the entire explanation for a pod that never scheduled.
+    expect(await screen.findByTestId("pod-detail-api-abc-events")).toHaveTextContent(
+      "insufficient cpu",
+    );
+    expect(screen.getByTestId("pod-detail-api-abc-empty")).toHaveTextContent(
+      "events below are the explanation",
+    );
+    expect(get).toHaveBeenCalledWith("/projects/p1/kubernetes/namespaces/default/pods/api-abc");
+  });
+
+  it("shows loading for a pod read too", () => {
+    get.mockReturnValue(new Promise(() => {}));
+    mount(<PodDetail projectId="p1" namespace="default" pod="api-abc" />);
+    expect(screen.getByTestId("pod-detail-loading-api-abc")).toBeInTheDocument();
   });
 });

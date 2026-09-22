@@ -1,0 +1,50 @@
+# Istio Ambient — the documented fallback. §2.7b
+#
+# Applied with three charts, in this order, pinned exactly:
+#   helm install istio-base istio/base        --version 1.24.2 -n istio-system
+#   helm install istiod     istio/istiod      --version 1.24.2 -n istio-system -f istio-ambient-values.yaml
+#   helm install ztunnel    istio/ztunnel     --version 1.24.2 -n istio-system
+#
+# AMBIENT, NOT SIDECAR. `profile: ambient` is the line that matters: ztunnel runs per NODE and a waypoint
+# proxy is created per namespace only where L7 is actually needed, so the per-pod cost that makes a sidecar
+# mesh unusable at 10,000 agents is not paid here either. What this buys over Cilium is richer L7
+# authorisation and mature multi-cluster identity; what it costs is two more components to operate, which is
+# why it is the fallback and not the default.
+
+profile: ambient
+
+meshConfig:
+  # mTLS is the reason to run this at all, so it is strict rather than permissive. Permissive mode accepts
+  # plaintext and is a migration setting; leaving it on means the mesh reports encryption it is not
+  # enforcing.
+  defaultConfig:
+    proxyMetadata:
+      ISTIO_META_DNS_CAPTURE: "true"
+  # Access logs to stdout so a cluster's existing log pipeline collects them without a second agent.
+  accessLogFile: /dev/stdout
+  extensionProviders:
+    - name: otel
+      # Points at the §2.10 gateway collector when it exists. Named here so switching the mesh does not
+      # also mean rediscovering where traces go.
+      opentelemetry:
+        service: otel-collector-gateway.observability.svc.cluster.local
+        port: 4317
+
+pilot:
+  # Two replicas for the same reason Cilium's operator has two: a node drain must not remove the control
+  # plane.
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+
+global:
+  # A waypoint is created per namespace ON REQUEST, by labelling the namespace. Not installed globally:
+  # a waypoint for every namespace would reintroduce the per-namespace proxy cost for namespaces that need
+  # no L7 rules at all.
+  proxy:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi

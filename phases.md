@@ -737,9 +737,21 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.7b Service Mesh
 
-- [ ] Infra: Prefer **Cilium** (eBPF, sidecarless, Hubble observability) for the 10k-agent self-host fleet — lowest-overhead option
-- [ ] Infra: **Istio Ambient** as fallback when rich L7/multi-cluster is needed
-- [ ] Note: Linkerd stable releases are behind a Buoyant subscription — avoid for an OSS-values project
+- [x] Infra: Prefer **Cilium** (eBPF, sidecarless, Hubble observability) for the 10k-agent self-host fleet — lowest-overhead option
+      — `infra/service-mesh/cilium-values.yaml`, installable Helm values pinned to an exact chart version,
+      with `kubeProxyReplacement`, Hubble relay and metrics, and WireGuard node encryption. The Hubble UI is
+      deliberately OFF: it has no authentication of its own, so enabling it needs an authenticating proxy and
+      is a decision rather than a default. The decision and its reasoning are in the directory's README.
+- [x] Infra: **Istio Ambient** as fallback when rich L7/multi-cluster is needed —
+      `infra/service-mesh/istio-ambient-values.yaml`, `profile: ambient` so ztunnel runs per node and a
+      waypoint exists only where L7 is needed. Kept current so switching is a values change rather than a
+      project; it is the fallback because it buys richer L7 and multi-cluster at the cost of two more
+      components to operate.
+- [x] Note: Linkerd stable releases are behind a Buoyant subscription — avoid for an OSS-values project
+      — recorded as a LICENSING judgement rather than a technical one, since Linkerd's technical record is
+      good. **Asserted, not just written**: `tests/meta/test_service_mesh_decision.py` (7 tests) holds the
+      README's claims, the two values files' load-bearing settings, and that no Linkerd configuration
+      appears anywhere under `infra/` — a decision recorded only in prose drifts.
 
 #### 2.8 Local Development Tools
 

@@ -449,3 +449,87 @@ describe("the Kubernetes dashboard", () => {
     expect(await screen.findByTestId("k8s-nodes-empty")).toHaveTextContent("has at least one");
   });
 });
+
+describe("the log toggles the dashboards added", () => {
+  it("opens and closes a container's log panel", async () => {
+    get.mockImplementation((path: string) => {
+      if (path.includes("/logs")) {
+        return Promise.resolve({
+          target: "api",
+          lines: ["2026-09-22T08:00:00Z listening"],
+          tail_lines: 200,
+          since_seconds: 0,
+          truncated: false,
+          observed_at: new Date().toISOString(),
+        });
+      }
+      return Promise.resolve(dockerInventory({ containers: [container()] }));
+    });
+    mount(<DockerDashboard projectId="p1" />);
+    await userEvent.click(await screen.findByTestId("docker-logs-api"));
+    expect(await screen.findByTestId("container-logs-api-lines")).toHaveTextContent("listening");
+    // Toggling again closes it, so the panel is not a one-way door.
+    await userEvent.click(screen.getByTestId("docker-logs-api"));
+    expect(screen.queryByTestId("container-logs-api-lines")).not.toBeInTheDocument();
+  });
+
+  it("opens a pod's logs and events from the pod row", async () => {
+    get.mockImplementation((path: string) => {
+      if (path.includes("/pods/")) {
+        return Promise.resolve({
+          target: "default/api-abc",
+          lines: [],
+          events: [
+            {
+              type: "Warning",
+              reason: "FailedScheduling",
+              message: "insufficient cpu",
+              count: 2,
+              last_seen: "2026-09-22T08:00:00Z",
+            },
+          ],
+          tail_lines: 200,
+          since_seconds: 0,
+          truncated: false,
+          observed_at: new Date().toISOString(),
+        });
+      }
+      return Promise.resolve(
+        k8sInventory({
+          pods: [
+            {
+              namespace: "default",
+              name: "api-abc",
+              phase: "Pending",
+              ready_containers: 0,
+              total_containers: 1,
+              restarts: 0,
+              node: "",
+              reason: "",
+              started_at: "",
+            },
+          ],
+        }),
+      );
+    });
+    mount(<KubernetesDashboard projectId="p1" />);
+    await userEvent.click(await screen.findByTestId("k8s-pod-logs-api-abc"));
+    // A pod that never scheduled has no logs, and its events are the whole explanation.
+    expect(await screen.findByTestId("pod-detail-api-abc-events")).toHaveTextContent(
+      "insufficient cpu",
+    );
+  });
+
+  it("samples stats and renders a populated figure", async () => {
+    get.mockImplementation(() =>
+      Promise.resolve(
+        dockerInventory({
+          stats_sampled: true,
+          containers: [container({ cpu_percent: 12.5, memory_bytes: 1024 * 1024 })],
+        }),
+      ),
+    );
+    mount(<DockerDashboard projectId="p1" />);
+    expect(await screen.findByTestId("docker-cpu-api")).toHaveTextContent("12.50%");
+  });
+});

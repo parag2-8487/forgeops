@@ -280,6 +280,73 @@ Two defects the run exposed, both recorded rather than fixed:
   same files. `every_imported_package_is_declared` fails in both readings, so it did not move the
   score, but a full scan losing its import graph is not a difference the index should have.
 
+## Phase 2 progress — 40 of 123 boxes
+
+Up from 16. Sections complete: **2.1** (6/6), **2.3** (5/5), **2.8** (7/7), **2.7b** (3/3). Partly done:
+2.2 (7/10), 2.4 (3/6), 2.9 (6/6 — complete), 2.6 (4/5). Untouched: 2.4a, 2.5, 2.7, 2.7a, 2.10, 2.11, 2.12,
+2.13, 2.14 and the 20 completion criteria.
+
+### Two defects found that nothing had ever exercised
+
+**`DeploymentService.complete` had no production caller.** Only tests called it, so a real deployment stayed
+`applying` for ever, `healthy` and `stable` were never written, and `rollback_target` could never offer
+anything — the whole of §2.3 rested on a column nothing set. `DeploymentSettler` is the runtime path, hooked
+into `record_command_result` through a `ChangeSetSettler` Protocol so `governance/` still cannot import
+`deployments/`. Verified by driving the real chain and reading the row back: a converged report writes
+`healthy=true, stable=true`; an unready workload writes `healthy=false, stable=false`; a report that says
+nothing about workloads leaves `healthy` NULL, because absence of health is not health.
+
+**`record_command_result`'s failure branch could never have worked.** It has always written
+`status = 'failed'` and `failed` was never in `ck_change_sets_status_allowed`, so any agent reporting a
+failed command raised `CheckViolationError` inside the result handler. Revision `0029` adds it to the
+vocabulary and to the terminal set. The author's distinction was right — `rolled_back` means the agent undid
+its own work, `failed` means a result arrived saying the operation did not succeed — so the fix is the
+vocabulary, not the intent.
+
+### Decisions made
+
+- **Promotion and rollback are deployments**, not operations of their own: both go through
+  `deploy_manifests`, so the TARGET environment's approval requirement governs a promotion into production
+  whether or not anybody remembered to think about it. Only a `stable` deployment can be a promotion source
+  or a rollback target.
+- **`change_sets.command_id`** (revision `0026`) records which command a change set was delivered as. §2.2's
+  live-log stream needs it to find the agent's per-command channel, and the audit chain gains a correlation
+  it previously left to matching timestamps.
+- **`devtools.run` takes a KIND, never a command line.** This is where an arbitrary-shell escape would most
+  naturally appear. The agent resolves the vector from the workspace's own manifests, a test enumerates every
+  vector against a forbidden-verb list so `down -v` and `prune` are unreachable, and another asserts `exec`,
+  `shell`, `run`, `custom` and `script` are not kinds. It is MUTATING and approval-required, because "run the
+  tests" executes code the repository controls.
+- **Novu is not integrated, and §2.6's first box stays open.** It needs an API key this deployment does not
+  have, and composing an unreachable client would put a placeholder on a runtime path. The three real
+  channels sit behind a `Channel` Protocol, so a Novu adapter is a new class rather than a rewrite.
+- **A webhook URL is treated as a credential.** Preference reads return `target_configured`, never the
+  value, asserted by searching both the service payload and the rendered DOM.
+
+### What the boundary checks caught in my own work
+
+`deployments/settler.py` imported `notifications.service` directly. Ruff's per-domain exemption did not hide
+it — the parse-based check in `scripts/chokepoint_graph.py` reported it as a cross-domain import, which is
+exactly the arrangement its comments claim. Replaced with a local `NotificationRaiser` Protocol.
+
+The first version of the settler hook used `contextlib.suppress`, which swallows the exception and leaves the
+TRANSACTION aborted, so the next statement failed with `InFailedSQLTransactionError` — an error about the
+wrong thing, several lines from its cause. It runs in a savepoint now, and a settlement failure is recorded
+on the change set rather than lost.
+
+### Carry-over still open
+
+- [ ] The three pre-existing generation-provenance integration failures: unchanged and still a decision about
+      what `served_from` means rather than a bug with one obvious fix.
+- [ ] `sse-paint`'s cross-invocation session recovery: the diagnostic is in place and has not yet reported,
+      because the spec passed on the last CI run. Read what it says before changing anything.
+- [ ] `verify-release.py`'s artifact-shaped problems: per-shard `.coverage.*` and junit XML are produced by a
+      full shard run, which does not fit in a build loop.
+- [ ] `automated_tests_present` / `centralised_configuration`, lockfile generation by real tool execution, the
+      no-lowering rule, predicted-versus-achieved readiness score, a real `served_from='provider'` run, the
+      measured artifact cap, cache-key versioning, `backend-coverage`'s self-skip, and Linux watch mode — all
+      untouched this session.
+
 ## Phase 2 progress — 16 of 123 boxes, and what closed the three open items
 
 **Box count: 16 done, 107 open.** Up from 8. Every tick carries its evidence inline in `phases.md`; every
