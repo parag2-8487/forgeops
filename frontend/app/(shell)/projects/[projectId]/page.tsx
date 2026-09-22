@@ -11,6 +11,7 @@ import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { CodebaseIndexPanel } from "@/features/codebase/CodebaseIndexPanel";
 import { DeploymentDashboard } from "@/features/deployments/DeploymentDashboard";
 import { DockerDashboard } from "@/features/hostops/DockerDashboard";
+import { ReleaseTimeline } from "@/features/releases/ReleaseTimeline";
 import { KubernetesDashboard } from "@/features/hostops/KubernetesDashboard";
 import { EnvironmentManager } from "@/features/environments/EnvironmentManager";
 import { ChangeHistoryTimeline } from "@/features/approvals/ChangeHistoryTimeline";
@@ -121,6 +122,18 @@ export default function ProjectDetailPage() {
                 and any of the three can demand one.
               </p>
               <DeploymentDashboard projectId={projectId} />
+            </section>
+
+            <section aria-labelledby="releases-heading" className="space-y-3">
+              <h2 id="releases-heading" className="text-lg font-semibold">
+                Releases
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                2.3. Promotion and rollback are deployments: both travel the chokepoint, and the
+                target environment&apos;s approval requirement governs. Only a deployment whose
+                workloads converged can be rolled back to.
+              </p>
+              <ReleaseTimeline projectId={projectId} />
             </section>
 
             <section aria-labelledby="docker-heading" className="space-y-3">

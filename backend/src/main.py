@@ -946,6 +946,12 @@ def create_app() -> FastAPI:
     # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory
     # and its writes through transit_host_action, and there is no third path -- check-chokepoint.sh
     # asserts that send_command stays confined to governance/, so this router cannot grow one.
+    # 2.1's promotion box and 2.3. Promotion and rollback are DEPLOYMENTS: both travel deploy_manifests,
+    # so the target environment's approval requirement applies without anyone having to remember it.
+    from .releases.routes import router as releases_router
+
+    app.include_router(releases_router)
+
     from .hostops.routes import router as hostops_router
 
     app.include_router(hostops_router)

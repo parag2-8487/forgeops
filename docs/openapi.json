@@ -2933,6 +2933,34 @@
         "title": "ProjectResponse",
         "type": "object"
       },
+      "PromoteRequest": {
+        "description": "Promote one environment's stable state to the next in the pipeline.",
+        "properties": {
+          "health_timeout_seconds": {
+            "default": 0,
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Health Timeout Seconds",
+            "type": "integer"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          },
+          "source_environment_id": {
+            "format": "uuid",
+            "title": "Source Environment Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_environment_id"
+        ],
+        "title": "PromoteRequest",
+        "type": "object"
+      },
       "ProviderCredentialRequest": {
         "description": "A credential an operator is setting.\n\nTrimmed, because a key pasted from a web page routinely carries whitespace and a leading or trailing\nspace produces a 401 that looks exactly like a wrong key.",
         "properties": {
@@ -3295,6 +3323,46 @@
           "reason"
         ],
         "title": "RevokeRequest",
+        "type": "object"
+      },
+      "RollbackRequest": {
+        "description": "Roll an environment back to a previous stable deployment.",
+        "properties": {
+          "deployment_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Id"
+          },
+          "environment_id": {
+            "format": "uuid",
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "health_timeout_seconds": {
+            "default": 0,
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Health Timeout Seconds",
+            "type": "integer"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment_id"
+        ],
+        "title": "RollbackRequest",
         "type": "object"
       },
       "SSEEventType": {
@@ -8467,6 +8535,240 @@
         "summary": "Readiness score",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/releases/diff": {
+      "get": {
+        "description": "What changed between two deployments: manifest set, digest, cluster target and health.\n\nCompares what this platform RECORDED, not live cluster state \u2014 a diff against the cluster would be a\ndifferent feature and would need a read per side. `identical` is computed from the manifest digest,\nwhich is order-independent, so two deployments of the same set in a different order are not reported\nas a change.",
+        "operationId": "diff_api_v1_projects__project_id__releases_diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "left_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Left Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "right_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Right Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Diff Api V1 Projects  Project Id  Releases Diff Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Diff between two deployments",
+        "tags": [
+          "releases"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/releases/promote": {
+      "post": {
+        "description": "Deploy the source's last stable manifest set to the next environment in the pipeline.\n\nThe TARGET's approval requirement governs, not the source's \u2014 promoting into production must ask a\nhuman even when staging did not. That is enforced by handing the target environment to\n`deploy_manifests`, which is the same path a direct deployment takes.\n\nRefuses, with the reason, when the source is last in the pipeline or has nothing stable to promote:\npromoting an unverified deployment would carry a broken state forward under the word \"promote\".",
+        "operationId": "promote_api_v1_projects__project_id__releases_promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Promote Api V1 Projects  Project Id  Releases Promote Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Promote an environment's stable state to the next",
+        "tags": [
+          "releases"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/releases/rollback": {
+      "post": {
+        "description": "Re-deploy a previous stable manifest set.\n\nA rollback is a deployment, so it travels the chokepoint and the environment's approval requirement\napplies. Only a STABLE deployment may be a target: rolling back to a degraded one would restore a\nbroken state while reporting success.",
+        "operationId": "rollback_api_v1_projects__project_id__releases_rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rollback Api V1 Projects  Project Id  Releases Rollback Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Roll an environment back to a stable deployment",
+        "tags": [
+          "releases"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/releases/timeline": {
+      "get": {
+        "description": "Every deployment of this project, newest first, with what a timeline marker needs.\n\n`healthy` stays nullable on the wire: null means nothing verified it, false means the workloads were\nchecked and were not ready. A timeline that collapsed those would mark an in-flight rollout as failed.",
+        "operationId": "timeline_api_v1_projects__project_id__releases_timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Timeline Api V1 Projects  Project Id  Releases Timeline Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deployment history with version metadata",
+        "tags": [
+          "releases"
         ]
       }
     },

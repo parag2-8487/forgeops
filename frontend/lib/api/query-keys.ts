@@ -153,6 +153,13 @@ export const queryKeys = {
    * reporting fine. The namespace is in the Kubernetes key for the same reason it is in the environments
    * key: one namespace's pods must never be served as another's.
    */
+  /** 2.3's timeline and diff. The diff key carries both ids, so one pair is never served for another. */
+  releases: {
+    all: ["releases"] as const,
+    timeline: (projectId: string) => [...queryKeys.releases.all, "timeline", projectId] as const,
+    diff: (projectId: string, leftId: string, rightId: string) =>
+      [...queryKeys.releases.all, "diff", projectId, leftId, rightId] as const,
+  },
   hostops: {
     all: ["hostops"] as const,
     dockerInventory: (projectId: string, stats: boolean) =>
