@@ -614,8 +614,27 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       including one holding the channel name equal to the hub's — if those drift the stream subscribes
       to nobody and renders an empty log for a working deployment, the quietest possible failure.
 - [ ] Backend: **Durable execution** for deployment workflows (one durable engine at P2 - Inngest, or Temporal if replay/history demands; not a multi-hop migration)
-- [ ] Backend: **Circuit breaker** pattern for deployment pipeline (fail-fast on validation errors) — not
-      built. A breaker chosen before there is a pipeline to break is a guess about which failures repeat.
+- [x] Backend: **Circuit breaker** pattern for deployment pipeline (fail-fast on validation errors) —
+      `src/deployments/breaker.py`, migration `0031` with its model. The box said a breaker chosen
+      before there is a pipeline to break is a guess about which failures repeat; now there is one, and
+      the repeating failure is observable: a manifest the cluster refuses fails identically until
+      somebody edits it, and each retry costs an approval, a signed envelope, an agent round trip and a
+      governance row. It is checked in the deploy route BEFORE the deployment row is created and before
+      a human is asked — refusing after an approval would waste it.
+      **What it must not count is the load-bearing half, and it is structural rather than remembered:**
+      the counting site is the settler's failure branch, reached only when the agent RAN the command and
+      it failed, so a policy deny, a held approval and an agent timeout cannot be counted — they never
+      reach `record_command_result` at all. A `degraded` deployment closes the breaker too: the
+      manifests were accepted and a pod is unhappy, which retrying can legitimately fix.
+      Three consecutive failures open it (one failure is often a typo the operator fixes next attempt);
+      a five-minute cooldown then admits ONE trial, applied on READ so a refreshing panel cannot consume
+      it, and a failed trial re-opens with a fresh cooldown. The first implementation left a failed trial
+      `half_open`, which `guard` treats as passable — a test caught it, and re-reading the argument for
+      it, it was wrong: by then there are four failures, more evidence than the three that opened it.
+      Persisted rather than in memory, because two replicas with in-memory breakers disagree and a
+      refusal that depends on which replica answered looks random. Never-tripped, counting, half-open
+      and open are four different sentences in `describe()`. A 503 with the cluster's own message and
+      the retry window, not a 422 — the request was well formed. 9 integration tests.
 - [x] Frontend: Deployment dashboard with progress indicators —
       `features/deployments/DeploymentDashboard.tsx`, mounted on the project route and using
       `EnvironmentSelector`, so §2.1's selector is now on a second screen. 13 tests; full suite 604 passed

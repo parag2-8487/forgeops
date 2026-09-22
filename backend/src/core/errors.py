@@ -188,6 +188,10 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "deployment-absent": ProblemSpec(404, "No such deployment"),
     "deployment-invalid": ProblemSpec(422, "The deployment request is not valid"),
     "deployment-conflict": ProblemSpec(409, "The deployment has already settled"),
+    # 2.2. A 503 because the request is well formed and would ordinarily be accepted: the service is
+    # declining to attempt it after repeated validation failures. A 422 would blame the manifests in
+    # THIS request, which is not what happened.
+    "deployment-circuit-open": ProblemSpec(503, "Deployments to this environment are stopped"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a

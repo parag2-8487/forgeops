@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .breaker import DeploymentCircuitBreaker
 from .service import DeploymentService
 
 
@@ -52,6 +53,10 @@ class DeploymentSettler:
 
     deployments: DeploymentService
     notifications: NotificationRaiser
+    # 2.2's breaker. A field with a default rather than a constructor argument, so every existing
+    # composition of this settler gets one -- a breaker that only counted when somebody remembered to
+    # wire it would be a breaker that never opened in production and always opened in tests.
+    _breaker: DeploymentCircuitBreaker = field(default_factory=DeploymentCircuitBreaker)
 
     async def settle(
         self,
@@ -99,6 +104,18 @@ class DeploymentSettler:
                 status=record.status,
                 detail="the agent reported the command failed",
             )
+            # THE BREAKER COUNTS THIS AND COUNTS NOTHING ELSE. This branch is reached only when the
+            # AGENT RAN THE COMMAND AND IT FAILED, which is the repeating failure the breaker is for: a
+            # manifest the cluster refuses fails identically until somebody edits it. A policy deny, a
+            # held approval and an agent timeout never reach `record_command_result` at all, so they
+            # cannot be counted here -- the distinction is structural rather than a condition somebody
+            # has to remember, which is why the counting site is here and not in the route.
+            await self._breaker.record_validation_failure(
+                session,
+                project_id=row["project_id"],
+                environment=environment,
+                reason=_failure_reason(report),
+            )
             return
 
         # HEALTH COMES FROM THE AGENT'S REPORT, and its ABSENCE is not health. A report that does not say
@@ -130,6 +147,13 @@ class DeploymentSettler:
             healthy=healthy,
             report=dict(report) if report is not None else None,
         )
+
+        # A COMMAND THAT RAN CLOSES THE BREAKER, even when the workloads did not become ready. The
+        # breaker is about the cluster REFUSING the manifests, and a `degraded` deployment was accepted
+        # -- the manifests are valid and a pod is unhappy, which is a different problem and one that
+        # retrying can legitimately fix once a node frees up. Counting it would stop deployments for a
+        # condition outside the manifests.
+        await self._breaker.record_success(session, project_id=row["project_id"], environment=environment)
 
         if healthy:
             await self.notifications.raise_notification(
@@ -194,3 +218,19 @@ class DeploymentSettler:
         # The id rather than a placeholder when the row is gone: a template that required a name and got
         # "unknown" would send a message naming nothing an operator can look up.
         return str(name) if name else str(project_id)
+
+
+def _failure_reason(report: Mapping[str, Any] | None) -> str:
+    """The failure text a panel shows, taken from the agent's report.
+
+    A GENERIC STRING WOULD DEFEAT THE BREAKER'S ONLY USEFUL OUTPUT. When deployments stop, the question
+    is what was failing, and "the command failed" answers nothing. The report's own error is used when
+    it has one, and its absence is stated as absence rather than filled in.
+    """
+    if report is None:
+        return "the agent reported the command failed and sent no detail"
+    for key in ("error", "message", "detail", "output"):
+        value = report.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:500]
+    return "the agent reported the command failed and sent no detail"

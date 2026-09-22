@@ -27,6 +27,9 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
+    UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -117,3 +120,48 @@ class Deployment(SQLModel, table=True):
 
 
 __all__ = ["DEPLOYMENT_STATUSES", "Deployment"]
+
+
+class DeploymentCircuitBreaker(SQLModel, table=True):
+    """One breaker per project and environment. 2.2, revision 0031.
+
+    EVERY MIGRATION NEEDS ITS MODEL. Three tables once had migrations and no models, and `alembic check`
+    proposed dropping all three -- so this exists to keep autogenerate's view of the schema equal to the
+    migrations' view, not because anything loads breakers through the ORM. `breaker.py` uses raw SQL
+    because its write is an `ON CONFLICT ... DO UPDATE` the ORM cannot express.
+    """
+
+    __tablename__ = "deployment_circuit_breakers"
+    __table_args__ = (
+        UniqueConstraint("project_id", "environment", name="uq_deployment_breakers_project_environment"),
+        CheckConstraint(
+            "state IN ('closed', 'open', 'half_open')",
+            name="ck_deployment_breakers_state_allowed",
+        ),
+        CheckConstraint(
+            "(state = 'open' AND opened_at IS NOT NULL) OR (state <> 'open')",
+            name="ck_deployment_breakers_open_has_opened_at",
+        ),
+        CheckConstraint(
+            "consecutive_failures >= 0",
+            name="ck_deployment_breakers_failures_non_negative",
+        ),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="projects.id", index=True, ondelete="CASCADE")
+    # The environment NAME, not a foreign key: a breaker must survive an environment row being
+    # recreated, because deleting and re-adding `production` should not clear a breaker protecting it.
+    environment: str = Field(max_length=64)
+    state: str = Field(max_length=16, default="closed")
+    consecutive_failures: int = Field(default=0)
+    # `Text` and not the default `VARCHAR`: the migration created it as TEXT, and `alembic check`
+    # correctly proposed a type change until the model said the same thing. A reason can be a
+    # cluster diagnostic several lines long.
+    last_failure_reason: str | None = Field(default=None, sa_column=Column("last_failure_reason", Text, nullable=True))
+    opened_at: datetime | None = Field(
+        default=None, sa_column=Column("opened_at", DateTime(timezone=True), nullable=True)
+    )
+    updated_at: datetime = Field(
+        sa_column=Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now())
+    )

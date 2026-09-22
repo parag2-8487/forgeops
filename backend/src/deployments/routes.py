@@ -31,6 +31,7 @@ from ..auth.principal import Principal
 from ..core.db import get_session
 from ..core.errors import problem
 from ..environments.service import EnvironmentService
+from .breaker import CircuitOpenError, DeploymentCircuitBreaker
 from .service import DeploymentRecord, DeploymentService
 
 router = APIRouter(
@@ -124,6 +125,29 @@ async def request_deployment(
                 "is nothing to deploy to"
             ),
         )
+
+    # THE BREAKER IS CHECKED BEFORE ANYTHING IS CREATED. 2.2. Repeated validation failures against one
+    # environment fail the same way every time until the manifests change, and each retry costs an
+    # approval, a signed envelope, an agent round trip and a governance row. Refusing here -- before the
+    # deployment row exists and before a human is asked -- is the whole value: it stops somebody
+    # approving something already known to fail.
+    breaker = DeploymentCircuitBreaker()
+    try:
+        await breaker.guard(session, project_id=project_id, environment=environment.name)
+    except CircuitOpenError as refused:
+        # 503 AND NOT 422. The request is well formed and would ordinarily be accepted; the service is
+        # declining to attempt it for now. A 422 would tell an operator their manifests were malformed,
+        # which is not what happened to THIS request. The retry window is in the detail rather than a
+        # `Retry-After` header because `problem()` deliberately takes no headers -- its whole purpose is
+        # that a caller cannot make a response disagree with the registry -- and widening it for one case
+        # would be the wrong trade.
+        raise problem(
+            "deployment-circuit-open",
+            detail=(
+                f"{refused.reason} Deployments to {environment.name} will be attempted again in "
+                f"{refused.retry_after_seconds} second(s)."
+            ),
+        ) from refused
 
     service = _service(request)
     record = await service.create(
