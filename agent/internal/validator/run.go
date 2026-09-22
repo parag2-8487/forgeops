@@ -226,7 +226,27 @@ func (r *Runner) Run(ctx context.Context, tool string, args ...string) (Outcome,
 	return outcome, nil
 }
 
+// RunWithStdin executes a tool with `stdin` written to its standard input and then closed.
+//
+// This exists for ONE REASON: a credential must not travel in argv. `docker login -p <secret>` and
+// `helm registry login -p <secret>` put the secret where `ps` shows it to every other user on the
+// machine, and both tools print a deprecation warning saying exactly that. The stdin path is the
+// supported one, so the runner has to be able to reach it.
+//
+// The input is written and the pipe closed before `Wait`, because a tool reading to EOF blocks for ever
+// against a pipe nobody closed ? which presents as the operation's timeout rather than as a mistake here.
+func (r *Runner) RunWithStdin(ctx context.Context, stdin string, tool string, args ...string) (Outcome, error) {
+	if _, err := r.Look(tool); err != nil {
+		return Outcome{Tool: tool}, err
+	}
+	return r.execWithStdin(ctx, stdin, tool, args...)
+}
+
 func (r *Runner) exec(ctx context.Context, tool string, args ...string) (Outcome, error) {
+	return r.execWithStdin(ctx, "", tool, args...)
+}
+
+func (r *Runner) execWithStdin(ctx context.Context, stdin string, tool string, args ...string) (Outcome, error) {
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, tool, args...)
 	cmd.Dir = r.Dir
@@ -246,6 +266,12 @@ func (r *Runner) exec(ctx context.Context, tool string, args ...string) (Outcome
 	limited := &limitedWriter{w: &combined, remaining: maxCaptureBytes}
 	cmd.Stdout = limited
 	cmd.Stderr = limited
+
+	if stdin != "" {
+		// A strings.Reader rather than a pipe written by hand: exec closes it at EOF and does not need a
+		// goroutine, so there is no path where the writer outlives the process.
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 
 	runErr := cmd.Run()
 	outcome := Outcome{

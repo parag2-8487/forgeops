@@ -440,6 +440,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # which is a true statement an operator can act on.
     app.state.notification_service = NotificationService(channels=compose_channels(settings))
     from .deployments.settler import DeploymentSettler
+    from .secrets.registry_credentials import SecretStoreRegistryCredentials
 
     app.state.deployment_service = DeploymentService()
     app.state.environment_service = EnvironmentService(pepper=settings.envelope_pepper.get_secret_value())
@@ -610,6 +611,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             deployments=app.state.deployment_service,
             notifications=app.state.notification_service,
         ),
+        # 2.2. A registry push needs a credential at the instant the envelope is signed and at no
+        # other time. Composed here for the same reason the clone provider is: the chokepoint knows a
+        # push needs one and must not learn that this deployment keeps it in Infisical.
+        registry_credential_provider=SecretStoreRegistryCredentials(app.state.secret_store),
     )
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()

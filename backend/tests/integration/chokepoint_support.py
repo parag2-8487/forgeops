@@ -178,6 +178,7 @@ def build_chokepoint(
     analyzer: SemanticPlanAnalyzer | None = None,
     clone_credential_provider: Any = None,
     change_set_settler: Any = None,
+    registry_credential_provider: Any = None,
 ) -> GovernanceChokepoint:
     """A chokepoint over the real collaborators, with a per-instance Redis key prefix.
 
@@ -203,6 +204,7 @@ def build_chokepoint(
         # configuration has to produce, and every apply test would carry a collaborator it never uses.
         clone_credential_provider=clone_credential_provider,
         change_set_settler=change_set_settler,
+        registry_credential_provider=registry_credential_provider,
     )
 
 

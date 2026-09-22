@@ -207,6 +207,29 @@ def _assert_no_credential(args: Mapping[str, Any]) -> None:
         )
 
 
+class RegistryCredentialProvider(Protocol):
+    """Yields the container-registry credential for a project, at the moment of delivery.
+
+    THE SAME SHAPE AS `CloneCredentialProvider` AND FOR THE SAME REASON. A registry token is a credential,
+    `FORBIDDEN_ARG_KEYS` and revision 0022's CHECK both refuse to let one be persisted on a change set,
+    and a push needs one at the instant the envelope is signed and at no other time. Resolving it here
+    means the credential exists in memory for the duration of one delivery and is never written beside
+    the inert arguments it joins.
+
+    Returning `None` means THE PROJECT HAS NO REGISTRY CREDENTIAL, which is a legitimate state -- a push
+    to an unauthenticated registry needs none, and the agent refuses the combination that makes no sense
+    (a named user with no secret) rather than this provider guessing. It is not a signal to substitute
+    anything: a fabricated credential would fail at the registry with an authentication error blaming the
+    operator's configuration.
+    """
+
+    async def registry_credential_for(
+        self, session: AsyncSession, *, project_id: uuid.UUID, registry: str
+    ) -> tuple[str, str] | None:
+        """Return `(username, secret)` for this project at this registry, or `None`."""
+        ...
+
+
 class CloneCredentialProvider(Protocol):
     """Yields the credential for a user's GitHub link, at the moment of delivery.
 
@@ -775,6 +798,7 @@ class GovernanceChokepoint:
         envelope_pepper: str,
         envelope_max_age_seconds: int = 300,
         clone_credential_provider: CloneCredentialProvider | None = None,
+        registry_credential_provider: RegistryCredentialProvider | None = None,
         change_set_settler: ChangeSetSettler | None = None,
     ) -> None:
         if not envelope_pepper:
@@ -797,6 +821,7 @@ class GovernanceChokepoint:
         # rather than an error: it must produce a refusal naming the missing piece, not an
         # AttributeError at the moment a human clicks approve.
         self._clone_credential = clone_credential_provider
+        self._registry_credential = registry_credential_provider
         self._settler = change_set_settler
 
     # ─── public transits ──────────────────────────────────────────────────────────────────
@@ -3092,11 +3117,35 @@ class GovernanceChokepoint:
         await self._sequencer.reserve_nonce(admitted.device_id, nonce, ttl_seconds=self._max_age)
         not_after = int(datetime.now(UTC).timestamp()) + self._max_age
 
+        # THE REGISTRY CREDENTIAL IS RESOLVED HERE, at the single signature site, so the auto-approved
+        # transit and the human-approved one both get it from one place. It is the last thing added
+        # before the envelope is built, which keeps the rule this method exists to enforce: every
+        # conditional resolves BEFORE the signature, and the signature covers whatever resulted.
+        #
+        # It is not in `args` on the change-set row and never was -- `_assert_no_credential` and
+        # revision 0022's CHECK would both refuse that row -- so the only copy is the one in this
+        # envelope, which exists for the length of one delivery.
+        envelope_args = dict(args)
+        if (
+            operation == DOCKER_IMAGE_OPERATION
+            and str(envelope_args.get("action", "")) == "push"
+            and self._registry_credential is not None
+        ):
+            credential = await self._registry_credential.registry_credential_for(
+                session,
+                project_id=admitted.project_id,
+                registry=str(envelope_args.get("registry", "") or ""),
+            )
+            if credential is not None:
+                username, secret = credential
+                envelope_args["registry_user"] = username
+                envelope_args["registry_secret"] = secret
+
         envelope = CommandEnvelope(
             command_id=str(uuid.uuid4()),
             device_id=str(admitted.device_id),
             operation=operation,
-            args=dict(args),
+            args=envelope_args,
             approval_id="" if approval_id is None else str(approval_id),
             policy_context=PolicyContextPayload(bundle_digest=admitted.bundle_digest, decision=decision.result),
             nonce=nonce,

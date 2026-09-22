@@ -484,6 +484,20 @@ func dockerImageAction(ctx context.Context, d *dispatcher, v *envelope.Verified,
 	if err := json.Unmarshal(v.Args(), &args); err != nil {
 		return Result{}, fmt.Errorf("%w: docker image action arguments: %v", ErrBadArgs, err)
 	}
+	// `build` and `push` are verbs of THIS authority, handled in image.go because they need more than a
+	// name: a build takes two paths that have to be contained, and a push takes a credential that must
+	// not reach argv. They are not separate operations — the whitelist entry says what a caller may
+	// affect, and all four verbs affect one image.
+	if args.Action == "build" || args.Action == "push" {
+		var full imageBuildPushArgs
+		if err := json.Unmarshal(v.Args(), &full); err != nil {
+			return Result{}, fmt.Errorf("%w: docker image action arguments: %v", ErrBadArgs, err)
+		}
+		if args.Action == "build" {
+			return dockerImageBuild(ctx, d, full, sink)
+		}
+		return dockerImagePush(ctx, d, full, sink)
+	}
 	if strings.TrimSpace(args.Image) == "" {
 		return Result{}, ErrNoTarget
 	}

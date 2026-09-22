@@ -186,7 +186,18 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
     },
   );
 
-  const imageAction = useMutation<ActionAccepted, Error, { action: string; image: string }>({
+  // The build form's fields. Local state rather than a form library: three optional strings, and the
+  // submit is disabled until the tag is present because a build with no tag produces a dangling image
+  // nothing can reference.
+  const [buildTag, setBuildTag] = useState("");
+  const [buildContext, setBuildContext] = useState("");
+  const [buildDockerfile, setBuildDockerfile] = useState("");
+
+  const imageAction = useMutation<
+    ActionAccepted,
+    Error,
+    { action: string; image: string; build_context?: string; dockerfile?: string }
+  >({
     mutationFn: (body) =>
       api.post<ActionAccepted>(`/projects/${projectId}/docker/images/actions`, body),
     onSuccess: (accepted) => {
@@ -385,6 +396,13 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                     </button>
                     <button
                       type="button"
+                      data-testid={`docker-push-${image.repository}`}
+                      onClick={() => imageAction.mutate({ action: "push", image: reference })}
+                    >
+                      push
+                    </button>
+                    <button
+                      type="button"
                       data-testid={`docker-rmi-${image.repository}`}
                       onClick={() => imageAction.mutate({ action: "remove", image: reference })}
                     >
@@ -397,6 +415,60 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
           </tbody>
         </table>
       )}
+
+      <h3>Build an image</h3>
+      {/*
+        NO COMMAND FIELD, and that is the point. A build takes a TAG and two paths the agent contains
+        against the workspace root; there is nowhere here to type `docker build && curl ...`. The
+        registry credential is not on this form either -- it is resolved from the project's secret
+        store at delivery, so a push cannot be performed by pasting somebody else's token into a
+        browser.
+      */}
+      <form
+        data-testid="docker-build-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (buildTag.trim() === "") {
+            return;
+          }
+          imageAction.mutate({
+            action: "build",
+            image: buildTag.trim(),
+            ...(buildContext.trim() === "" ? {} : { build_context: buildContext.trim() }),
+            ...(buildDockerfile.trim() === "" ? {} : { dockerfile: buildDockerfile.trim() }),
+          });
+        }}
+      >
+        <label htmlFor="docker-build-tag">Tag</label>
+        <input
+          id="docker-build-tag"
+          data-testid="docker-build-tag"
+          value={buildTag}
+          onChange={(event) => setBuildTag(event.target.value)}
+          placeholder="registry.example.com/app:v1"
+        />
+        <label htmlFor="docker-build-context">
+          Context (optional, relative to the workspace root)
+        </label>
+        <input
+          id="docker-build-context"
+          data-testid="docker-build-context"
+          value={buildContext}
+          onChange={(event) => setBuildContext(event.target.value)}
+        />
+        <label htmlFor="docker-build-dockerfile">
+          Dockerfile (optional, relative to the context)
+        </label>
+        <input
+          id="docker-build-dockerfile"
+          data-testid="docker-build-dockerfile"
+          value={buildDockerfile}
+          onChange={(event) => setBuildDockerfile(event.target.value)}
+        />
+        <button type="submit" data-testid="docker-build-submit" disabled={buildTag.trim() === ""}>
+          build
+        </button>
+      </form>
 
       <h3>Volumes and networks</h3>
       <ul data-testid="docker-volumes">

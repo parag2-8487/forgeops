@@ -265,6 +265,70 @@ describe("the Docker dashboard", () => {
     });
   });
 
+  it("builds through the same route as every other image action, with no command field", async () => {
+    get.mockResolvedValue(dockerInventory({ containers: [container()] }));
+    post.mockResolvedValue({ change_set_id: "cs-b", status: "approved", outcome: "applying" });
+    mount(<DockerDashboard projectId="p1" />);
+
+    const form = await screen.findByTestId("docker-build-form");
+    // THE ABSENCE IS THE ASSERTION. A free-text command field on this form would be an arbitrary-shell
+    // escape reachable from a browser, which is the one thing the operation catalogue exists to stop.
+    expect(form.textContent).not.toContain("Command");
+    expect(screen.queryByTestId("docker-build-command")).not.toBeInTheDocument();
+
+    // A build with no tag cannot be submitted: it would produce a dangling image nothing can pin.
+    expect(screen.getByTestId("docker-build-submit")).toBeDisabled();
+
+    await userEvent.type(screen.getByTestId("docker-build-tag"), "registry.example.com/app:v1");
+    await userEvent.click(screen.getByTestId("docker-build-submit"));
+    expect(post).toHaveBeenCalledWith("/projects/p1/docker/images/actions", {
+      action: "build",
+      image: "registry.example.com/app:v1",
+    });
+  });
+
+  it("omits an empty context and dockerfile rather than sending empty strings", async () => {
+    get.mockResolvedValue(dockerInventory({ containers: [container()] }));
+    post.mockResolvedValue({ change_set_id: "cs-c", status: "approved", outcome: "applying" });
+    mount(<DockerDashboard projectId="p1" />);
+
+    await userEvent.type(await screen.findByTestId("docker-build-tag"), "app:v2");
+    await userEvent.type(screen.getByTestId("docker-build-context"), "services/api");
+    await userEvent.click(screen.getByTestId("docker-build-submit"));
+    // An empty `dockerfile` sent as "" would reach the agent as a path, and the agent resolves an
+    // empty path to the context root -- which happens to be right, and would be right by accident.
+    // Omitting the key means the default is chosen in ONE place.
+    expect(post).toHaveBeenCalledWith("/projects/p1/docker/images/actions", {
+      action: "build",
+      image: "app:v2",
+      build_context: "services/api",
+    });
+  });
+
+  it("offers a push per image and sends no credential with it", async () => {
+    get.mockResolvedValue(
+      dockerInventory({
+        images: [{ id: "sha256:abc", repository: "app", tag: "v1", size: "12MB" }],
+      }),
+    );
+    post.mockResolvedValue({
+      change_set_id: "cs-p",
+      status: "pending_approval",
+      outcome: "pending_approval",
+    });
+    mount(<DockerDashboard projectId="p1" />);
+
+    await userEvent.click(await screen.findByTestId("docker-push-app"));
+    // NO CREDENTIAL IN THE BODY. It is resolved from the project secret store at delivery, so there is
+    // nothing here for a proxy log to keep.
+    expect(post).toHaveBeenCalledWith("/projects/p1/docker/images/actions", {
+      action: "push",
+      image: "app:v1",
+    });
+    const body = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(Object.keys(body)).not.toContain("registry_secret");
+  });
+
   it("distinguishes an empty host from an unreachable one in words", async () => {
     get.mockResolvedValue(dockerInventory());
     mount(<DockerDashboard projectId="p1" />);

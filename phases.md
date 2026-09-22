@@ -536,9 +536,23 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.2 Deployment Automation
 
-- [ ] Agent: Container image build and push to registry (OCI-compliant) — not built. Separate credentials
-      and separate failure modes, and a registry push produces the one value a deployment record should pin
-      (an image digest); doing it badly would put a fabricated digest on a runtime path.
+- [x] Agent: Container image build and push to registry (OCI-compliant) — `build` and `push` are VERBS
+      ON THE EXISTING `docker.image_action` AUTHORITY (`agent/internal/executor/image.go`), not two new
+      operations: the permission granted is "act on an image in this project", and four whitelist
+      entries would describe one permission. Verified against a REAL `registry:2` this test starts
+      itself — the pushed digest is then fetched back with `docker manifest inspect`, so a fabricated
+      digest fails rather than travelling onto a deployment record, which is exactly what this box's
+      own wording warned about. A build's report says `digest_kind: local_image_id` and a push's says
+      `registry_digest`, because a local ID is reproducible nowhere else and pinning one would be a
+      deployment record that cannot be rebuilt. A failing build is a RESULT with its output, not an
+      error. The credential never reaches argv (`docker login --password-stdin`), is resolved AT
+      DELIVERY from the project's secret store through `secrets/registry_credentials.py` rather than
+      accepted on the request body, and is asserted absent from `~/.docker/config.json` afterwards —
+      including base64-encoded, which the first version of that check missed and its own test caught.
+      Both path arguments are contained against the workspace root AND the Dockerfile separately
+      against the context, because `docker build -f` accepts a path outside it. 5 Go tests (2 needing
+      a real daemon), 7 integration tests that drive a real push and then search every governance
+      column for the token, 3 frontend tests.
 - [x] Agent: K8s manifest apply with health check verification — `agent/internal/executor/deployment.go`,
       operation `deployment.apply_manifests`, mutating and approval-required, `timeoutDeploy` 15 minutes.
       `kubectl` through an argument vector: no shell, and no `--prune` — pruning is an unbounded delete
@@ -665,10 +679,13 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       and a create operation that accepted those would be the bind-mount-and-`--privileged` authority this
       catalogue has carefully avoided. It belongs with a reviewed spec (a compose file, a manifest), not
       with a form. Recorded here so the next person does not add it casually.
-- [ ] Frontend: Image list with build/pull/push/remove — list, pull and remove are built and tested.
-      **Build and push are not**, and they are the §2.2 "container image build and push to registry" box:
-      a push needs registry credentials and produces the one value a deployment record should pin, an
-      image digest, so doing it badly would put a fabricated digest on a runtime path.
+- [x] Frontend: Image list with build/pull/push/remove — all four, in `DockerDashboard.tsx`. The build
+      form has a TAG and two optional paths and NO COMMAND FIELD, and a test asserts the absence:
+      a free-text command on a browser form would be the arbitrary-shell escape the whole operation
+      catalogue exists to prevent. Submit is disabled without a tag (an untagged build produces a
+      dangling image nothing can pin), and an empty context or Dockerfile is OMITTED rather than sent
+      as "", so the default is chosen in one place. A push sends no credential and a test asserts that
+      too. 3 tests; the file's suite is 31 passed.
 - [ ] Frontend: **Resource utilisation view** — live container CPU/memory/network from the Docker probe AND cluster/application series from the metrics tier, distinguishing "never reported" from "stale" from "healthy" — _combined box: former 2.4 "Live resource monitoring (CPU, memory, network)" + former 3.2 "Resource utilization charts". Two panels showing the same quantity from two sources is how a stale number gets read as a live one; satisfies both._
       The Docker-probe half is done, including the tri-state this box names: `freshnessOf` classifies a
       reading as never-reported, stale-with-its-age, or current, and an unparsable timestamp resolves to

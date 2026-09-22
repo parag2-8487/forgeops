@@ -96,9 +96,31 @@ class ContainerActionRequest(BaseModel):
 
 
 class ImageActionRequest(BaseModel):
-    """One action against one named image reference."""
+    """One action against one named image reference.
 
-    action: Literal["pull", "remove"]
+    FOUR VERBS ON ONE AUTHORITY. `build` and `push` join `pull` and `remove` rather than getting routes of
+    their own: the permission being granted is "act on an image in this project", and minting a second
+    operation would mean a second policy resource and a second approval row describing one permission.
+
+    A build and a push each need fields the other two do not, and they are OPTIONAL here with a validator
+    below refusing the combinations that make no sense -- a push with a registry user and no secret, or a
+    build with no tag. The alternative, a separate model per verb, would put the same four checks in four
+    places and let them drift.
+    """
+
+    action: Literal["pull", "remove", "build", "push"]
+    build_context: str | None = None
+    dockerfile: str | None = None
+    build_args: dict[str, str] | None = None
+    registry: str | None = None
+    registry_user: str | None = None
+    # THERE IS NO SECRET FIELD, deliberately. A registry credential is resolved AT DELIVERY from the
+    # project's secret store, exactly as a clone token is resolved from the requester's GitHub link --
+    # `FORBIDDEN_ARG_KEYS` and revision 0022's CHECK constraint both exist to stop a credential reaching
+    # `change_sets.operation_args`, and accepting one on the request body would mean carrying it through
+    # the six stages to dodge them. A push whose credential is not in the store fails at delivery with a
+    # message naming the store, which is a better failure than one that succeeded because a caller pasted
+    # a token into a JSON body that a proxy log then kept.
     image: str = Field(min_length=1, max_length=512)
     reason: str = Field(default="", max_length=500)
 
@@ -260,7 +282,7 @@ async def container_action(
 @router.post(
     "/docker/images/actions",
     status_code=202,
-    summary="Pull or remove one image (through the chokepoint)",
+    summary="Build, push, pull or remove one image (through the chokepoint)",
 )
 async def image_action(
     project_id: uuid.UUID,
@@ -270,13 +292,26 @@ async def image_action(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ActionAccepted:
     """202, for the reason above."""
+    args: dict[str, Any] = {"action": body.action, "image": body.image}
+    if body.action == "build":
+        if body.build_context is not None:
+            args["build_context"] = body.build_context
+        if body.dockerfile is not None:
+            args["dockerfile"] = body.dockerfile
+        if body.build_args:
+            args["build_args"] = body.build_args
+    if body.action == "push" and body.registry is not None:
+        args["registry"] = body.registry
+    if body.action == "push" and body.registry_user is not None:
+        args["registry_user"] = body.registry_user
+
     submission = await _chokepoint(request).transit_host_action(
         session,
         project_id=project_id,
         principal=principal,
         operation=DOCKER_IMAGE_OPERATION,
         target=body.image,
-        args={"action": body.action, "image": body.image},
+        args=args,
         environment_name=None,
         environment_requires_approval=False,
         reason=body.reason or f"{body.action} image {body.image}",
