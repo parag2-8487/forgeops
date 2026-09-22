@@ -101,6 +101,27 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "OLLAMA_PORT",
         # Compose-only, as OLLAMA_PORT is: the published port of the `ollama-secondary` service.
         "OLLAMA_SECONDARY_PORT",
+        # 2.2 and 2.4a: the durable execution engine's compose service and client.
+        "INNGEST_PORT",
+        "INNGEST_APP_ID",
+        "INNGEST_EVENT_KEY",
+        "INNGEST_IS_PRODUCTION",
+        "INNGEST_BASE_URL",
+        "INNGEST_DISCOVERY_URL",
+        # 2.10: the observability tier. Most are compose-only published ports; the two the backend
+        # itself reads are FORGEOPS_OTEL_ENDPOINT and FORGEOPS_PROMETHEUS_URL, both empty by default
+        # because monitoring is optional and an absent endpoint must be a no-op rather than a failure.
+        "OTEL_GATEWAY_GRPC_PORT",
+        "OTEL_GATEWAY_METRICS_PORT",
+        "PROMETHEUS_PORT",
+        "MIMIR_PORT",
+        "LOKI_PORT",
+        "GRAFANA_PORT",
+        "GRAFANA_ADMIN_LOGIN_SECRET",
+        "FORGEOPS_OTEL_ENDPOINT",
+        "FORGEOPS_PROMETHEUS_URL",
+        "FORGEOPS_DEPLOYMENT_NAME",
+        "NEXT_PUBLIC_GRAFANA_URL",
         "INFISICAL_URL",
         "INFISICAL_CLIENT_ID",
         "INFISICAL_CLIENT_SECRET",

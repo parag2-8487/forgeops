@@ -342,6 +342,63 @@ TRANSACTION aborted, so the next statement failed with `InFailedSQLTransactionEr
 wrong thing, several lines from its cause. It runs in a savepoint now, and a settlement failure is recorded
 on the change set rather than lost.
 
+### The generation-provenance failures: three real defects fixed, and why the tests still fail
+
+**Phase 2 is 72 of 123.** These three tests have been carried for five passes. Driving them with a live
+`qwen2.5-coder:1.5b` found and fixed **three genuine defects**, and then established that the tests'
+remaining failure is not a defect at all. Both halves of that are recorded because the second is the more
+useful finding.
+
+**Defect 1: a run was served from the cache it had just written.** `ModelRouter.complete` consulted the
+cache on every call, and a generation run calls it once per attempt. Attempt 1 missed, called a provider,
+and stored the result; attempt 2 -- which exists only because the gate rejected attempt 1 -- found that
+entry and was served from it. The run recorded `served_from='l1'` for work no cache held when it began,
+and `iterations_used=0` for a run that plainly iterated, corrupting the NFR-04 average that column exists
+to measure. Worse, it guaranteed non-convergence: the retry was handed back the artifact the gate had just
+rejected. Fixed with `may_serve_from_cache`, a CALLER'S DECLARATION rather than something inferred in the
+router -- from inside `complete`, two attempts of one run and two separate runs are indistinguishable.
+
+**Defect 2: the cache was poisoned with gate-rejected output.** The router stored every successful
+completion, but generation's output faces a validation gate AFTER the router returns. So rejected
+artifacts were cached, and every later run with that prompt was served the known-bad one, failed the gate
+again, and burned its whole attempt budget re-delivering it. Fixed by making storage the caller's decision
+(`store_in_cache`) and adding one verb, `remember`, called only after the gate passes. `remember` is a
+named router method rather than a public `cache` attribute, because exposing the cache would let a caller
+read entries or choose a tier, none of which belong outside routing.
+
+**Defect 3: the accepted answer was cached under a key nobody would ask for.** A retry's prompt carries
+the previous attempt's findings appended to it. Caching under that prompt writes an entry whose key no
+future run will ever present -- a silent permanent miss that looks exactly like a cache working and never
+hitting. Now keyed on the first attempt's prompt, captured for the run.
+
+**Why the tests still fail, with the evidence.** Instrumenting the real path showed exactly one cache
+lookup per run (correct) and run 2's attempt 1 reporting `served='l1'` (correct -- the fixes work). The
+run then continues, because the gate rejects the cached artifacts with
+`Dockerfile: still fails dockerfile_healthcheck_present (0/15)` on **every attempt of both runs**. The
+1.5b model never emits a HEALTHCHECK, so no run ever has acceptable output to serve from cache, and the
+final `served_from` is honestly `provider` -- the delivered artifacts came from attempt 3 plus a template
+substitution, not from the cache.
+
+So `assert second['served_from'] == 'l1'` asserts a RUN-level provenance that requires the first run's
+output to pass the gate. **The tests are not wrong about the system; they are unsatisfiable with the
+configured model.** They were left failing rather than relaxed: changing the assertion to the attempt-level
+provenance, or to a prompt with weaker checks, would be weakening a test to fit -- and the assertion is
+the correct one for a deployment whose model can satisfy its own gate. **What would close them** is a model
+that satisfies `dockerfile_healthcheck_present`; `qwen2.5-coder:7b` is the cheapest thing to try, and the
+decision is a deployment one rather than a code change.
+
+**A fourth, smaller provenance defect was found and fixed on the way:** when the gate rejected everything
+and the audited template floor supplied EVERY delivered artifact, the row still said `provider`. It now
+says `template`. A partial substitution deliberately keeps the model's provenance, since some delivered
+artifact did come from it.
+
+**Two regressions of my own, both caught by existing tests rather than by review**, which is the argument
+for those tests: binding `substituted` only on the gate-failure path raised `UnboundLocalError` on the
+ordinary happy path (`test_generation_routing.py`), and the new 2.10 and Inngest env keys were absent from
+`PROJECT_CONFIG_KEYS` (`test_config.py`, which demands bidirectional agreement between the registry and
+`.env.example` -- stronger than I had assumed, and it caught a setting I had registered without
+documenting).
+
 ### HANDOFF: where the next pass starts
 
 **Phase 2 is 65 of 123.** Tree clean, NOT pushed -- the standing instruction is one push after all 123.

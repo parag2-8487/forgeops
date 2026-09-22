@@ -34,7 +34,7 @@ from ..core.manifest_facts import dockerfile_base_pinned
 from ..core.model_port import ArtifactModelPort
 from ..core.sse import SSEEventType, format_event
 from ..core.target_checks import score_lowering_findings, unsatisfied_targets
-from ..secrets.redaction import create_redacted_prompt
+from ..secrets.redaction import RedactedPrompt, create_redacted_prompt
 from .artifact_checks import validate_artifacts
 from .iac_renderers import (
     GENERATED_IMAGE_TAG,
@@ -454,6 +454,14 @@ class GenerationService:
         facts = facts_from_project(project=project, operator_prompt=prompt, default_app_name=app_name)
 
         findings: tuple[str, ...] = ()
+        # Assigned on attempt 1 and used after acceptance; see `remember` below for why the retry
+        # prompt must not be the key.
+        first_attempt_prompt: RedactedPrompt | None = None
+        # Bound HERE rather than only on the gate-failure path, which is where it used to live. The
+        # provenance decision below reads it on every successful attempt including the ones that never
+        # reached the floor, and leaving it unbound raised UnboundLocalError on the ordinary happy path --
+        # caught immediately by `test_generation_routing.py`, which is what those tests are for.
+        substituted: tuple[str, ...] = ()
         for attempt in range(1, self._max_attempts + 1):
             yield format_event(
                 SSEEventType.PROGRESS,
@@ -503,13 +511,37 @@ class GenerationService:
             # only thing handed to the provider. Redacting here rather than inside the port keeps
             # the guarantee at the boundary where raw operator text last exists.
             redacted = create_redacted_prompt(model_prompt)
+            if attempt == 1:
+                # THE CACHE KEY OF THE WHOLE RUN, kept because a later attempt's prompt is not one any
+                # future run will present: it carries the previous attempt's gate findings appended to
+                # it. Caching the accepted content under that prompt writes an entry whose key nobody
+                # will ever ask for again -- a silent permanent miss, which looks exactly like a cache
+                # that is working and never hitting.
+                first_attempt_prompt = redacted
 
             deltas: asyncio.Queue[str | None] = asyncio.Queue()
 
             async def _sink(text: str, queue: asyncio.Queue[str | None] = deltas) -> None:
                 await queue.put(text)
 
-            task = asyncio.create_task(self._model.complete(prompt=redacted, on_token=_sink))
+            # ONLY THE FIRST ATTEMPT MAY BE SERVED FROM CACHE. A later attempt exists because the gate
+            # rejected what the earlier one produced, and that rejected output is what the cache now
+            # holds -- so a hit would re-deliver the artifact that just failed, guaranteeing the loop
+            # cannot converge, and would record `served_from='l1'` with `iterations_used=0` for a run
+            # that plainly iterated.
+            task = asyncio.create_task(
+                self._model.complete(
+                    prompt=redacted,
+                    on_token=_sink,
+                    may_serve_from_cache=attempt == 1,
+                    # NOT CACHED ON PRODUCTION. What the model produced is not yet what this run will
+                    # deliver: the validation gate runs below and may reject all of it. Caching here
+                    # would poison the entry -- every later run with this prompt served the known-bad
+                    # artifact, failing the gate again and burning its attempt budget re-delivering
+                    # it. `remember` is called after acceptance instead.
+                    store_in_cache=False,
+                )
+            )
             # The frames are emitted from the QUEUE rather than from the task's result, which is
             # what makes them real: each one leaves this process as soon as the provider produced
             # it. Draining after the call returned would be the 120-character slicing this
@@ -647,7 +679,7 @@ class GenerationService:
                 # re-validated through the SAME `_validate` — including the regression and
                 # score-lowering rules — so a substitution that would make the set worse is rejected
                 # and the withholding stands. A floor that cannot satisfy the check is not used.
-                substituted: tuple[str, ...] = ()
+                substituted = ()
                 # ONLY WHEN SOMETHING OF THE MODEL'S SURVIVED, and the reason is provenance.
                 #
                 # If NOTHING passed, substituting the floor for every artifact would deliver a set that is
@@ -705,12 +737,37 @@ class GenerationService:
                 outcome.completion_tokens = (result.usage or {}).get("completion_tokens", 0) or token_count
                 outcome.validation_passed = True
                 outcome.status = "accepted"
-                outcome.served_from = served_from
+                # WHERE THE DELIVERED ARTIFACTS ACTUALLY CAME FROM, which is not always where the
+                # completion came from. When the gate rejected everything the model produced and the
+                # audited template floor supplied every artifact being delivered, the provenance is
+                # `template` -- recording the model's `served_from` would put a row in the table
+                # claiming a provider (or a cache) produced files it did not produce. That is the same
+                # class of defect as the `served_from` failures already recorded in PROGRESS.md, and it
+                # is reachable on any prompt whose checks the configured model cannot satisfy: with
+                # `qwen2.5-coder:1.5b` and a Dockerfile needing a HEALTHCHECK, every attempt fails the
+                # gate and the floor delivers all four artifacts, yet the row said `provider`.
+                #
+                # A PARTIAL substitution stays with the model's provenance: some delivered artifact did
+                # come from it, and calling the whole run `template` would understate what the model did.
+                delivered = {artifact.path for artifact in files}
+                outcome.served_from = "template" if delivered and delivered <= set(substituted) else served_from
                 outcome.tier = self._model.tier_name
                 outcome.endpoint_id = result.endpoint_id
                 # A cache hit consumed no provider attempt, and recording one would inflate the
                 # NFR-04 iteration average the column exists to measure.
                 outcome.iterations_used = 0 if served_from in {"l1", "l2"} else attempt
+
+            # THE GATE HAS PASSED, so this answer is fit to keep. Cached here rather than in the router
+            # because only this line knows the artifacts survived validation.
+            #
+            # Skipped when the content came FROM the cache: rewriting an entry with itself is wasted work,
+            # and it would refresh the TTL on every read, so a hot entry could never expire -- which is how
+            # a cache comes to serve an answer from a model version that is no longer configured.
+            if served_from == "provider" and result.content and first_attempt_prompt is not None:
+                await self._model.remember(
+                    prompt=first_attempt_prompt,
+                    content=result.content,
+                )
 
             report.succeeded = True
             yield format_event(

@@ -95,4 +95,27 @@ class ArtifactModelPort(Protocol):
         *,
         prompt: RedactedPrompt,
         on_token: TokenSink | None = None,
+        # The caller declaring whether a cached answer is acceptable FOR THIS CALL. A domain that
+        # retries its own work must say so: otherwise the second call is served the entry the first
+        # one wrote, and the run records a provenance no cache held when it began. This is the one
+        # routing fact a domain legitimately knows and the router cannot see -- two attempts of one
+        # run and two separate runs are indistinguishable from inside the router -- which is why it
+        # is on this otherwise deliberately narrow port.
+        may_serve_from_cache: bool = True,
+        # Whether this answer is fit to keep. A caller whose output faces a validation gate AFTER
+        # this returns does not know yet, and must pass False -- otherwise a rejected artifact is
+        # cached and every later run with the same prompt is served the known-bad one, failing the
+        # gate again and burning its whole attempt budget. Such a caller calls `remember` on the
+        # content it accepted.
+        store_in_cache: bool = True,
     ) -> ModelCompletion: ...
+
+    async def remember(self, *, prompt: RedactedPrompt, content: str) -> None:
+        """Keep `content` as the cached answer for `prompt`.
+
+        Separated from `complete` so that WHAT WAS PRODUCED and WHAT WAS ACCEPTED can differ, which for
+        any caller with a validation gate they always do. This does not widen the port towards routing:
+        it still names no tier, breaker or endpoint, and a caller cannot ask which cache tier was
+        written or read one back.
+        """
+        ...

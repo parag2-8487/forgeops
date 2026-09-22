@@ -73,6 +73,8 @@ class RoutedArtifactModel:
         *,
         prompt: RedactedPrompt,
         on_token: TokenSink | None = None,
+        may_serve_from_cache: bool = True,
+        store_in_cache: bool = True,
     ) -> ModelCompletion:
         """Route one completion, streaming to `on_token` when the endpoint supports it."""
         request = CompletionRequest(
@@ -82,7 +84,14 @@ class RoutedArtifactModel:
             max_tokens=self._max_tokens,
         )
         try:
-            result = await self._router.complete(tier=self._tier, request=request, prompt=prompt, on_token=on_token)
+            result = await self._router.complete(
+                tier=self._tier,
+                request=request,
+                prompt=prompt,
+                on_token=on_token,
+                may_serve_from_cache=may_serve_from_cache,
+                store_in_cache=store_in_cache,
+            )
         except Exception as exc:  # noqa: BLE001 - reported as a failed completion, not a crash
             # The router classifies per-endpoint failures into attempt records; an exception
             # escaping it is a fault in the call itself. Reported as `ok=False` because the caller
@@ -115,6 +124,24 @@ class RoutedArtifactModel:
             usage=result.usage,
             streamed=result.streamed,
         )
+
+    async def remember(self, *, prompt: RedactedPrompt, content: str) -> None:
+        """Cache an ACCEPTED answer.
+
+        The params must match the ones `complete` used or the key differs and the entry is never found --
+        which would fail silently as a permanent cache miss, so they are built by the same expression
+        rather than restated.
+        """
+        await self._router.remember(
+            model=self._model,
+            prompt=prompt,
+            params=self._cache_params(),
+            content=content,
+        )
+
+    def _cache_params(self) -> dict[str, object]:
+        """The cache-key params. ONE definition, used by both the lookup and the store."""
+        return {"temperature": self._temperature, "max_tokens": self._max_tokens}
 
 
 def build_artifact_model(
