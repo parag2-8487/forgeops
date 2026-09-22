@@ -26,6 +26,16 @@ dependencies = [
     "redis==5.2.1",
     "httpx==0.27.2",
     "orjson==3.11.6",
+    # 2.2 and 2.4a: the durable execution engine. Business logic must never import this -- the banned-api
+    # rule in [tool.ruff.lint.flake8-tidy-imports] confines it to src/core/tasks.py.
+    "inngest==0.4.19",
+    # 2.10: OTel-native monitoring. Exact pins, and the SDK and the instrumentation packages version
+    # SEPARATELY (1.30.0 / 0.51b0) -- mixing an SDK with instrumentation built for another raises at
+    # import, so both lines move together or neither does.
+    "opentelemetry-sdk==1.30.0",
+    "opentelemetry-exporter-otlp-proto-grpc==1.30.0",
+    "opentelemetry-instrumentation-fastapi==0.51b0",
+    "opentelemetry-instrumentation-sqlalchemy==0.51b0",
     "pyjwt[crypto]==2.13.0",
     # design.md §4.6 / D-32: the Phase 1 task engine, behind the unchanged
     # TaskDispatcher seam. Redis-backed, so it needs no new infrastructure. Importable
