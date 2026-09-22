@@ -1,0 +1,84 @@
+# Loki — Phase 2 §2.10's log aggregation.
+#
+# WHY LOKI AND NOT ELASTICSEARCH. Loki indexes LABELS, not log content: a query is "find the streams with
+# these labels, then grep them". That makes it an order of magnitude cheaper to run and, more importantly for
+# this product, it makes the cost of a log line predictable — an Elasticsearch cluster's index grows with the
+# content, so a verbose deployment silently becomes an expensive one.
+#
+# THE COST OF THAT CHOICE, stated because it shapes how logs are queried here: a full-text search across all
+# logs is slow. Every query must start from labels. That is why the collector's resource processor stamps
+# service, tier and host — they are the labels every query begins with, and a log line without them is
+# findable only by scanning everything.
+#
+# WHAT MUST NOT BECOME A LABEL: anything unbounded. A `trace_id` or `user_id` label would create one stream per
+# request, and Loki's per-stream overhead makes that the standard way to take it down. Trace correlation works
+# the other way round — the trace id stays in the line and is found by a `|=` filter after labels have
+# narrowed the search, which is what `derived_fields` in the Grafana datasource does.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # RETENTION IS ENFORCED, not left to the default of never deleting. A filesystem-backed Loki with no
+  # retention fills the disk, and when it does every write fails at once — including the log lines describing
+  # why. Thirty days rather than Mimir's ninety, because logs are an order of magnitude larger per unit of
+  # insight and the questions they answer are recent ones.
+  retention_period: 720h
+  # REJECT OLD SAMPLES rather than accepting them. A collector replaying a week-old queue after an outage
+  # would otherwise write into closed index periods, which Loki handles badly and which makes a query for
+  # "last hour" return week-old lines.
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+  # Guards, so one runaway service cannot exhaust the instance. The failure then names the limit and the
+  # stream rather than presenting as Loki dying.
+  max_streams_per_user: 10000
+  max_line_size: 256KB
+  # Structured metadata carries OTel attributes that must NOT become labels — the trace id above all. This is
+  # what makes trace correlation possible without one stream per request.
+  allow_structured_metadata: true
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+
+# The OTLP receiver, so the collector can send logs without a Promtail hop. One fewer component than the
+# traditional Promtail pipeline, and the collector already has the resource attributes Loki wants as labels.
+distributor:
+  otlp_config:
+    default_resource_attributes_as_index_labels:
+      - service.name
+      - forgeops.tier
+      - host.name

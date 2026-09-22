@@ -1,0 +1,46 @@
+# Prometheus — Phase 2 §2.10's metrics store and PromQL surface.
+#
+# WHAT THIS TIER IS AND IS NOT. It is the FAST, SHORT window: fifteen days on local disk, queried directly by
+# panels that need an answer in milliseconds. It is NOT the archive — that is Mimir, by remote write from the
+# collector, and the split exists because the two have opposite requirements. A store tuned for fast queries
+# over a recent window and a store tuned for years of retention are different systems, and asking one to do
+# both means either slow dashboards or a disk that fills.
+#
+# WHY PROMETHEUS SCRAPES THE COLLECTOR rather than the collector pushing here. A pull model means a
+# Prometheus restart loses nothing (it re-scrapes) and a collector restart loses at most one interval.
+# Remote-write in both directions doubles the number of places a failure can hide, and a failed push is
+# invisible from the Prometheus side — it looks like a service that stopped emitting.
+
+global:
+  # Fifteen seconds. The collector's export interval is also fifteen seconds, and scraping faster would
+  # duplicate samples while scraping slower would alias them — a fifteen-second counter read every minute
+  # loses three quarters of its resolution and `rate()` becomes a guess.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    # Stamped so Mimir can tell one deployment's series from another's. Without it, two ForgeOps
+    # installations writing to one Mimir would silently merge their metrics.
+    forgeops_deployment: ${FORGEOPS_DEPLOYMENT_NAME:-local}
+
+scrape_configs:
+  # The gateway collector's Prometheus exporter, which is where all application metrics arrive.
+  - job_name: otel-gateway
+    honor_labels: true
+    static_configs:
+      - targets: ["otel-gateway:8889"]
+
+  # The collectors' OWN metrics. Without these, "is telemetry flowing" is only answerable by noticing its
+  # absence downstream — which is indistinguishable from a quiet system.
+  - job_name: otel-collector-internal
+    static_configs:
+      - targets: ["otel-gateway:8888", "otel-agent:8888"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+# RULES ARE IN A SEPARATE FILE, loaded here. Recording rules for the panels that would otherwise run an
+# expensive query on every refresh: an AI cost dashboard summing a counter over a month recomputes the whole
+# range each time, and at that point the dashboard is the load.
+rule_files:
+  - /etc/prometheus/rules/*.yaml

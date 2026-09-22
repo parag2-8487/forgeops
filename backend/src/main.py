@@ -338,6 +338,21 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # only the request that needs it, and leaves an unreachable Redis as a readiness matter (§4.4).
     app.state.arq_pool = None
 
+    # --- 2.10: OTel instrumentation ------------------------------------------
+    #
+    # A NO-OP WHEN NO COLLECTOR IS CONFIGURED, and constructed unconditionally so `app.state.telemetry`
+    # always exists -- a caller checking for the attribute would be a second way to be off.
+    from .monitoring.telemetry import Telemetry
+
+    telemetry = Telemetry(
+        endpoint=getattr(settings, "forgeops_otel_endpoint", ""),
+        service_name="forgeops-backend",
+    )
+    app.state.telemetry = telemetry
+    # Health and readiness are EXCLUDED inside `instrument_app`: a liveness probe every second would
+    # otherwise be the overwhelming majority of every trace sample and every request-rate panel.
+    telemetry.instrument_app(app)
+
     # --- 2.2 and 2.4a: the durable deployment pipeline ------------------------
     #
     # The pipeline's steps are engine-agnostic handlers in `deployments/pipeline.py`; they need a session

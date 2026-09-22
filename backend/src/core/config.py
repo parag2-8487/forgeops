@@ -620,6 +620,12 @@ class Settings(BaseSettings):
     # accepting anything: an unauthenticated webhook that writes rows and raises notifications is a spam
     # and storage amplifier, and a forged payload would put a false entry in somebody's history.
     argocd_webhook_login_secret: str = ""
+    # 2.10. Where the OTel collector is. EMPTY MEANS OFF, and that is a supported configuration:
+    # telemetry is not a runtime dependency, so a deployment without a collector must behave exactly as
+    # one with it. What it must not do is emit zeros that look like measurements, which is why
+    # `Telemetry.enabled` is separate and the readiness report distinguishes unconfigured from
+    # unreachable.
+    forgeops_otel_endpoint: str = ""
     arq_queue_name: str = Field(default="forgeops")
     arq_max_jobs: int = Field(default=10, ge=1, le=1000)
     arq_job_timeout_seconds: int = Field(default=900, ge=1)

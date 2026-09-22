@@ -540,6 +540,119 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+  # ---- 2.10: OTel-native monitoring -------------------------------------------------------------
+  #
+  # BEHIND THE `observability` PROFILE, so `make up` does not start six more containers for a developer
+  # working on a route. That is a judgement about the default experience and not about importance:
+  # `docker compose --profile observability up -d` brings the whole tier, and the backend's telemetry is
+  # a no-op until FORGEOPS_OTEL_ENDPOINT points at it -- so a deployment without this profile behaves
+  # exactly as one with it rather than failing.
+
+  otel-agent:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.116.1@sha256:d0ebf65280da2e1b1491d1b93648281afd353d4b9ea19160090303cec9a233bd
+    command: ["--config=/etc/otel/agent.yaml"]
+    volumes:
+      - ./infra/observability/otel-agent.yaml:/etc/otel/agent.yaml:ro
+    environment:
+      FORGEOPS_OTEL_GATEWAY_ENDPOINT: otel-gateway:4317
+      FORGEOPS_OTEL_GATEWAY_INSECURE: "true"
+    # The agent receives on LOCALHOST only, so it is reachable by processes sharing its network namespace
+    # and by nothing else. Publishing a port here would defeat the reason it binds 127.0.0.1.
+    network_mode: service:backend
+    depends_on:
+      otel-gateway: { condition: service_started }
+
+  otel-gateway:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.116.1@sha256:d0ebf65280da2e1b1491d1b93648281afd353d4b9ea19160090303cec9a233bd
+    command: ["--config=/etc/otel/gateway.yaml"]
+    volumes:
+      - ./infra/observability/otel-gateway.yaml:/etc/otel/gateway.yaml:ro
+    environment:
+      FORGEOPS_MIMIR_ENDPOINT: http://mimir:9009/api/v1/push
+      FORGEOPS_MIMIR_INSECURE: "true"
+      FORGEOPS_LOKI_ENDPOINT: http://loki:3100/otlp
+      FORGEOPS_LOKI_INSECURE: "true"
+      FORGEOPS_TEMPO_ENDPOINT: tempo:4317
+      FORGEOPS_TEMPO_INSECURE: "true"
+    ports:
+      - "127.0.0.1:${OTEL_GATEWAY_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${OTEL_GATEWAY_METRICS_PORT:-8889}:8889"
+    depends_on:
+      mimir: { condition: service_started }
+      loki: { condition: service_started }
+      tempo: { condition: service_started }
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.1.0@sha256:6559acbd5d770b15bb3c954629ce190ac3cbbdb2b7f1c30f0385c4e05104e218
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus"
+      # FIFTEEN DAYS, and the archive is Mimir. A Prometheus asked to hold a year on local disk is
+      # either slow or full, which is the reason both stores exist.
+      - "--storage.tsdb.retention.time=15d"
+      # Required for exemplars to be stored at all. Without it the metric-to-trace link silently does
+      # nothing: the collector emits exemplars, Prometheus discards them, and the panel has no link.
+      - "--enable-feature=exemplar-storage"
+    volumes:
+      - ./infra/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./infra/observability/rules:/etc/prometheus/rules:ro
+      - promdata:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  mimir:
+    profiles: ["observability"]
+    image: grafana/mimir:2.15.0@sha256:85f55510e0d348140db06566659193a96bf2b2695205d44fc1092092b937e9a0
+    command: ["-config.file=/etc/mimir/mimir.yaml"]
+    volumes:
+      - ./infra/observability/mimir.yaml:/etc/mimir/mimir.yaml:ro
+      - mimirdata:/data/mimir
+    ports:
+      - "127.0.0.1:${MIMIR_PORT:-9009}:9009"
+
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:3.3.2@sha256:8af2de1abbdd7aa92b27c9bcc96f0f4140c9096b507c77921ffddf1c6ad6c48f
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./infra/observability/loki.yaml:/etc/loki/loki.yaml:ro
+      - lokidata:/loki
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+
+  tempo:
+    profiles: ["observability"]
+    image: grafana/tempo:2.7.0@sha256:12e904cc509a8e0bd87815e0bc719b6167933bc3f2532716a85811af967780f6
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./infra/observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempodata:/var/tempo
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.5.1@sha256:5781759b3d27734d4d548fcbaf60b1180dbf4290e708f01f292faa6ae764c5e6
+    environment:
+      # ANONYMOUS ACCESS IS OFF. Grafana's default admin password is `admin`, and a monitoring UI reachable
+      # without a login exposes every metric and log line in the deployment -- including the log lines the
+      # redaction pipeline exists to protect.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_LOGIN_SECRET:?GRAFANA_ADMIN_LOGIN_SECRET must be set}
+      # Embedding is what 2.10's dashboard box needs, and it is narrowed rather than opened: same-origin
+      # only, so this product's frontend can iframe a panel and another site cannot.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "strict"
+    volumes:
+      - ./infra/observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/forgeops.yaml:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      prometheus: { condition: service_started }
+      loki: { condition: service_started }
+      tempo: { condition: service_started }
   # Added by task 9.5: devtools container for OpenTofu integration tests.
   # Only starts with `docker compose --profile tools up -d --wait`.
   agent-dev:
@@ -555,6 +668,11 @@ services:
 
 volumes:
   pgdata: {}
+  promdata: {}
+  mimirdata: {}
+  lokidata: {}
+  tempodata: {}
+  grafanadata: {}
   redisdata: {}
   tofucache: {}
   # The Ollama model store. Named rather than anonymous so `docker compose down` without

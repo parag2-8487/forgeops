@@ -1,0 +1,90 @@
+# Grafana datasources — Phase 2 §2.10.
+#
+# PROVISIONED AS A FILE, not clicked in. A datasource configured by hand exists only in the Grafana database
+# of one machine, so the dashboards this product ships would be broken on every other installation — and
+# nobody would find out until they looked.
+#
+# THE CORRELATION WIRING IS THE POINT OF THIS FILE. Four stores are useless separately; what makes them a
+# monitoring system is being able to move between them:
+#
+#   metric → trace   `exemplarTraceIdDestination` on Prometheus. An exemplar is a trace id attached to a
+#                    histogram bucket, so clicking a latency spike opens a request that was actually slow.
+#                    This is what §2.10's "trace correlation" means, and the collector must emit exemplars
+#                    for it to work at all — see `enable_open_metrics` in the gateway config.
+#
+#   trace → logs     `tracesToLogsV2` on Tempo, matched on `service.name` and the trace id. Without the tag
+#                    mapping, Grafana searches all logs for the id, which on a Loki that indexes labels and
+#                    not content means scanning everything.
+#
+#   logs → trace     `derivedFields` on Loki, extracting the trace id from the line. The id is deliberately
+#                    NOT a Loki label — a label per request is the standard way to take Loki down — so it is
+#                    found in the line and linked from there.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      # Must match the scrape interval, or Grafana's `$__rate_interval` computes a window narrower than the
+      # data and every rate() panel shows gaps that are not there.
+      timeInterval: 15s
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+
+  # The long-term store, as a SEPARATE datasource rather than replacing Prometheus. A panel asking about the
+  # last hour should not pay Mimir's query cost, and a panel asking about last quarter cannot be answered by
+  # Prometheus at all — so the choice belongs to the panel.
+  - name: Mimir
+    type: prometheus
+    uid: mimir
+    access: proxy
+    url: http://mimir:9009/prometheus
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        # Extracted from the LINE, because the trace id must not be a Loki label.
+        - name: TraceID
+          matcherRegex: 'trace_id[=:"\s]+([a-f0-9]{32})'
+          url: "$${__value.raw}"
+          datasourceUid: tempo
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        # Matched on the service, so the log search starts from a label rather than scanning every stream.
+        tags:
+          - key: service.name
+            value: service_name
+        filterByTraceID: true
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags:
+          - key: service.name
+            value: service_name
+      # The service graph needs the collector's spanmetrics connector; without it this panel is empty, and an
+      # empty service graph reads as "no services talk to each other" rather than as "not configured".
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

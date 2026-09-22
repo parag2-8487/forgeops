@@ -1019,15 +1019,85 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.10 OTel-Native Monitoring (Two-Tier Deployment) _(former 3.2)_
 
-- [ ] Deploy **OTel Collector two-tier architecture**:
-  - **Tier 1 (Sidecar)**: Per-pod collectors — PII redaction, local buffering (`memory_limiter`), 50-100MB overhead
-  - **Tier 2 (Gateway)**: Cluster-level collectors — **tail-based sampling** (stateful), load balancing (consistent hash), batch processing
-- [ ] Backend: Configure OTel metrics, logs, traces instrumentation with **gen_ai.\* semantic conventions**
-- [ ] Backend: Implement **hybrid sampling**: head-based 10% for routine traffic + tail-based 100% for errors/outliers
-- [ ] Backend: Implement **per-tenant cost tracking** via OTel custom metrics (`gen_ai.cost.total`)
-- [ ] Prometheus: Metrics storage and PromQL queries
-- [ ] **Grafana Mimir**: Long-term metrics storage with retention policies
-- [ ] Loki: Log aggregation
+- [x] Deploy **OTel Collector two-tier architecture**: `infra/observability/otel-agent.yaml` (per host)
+      and `otel-gateway.yaml` (per deployment), both in `docker-compose.yml` behind the `observability`
+      profile. The division is not stylistic: **tail sampling cannot live in the agent**, because the
+      decision needs every span of a trace in one place and a trace crosses hosts — an agent sampling
+      locally decides on fragments, and the case it gets wrong most often is the one that matters, since
+      an error span whose siblings were dropped looks like a complete, uneventful trace. A test asserts
+      no pipeline in the agent tier contains a processor whose name contains `sampl`. The agent listens
+      on 127.0.0.1 only (0.0.0.0 would accept telemetry from anything reaching the host: an injection
+      route into an operator's own dashboards); the gateway listens on 0.0.0.0 because accepting off-box
+      is its purpose. `memory_limiter` precedes `batch` in both tiers, asserted — a collector killed by
+      the OOM killer loses everything it held, one refusing data loses only what it refused. The agent's
+      retry queue is BOUNDED, because an unbounded queue is a memory leak wearing a reliability costume.
+- [x] Backend: Configure OTel metrics, logs, traces instrumentation with **gen_ai.\* semantic
+      conventions** — `src/monitoring/telemetry.py`, composed in the lifespan. The conventions are the
+      point: any code can emit `llm_tokens`, and `gen_ai.usage.input_tokens` is what every Grafana
+      dashboard and OTel-aware backend already understands. **Both `gen_ai.request.model` and
+      `gen_ai.response.model` are recorded**, because a routing cascade that fell back to a standby is
+      invisible when only the request is, and "why did this cost more than I expected" is then
+      unanswerable. **Prompts and completions are refused by an assertion**, not by review: a prompt in a
+      metrics store is an unredacted copy of the operator's source code under a different retention
+      policy and access model from the database it was redacted for. Health and readiness are excluded
+      from instrumentation, or a per-second liveness probe becomes the majority of every trace sample and
+      request-rate panel. A missing collector endpoint is a cheap no-op, and `enabled` stays False so
+      readiness can distinguish unconfigured from unreachable. 16 tests, including emission read back
+      from the SDK's own in-memory reader.
+- [x] Backend: Implement **hybrid sampling**: head-based 10% for routine traffic + tail-based 100% for
+      errors/outliers — in the gateway's `tail_sampling` processor, whose policies are **or**-ed, which
+      is what makes 10% probabilistic beside 100% error yield "all errors plus a tenth of the rest"
+      rather than "a tenth of the errors". Four policies, each asserted on the parsed config: every
+      ERROR trace, every trace over 2s, **every `gen_ai` trace** (expensive, rare, and the thing this
+      product exists to do — sampling it away would also make per-tenant cost an estimate scaled up from
+      a sample rather than a measurement), and 10% of everything else. `tail_sampling` runs BEFORE
+      `batch`, asserted, because it needs whole traces and batching first hands it arbitrary groupings.
+      **Metrics and logs are never sampled**, also asserted: a sampled counter is a wrong number rather
+      than a cheaper one — a 10% sample of `gen_ai.cost.total` under-reports every bill by an order of
+      magnitude with nothing downstream able to tell — and for logs the one line an operator needs during
+      an incident is exactly the one a sampler would drop.
+- [x] Backend: Implement **per-tenant cost tracking** via OTel custom metrics (`gen_ai.cost.total`) —
+      **verified end to end against the running stack**: the backend emitted three generations at 0.5,
+      the collector received and exported them, and `curl` against Prometheus returned
+      `gen_ai_cost_total = 1.5` carrying `forgeops_tenant_id`, `gen_ai_request_model` and
+      `gen_ai_response_model`. `tenant_id` is a metric ATTRIBUTE and that is a deliberate cardinality
+      decision: tenants are few and long-lived, whereas `user_id` or `request_id` would be unbounded and
+      attaching one is the classic way to take a monitoring system down with monitoring. An absent tenant
+      becomes the label `"none"` rather than being omitted, because an omitted label creates a SECOND
+      series and a query summing by tenant would silently exclude every untenanted generation — which,
+      with tenants deferred, is currently all of them. A negative cost RAISES rather than being clamped:
+      Prometheus reads a counter that went down as a reset, so one bad value corrupts every later
+      `rate()` over that series rather than just that sample.
+- [x] Prometheus: Metrics storage and PromQL queries — `infra/observability/prometheus.yaml` plus
+      recording rules in `rules/forgeops.yaml`, and a real query against the running instance returned
+      the cost series. It SCRAPES the collector rather than the collector pushing: a Prometheus restart
+      then loses nothing and a collector restart loses one interval, whereas remote-write in both
+      directions doubles the places a failure can hide and a failed push is invisible from this side.
+      Fifteen-day retention, matching the scrape interval to the collector's export interval so `rate()`
+      is not aliased. `--enable-feature=exemplar-storage` is set, without which the collector emits
+      exemplars and Prometheus discards them — the metric-to-trace link would silently do nothing.
+      The recorded error ratio deliberately does NOT use `or vector(0)`: an absent series must render as
+      "no data" rather than as a zero nobody measured.
+- [x] **Grafana Mimir**: Long-term metrics storage with retention policies —
+      `infra/observability/mimir.yaml`, running and answering `/ready`, fed by the gateway's remote-write
+      exporter. **`compactor_blocks_retention_period: 90d` is stated explicitly** rather than left to
+      Mimir's default of forever, which on a filesystem backend means "until the disk fills and every
+      write fails at once". Monolithic mode deliberately: microservices mode is right for a metrics
+      platform serving many teams and is a dozen components to operate, whereas this product's default
+      deployment is one machine — and switching to S3 and scaling out is a configuration change rather
+      than a migration, which is the reason for choosing Mimir over a second long-retention Prometheus.
+      Ingestion and cardinality limits are set, so one misbehaving exporter is a rejected series naming
+      the culprit instead of Mimir dying.
+- [x] Loki: Log aggregation — `infra/observability/loki.yaml`, running and answering `/ready`, receiving
+      OTLP directly from the gateway so there is no Promtail hop and the collector's resource attributes
+      become the labels. Chosen over Elasticsearch because Loki indexes LABELS and not content, which
+      makes the cost of a log line predictable — an Elasticsearch index grows with the content, so a
+      verbose deployment silently becomes an expensive one. **The trace id is deliberately not a label**:
+      a label per request is the standard way to take Loki down, so it stays in the line and Grafana's
+      `derivedFields` extracts it. Retention is enforced at 30 days with `retention_enabled` on the
+      compactor, because a filesystem-backed Loki with no retention fills the disk and then every write
+      fails at once — including the lines describing why. Old samples are rejected, so a collector
+      replaying a week-old queue cannot make a "last hour" query return week-old lines.
 - [ ] Grafana: Embedded dashboards (data sources: Prometheus/Mimir + Loki + Tempo)
 - [ ] Frontend: Unified monitoring dashboard with exemplar support
 - [ ] Frontend: Infrastructure health overview
