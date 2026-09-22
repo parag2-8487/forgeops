@@ -49,11 +49,7 @@ def test_the_fallback_is_ambient_and_not_sidecar() -> None:
 
 def test_no_linkerd_configuration_is_introduced() -> None:
     """The avoided option must stay avoided, which is a property of the tree rather than of the README."""
-    offenders = [
-        path
-        for path in (MESH.parent).rglob("*")
-        if path.is_file() and "linkerd" in path.name.lower()
-    ]
+    offenders = [path for path in (MESH.parent).rglob("*") if path.is_file() and "linkerd" in path.name.lower()]
     assert offenders == [], f"Linkerd configuration was added under infra/: {offenders}"
 
 
