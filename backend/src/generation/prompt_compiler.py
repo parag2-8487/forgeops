@@ -76,6 +76,34 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "It contains a line that is exactly `USER 10001`, placed after the last RUN instruction and "
         "before CMD or ENTRYPOINT. Write that line verbatim — a numeric id is required because "
         "Kubernetes' runAsNonRoot check reads the uid and cannot resolve a name from the image.",
+        # THE SAME LESSON AS `USER 10001`, found the same way and by the harness rather than by review.
+        # `dockerfile_base_pinned` was the check failing every attempt, and the only instruction the model
+        # had for it was the finding restated as prose -- "every FROM pinned to a digest or an exact
+        # version, never a floating tag". 7b answered `FROM alpine:latest`, which is a reasonable-looking
+        # base image and an unambiguous failure. Naming the forbidden token and the accepted shape gives
+        # the model something to copy instead of something to infer.
+        "NO `FROM` line ends in `:latest`, and none omits a tag. Every `FROM` is either "
+        "`image:<exact-version>` (for example `python:3.13-slim`, never `python:latest` and never bare "
+        "`python`) or `image@sha256:<digest>`. This applies to EVERY stage of a multi-stage build, "
+        "including the builder: a build whose builder floats is not reproducible even when its final "
+        "stage is pinned.",
+        # The language is stated as a REQUIREMENT rather than left to the facts section. 7b read a Python
+        # project's index and wrote a Go build -- `FROM golang:1.17` with `go mod download` -- so the
+        # facts alone did not carry it. An artifact for the wrong language fails every content check at
+        # once and the findings then describe symptoms rather than the cause.
+        # Multi-stage and HEALTHCHECK get the same treatment, in one edit rather than one 7-minute harness
+        # iteration each: they fail for the same reason (prose the model must synthesise from) and the
+        # remedy is identical (a shape it can copy). Iterating one check at a time would have been three
+        # more runs to learn the same thing.
+        "There are AT LEAST TWO `FROM` instructions. The first is the build stage and ends with "
+        "` AS builder`; the second is the final runtime image and copies from it with "
+        "`COPY --from=builder`. A single-stage Dockerfile ships the build tooling in the runtime image "
+        "and does not satisfy this.",
+        "There is a `HEALTHCHECK` instruction. Write it as a single line beginning `HEALTHCHECK ` with "
+        "`--interval`, `--timeout` and `--retries` options and a `CMD` that exercises the service's own "
+        "health endpoint. A comment mentioning health does not count; the instruction must be present.",
+        "The base image and the build steps match the language of THIS repository, as stated in the "
+        "facts section above. Do not write a build for a different language.",
         "The file contains at least one real instruction, not only comments.",
     ),
     "k8s": (
