@@ -342,6 +342,30 @@ TRANSACTION aborted, so the next statement failed with `InFailedSQLTransactionEr
 wrong thing, several lines from its cause. It runs in a savepoint now, and a settlement failure is recorded
 on the change set rather than lost.
 
+### A regression I introduced and did NOT isolate
+
+**`End-to-End Journey CI` / "Apply from a host agent binary" fails on `5de7d1e` and passed on the previous
+run.** It is a regression from this session. What is known from the log:
+
+- The revert transit SUCCEEDS — `scripts/submit_host_apply.py` prints its result line,
+  `{"reverse_change_set_id": ..., "status": "applying", "reverted": ...}`, so the governance work completed.
+- The process then exits NON-ZERO, and the traceback is `asyncio.exceptions.CancelledError` raised inside
+  the app lifespan's teardown, at `redis.asyncio.client.aclose` → `connection.disconnect`.
+- `host-apply-proof.py` treats any non-zero return from that `docker compose exec` as
+  `submit ('revert-and-approve', ...) failed`, which is why the message names the transit rather than the
+  shutdown.
+
+So the likely shape is: the transit is fine and the short-lived process's SHUTDOWN now raises. The two
+changes that could plausibly reach it are the `command_id` UPDATE added to `_deliver` and the savepoint the
+settler hook opens in `record_command_result` — the latter is composed as `None` in that script, which argues
+against it and is exactly why this needs isolating rather than guessing.
+
+**Next step, stated so it is not re-derived:** run `scripts/submit_host_apply.py` in the stack with a real
+seeded project and read its exit code separately from its stdout; if the transit line prints and the exit is
+non-zero, the fault is in teardown and not in governance, and `git stash`-ing the `_deliver` UPDATE alone
+distinguishes the two candidates in one run. Do not change the proof script to tolerate a non-zero exit:
+that would hide whatever this is.
+
 ### Carry-over still open
 
 - [ ] The three pre-existing generation-provenance integration failures: unchanged and still a decision about
