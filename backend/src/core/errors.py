@@ -223,6 +223,11 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "incident-suggestion-absent": ProblemSpec(404, "No such fix suggestion for this incident"),
     "incident-suggestion-already-submitted": ProblemSpec(409, "That suggestion is already a change set"),
     "incident-governance-absent": ProblemSpec(503, "Governance is not composed, so a fix cannot be proposed"),
+    # 2.12's three. `healing-requires-approval` is a 403 and not a 409: the caller asked for something
+    # they are not permitted to have done automatically, and the answer does not change by retrying.
+    "healing-refused": ProblemSpec(409, "A self-healing guard rail refused this action"),
+    "healing-requires-approval": ProblemSpec(403, "That remedy cannot be executed without an approval"),
+    "healing-governance-absent": ProblemSpec(503, "Governance is not composed, so no healing can occur"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a

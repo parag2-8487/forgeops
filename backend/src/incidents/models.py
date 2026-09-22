@@ -92,7 +92,10 @@ class Incident(SQLModel, table=True):
     # THE DEDUPLICATION KEY, and the reason it is stored rather than computed on read: the inputs that
     # produce it (a container name, an exit code, a pod's reason) may be gone by the time anyone looks,
     # so a fingerprint recomputed later could differ from the one that grouped the incident.
-    fingerprint: str = Field(max_length=64, index=True)
+    # NO `index=True`: that would declare a SECOND index of the same name, plain and non-unique, which
+    # shadows the partial unique index in `__table_args__` that deduplication depends on. `alembic check`
+    # caught it as drift -- proposing to drop the unique index and add a plain one.
+    fingerprint: str = Field(max_length=64)
     # How many times this fingerprint has been seen. Incremented rather than inserting a new row, because
     # an operator facing a crash-loop needs one incident saying "47 times" and not 47 incidents.
     occurrences: int = Field(default=1)
@@ -204,6 +207,68 @@ class IncidentFixSuggestion(SQLModel, table=True):
         default=None,
         sa_column=Column("change_set_id", Uuid(), ForeignKey("change_sets.id"), nullable=True),
     )
+    created_at: datetime = Field(
+        sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now())
+    )
+
+
+class HealingAction(SQLModel, table=True):
+    """One self-healing attempt, INCLUDING the ones a guard rail refused.
+
+    A refused action is a row and not a silence. "The system did nothing" and "the system decided not to"
+    are different facts, and an operator asking why a container was never restarted needs the second.
+
+    The `auto = false OR remedy IN (safe set)` CHECK in revision 0034 is the two-tier split expressed
+    where no future caller can bypass it -- see the migration for why that duplication is deliberate.
+    """
+
+    __tablename__ = "healing_actions"
+    __table_args__ = (
+        Index("ix_healing_actions_incident", "incident_id", "created_at"),
+        Index("ix_healing_actions_created_at", "created_at"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    incident_id: uuid.UUID = Field(
+        sa_column=Column("incident_id", Uuid(), ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False)
+    )
+    remedy: str = Field(max_length=64)
+    operation: str = Field(max_length=64)
+    arguments: dict[str, Any] = Field(sa_column=Column("arguments", JSONB, nullable=False))
+    auto: bool = Field(default=False)
+    state: str = Field(max_length=16)
+    change_set_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column("change_set_id", Uuid(), ForeignKey("change_sets.id"), nullable=True),
+    )
+    note: str = Field(default="", sa_column=Column("note", Text, nullable=False))
+    created_at: datetime = Field(
+        sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now())
+    )
+    completed_at: datetime | None = Field(
+        default=None, sa_column=Column("completed_at", DateTime(timezone=True), nullable=True)
+    )
+
+
+class IncidentPostmortem(SQLModel, table=True):
+    """The summary and recommendations written after an incident.
+
+    Separate from the analysis because they answer different questions at different times: an analysis says
+    what broke, a postmortem says what happened and what to change so it does not recur.
+    """
+
+    __tablename__ = "incident_postmortems"
+    __table_args__ = (Index("ix_incident_postmortems_incident", "incident_id", "created_at"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    incident_id: uuid.UUID = Field(
+        sa_column=Column("incident_id", Uuid(), ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False)
+    )
+    state: str = Field(max_length=16)
+    summary: str = Field(default="", sa_column=Column("summary", Text, nullable=False))
+    recommendations: list[Any] = Field(default_factory=list, sa_column=Column("recommendations", JSONB, nullable=False))
+    model: str = Field(default="", max_length=128)
+    actions_considered: int = Field(default=0)
     created_at: datetime = Field(
         sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now())
     )

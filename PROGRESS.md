@@ -399,6 +399,39 @@ ordinary happy path (`test_generation_routing.py`), and the new 2.10 and Inngest
 `.env.example` -- stronger than I had assumed, and it caught a setting I had registered without
 documenting).
 
+### The model question, settled by measurement -- and the answer was not the one expected
+
+**Measured on this CPU, two runs each, direct prompt asking for a Dockerfile with a HEALTHCHECK:**
+
+| model                | `### FILE:` parse | emits `HEALTHCHECK` | latency             |
+| -------------------- | ----------------- | ------------------- | ------------------- |
+| `qwen2.5-coder:1.5b` | 2/2               | **0/2**             | 11-71s              |
+| `qwen2.5-coder:7b`   | 2/2               | **2/2**             | 64s warm, 367s cold |
+
+Both properties were measured rather than just size, because the earlier `3b` result (1 of 4 parsed where
+`1.5b` parsed 4 of 4) had already shown bigger is not automatically better on the format contract. 7b is
+better on both, so **7b is now the default** in `.env.example`, `.env` and the integration suite's
+`DEFAULT_MODEL` -- which mirrors it deliberately, so the tests exercise the configured model rather than a
+hardcoded other one. The latency cost is real and is why `TIMEOUT_SECONDS` is 900: a cold first generation
+is around six minutes.
+
+**The three provenance tests still fail, and that is the useful finding.** With 7b configured the run took
+19m30s and still ended `served_from == 'provider'`. So the model was NOT the sole binding constraint, and
+the earlier diagnosis was incomplete: 7b satisfies `dockerfile_healthcheck_present` when asked directly,
+but the real pipeline does not ask directly -- `compile_prompt` builds its instruction from the set of
+FAILING READINESS CHECKS, and the gate then judges the result against all of them. Which of those checks
+now fails is **not isolated**, and it was not isolated because each iteration costs nineteen minutes; that
+is a statement of what was not done rather than an excuse.
+
+**What to do next, in the cheap order:** run one generation through `compile_prompt` + `_validate` in
+isolation and print the findings -- roughly 60-90 seconds against a warm 7b, versus 19 minutes through
+pytest. That names the failing check directly. An attempt at this was started and blocked only on
+`compile_prompt`'s real signature (it takes `checks`, `paths`, `contents`, `inventory` -- not a free-text
+prompt), so the next pass should build that fixture first.
+
+The assertions were not relaxed and the prompt was not swapped for one with weaker checks. `ci` stays red
+for this, now with a measured cause and a named next step rather than a carried one.
+
 ### HANDOFF: where the next pass starts
 
 **Phase 2 is 72 of 123.** Tree clean, NOT pushed -- one push after all 123.

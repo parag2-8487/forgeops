@@ -1264,14 +1264,77 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.12 Self-Healing (Guard-Railed) _(former 3.4)_
 
-- [ ] Backend: Health monitoring (failed containers, crash-looping pods, high resource usage)
-- [ ] Backend: Two-tier action model
-  - Safe: auto-execute (restart crashed container), logged + reported
-  - Risky: require approval (rollback, scaling, config changes)
-- [ ] Backend: AI post-incident summary generation
-- [ ] Backend: Long-term recommendation generation
-- [ ] Frontend: Self-healing activity log
-- [ ] Frontend: Post-incident summary display
+- [x] Backend: Health monitoring (failed containers, crash-looping pods, high resource usage) -- the
+      observing half is 2.11's ingestion, which already turns a non-zero container exit, a
+      `CrashLoopBackOff` event and a breaker opening into deduplicated incidents from sources that
+      already exist. High resource usage is read through 2.10's catalogue rather than a second probe:
+      `collect_metrics_evidence` reads the recorded series, and `collector_refused_spans` is included so
+      an analysis cannot read a healthy figure from a collector that is dropping spans.
+- [x] Backend: Two-tier action model -- `src/incidents/healing.py`, migration `0034`, 35 tests.
+      **The split is structural in four independent ways, because a condition somebody could get wrong
+      later is not a boundary.**
+
+      *(1) The safe set is closed and auto-execution IS membership in it.* `is_auto_executable` is
+      `remedy in SAFE_REMEDIES` with no second condition -- no severity check, no confidence threshold,
+      no "unless". So a remedy nobody has classified is risky, which is the fail-safe direction; the
+      obvious alternative, a `risky: bool` per remedy, fails OPEN the first time somebody forgets it. A
+      test asserts every risky remedy is refused by `/heal` **and that nothing reached governance at all**.
+      `/heal` has no `auto` field, so the most dangerous decision is not in the request body.
+
+      *(2) An auto action cannot widen its own scope, because it does not choose its own target.*
+      `plan_from_incident` derives the operation arguments from the INCIDENT ROW; there is no parameter
+      for a container, namespace or replica count. An override can only narrow -- naming a risky remedy
+      yields `auto=False` and still acts on the incident's own target. An incident naming no target is
+      refused rather than guessed, only a Pod is restartable (deleting a Deployment is not a restart), and
+      there is **no default remedy** for an unmapped source: a fallback remedy is one that runs against
+      incidents nobody considered.
+
+      *(3) A healing loop cannot amplify.* Three bounds, checked against COMMITTED rows so two workers
+      cannot each pass them: a per-incident cap of 3 across all remedies; a 300-second cooldown, longer
+      than any container takes to crash again; and **a failed remedy is disqualified permanently** -- not
+      delayed, tested at +7 days -- because a restart that failed is evidence the restart is not the
+      answer. A governance refusal marks the action failed, closing the loop: an automated system that
+      retried every cooldown would be arguing with its own policy. Refusals do NOT consume the budget,
+      or one refusal would cascade into permanent refusal nobody chose.
+
+      *(4) The database refuses a dishonest row.* `ck_healing_actions_auto_is_safe` rejects any row
+      claiming `auto` for a remedy outside the safe set, whatever code wrote it, and
+      `ck_healing_actions_risky_needs_change_set` rejects an approval-required action recorded as having
+      run with nothing to point at. Both are tested with raw SQL, because their purpose is to hold when a
+      FUTURE caller with a plausible `if severity == 'critical'` gets it wrong. The remedy vocabulary is
+      duplicated between migration and Python with a test asserting they agree -- a guard rail that exists
+      only in the language with the bug is not a guard rail.
+
+      Every action goes through `transit_host_action`: "auto" means nobody was asked, never that nothing
+      was checked. With no chokepoint composed, nothing is attempted -- an automated action with no audit
+      row is the one thing this feature must never do. **Nothing in either tier runs a command line**, and
+      a test asserts no remedy name contains `exec`, `run`, `shell` or `command`.
+- [x] Backend: AI post-incident summary generation -- `src/incidents/postmortem.py`. The same refusals as
+      the RCA pipeline, because a fabricated postmortem is worse than none: it becomes the record. No
+      model gives `unavailable`, not an empty summary; an unparseable answer gives `insufficient` rather
+      than the raw text dropped into the summary field; and the database enforces both directions so the
+      honesty survives a future caller. **The declined healing actions are in the prompt, labelled as
+      declines** -- an incident where every remedy was refused must not read as one nobody responded to.
+- [x] Backend: Long-term recommendation generation -- a separate JSONB column, not prose inside the
+      summary, because the two have different audiences and lifetimes: a summary is read once during
+      review, a recommendation is acted on later, and merging them buries the actionable part. The model's
+      own "none supported by this record" is **filtered out** rather than carried through, since a
+      non-recommendation in a list an operator scans for things to do is worse than an empty list.
+      **Nothing here can execute itself**: recommendations are prose, and no path turns one into a remedy
+      -- a recommendation that could execute would be a self-healing system rewriting its own guard rails.
+- [x] Frontend: Self-healing activity log -- `features/incidents/HealingPanels.tsx`, 13 tests. **Refusals
+      are rows, marked as decisions rather than failures**, because a log showing only successes makes a
+      system that declined three times look like one never engaged. The remaining budget comes FIRST and
+      is an alert when spent ("this incident is now a human's"), the disqualified remedies are named with
+      the reason they will not be retried, and `auto` is rendered as a sentence -- "ran without waiting
+      for a human; policy, blast radius and audit still applied" -- rather than a badge, since a coloured
+      dot survives neither a screenshot, a colour-blind reader, nor a screen reader. The derived target is
+      shown so an operator can confirm the action touched what the incident was about.
+- [x] Frontend: Post-incident summary display -- a non-generated state renders its sentence and **no
+      summary block at all**, because a heading with nothing under it reads as "reviewed, nothing to say".
+      A record that recommends nothing is distinguished in words from no record existing -- the first is a
+      conclusion, the second a gap -- and the provenance line states that nothing shown can execute
+      itself.
 
 #### 2.13 AI Learning History (Per-Project Memory) _(former 3.5)_
 

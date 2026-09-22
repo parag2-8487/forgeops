@@ -71,7 +71,12 @@ EMBEDDING_MODEL_ENV = "SELF_HOSTED_EMBEDDING_MODEL_ID"
 #: this file failed on a developer's machine and passed in CI, so the natural reading was that the
 #: machine was at fault. `test_self_hosted_defaults_match_dotenv_example` now pins both constants
 #: against `.env.example`, so the claim in this comment is checked rather than asserted.
-DEFAULT_MODEL = "qwen2.5-coder:1.5b"
+# MIRRORS `.env.example`'s SELF_HOSTED_MODEL_ID, and it moved to 7b by MEASUREMENT rather than by
+# preference: `1.5b` parses the `### FILE:` contract 2/2 but emits a HEALTHCHECK 0/2, so
+# `dockerfile_healthcheck_present` can never pass and every run exhausts its attempts. `7b` is 2/2 on
+# both. The cost is latency -- 64s warm, 367s cold on this CPU -- which is why TIMEOUT_SECONDS below is
+# 900 rather than 300.
+DEFAULT_MODEL = "qwen2.5-coder:7b"
 DEFAULT_EMBEDDING_MODEL = "bge-m3:567m"
 
 #: CPU inference is minutes, not seconds. `OUTBOUND_HTTP_TIMEOUT_SECONDS` is 60, which is a
