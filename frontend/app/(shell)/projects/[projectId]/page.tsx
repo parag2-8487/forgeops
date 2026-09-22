@@ -10,6 +10,7 @@ import { AsyncState } from "@/components/ui/async-state";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { CodebaseIndexPanel } from "@/features/codebase/CodebaseIndexPanel";
 import { DeploymentDashboard } from "@/features/deployments/DeploymentDashboard";
+import { DevToolsPanel } from "@/features/devtools/DevToolsPanel";
 import { DockerDashboard } from "@/features/hostops/DockerDashboard";
 import { ReleaseTimeline } from "@/features/releases/ReleaseTimeline";
 import { KubernetesDashboard } from "@/features/hostops/KubernetesDashboard";
@@ -134,6 +135,18 @@ export default function ProjectDetailPage() {
                 workloads converged can be rolled back to.
               </p>
               <ReleaseTimeline projectId={projectId} />
+            </section>
+
+            <section aria-labelledby="devtools-heading" className="space-y-3">
+              <h2 id="devtools-heading" className="text-lg font-semibold">
+                Developer tools
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                2.8. Five named kinds, no command field. The agent chooses the argument vector from
+                the workspace&apos;s own manifests, and each run is a mutation through the
+                chokepoint.
+              </p>
+              <DevToolsPanel projectId={projectId} />
             </section>
 
             <section aria-labelledby="docker-heading" className="space-y-3">

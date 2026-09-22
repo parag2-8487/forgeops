@@ -725,13 +725,30 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.8 Local Development Tools
 
-- [ ] Agent: Run tests (npm test, pytest, go test)
-- [ ] Agent: Run linters
-- [ ] Agent: Build project
-- [ ] Agent: Run Docker locally
-- [ ] Agent: Run DB migrations
-- [ ] Backend: Dev-tools command proxy
-- [ ] Frontend: Dev-tools panel in project dashboard
+- [x] Agent: Run tests (npm test, pytest, go test) — `devtools.run` with `kind: "tests"`, resolved per
+      ecosystem from what the workspace contains: `go test ./...`, `npm test`, or `pytest -q`. A repository
+      with two manifests resolves the same way every time (Go first), asserted over five runs, because map
+      iteration order would make two runs of "tests" test different things. A FAILING SUITE IS A RESULT,
+      not an error: `go test` exiting 1 is what the operator asked to find out, and returning an error
+      would make a red suite indistinguishable from an agent that could not run it.
+- [x] Agent: Run linters — `kind: "lint"`: `go vet`, `npm run lint`, or `ruff check`.
+- [x] Agent: Build project — `kind: "build"`: `go build`, `npm run build`, or `docker build`. No registry
+      push: building an image is a build and pushing it is not.
+- [x] Agent: Run Docker locally — `kind: "compose"`: `docker compose up -d --wait`. The vector cannot
+      express `down -v` or `prune`, and a test enumerates every vector against a forbidden-verb list, so a
+      destructive compose verb is unreachable rather than merely unused.
+- [x] Agent: Run DB migrations — `kind: "migrations"`: `alembic upgrade head` or `prisma migrate deploy`.
+- [x] Backend: Dev-tools command proxy — `POST /projects/{id}/devtools/run` through
+      `transit_host_action`, so it is MUTATING and approval-required. "Run the tests" sounds read-only and
+      is not: the command is code the repository controls, so treating it as a read would give a panel the
+      authority to execute the repository's own scripts without a human. Revision `0027` admits
+      `devtools.run` to the change-set vocabulary. **The argument is a KIND, never a command line** — this
+      is the one place an arbitrary-shell escape would naturally appear, and `devtools_test.go` asserts the
+      kind set is closed and that `exec`, `shell`, `run`, `custom` and `script` are not kinds.
+- [x] Frontend: Dev-tools panel in project dashboard — `features/devtools/DevToolsPanel.tsx`, five buttons
+      and **no free-text field**, matching the operation: a panel that could type a command would need an
+      agent that accepts one. Each run reports a governance outcome, and the approval case says "nothing
+      has run yet" rather than implying the tool ran. 5 tests.
 
 #### 2.9 Kubernetes Management Dashboard _(former 3.1)_
 

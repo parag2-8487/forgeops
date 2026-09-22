@@ -43,6 +43,7 @@ from ..core.db import get_session
 from ..core.errors import problem
 from ..environments.service import EnvironmentService
 from ..governance.chokepoint import (
+    DEVTOOLS_OPERATION,
     DOCKER_CONTAINER_OPERATION,
     DOCKER_IMAGE_OPERATION,
     DOCKER_INVENTORY_OPERATION,
@@ -421,3 +422,47 @@ async def pod_detail(
             timeout_seconds=_READ_TIMEOUT_SECONDS,
         )
     )
+
+
+class DevToolRequest(BaseModel):
+    """Run one of the project's own tools, named by KIND.
+
+    A `Literal`, so an unknown kind is a 422 from the schema. There is deliberately no command, argument or
+    flag field: the agent chooses the vector from the kind and the workspace's own manifests, which is what
+    keeps this from being an arbitrary-execution route.
+    """
+
+    kind: Literal["tests", "lint", "build", "compose", "migrations"]
+    timeout_seconds: int = Field(default=0, ge=0, le=1500)
+    reason: str = Field(default="", max_length=500)
+
+
+@router.post(
+    "/devtools/run",
+    status_code=202,
+    summary="Run the project's own tests, linters, build, compose stack or migrations",
+)
+async def run_dev_tool(
+    project_id: uuid.UUID,
+    body: DevToolRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ActionAccepted:
+    """202, and approval-required like every other mutation.
+
+    "Run the tests" sounds read-only and is not: the command is code the repository controls. That is why
+    this travels `transit_host_action` rather than `read_inventory`.
+    """
+    submission = await _chokepoint(request).transit_host_action(
+        session,
+        project_id=project_id,
+        principal=principal,
+        operation=DEVTOOLS_OPERATION,
+        target=body.kind,
+        args={"kind": body.kind, "timeout_seconds": body.timeout_seconds},
+        environment_name=None,
+        environment_requires_approval=False,
+        reason=body.reason or f"run {body.kind}",
+    )
+    return _accepted(submission)

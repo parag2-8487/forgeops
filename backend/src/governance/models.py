@@ -132,6 +132,10 @@ CHANGE_SET_OPERATIONS: tuple[str, ...] = (
     "docker.container_action",
     "docker.image_action",
     "kubernetes.workload_action",
+    # 2.8. The project's own tests, linters, build, compose stack or migrations, by KIND -- never a
+    # command line. A change set because it executes the repository's own scripts on the operator's
+    # machine.
+    "devtools.run",
 )
 
 #: Key names a credential travels under, refused in `change_sets.operation_args`.

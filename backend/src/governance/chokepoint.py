@@ -146,8 +146,17 @@ READ_OPERATIONS: Final[frozenset[str]] = frozenset(
         KUBERNETES_POD_DETAIL_OPERATION,
     }
 )
+#: 2.8. Running the project's own scripts is the largest execution authority in the catalogue, so it is a
+#: host action rather than a read: a build writes artifacts, compose starts containers and a migration
+#: changes a database. The envelope names a KIND from a closed set; no field in it reaches a shell.
+DEVTOOLS_OPERATION: Final[str] = "devtools.run"
 HOST_ACTION_OPERATIONS: Final[frozenset[str]] = frozenset(
-    {DOCKER_CONTAINER_OPERATION, DOCKER_IMAGE_OPERATION, KUBERNETES_WORKLOAD_OPERATION}
+    {
+        DOCKER_CONTAINER_OPERATION,
+        DOCKER_IMAGE_OPERATION,
+        KUBERNETES_WORKLOAD_OPERATION,
+        DEVTOOLS_OPERATION,
+    }
 )
 
 #: The plan resource type a host action is scored as.

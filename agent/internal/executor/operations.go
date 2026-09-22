@@ -80,6 +80,13 @@ const (
 	// the entire explanation.
 	OpDockerContainerLogs Operation = "docker.container_logs"
 	OpKubernetesPodDetail Operation = "kubernetes.pod_detail"
+
+	// OpDevToolsRun runs the PROJECT'S OWN tests, linters, build, compose stack or migrations. The argument
+	// is a KIND from a closed set, never a command line: this is where an arbitrary-shell operation would
+	// most naturally appear and it deliberately does not. Mutating and approval-required, because a
+	// project's own test command is code the project controls, a build writes artifacts, compose starts
+	// containers and a migration changes a database.
+	OpDevToolsRun Operation = "devtools.run"
 )
 
 // allOperations is the declared vocabulary, used only to assert that the dispatch table covers
@@ -99,6 +106,7 @@ var allOperations = []Operation{
 	OpDockerInventory, OpKubernetesInventory,
 	OpDockerContainerAction, OpDockerImageAction, OpKubernetesWorkloadAction,
 	OpDockerContainerLogs, OpKubernetesPodDetail,
+	OpDevToolsRun,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).
