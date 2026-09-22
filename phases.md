@@ -1490,25 +1490,92 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 ### Completion Criteria
 
-- [ ] User can promote from dev → staging → production
-- [ ] Deployment with real image build + push + apply works
-- [ ] Rollback restores previous stable state
-- [ ] Docker dashboard shows containers and stats
-- [ ] AI Command Center understands "Deploy to staging" and executes
-- [ ] Notifications sent on deploy complete/failure
-- [ ] Local dev tools work (run tests, lint from dashboard)
+- [x] User can promote from dev -> staging -> production -- `test_deployments.py` (16 passed this session)
+      covers the promotion sequence over the `environments.position` ordering, which is a TOTAL order
+      enforced by `uq_environments_project_position`: two environments at one position would make "the next
+      one" a coin toss, and a promotion that picked arbitrarily is a deployment to the wrong place.
+- [x] Deployment with real image build + push + apply works -- **re-run this session with the capability
+      provided rather than skipped.** `TestABuildProducesAnImageAndAPushProducesARegistryDigest` passed in
+      4.19s with `FORGEOPS_REAL_DOCKER=1` against a `registry:2` the test starts itself; the pushed digest
+      is fetched back with `docker manifest inspect`, so a fabricated digest fails. Build reports
+      `digest_kind: local_image_id` and push `registry_digest`, because pinning a deployment to a local id
+      yields something unrebuildable. `TestACredentialLeftInTheDockerConfigFailsThePush` also passes: the
+      credential is asserted absent from `~/.docker/config.json` including base64-decoded.
+- [x] Rollback restores previous stable state -- `test_deployments.py` (16) and
+      `test_deployment_settler.py` (5) pass this session. A failed apply leaves `healthy` NULL rather than
+      False, because nothing checked the workloads and False would assert that they were checked and found
+      wanting -- which is what stops a failed apply looking like a cluster problem.
+- [x] Docker dashboard shows containers and stats -- 36 frontend tests pass this session
+      (`hostops.test.tsx` and `devtools.test.tsx`). `freshnessOf` classifies every reading as
+      never-reported, stale-with-its-age, or current, and an unparsable timestamp resolves to
+      never-reported rather than to now -- the one mistake that would make a stale panel look live.
+- [x] AI Command Center understands "Deploy to staging" and executes -- 48 tests. "Deploy to staging"
+      resolves to `deployments.create {environment: staging}`, and all five utterances the §2.5 box names
+      are asserted with their exact resolved arguments. Execution is a **second route**, not a boolean, so
+      a classifier's guess cannot reach the chokepoint without a human confirming the operation and
+      arguments it was shown. Ten adversarial utterances are asserted to produce no shell metacharacter in
+      any argument.
+- [x] Notifications sent on deploy complete/failure -- `test_notifications.py` (11 passed this session).
+      In-app and the recorded channels; the Novu box above stays open for its stated reason, and this
+      criterion does not depend on it.
+- [x] Local dev tools work (run tests, lint from dashboard) -- `devtools.run` takes a KIND and never a
+      command line, and the agent's executor tests pass this session. The same enumerated-verb discipline
+      the Command Center applies, which is why §2.5 could route natural language at it safely.
 - [ ] End-to-end test: scan project → deploy to staging → verify health → rollback
-- [ ] Inngest workflows functional: deployment pipeline with approval gates completes end-to-end
-- [ ] ArgoCD Application manifests generated and synced successfully
-- [ ] K8s dashboard shows real pods, deployments, namespaces
-- [ ] Metrics flowing from OTel → Prometheus → Grafana
-- [ ] AI can analyze a failed deployment and identify root cause
-- [ ] Failed container is auto-restarted (with log)
-- [ ] AI generates post-incident summary
-- [ ] AI learns from accepted/rejected suggestions (doesn't re-suggest rejected patterns)
-- [ ] Knowledge base answers questions using project context
+- [x] Inngest workflows functional: deployment pipeline with approval gates completes end-to-end --
+      `test_durable_pipeline.py` **11 passed with 0 skipped this session**, after starting the dev server
+      so the two capability-gated tests ran rather than skipping. A workflow is DATA carrying no engine
+      type; the release route refuses a step that is not gated, because sending an event nothing waits for
+      would leave the run suspended while the operator believed they had released it.
+- [x] ArgoCD Application manifests generated and synced successfully -- `test_argocd.py` (10) and
+      `test_argocd_rollouts.py` (18) pass this session. Safety defaults are asserted on the PARSED
+      document, because an `automated:` block nested one level too deep reads correctly and is silently
+      ignored. The webhook records rather than syncs: an unauthenticated HTTP request causing a production
+      deployment is the wrong shape however natural the implementation looks.
+- [x] K8s dashboard shows real pods, deployments, namespaces -- the same 36 frontend tests, plus the
+      rollout panel's 15. The agent reports -1 for NOT REPORTED and the panel renders that in words, with
+      a test asserting the weight cell contains no percentage at all in that state.
+- [x] Metrics flowing from OTel -> Prometheus -> Grafana -- **verified this session against the running
+      tier.** Four generations at 0.75 were emitted through the backend's `Telemetry`, and
+      `gen_ai_cost_total` read back as exactly **3.0** from Prometheus, from Mimir, and through BOTH
+      Grafana datasource proxies (`/api/datasources/proxy/uid/prometheus` and `.../uid/mimir`) carrying
+      the tenant and both model labels. Read back rather than assumed at each hop, so a break anywhere in
+      the chain would have shown as a missing series rather than as a passing configuration check.
+- [x] AI can analyze a failed deployment and identify root cause -- 31 tests. The ingestion path's
+      production caller is `DeploymentService.fail`, driven for real in
+      `test_a_real_deployment_failure_produces_an_incident_row`, and the analysis pipeline then produces
+      problem/location/fix from the evidence. **It refuses to conclude below two reachable sources, with
+      no model, or from an answer it could not parse** -- and the database refuses a row claiming
+      `analysed` with empty content, so a fabricated cause is not storable by any path.
+- [x] Failed container is auto-restarted (with log) -- `test_phase2_criteria.py` drives the real chain: a
+      container-exit incident is ingested, `POST .../heal` executes `restart_container` with `auto=true`,
+      and the `healing_actions` row is read back showing `state=executing`, `auto=true` and arguments
+      `{action: restart, container: api}` **derived from the incident** rather than supplied. The restart
+      reached governance as `docker.container_action`, asserted -- "auto" means nobody was asked, not that
+      nothing was checked.
+- [x] AI generates post-incident summary -- the same real chain continues into `POST .../postmortem`,
+      which returned `state=generated` with a summary naming the exit code and the restart, and one parsed
+      recommendation. The declined actions are in the prompt labelled as declines, so an incident where
+      every remedy was refused cannot read as one nobody responded to.
+- [x] AI learns from accepted/rejected suggestions (doesn't re-suggest rejected patterns) -- proven as a
+      CHAIN rather than as a stored row, because a row only proves the system remembered and not that it
+      acts on the memory. Two rejections of `Dockerfile` with the comment "we never use alpine here" were
+      recorded; reflection read them (the test asserts the rejections and the comment are in the prompt)
+      and wrote one preference; and `memory_for_prompt` then returned a block containing "Never use an
+      alpine base image in this project", which was recorded as an injection so a later run can be judged
+      against what actually reached the model.
+- [x] Knowledge base answers questions using project context -- 16 tests, including a **two-tenant
+      isolation proof**: signed in as tenant A and naming tenant B's project id exactly returns 404 with
+      B's content nowhere in the response, while B reading its own project succeeds -- so the isolation is
+      not a route that refuses everyone. An answer carries its sources, and with no retrieved context the
+      model is not asked at all, because a general answer that reads as specific is indistinguishable from
+      a real one.
 - [ ] End-to-end test: deploy → inject failure → AI detects → AI suggests fix → human approves
-- [ ] Grafana Mimir storing long-term metrics with configured retention period
+- [x] Grafana Mimir storing long-term metrics with configured retention period -- **the running process
+      confirms it, not the file**: `curl http://mimir:9009/config` reports
+      `compactor_blocks_retention_period: 90d`, and the same probe above proved data actually arrives via
+      the gateway's remote-write exporter. Stated explicitly rather than left to Mimir's default of
+      forever, which on a filesystem backend means "until the disk fills and every write fails at once".
 - [ ] Test coverage ≥ 75% — _combined criterion: former Phase 2 asked ≥ 70% and former Phase 3 asked ≥ 75%. Resolved to the STRICTER of the two, because a merged phase that shipped at the looser threshold would be a coverage reduction dressed as a merge. Backend, agent and frontend keep their existing higher gates (86%/77%/96-97-94-86); this is the phase floor, not a target._
 
 ### Excluded (for this phase)
