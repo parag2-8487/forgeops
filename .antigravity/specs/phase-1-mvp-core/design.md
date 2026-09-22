@@ -5349,6 +5349,11 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `healing-refused` | 409 | A self-healing guard rail refused the action: the attempt budget is spent, the cooldown has not elapsed, the remedy already failed for this incident, or no remedy is defined for that incident source. A 409 because the conflict is with recorded state; the detail names which bound was reached. |
 | `healing-requires-approval` | 403 | The remedy is not in the closed safe set, so it cannot be auto-executed. Not a 409: retrying does not change the answer, and the safe set is closed so an unclassified remedy lands here by default. |
 | `healing-governance-absent` | 503 | The governance chokepoint is not composed, so no healing action can be taken. Acting outside governance is not offered as an alternative. |
+| `learning-verdict-invalid` | 422 | The feedback verdict is not one of accepted/rejected/edited, or an `edited` verdict carried no final content -- which records that something changed while discarding what it became, the only part a preference can be derived from. |
+| `learning-scope-invalid` | 422 | The preference scope is not in the closed set. Refused rather than filed as `general`, because a misfiled preference is injected into prompts it has nothing to do with. |
+| `learning-preference-invalid` | 422 | The correction changes nothing: neither a statement nor an active flag was supplied. |
+| `learning-preference-absent` | 404 | No preference with that id. |
+| `learning-turn-invalid` | 422 | A conversation turn's role is not `user` or `assistant`. |
 | `notification-absent` | 404 | The named notification does not belong to this project | A 404 rather than a 403 for the reason `environment-absent` is one: the caller is already authorised for the project that owns it, so concealing which notifications exist would buy nothing |
 | `notification-preference-invalid` | 422 | The notification preference cannot be stored as asked | Raised for one case above all: an ENABLED channel with no target. A preference that delivers nowhere is a setting that silently does nothing, and a user who set it believes they are covered — so it is refused at the point of saving rather than discovered when nothing arrives |
 

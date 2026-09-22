@@ -204,6 +204,7 @@ ignore = [
 "src.deployment".msg = "Cross-domain import: use src.core only"
 "src.monitoring".msg = "Cross-domain import: use src.core only"
 "src.incidents".msg = "Cross-domain import: use src.core only"
+"src.learning".msg = "Cross-domain import: use src.core only"
 "src.policies".msg = "Cross-domain import: use src.core only"
 "src.secrets.routes".msg = "Cross-domain import: secrets management is secrets' alone"
 "src.secrets.store".msg = "Cross-domain import: secret store is secrets' alone"
@@ -302,6 +303,8 @@ ignore = [
 # it declares itself, and why RCA reads metrics through `core.metrics_port` rather than importing
 # `monitoring`. `find_module_ban_violations` re-asserts all of it by parsing.
 "src/incidents/**/*.py" = ["TID251"]
+# 2.13. A domain reaching its own namespace, as above.
+"src/learning/**/*.py" = ["TID251"]
 
 # `src/auth` is exempted FILE BY FILE rather than by glob, which is the narrower form
 # of the rule above. Only `routes.py` composes the flow — it is the one module that must

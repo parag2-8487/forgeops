@@ -228,6 +228,14 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "healing-refused": ProblemSpec(409, "A self-healing guard rail refused this action"),
     "healing-requires-approval": ProblemSpec(403, "That remedy cannot be executed without an approval"),
     "healing-governance-absent": ProblemSpec(503, "Governance is not composed, so no healing can occur"),
+    # 2.13's five. All 422 or 404: this domain mutates only its own bookkeeping, so there is no
+    # governance refusal to express and no state conflict -- a bad verdict or scope is a malformed
+    # request, and a missing preference is a missing resource.
+    "learning-verdict-invalid": ProblemSpec(422, "That feedback verdict is not valid"),
+    "learning-scope-invalid": ProblemSpec(422, "That preference scope is not valid"),
+    "learning-preference-invalid": ProblemSpec(422, "The preference change is not valid"),
+    "learning-preference-absent": ProblemSpec(404, "No such preference"),
+    "learning-turn-invalid": ProblemSpec(422, "That conversation turn is not valid"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a

@@ -1052,6 +1052,16 @@ def create_app() -> FastAPI:
 
     app.include_router(healing_router, prefix=settings.api_prefix)
 
+    from .learning.routes import router as learning_router
+
+    app.include_router(learning_router, prefix=settings.api_prefix)
+
+    # 2.13's seam, composed here for the same reason the metrics-evidence port is: this is the only place
+    # both sides are in scope, so `generation` depends on `core.memory_port` and never on `learning`.
+    from .learning.memory import LearningMemory
+
+    app.state.memory_port = LearningMemory()
+
     # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
     # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory
     # and its writes through transit_host_action, and there is no third path -- check-chokepoint.sh

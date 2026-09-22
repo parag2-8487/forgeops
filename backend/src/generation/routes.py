@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from dataclasses import replace
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -51,6 +52,11 @@ from .service import GenerationOutcome, GenerationService
 #: The two event types that end a stream (§7.4). Anything after one of these is unreachable by a
 #: client that closed on it, which is why exactly one may be emitted.
 _TERMINAL_EVENTS = frozenset({SSEEventType.COMPLETE.value, SSEEventType.ERROR.value})
+
+
+def nl_join(skill_file_text: str) -> str:
+    """Two blank lines and the skill file, so it reads as its own section rather than running on."""
+    return "\n\n" + skill_file_text
 
 
 def _is_terminal(frame: str) -> bool:
@@ -264,6 +270,26 @@ async def create_generation_run(
             project_id=body.project_id,
             selected_check_ids=body.target_checks,
         )
+        # 2.13: THIS PROJECT'S LEARNED PREFERENCES, injected into the instruction.
+        #
+        # After compilation and before recording, deliberately: the recorded prompt must be the text the
+        # model actually received, or the run cannot be judged from it. Recording the pre-injection
+        # version would make every learned preference invisible in exactly the place somebody looks to
+        # find out why a run behaved as it did.
+        #
+        # The skill file is appended rather than prepended: the gate's requirements and the project's
+        # facts are what the artifact is judged against, and a preference that pushed them further from
+        # the answer would trade correctness for style.
+        # Through `app.state`, so `generation` names `core.memory_port` and never `learning`. Absent when
+        # the learning domain is not composed, which leaves the prompt exactly as it was -- memory is an
+        # enhancement and a deployment without it must generate identically, not fail.
+        memory_port = getattr(request.app.state, "memory_port", None)
+        if compiled is not None and memory_port is not None:
+            memory = await memory_port.memory_for_prompt(session, project_id=body.project_id)
+            if not memory.is_empty:
+                compiled = replace(compiled, text=compiled.text + nl_join(memory.content))
+                await memory_port.record_injection(session, project_id=body.project_id, memory=memory)
+
         # Persisted BEFORE the stream, not after. A run that crashes mid-generation is exactly the run
         # somebody needs the prompt for, and a prompt written at the end would be missing from every
         # failure.

@@ -1338,14 +1338,61 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.13 AI Learning History (Per-Project Memory) _(former 3.5)_
 
-- [ ] Backend: Feedback event logging (accepted/rejected suggestions)
-- [ ] Backend: Two-tier memory architecture
-  - Short-term: conversation history within session
-  - Long-term: preference graph synthesized by Reflector Agent
-- [ ] Backend: Periodic Reflector Agent that synthesizes Skill Files
-- [ ] Backend: Skill file injection into LLM context
-- [ ] Frontend: Learning history viewer (inspectable, editable)
-- [ ] Frontend: Preference display (what AI has learned about this project)
+- [x] Backend: Feedback event logging (accepted/rejected suggestions) -- `learning_feedback`, migration
+      `0035`, 36 tests. **`edited` is a third verdict rather than a flavour of `accepted`**, and it is the
+      most informative of the three: the difference between what was produced and what a human kept is a
+      preference stated by demonstration, and collapsing it into `accepted` would throw away the signal
+      this table exists for. `ck_learning_feedback_edited_has_content` refuses an `edited` row with no
+      final content, because recording that something changed while discarding what it became keeps the
+      useless half. A reason is NOT required -- demanding one biases the store towards whichever verdict
+      needs no explanation. Append-only: it is the evidence everything else is derived from, so a
+      preference that turns out wrong stays traceable to the events behind it.
+- [x] Backend: Two-tier memory architecture -- `learning_sessions` (short-term) and
+      `learning_preferences` (long-term). **Reflection reads feedback and never reads session turns**, and
+      a test proves it: a project with five conversation turns saying "always use alpine" and no feedback
+      infers nothing. Thinking aloud is not stating a standing preference, and treating chatter as
+      instruction is how a system comes to believe something nobody decided. Short-term memory is trimmed
+      AT THE WRITE SITE rather than by a sweep, so the bound holds at every moment instead of on average --
+      a sweep leaves the window unbounded exactly when a long conversation would blow a prompt budget.
+- [x] Backend: Periodic Reflector Agent that synthesizes Skill Files -- `src/learning/reflector.py`, with
+      `POST .../learning/reflect` as its production caller. **Four properties make this correctable rather
+      than merely adaptive, each tested:** a stated preference is never rewritten by reflection (it may
+      only gain evidence); a deactivated preference is never reactivated by it, because the user's
+      checkbox must not un-check itself; editing a reflected preference promotes it to `stated` so the next
+      pass cannot undo the correction; and reflection is idempotent on statement text via a unique index
+      on `(project_id, scope, statement_digest)` -- without which the skill file fills with the same
+      sentence and the budget buys repetition. Below two feedback events **the model is not consulted at
+      all**: one accept is noise, and an inference from it would be a preference nobody stated. An
+      unrecognised scope is DROPPED rather than coerced to `general`, because a misfiled preference gets
+      injected into prompts it has nothing to do with.
+- [x] Backend: Skill file injection into LLM context -- injected in `generation/routes.py` after
+      compilation and **before the prompt is recorded**, so the stored text is what the model actually
+      received; recording the pre-injection version would make every learned preference invisible in the
+      one place somebody looks to explain a run. Appended rather than prepended: the gate's requirements
+      and the project's facts are what the artifact is judged against, and a preference that pushed them
+      further from the answer would trade correctness for style. **`check-chokepoint` refused `generation`
+      importing `learning` and both easy answers were rejected in writing** -- an exemption opens the
+      domain to everyone, and duplicating the selection in `generation` is worse because the budget, the
+      ordering and the exclusion record are what make injection auditable. `core/memory_port.MemoryPort`
+      is the answer, and **its return type carries the EXCLUSIONS**, which is load-bearing: a caller given
+      only the text could not record which preferences failed to fit, so the record would be silently
+      incomplete exactly where a user asks why theirs had no effect.
+- [x] Frontend: Learning history viewer (inspectable, editable) --
+      `features/learning/LearningPanels.tsx`, 14 tests. Three actions per preference that do **different**
+      things, stated in the copy: correcting the text also promotes it to stated so reflection cannot undo
+      it; switching it off stops injection while keeping the record that it was inferred; forgetting
+      removes it and leaves the feedback intact. Offering only deletion would force a user to destroy the
+      evidence in order to stop acting on it. `edited` rows show the size of what was kept, and an absent
+      reason renders as "no reason given" rather than a blank.
+- [x] Frontend: Preference display (what AI has learned about this project) -- the evidence count is shown
+      because "derived from a single feedback event, so treat it as a guess" and "inferred from 40" deserve
+      different confidence, and a bare sentence cannot express it. **Inactive preferences are listed, not
+      hidden**: a user who switched one off needs to see it is still there and still off, or the next
+      reflection finding it again looks like new learning. A separate skill-file panel shows what actually
+      reaches the model and **raises an alert naming the preferences that did not fit the budget** -- which
+      is the answer to "why did it ignore what I told it", and is invisible from output alone. An empty
+      store says the system has been told nothing, which is different from having been told and ignoring
+      it.
 
 #### 2.14 Knowledge Base Mode _(former 3.6)_
 

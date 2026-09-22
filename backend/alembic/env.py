@@ -67,6 +67,12 @@ from src.incidents.models import (  # noqa: F401, E402
     IncidentPostmortem,
 )
 from src.integrations.models import GitHubAccountLink  # noqa: F401, E402
+from src.learning.models import (  # noqa: F401, E402
+    LearningFeedback,
+    LearningPreference,
+    LearningSession,
+    LearningSkillFile,
+)
 from src.notifications.models import (  # noqa: F401, E402
     Notification,
     NotificationPreference,
