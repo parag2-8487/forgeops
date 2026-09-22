@@ -113,10 +113,14 @@ frontend/load'
 # and `analysis/` were never on this list and are Phase 1 domains.
 GO_STRUCTURAL_DIRS='agent/pkg'
 
+# `notifications` LEFT THIS LIST IN PHASE 2. It was deferred by design 1.3 and 2.6 built it: five modules,
+# two tables and three channel adapters. A structural check that still demanded it be empty would be
+# asserting the absence of a shipped deliverable -- the same shape as the test that asserted no
+# `environments` table could exist after 2.1 created one. `monitoring` and `incidents` stay deferred until
+# 2.10 and 2.11; `deployment` (singular) stays because the built domain is `deployments`.
 PY_STRUCTURAL_DIRS='backend/src/deployment
 backend/src/monitoring
-backend/src/incidents
-backend/src/notifications'
+backend/src/incidents'
 
 FE_STRUCTURAL_DIR='frontend/features'
 

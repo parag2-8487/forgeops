@@ -64,13 +64,17 @@ class TestInlineDispatcher:
 
 
 class TestSSEEventTypes:
-    """SSE event type vocabulary must be exactly six values."""
+    """SSE event type vocabulary must be exactly the declared values.
 
-    def test_exactly_six_events(self):
-        assert len(SSEEventType) == 6
+    Seven since Phase 2 2.2: `log` joined for live deployment output. Pinned so growth stays deliberate —
+    the count is the point, not the number.
+    """
+
+    def test_exactly_seven_events(self):
+        assert len(SSEEventType) == 7
 
     def test_exact_values(self):
-        expected = {"status", "token", "progress", "validation", "complete", "error"}
+        expected = {"status", "token", "progress", "log", "validation", "complete", "error"}
         actual = {e.value for e in SSEEventType}
         assert actual == expected
 

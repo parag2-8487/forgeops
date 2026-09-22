@@ -46,7 +46,7 @@ One consequence of level 5 worth stating plainly: the *repository* is also an au
 |:---|:---|:---|
 | **6-tier** model routing; GPT-5.6 Sol primary flagship, Claude Fable 5 analysis flagship | Research §0 | §11.5, §13.2, §15.6 |
 | FastAPI **native `EventSourceResponse`**; never `sse-starlette` | Research §0, §A0b | §7.5, §11.11 |
-| SSE event vocabulary is exactly `status`, `token`, `progress`, `validation`, `complete`, `error` | Research §0; Phase 0 `core/sse.py` | §7.5, Q-26 |
+| SSE event vocabulary is exactly `status`, `token`, `progress`, `log`, `validation`, `complete`, `error` | Research §0; Phase 0 `core/sse.py`; `log` added by Phase 2 §2.2 for live deployment output, distinct from `progress` because one carries a percentage and the other carries text | §7.5, Q-26 |
 | **No Celery.** ARQ/Dramatiq at P1; exactly **one** durable engine at P2 behind an orchestrator-agnostic interface | Research §0, §B6 | §7.10, D-32 |
 | **pgvector HNSW** by default; `hnsw.ef_search` tuned at query time | Research §0, §A0a | §6.4, §11.4 |
 | Agent identity = **SPIFFE/SPIRE X.509-SVID + mTLS with attestation**; no long-lived agent keys | Research §0, §H31 | §14.3, D-36 |
@@ -3159,7 +3159,7 @@ class GenerationService:
     async def run(self, *, project_id: uuid.UUID, principal: Principal,
                   kinds: Sequence[ArtifactKind], stream: SSEStream) -> GenerationOutcome:
         """One generation run: retrieve → assemble → generate → validate (≤3) → judge
-        → hand to the governance chokepoint. Emits only the six SSE event types.
+        → hand to the governance chokepoint. Emits only the declared SSE event types.
 
         This method NEVER writes a file and NEVER contacts the agent hub directly. Its
         terminal act is chokepoint.submit(MutationRequest), which is the only way its
@@ -5333,6 +5333,8 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `deployment-absent` | 404 | A deployment id was given and no such deployment exists | Names the identifier |
 | `deployment-invalid` | 422 | A deployment names no manifests, more than the bound allows, or a path that is not workspace-relative | Names the bound and the count, or the offending path. The agent enforces the same bound, and the message says so: a request the backend accepted and the agent will refuse becomes a change set that can never be delivered |
 | `deployment-conflict` | 409 | A report arrived for a deployment that has already settled | Names the current status and says the report was ignored. A 409 rather than a 422 because the request was well formed and the row moved on — command delivery is at-least-once, so this is an expected event rather than a caller error |
+| `notification-absent` | 404 | The named notification does not belong to this project | A 404 rather than a 403 for the reason `environment-absent` is one: the caller is already authorised for the project that owns it, so concealing which notifications exist would buy nothing |
+| `notification-preference-invalid` | 422 | The notification preference cannot be stored as asked | Raised for one case above all: an ENABLED channel with no target. A preference that delivers nowhere is a setting that silently does nothing, and a user who set it believes they are covered — so it is refused at the point of saving rather than discovered when nothing arrives |
 
 `audit-write-failed` deserves a note. A failed audit write **aborts the mutation**, because §1.9's guarantee is that every action is logged — an action that happened without a record would break Q-04 and, worse, would be invisible. Availability is traded for auditability, deliberately.
 
