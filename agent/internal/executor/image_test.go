@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package executor
 
 // Real build-and-push verification for §2.2's image boxes.

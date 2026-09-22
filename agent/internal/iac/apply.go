@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package iac
 
 // OpenTofu apply with state management — Phase 2 §2.2.

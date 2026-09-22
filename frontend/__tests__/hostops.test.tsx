@@ -308,7 +308,15 @@ describe("the Docker dashboard", () => {
   it("offers a push per image and sends no credential with it", async () => {
     get.mockResolvedValue(
       dockerInventory({
-        images: [{ id: "sha256:abc", repository: "app", tag: "v1", size: "12MB" }],
+        images: [
+          {
+            id: "sha256:abc",
+            repository: "app",
+            tag: "v1",
+            size: "12MB",
+            created_at: "2026-09-01T00:00:00Z",
+          },
+        ],
       }),
     );
     post.mockResolvedValue({

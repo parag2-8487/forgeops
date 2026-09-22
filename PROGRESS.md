@@ -342,6 +342,89 @@ TRANSACTION aborted, so the next statement failed with `InFailedSQLTransactionEr
 wrong thing, several lines from its cause. It runs in a savepoint now, and a settlement failure is recorded
 on the change set rather than lost.
 
+### HANDOFF: where the next pass starts
+
+**Phase 2 is 44 of 123.** Tree clean, NOT pushed -- the standing instruction is one push after all 123,
+and this pass did not reach that.
+
+Next box, precisely: **2.2's `Backend: Durable execution for deployment workflows`**, which is the same
+deliverable as **2.4a's five Inngest boxes** and should be built once as six. `inngest` is NOT installed
+in `backend/.venv` and is on the banned-import list outside `src/core/tasks.py` (pyproject line 204), so
+the work is: install it, add an Inngest dev-server service to the compose file, and put the engine
+behind `tasks.py`'s existing `TaskDispatcher` Protocol as a third dispatcher beside `InlineDispatcher`
+and `ArqDispatcher` -- the seam is already the right shape and business logic must not import the SDK.
+
+Then, in the order the brief gave: 2.7 ArgoCD, 2.7a Argo Rollouts, 2.10 OTel, 2.11 RCA, 2.12
+self-healing, 2.13 learning history, 2.5 Command Center, 2.14 knowledge base, then the 20 completion
+criteria.
+
+Still open and untouched this pass: the three generation-provenance failures (the only reason `ci` is
+red; 1094 tests pass around them), 2.4's resource-utilisation box which needs 2.10's series, and every
+carry-over item below.
+
+Migrations are at **0031**. The agent catalogue is **28 operations, 26 implemented**.
+
+### Phase 2: 44 of 123. This pass closed four boxes in 2.2 and 2.4
+
+**Image build and push are VERBS of the existing `docker.image_action` authority**, not new operations.
+The permission granted is "act on an image in this project"; four whitelist entries would describe one
+permission. Verified against a real `registry:2` the test starts itself, and the pushed digest is
+fetched back with `docker manifest inspect` -- so a fabricated digest fails rather than reaching a
+deployment record, which is what that box's own wording warned about. A build reports
+`digest_kind: local_image_id` and a push `registry_digest`, because pinning a local ID would produce a
+deployment nobody can rebuild.
+
+**The registry credential is resolved AT DELIVERY, in `secrets/registry_credentials.py`.** It is not a
+request-body field: `FORBIDDEN_ARG_KEYS` and revision 0022's CHECK exist to keep credentials out of
+`change_sets.operation_args`, and accepting one on the body would mean carrying it through the six
+stages to dodge them. It is added at the single signature site, so the auto-approved transit and the
+human-approved one get it from one place. An integration test drives a real push and then searches
+`change_sets.operation_args` and every `audit_events` state and reason column for the token -- because
+`transit_host_action` copies every argument into `after_state`, and reasoning about which fields get
+copied is not the same as checking.
+
+**Two gates rejected the first placement and both were right.** The provider started under `hostops/`;
+the parse-based check refused it for reaching `get_value` outside `secrets.injection`, then for
+importing `secrets.store` at all. Secret retrieval is that domain's alone, so the file moved rather
+than an exemption being added.
+
+**OpenTofu apply runs only from a saved plan, and the lock is not expressible as off.**
+`ApplyOptions` has no `Lock` field, so an unlocked apply cannot be requested; `-lock=true` with a
+timeout is always in the vector. One operation plans and applies inside ONE approval, because two
+would leave the state free to move between the approval and the apply -- which defeats the reason a
+plan is saved. Verified against real `tofu` with the `local` provider: the resource is read off the
+filesystem and the state SERIAL is read back, so two applies that both report success are
+distinguishable. The first version read the serial from `tofu show -json` and got zero every time --
+that command emits a rendered view with no `serial` field -- so it reads the raw state via
+`tofu state pull`.
+
+**Widening `iac.Runner` broke an MCP test double, which is the interface doing its job.** The tempting
+fix was a method returning an empty result; that would have given the MCP tool surface -- a surface an
+AI drives -- a silent working apply that no approval covered. It raises instead, and a new test walks
+`toolMeta` asserting no tool names an apply and none claims a blast radius beyond the workspace.
+
+**The circuit breaker counts validation failures and nothing else, structurally.** The counting site is
+the settler's failure branch, reached only when the agent RAN the command and it failed -- so a policy
+deny, a held approval and an agent timeout cannot be counted, because none of them reaches
+`record_command_result`. That is a property of where the code lives rather than a condition somebody
+has to remember. A `degraded` deployment closes it too: the manifests were accepted and a pod is
+unhappy, which retrying can legitimately fix. Checked in the route BEFORE the deployment row exists
+and before a human is asked. Persisted, because two replicas with in-memory breakers disagree and a
+refusal that depends on which replica answered looks random.
+
+The first breaker left a failed half-open trial in `half_open`, which `guard` treats as passable -- so a
+broken environment would have admitted every later attempt. A test caught it. Re-reading the argument
+written against re-opening, it was wrong: by then there are four failures, more evidence than the three
+that opened it. It re-opens with a fresh cooldown and the count resets to one, because the count means
+failures since the last DECISION.
+
+**A self-inflicted defect worth recording, because it wasted time and will recur.** A patch script
+replaced a docstring paragraph by slicing to "the next blank line", and the paragraph was followed
+immediately by the closing `"""` with no blank line between -- so the terminator was deleted and every
+line after it became code. The symptom was `SyntaxError: invalid character '-' (U+2014)` pointing three
+lines into a docstring, which sends a reader looking for an encoding problem that does not exist. The
+diagnosis is to COUNT `"""` in the file: an odd number is the answer immediately.
+
 ### A regression I introduced and did NOT isolate
 
 **`End-to-End Journey CI` / "Apply from a host agent binary" fails on `5de7d1e` and passed on the previous
