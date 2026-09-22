@@ -434,40 +434,40 @@ for this, now with a measured cause and a named next step rather than a carried 
 
 ### HANDOFF: where the next pass starts
 
-**Phase 2 is 72 of 123.** Tree clean, NOT pushed -- one push after all 123.
+**Phase 2 is 85 of 123.** Tree clean, NOT pushed -- one push after all 123.
 
-Complete: 2.1, 2.2, 2.3, 2.4, 2.4a, 2.7, 2.7a, 2.7b, 2.8, 2.9, **2.10**. 2.6 is 4/5 with the Novu box
-staying open for its recorded reason.
+Complete: 2.1, 2.2, 2.3, 2.4, 2.4a, 2.7, 2.7a, 2.7b, 2.8, 2.9, 2.10, **2.11**, **2.12**. 2.6 is 4/5 with
+the Novu box staying open for its recorded reason.
 
-**Next box: 2.11 AI Troubleshooting / RCA, first box.** Nothing of 2.11 exists yet. It reads the
-observability tier finished this pass, so the inputs are real: `src/monitoring/queries.py` holds an
-enumerated PromQL catalogue and `reader.py` returns a verdict with every answer. **Add RCA's queries to
-that catalogue rather than introducing a second query path** -- the catalogue is what makes tenant scoping
-structural, and a second path would be the hole it exists to close. `src/incidents/` is still a deferred
-structural directory and 2.11 will need it removed from `PY_STRUCTURAL_DIRS` in `scripts/check-structure.sh`,
-as `notifications` and `monitoring` were.
+**Next box: 2.13 AI Learning History, first box (feedback event logging).** Nothing of 2.13 exists.
+Migrations are at **0034**; the next is 0035.
 
-Then 2.12 self-healing (the most safety-critical section left), 2.13, 2.5, 2.14 and the 20 completion
-criteria.
+Remaining: 2.13 (6), 2.5 AI Command Center (8), 2.14 Knowledge Base (3), and the 20 completion criteria.
 
-**Three things the next pass must know:**
+**Four things the next pass needs to know:**
 
-1. **Run the observability tier when working on anything that reads metrics.**
-   `docker compose --profile observability up -d` brings Prometheus, Mimir, Loki, Tempo, Grafana and both
-   collector tiers. `GRAFANA_ADMIN_LOGIN_SECRET` is REQUIRED by compose and has no default -- Grafana's own
-   default is `admin`, and a monitoring UI with that password exposes every metric and log line.
+1. **`src/incidents/` is now a real domain** holding ingestion, evidence, analysis, healing, postmortems
+   and two route modules. It is out of `PY_STRUCTURAL_DIRS` and has the intra-domain `TID251` glob, like
+   `monitoring` and `notifications`. The cross-domain boundary was verified by planting a real import from
+   `projects` and confirming the parse in `chokepoint_graph.py` refused it.
 
-2. **Ollama must be running for the generation integration tests** (`docker start forgeops-ollama-1`).
-   Without it they fail as a missing capability rather than skipping.
+2. **Two cross-domain Protocols were added rather than exemptions**, and 2.13 will face the same choice:
+   `core/metrics_port.MetricsEvidencePort` (so RCA reads the ONE PromQL catalogue without importing
+   `monitoring`) and `deployments.DeploymentIncidentRecorder` (so a failed deployment files an incident
+   without importing `incidents`). Both are composed in `main.py`, which is the only place both sides are
+   in scope.
 
-3. **Every new env key needs BOTH `PROJECT_CONFIG_KEYS` in `src/core/config.py` AND a line in
-   `.env.example`.** `test_config.py` demands bidirectional agreement; a key in one and not the other fails.
+3. **The model is now `qwen2.5-coder:7b`** by measurement -- see the section above for the numbers and for
+   why the three provenance tests still fail. `qwen2.5-coder:1.5b` is still pulled if a faster model is
+   wanted for unrelated work, but it cannot satisfy `dockerfile_healthcheck_present`.
 
-Migrations are at **0032**. The agent catalogue is **30 operations, 28 implemented**. Dependencies added
-this pass are declared in `pyproject.toml` and locked by running `pip-compile` (CI installs with
-`--require-hashes`, so a hand-edited lockfile fails): `inngest`, five `opentelemetry-*` packages, and
-`opentelemetry-instrumentation-system-metrics`. The lockfiles' header no longer records `--no-index`,
-because regenerating with it failed for want of a local wheelhouse -- if CI depends on one, check that first.
+4. **Ollama and the test containers must be running**: `docker start forgeops-ollama-1 forgeops-test-pg
+forgeops-test-redis forgeops-test-cerbos`. The observability tier is a separate profile:
+   `docker compose --profile observability up -d`, and `GRAFANA_ADMIN_LOGIN_SECRET` is required with no
+   default.
+
+Still not run this pass, and all of it belongs to the final verification: any full shard, the five E2E
+specs, `go test -race`, and `verify-release.py`.
 
 ### Phase 2: 44 of 123. This pass closed four boxes in 2.2 and 2.4
 
