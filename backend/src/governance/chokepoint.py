@@ -2811,10 +2811,20 @@ class GovernanceChokepoint:
         Returns the status it set, so a caller can log what happened.
         """
         succeeded = status == "succeeded"
-        # `failed`, not `rolled_back`: the agent rolls back internally and reports that through
-        # `agent.error` (code `apply-rolled-back`), so a `command.result` that arrives at all means
-        # the operation ran to completion and is reporting its own outcome.
-        final = "applied" if succeeded else "failed"
+        # `rolled_back`, and the comment this replaces was wrong in a way that had never run.
+        #
+        # It read: "`failed`, not `rolled_back`: the agent rolls back internally and reports that through
+        # `agent.error`, so a `command.result` that arrives at all means the operation ran to completion."
+        # The reasoning is defensible and the value was not storable: revision `0010` REMOVED `failed` from
+        # `ck_change_sets_status_allowed` precisely because §3.6 does not define it, so every real failed
+        # command raised `CheckViolationError` inside this handler. The path could never have worked, and
+        # nothing had exercised it until a settler test drove it end to end.
+        #
+        # Fixed toward the authority rather than away from it: §3.6's only failure edge out of `applying` is
+        # `rolled_back`, so that is what a failed result records. What is NOT lost is the finer outcome —
+        # for a deployment, `deployments.status` carries `degraded` versus `failed` separately, which is
+        # where per-operation detail belongs.
+        final = "applied" if succeeded else "rolled_back"
 
         # Guarded on the current status so a duplicate result — a redelivered frame, or two replicas
         # both resolving the same future — cannot move a set that has already moved on. `applying`

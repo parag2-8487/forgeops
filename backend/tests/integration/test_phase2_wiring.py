@@ -77,3 +77,30 @@ class TestTheEnvironmentAndDeploymentServicesAreReachedThroughTheRealGraph:
         sealed = service._key  # noqa: SLF001 - the property under test is that it exists at startup
         assert isinstance(sealed, bytes)
         assert len(sealed) == 32
+
+
+@wires("notification_service")
+class TestTheNotificationServiceIsReachedThroughTheRealGraph:
+    async def test_the_router_is_registered_and_refuses_without_a_principal(
+        self, production_app: Any
+    ) -> None:
+        """A 401 proves the route exists and is guarded; a 404 would mean it was never mounted."""
+        transport = ASGITransport(app=production_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/api/v1/projects/{uuid.uuid4()}/notifications")
+        assert response.status_code == 401, response.text
+
+    async def test_the_service_exists_at_startup_with_its_channels_composed(
+        self, production_app: Any
+    ) -> None:
+        """Composed in the lifespan, not on first use.
+
+        A channel map built lazily would make "is Slack configured?" a question answered by the first
+        notification rather than at startup ? and the answer would arrive as a delivery that did not happen.
+        The map is allowed to be missing `email` (no SMTP host configured is the ordinary case); what must
+        exist is the service and the two webhook adapters, which need no configuration at all.
+        """
+        service = getattr(production_app.state, "notification_service", None)
+        assert service is not None
+        assert "slack" in service.channels
+        assert "discord" in service.channels
