@@ -505,7 +505,13 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       — a typo, a deleted environment or a Command Center instruction naming something that never existed all
       land on "ask a human". 13 tests in `tests/integration/test_environments.py`, all passing against the
       real database.
-- [ ] Backend: Promotion flows between environments — the RULE is built and tested
+- [x] Backend: Promotion flows between environments — the rule (`promote_from`) and the DEPLOYMENT it
+      authorises. `POST /projects/{id}/releases/promote` deploys the source's last STABLE manifest set
+      to the next environment, and the TARGET's approval requirement governs — promoting into
+      production asks a human even when staging did not, asserted in `test_releases.py`. Refuses, with
+      the reason, when the source is last in the pipeline or has nothing stable: promoting an
+      unverified deployment would carry a broken state forward under the word "promote". 7 tests.
+      Superseded detail: the RULE was built and tested
       (`promote_from`, `GET /{environment_id}/promotion`): ordered by `position`, each environment promotes to
       the next, the target's approval requirement governs, a delete closes the gap so "the next one" cannot
       depend on deletion history, and the last environment refuses with a reason instead of succeeding
@@ -569,9 +575,16 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       the earlier healthy one — the invariant the whole of 2.3 rests on. A second report for a settled
       deployment is refused, because delivery is at-least-once and a redelivered `degraded` must not
       un-stable a row a rollback is targeting.
-- [ ] Backend: Live log streaming during deployment (SSE with `log` event type) — not built. The agent's
-      progress sink exists and the operation emits through it; carrying that to a browser as an SSE `log`
-      stream is the missing half.
+- [x] Backend: Live log streaming during deployment (SSE with `log` event type) — `src/deployments/logs.py`.
+      `log` joined the closed SSE vocabulary (distinct from `progress`, which carries a percentage while
+      a log line carries text). Revision `0026` records `change_sets.command_id` at delivery, which is
+      what lets one deployment's stream find the agent's per-command Redis channel — and incidentally
+      gives the audit chain a correlation it previously left to matching timestamps. An UNDELIVERED
+      deployment is refused before a stream opens, because an empty stream reads as "nothing is
+      happening" rather than "a human has not approved this". A keep-alive is a comment frame, not a
+      `log` event, so an operator's log does not gain a blank line every fifteen seconds. 5 tests,
+      including one holding the channel name equal to the hub's — if those drift the stream subscribes
+      to nobody and renders an empty log for a working deployment, the quietest possible failure.
 - [ ] Backend: **Durable execution** for deployment workflows (one durable engine at P2 - Inngest, or Temporal if replay/history demands; not a multi-hop migration)
 - [ ] Backend: **Circuit breaker** pattern for deployment pipeline (fail-fast on validation errors) — not
       built. A breaker chosen before there is a pipeline to break is a guess about which failures repeat.
@@ -583,15 +596,34 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       tell an operator that a rollout still in flight had already failed. The rollback panel renders the
       absence of a stable state as an absence, with no button: offering a rollback to a degraded deployment
       would restore a broken state while reporting success.
-- [ ] Frontend: Deployment results with structured logs — waits on the SSE `log` stream above.
+- [x] Frontend: Deployment results with structured logs — `features/deployments/DeploymentResult.tsx`.
+      The agent's report is rendered as its PARTS (applied objects, each workload's readiness and wait,
+      the kubectl version) rather than as raw JSON, so the distinctions in it survive to the screen: a
+      workload with `ready: false` and one with no entry read differently, and a deployment that applied
+      with nothing waited on says so rather than looking successful. The live stream is opened only for
+      a delivered deployment, and a failed stream is its own state — not silence.
 
 #### 2.3 Rollback & Release Timeline
 
-- [ ] Backend: Deployment history with full version metadata
-- [ ] Backend: Diff between any two deployments (image, manifests, configs)
-- [ ] Backend: Rollback to any previous deployment
-- [ ] Frontend: Timeline visualization with deployment markers
-- [ ] Frontend: Side-by-side deployment comparison
+- [x] Backend: Deployment history with full version metadata — `GET /releases/timeline`, newest first,
+      with the environment name, manifest set, digest, cluster context and both timestamps. `healthy`
+      stays nullable on the wire so an in-flight rollout is not marked failed.
+- [x] Backend: Diff between any two deployments (image, manifests, configs) — `GET /releases/diff`,
+      comparing manifest sets, images (through the manifest set), cluster context, namespace and
+      health. `identical_manifests` comes from the order-independent digest, so the same set deployed
+      in a different order is not reported as a change.
+- [x] Backend: Rollback to any previous deployment — `POST /releases/rollback`, a DEPLOYMENT through the
+      chokepoint rather than a path of its own. Only a `stable` deployment may be a target, and one
+      belonging to another environment is refused: rolling back to a degraded deployment would restore
+      a broken state while reporting success. Verified against a real cluster in
+      `deployment_cluster_test.go`, which applies, degrades, and rolls back to the previous image.
+- [x] Frontend: Timeline visualization with deployment markers — `features/releases/ReleaseTimeline.tsx`,
+      mounted on the project page. A rollback button exists only for a deployment the server called
+      stable, and where it would be, an unstable deployment states why instead. 10 tests.
+- [x] Frontend: Side-by-side deployment comparison — the same component; added, removed and unchanged
+      manifests, and the health transition in words (`converged → did not converge`), which is the
+      fact an operator comparing two releases is usually after. Asks for nothing until two DIFFERENT
+      deployments are chosen.
 
 #### 2.4 Docker Management Dashboard
 
@@ -622,11 +654,11 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       produces, so their presence is the evidence the stage ran), and a read leaves **no** change-set row
       and an **empty** `approval_id`. `check-chokepoint.sh` still reports both halves clean, so the read
       path did not become a second way to reach an agent.
-- [ ] Frontend: Container list with status, logs, resource stats — the list, the status and the resource
-      stats are built and tested (`features/hostops/DockerDashboard.tsx`, 15 of the 25 tests in
-      `__tests__/hostops.test.tsx`), and **container logs are not**. A log stream is the §2.2 SSE `log`
-      deliverable in a different costume: it needs a streaming operation, a browser-side consumer and a
-      bound on how much is held, and none of the three exists yet. Two thirds of a box is not a box.
+- [x] Frontend: Container list with status, logs, resource stats — all three now. Logs arrive through
+      `docker.container_logs`, a read bounded in BOTH dimensions (`--tail` and `--since`), and the
+      applied bounds plus a `truncated` flag travel to the screen: an unmarked tail lets a reader
+      conclude an error never happened when it fell off the top. The panel distinguishes a failed read
+      from a quiet container in words.
 - [ ] Frontend: Container create/start/stop/restart/delete — start, stop, restart and delete are built,
       tested and travel the chokepoint. **Create is deliberately absent**, and this is a decision rather
       than an omission: creating a container means choosing an image, ports, mounts and a privilege level,
@@ -719,11 +751,12 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       version differed from the operator's client. The second version trimmed to the first brace and failed
       when the warning landed AFTER the document. It now decodes the first complete JSON value, and
       `TestDecodeFirstJSONSurvivesAWarningOnEitherSide` pins all four arrangements.
-- [ ] Frontend: Pod list with status, logs, events — the list and the status are built and tested, with
-      readiness as a RATIO (`1/2` is a broken sidecar and `0/2` is not, and a boolean loses that) and the
-      container's waiting reason surfaced because `ImagePullBackOff` is what an operator acts on. **Logs
-      and events are not built**: both are streams, and they need the same SSE machinery §2.2's `log` box
-      describes. Left open rather than ticked for two thirds.
+- [x] Frontend: Pod list with status, logs, events — all three. `kubernetes.pod_detail` returns logs AND
+      events from ONE operation, which is the design rather than a convenience: a pod that never
+      scheduled has no logs and its events are the entire explanation, so two operations would make the
+      panel ask twice and then choose which absence to believe. The panel says "no log output — the
+      events below are the explanation" for exactly that case. Readiness stays a ratio and the waiting
+      reason stays surfaced.
 - [x] Frontend: Deployment management (scale, restart, rollback) — all three, through
       `kubernetes.workload_action` and the chokepoint. Confined to the same three pod-bearing kinds the
       deployment operation can VERIFY, because acting on something unverifiable would report the API
