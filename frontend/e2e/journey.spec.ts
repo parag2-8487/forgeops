@@ -449,7 +449,7 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     // A REAL MODEL CALL, so a real model's latency.
     //
     // This step used to render a template, which returned in milliseconds. It now goes through the
-    // six-tier router to a live `qwen2.5-coder:1.5b`, and the deterministic gate may ask for up to
+    // six-tier router to a live `qwen2.5-coder:7b`, and the deterministic gate may ask for up to
     // three iterations before it accepts the artifacts — so several minutes on CPU is ordinary, not
     // a symptom. The observed cost of one provider run in the integration suite is 200-340s.
     //
@@ -462,7 +462,17 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     // first attempt and beyond 600s when it asks for another, so 600 was a coin toss — it passed
     // once and timed out on the next run with no code change between them. The budget covers three
     // attempts with margin, because a flaky timeout teaches people to re-run rather than to read.
-    test.setTimeout(1_200_000);
+    //
+    // RAISED TO 1800s WHEN THE DEFAULT MODEL BECAME `qwen2.5-coder:7b`, and the number is measured rather
+    // than padded. The isolation harness timed the same eight-artifact prompt at 224s, 271s, 418s and 439s
+    // per attempt against a warm 7b; three attempts at the worst observed figure is 1317s, which no longer
+    // fitted the 1200s budget that was correct for 1.5b. A cold start would have added another 45s, which
+    // is why the workflow now warms the model in the step that pulls it -- so this budget covers
+    // generation and not weight loading.
+    //
+    // This was measured BEFORE a CI run rather than discovered during one: the failure mode would have
+    // been a timeout that reads as a flake, and the second run would have been blamed on the runner.
+    test.setTimeout(1_800_000);
     const response = await page.request.post(`${API}/generation/runs`, {
       headers: authHeaders(),
       data: {

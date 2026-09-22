@@ -372,6 +372,18 @@ jobs:
             /bin/ollama list
           curl -fsS http://localhost:11434/v1/models >/dev/null
           python scripts/ci/check-embedding-width.py
+          # WARM THE GENERATION MODEL, measured rather than guessed at: loading `qwen2.5-coder:7b`'s
+          # weights costs 45s on top of every completion, and a CI runner is always a cold start. Paying
+          # it here, in a step named for it, keeps it out of the journey's generation budget -- where it
+          # would have been indistinguishable from a slow model call and would have eaten the margin that
+          # exists for the gate's retries.
+          #
+          # A trivial prompt with `max_tokens` of 8: the point is to resident the weights, not to generate
+          # anything. Measured at 48s cold and 2.9s warm for exactly this request.
+          curl -fsS http://localhost:11434/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d "{\"model\": \"${SELF_HOSTED_MODEL_ID:-qwen2.5-coder:7b}\", \"messages\": [{\"role\": \"user\", \"content\": \"ready\"}], \"max_tokens\": 8}" \
+            >/dev/null
 
       - name: Create Authentik's database
         env:
