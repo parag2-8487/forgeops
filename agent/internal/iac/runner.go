@@ -59,10 +59,17 @@ type PlanResult struct {
 type LineSink func(stream string, line string)
 
 // Runner defines the contract for OpenTofu operations.
-// No Apply is exposed — by design.
+//
+// PHASE 1 EXPOSED NO `Apply` AND PHASE 2 ADDS ONE (design 1.4, 14.6, phases 2.2). The earlier absence
+// was not squeamishness about the verb: there was nothing to hold the state lock, no approval to
+// attach an apply to, and no saved plan to apply, so an `Apply` then would have re-planned at run time
+// and applied whatever it found. All three now exist, and `Apply` takes a SAVED PLAN FILE and no
+// `Lock` option at all, so the two properties that made the verb dangerous are structural rather than
+// left to a caller.
 type Runner interface {
 	Validate(ctx context.Context, workdir string) (*ValidateResult, error)
 	Plan(ctx context.Context, workdir string, opts PlanOptions) (*PlanResult, error)
+	Apply(ctx context.Context, workdir string, opts ApplyOptions) (*ApplyResult, error)
 }
 
 // ErrTofuNotFound is returned when the configured tofu binary cannot be located.

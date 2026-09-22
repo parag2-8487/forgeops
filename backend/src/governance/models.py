@@ -136,6 +136,9 @@ CHANGE_SET_OPERATIONS: tuple[str, ...] = (
     # command line. A change set because it executes the repository's own scripts on the operator's
     # machine.
     "devtools.run",
+    # 2.2. OpenTofu apply, from a plan made inside the same approval, so the approved diff is the
+    # applied diff.
+    "iac.apply",
 )
 
 #: Key names a credential travels under, refused in `change_sets.operation_args`.

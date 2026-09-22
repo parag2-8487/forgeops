@@ -572,8 +572,22 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       each read back from the cluster with `kubectl get -o jsonpath` rather than from the operation's own
       report, because a report is this code's opinion and the point is to check the opinion against the
       object. The earlier "not yet run against a real cluster" caveat is therefore withdrawn.
-- [ ] Agent: OpenTofu apply with state management — not built. State locking makes it a different problem
-      from an idempotent `kubectl apply`, and `iac.Runner` still exposes no `apply`.
+- [x] Agent: OpenTofu apply with state management — `internal/iac/apply.go` and the `iac.apply`
+      operation (`internal/executor/iac_apply.go`), mutating and approval-required. State locking is
+      why this was a different problem from an idempotent `kubectl apply`, and the answer is structural
+      rather than a setting: `ApplyOptions` HAS NO `Lock` FIELD, so an unlocked apply is not
+      expressible, and `-lock=true` with a `-lock-timeout` is always in the argument vector. An apply
+      runs ONLY from a saved plan, and the operation plans and applies inside ONE approval — two
+      operations would leave the state free to move between the approval and the apply, which defeats
+      the reason a plan is saved at all. Verified against REAL OpenTofu (`tofu` on PATH) with the
+      `local` provider: the resource is read off the filesystem, and the state SERIAL is read back so
+      two applies that both report success are distinguishable. The first version read the serial from
+      `tofu show -json` and got zero every time — that command emits a rendered view with no `serial`
+      field — so it reads the raw state through `tofu state pull`. A converged module is NOT applied and
+      says so; a failed apply is a RESULT with its output, because a partial apply has created some
+      resources and an error would discard which. `iac.Runner`'s contract test did its job: adding
+      `Apply` to the interface was a compile error until `TofuRunner` implemented it. Migration `0030`
+      admits the operation; the catalogue is re-pinned at 28 operations, 26 implemented. 5 Go tests.
 - [x] Backend: Deployment record CRUD — revision `0024`, `src/deployments/`,
       `GET/POST /projects/{id}/deployments`, `GET /{deployment_id}`, `GET /rollback-target`.
       `check-route-auth.py` examined 95 routes across 79 paths and found every one behind a principal;

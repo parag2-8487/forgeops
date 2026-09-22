@@ -81,6 +81,13 @@ const (
 	OpDockerContainerLogs Operation = "docker.container_logs"
 	OpKubernetesPodDetail Operation = "kubernetes.pod_detail"
 
+	// OpIacApply applies OpenTofu configuration, from a plan it makes inside the same approval. 2.2.
+	//
+	// ONE OPERATION AND NOT plan-then-apply, because the authority is "change this project's
+	// infrastructure" and a plan changes nothing. Two operations would mean two approvals with the state
+	// free to move between them, which defeats the reason an apply runs from a SAVED PLAN.
+	OpIacApply Operation = "iac.apply"
+
 	// OpDevToolsRun runs the PROJECT'S OWN tests, linters, build, compose stack or migrations. The argument
 	// is a KIND from a closed set, never a command line: this is where an arbitrary-shell operation would
 	// most naturally appear and it deliberately does not. Mutating and approval-required, because a
@@ -107,6 +114,7 @@ var allOperations = []Operation{
 	OpDockerContainerAction, OpDockerImageAction, OpKubernetesWorkloadAction,
 	OpDockerContainerLogs, OpKubernetesPodDetail,
 	OpDevToolsRun,
+	OpIacApply,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).

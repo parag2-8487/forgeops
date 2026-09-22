@@ -203,6 +203,12 @@ var handlerTable = map[Operation]entry{
 		mutating: true, requiresApproval: true, timeout: timeoutDevTools, implemented: true,
 		run: devToolsRun,
 	},
+	// 2.2. `tofu apply` creates and destroys real infrastructure and bills for it, so there is no
+	// unapproved form of this. `validate.tofu` is the read-only one and already exists.
+	OpIacApply: {
+		mutating: true, requiresApproval: true, timeout: timeoutDeploy, implemented: true,
+		run: iacApply,
+	},
 	OpKubernetesInventory: {timeout: timeoutValidate, implemented: true, run: k8sInventory},
 
 	// ── Phase 2: the mutating actions those dashboards offer ──

@@ -448,8 +448,16 @@ func TestImageActionRefusesAnEmptyOrUnknownTargetBeforeTouchingADaemon(t *testin
 	}{
 		{"no image named", map[string]any{"action": "pull", "image": ""}, "no target"},
 		{"only whitespace", map[string]any{"action": "remove", "image": "   "}, "no target"},
-		{"an action outside the set", map[string]any{"action": "build", "image": "nginx:1.27"}, "closed set"},
-		{"push is not reachable", map[string]any{"action": "push", "image": "nginx:1.27"}, "closed set"},
+		// `build` AND `push` LEFT THIS LIST IN PHASE 2 (2.2) and they are the only two that did. They were
+		// unreachable before because nothing implemented them, not because an image must never be built --
+		// see image.go for what had to exist first (path containment for two arguments, and a credential
+		// that reaches the envelope and no persisted row). They are exercised there, including against a
+		// real registry.
+		{"an action outside the set", map[string]any{"action": "tag", "image": "nginx:1.27"}, "closed set"},
+		{"squash is not reachable", map[string]any{"action": "squash", "image": "nginx:1.27"}, "closed set"},
+		// `prune` STAYS UNREACHABLE, and this is the one that matters most: `docker image prune` is an
+		// unbounded delete driven by whatever happens to be unreferenced, which is not an action against
+		// the one named target this operation is allowed to affect.
 		{"prune is not reachable", map[string]any{"action": "prune", "image": "nginx:1.27"}, "closed set"},
 	}
 	for index, tc := range cases {
