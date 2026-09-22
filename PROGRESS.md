@@ -297,11 +297,19 @@ into `record_command_result` through a `ChangeSetSettler` Protocol so `governanc
 nothing about workloads leaves `healthy` NULL, because absence of health is not health.
 
 **`record_command_result`'s failure branch could never have worked.** It has always written
-`status = 'failed'` and `failed` was never in `ck_change_sets_status_allowed`, so any agent reporting a
-failed command raised `CheckViolationError` inside the result handler. Revision `0029` adds it to the
-vocabulary and to the terminal set. The author's distinction was right — `rolled_back` means the agent undid
-its own work, `failed` means a result arrived saying the operation did not succeed — so the fix is the
-vocabulary, not the intent.
+`status = 'failed'`, and revision `0010` REMOVED `failed` from `ck_change_sets_status_allowed` precisely
+because design §3.6 does not define that state — so any agent reporting a failed command raised
+`CheckViolationError` inside the result handler. Nothing had exercised it until a settler test drove it end
+to end.
+
+**And the first fix was in the wrong direction, which is worth recording.** I widened the vocabulary to admit
+`failed`, and `test_0010_change_set_statuses.py` failed immediately: it asserts the constraint REJECTS
+`failed`, because `0010`'s whole purpose was that `0004`'s tuple had been written from memory rather than
+from §3.6. Widening the authority to accommodate a bug is the wrong trade. The code is fixed toward the
+authority instead — a failed result records `rolled_back`, §3.6's only failure edge out of `applying` — and
+revision `0029` restores the constraint to exactly what `0010` installed. No finer outcome is lost: for a
+deployment, `deployments.status` already carries `degraded` versus `failed` separately, which is where
+per-operation detail belongs.
 
 ### Decisions made
 
