@@ -364,6 +364,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.metrics_reader = MetricsReader(
         base_url=getattr(settings, "forgeops_prometheus_url", ""),
     )
+    # 2.11's metrics evidence source, implementing `core.metrics_port.MetricsEvidencePort`. Composed
+    # here so `incidents` never names `monitoring`: the analysis depends on the Protocol, and this is
+    # the one place the concrete reader and the consumer meet.
+    from .monitoring.incident_evidence import MetricsEvidence
+
+    app.state.metrics_evidence = MetricsEvidence(app.state.metrics_reader)
 
     # --- 2.2 and 2.4a: the durable deployment pipeline ------------------------
     #
@@ -487,9 +493,15 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # which is a true statement an operator can act on.
     app.state.notification_service = NotificationService(channels=compose_channels(settings))
     from .deployments.settler import DeploymentSettler
+
+    # 2.11: the deployment service files an incident when an apply it sent actually failed. Composed
+    # here because this is the only place both domains are in scope -- `deployments` depends on a
+    # Protocol it declares itself, so it never names `incidents`.
+    from .incidents.recorders import DeploymentIncidents
     from .secrets.registry_credentials import SecretStoreRegistryCredentials
 
-    app.state.deployment_service = DeploymentService()
+    app.state.deployment_incidents = DeploymentIncidents()
+    app.state.deployment_service = DeploymentService(incidents=app.state.deployment_incidents)
     app.state.environment_service = EnvironmentService(pepper=settings.envelope_pepper.get_secret_value())
 
     app.state.github_link_service = GitHubLinkService(
@@ -1031,6 +1043,10 @@ def create_app() -> FastAPI:
     from .monitoring.routes import router as monitoring_router
 
     app.include_router(monitoring_router, prefix=settings.api_prefix)
+
+    from .incidents.routes import router as incidents_router
+
+    app.include_router(incidents_router, prefix=settings.api_prefix)
 
     # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
     # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory

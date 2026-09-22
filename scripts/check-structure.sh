@@ -121,8 +121,7 @@ GO_STRUCTURAL_DIRS='agent/pkg'
 # `monitoring` LEFT THIS LIST IN PHASE 2 (2.10), for the same reason `notifications` did: it was deferred by
 # design 1.3 and 2.10 built it. `incidents` stays deferred until 2.11. `deployment` (singular) stays because
 # the built domain is `deployments`.
-PY_STRUCTURAL_DIRS='backend/src/deployment
-backend/src/incidents'
+PY_STRUCTURAL_DIRS='backend/src/deployment'
 
 FE_STRUCTURAL_DIR='frontend/features'
 

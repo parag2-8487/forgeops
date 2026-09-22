@@ -1181,13 +1181,86 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.11 AI Troubleshooting / Root-Cause Analysis _(former 3.3)_
 
-- [ ] Backend: Incident ingestion from build failures, deployment errors, K8s events, logs
-- [ ] Backend: AI-powered log analysis (Gemini 3 Flash for high throughput, through the §0.5 routing cascade)
-- [ ] Backend: Root cause identification pipeline
-- [ ] Backend: Fix suggestion generation (enters approval pipeline)
-- [ ] Frontend: Incident list and detail view
-- [ ] Frontend: RCA display (problem → location → fix)
-- [ ] Frontend: Suggested fix with diff preview
+- [x] Backend: Incident ingestion from build failures, deployment errors, K8s events, logs --
+      `src/incidents/ingestion.py`, migration `0033`, model `src/incidents/models.py`. **Every source
+      already exists and already fails**: nothing here invents a feed, which is deliberate -- an
+      ingestion path with no producer is this project's recurring defect (`DeploymentService.complete`
+      with no caller, `record_command_result`'s unreachable failure branch). **The production caller is
+      `DeploymentService.fail`**, reached only when the agent RAN the command and it failed, so a policy
+      deny, a held approval and an agent timeout structurally cannot file one -- the same argument as the
+      circuit breaker's counting site. Wired through a Protocol `deployments` declares itself, so it
+      never names `incidents`. A test drives the real chain and reads the row back: `source`,
+      `origin_kind=deployment` and `origin_id` equal to the deployment's own id.
+
+      **Deduplication is one `INSERT .. ON CONFLICT`, not select-then-insert**, against a partially
+      unique index over unresolved incidents. Two agents reporting the same crash-looping pod in the same
+      second would both find no row and both insert, and that window is exactly when the source fires
+      fastest. Severity RISES and never falls, because the worst thing an incident has ever been is what
+      an operator needs. A resolved incident recurring files a NEW one -- folding a regression into a
+      dismissed row would hide it. Exit code 0 is refused rather than filed as info. 31 tests.
+- [x] Backend: AI-powered log analysis (through the §0.5 routing cascade) -- `src/incidents/analysis.py`
+      takes an `ArtifactModelPort` and **names no model at all**, so the deployment's configured cascade
+      decides; the box names Gemini 3 Flash and the cascade has that tier, while on this deployment every
+      `LLM_KEY_*` is a placeholder so it resolves to the self-hosted model. Which endpoint answered is
+      recorded, so a reader is never guessing. `store_in_cache=False` on the call with `remember` after
+      the answer parses -- the same discipline generation now uses, because caching an unparseable answer
+      would serve it to every later analysis of the same failure.
+- [x] Backend: Root cause identification pipeline -- `evidence.py` + `analysis.py`, with
+      `POST /incidents/{id}/analysis` as its production caller. **The design is what it refuses to do.**
+      It will not conclude below a floor of two reachable sources; it will not conclude with no model; and
+      an answer it cannot parse becomes `inconclusive` rather than being stuffed into `problem` -- which
+      would satisfy the database constraint while being exactly the lie it exists to prevent. The model is
+      given an explicit `### INSUFFICIENT` escape and told not to guess, and **the unreachable sources are
+      named in the prompt**: a model shown only what was readable reasons as though that were everything.
+
+      **The sources are never merged into one confidence number.** Metrics, logs and events measure
+      different things over different windows by different mechanisms, so each keeps its own reachability
+      and its own prose -- the same refusal as 2.4's two resource columns. Five analysis states, and the
+      database enforces the honesty rather than trusting the code: `ck_incident_analyses_analysed_has_content`
+      refuses a cause with empty fields, and its converse refuses content without the state. Both are
+      exercised against a real Postgres, because a CHECK never tested might be misspelled.
+
+      **RCA reads the existing PromQL catalogue and no second query path exists.** `check-chokepoint`
+      refused `incidents` importing `monitoring` and was right; the answer is
+      `core/metrics_port.MetricsEvidencePort`, implemented by `monitoring/incident_evidence.py`. The two
+      alternatives were both rejected in writing: an exemption would open `monitoring` to every domain,
+      and a second query path is worse still, because the catalogue is what makes tenant scoping
+      structural.
+- [x] Backend: Fix suggestion generation (enters approval pipeline) -- `incident_fix_suggestions`, and
+      `POST .../suggestions/{id}/change-set` is **the only path from a suggestion to a file**. It submits
+      through the chokepoint exactly as generation does, so an AI-proposed edit faces policy, approval,
+      blast radius and audit; a route that wrote the file directly would be an AI editing a repository
+      with no human in the path. **The pre-image travels with the change set** rather than being re-read
+      here: it becomes `change_items.old_hash`, and the agent recomputes the hash of the file it is about
+      to write and aborts the whole set on a mismatch -- stronger than this route re-reading, since only
+      the agent can see the file. A second submission of the same suggestion is a 409, because two change
+      sets proposing one edit would both pass approval and the second would conflict with the first,
+      presenting as an unexplained refusal of the operator's own change. `origin` stays `manual`: a human
+      read the diff, `approve()` branches on origin so a fourth value risks an unhandled branch, and the
+      AI provenance is a foreign key rather than an enum string.
+- [x] Frontend: Incident list and detail view -- `features/incidents/IncidentPanels.tsx`, 19 tests. The
+      list shows the analysis state per row so a triaging operator need not open each one, and
+      occurrences carry a unit ("once", "47 times") rather than being a bare number. **An empty list
+      renders the backend's sentence saying nothing has been INGESTED**, which is not the same as nothing
+      having failed if the sources feeding ingestion are not running -- and a failed request says the
+      state is unknown rather than showing an empty list in its place. The detail view puts the evidence
+      caveat ABOVE any conclusion, as an alert when sources were missed, so an operator reading top to
+      bottom cannot reach a cause without passing how much of the picture was available.
+- [x] Frontend: RCA display (problem -> location -> fix) -- five states, five sentences, and **the
+      problem/location/fix block is absent entirely in the four non-`analysed` states rather than empty**.
+      That is the whole point: those rows are blank in the data, and rendering three empty fields under a
+      "Root cause" heading reads to a human as "analysed, nothing found". A parameterised test asserts for
+      each of the four states that no Problem or Location markup exists at all. A cause found without a
+      remedy says so rather than leaving a blank that reads as "no fix needed", and the provenance line
+      either names the endpoint that answered or states that none did.
+- [x] Frontend: Suggested fix with diff preview -- the diff is **rendered from the stored contents, never
+      stored**: a stored diff can disagree with the file it claims to patch once the file moves on, and a
+      preview that lies about the current state is worse than none, because a human approves a change
+      believing it does one thing. The caveat sits ABOVE the diff and says the comparison is against what
+      the file held when the analysis ran -- the one thing a reader would otherwise assume wrongly. An
+      identical proposal says "there is no difference" rather than presenting an empty diff to approve, a
+      failed render states that nothing has been applied, and a submitted suggestion is marked "awaiting
+      the same approval as any other mutation" with a test asserting the word "applied" never appears.
 
 #### 2.12 Self-Healing (Guard-Railed) _(former 3.4)_
 

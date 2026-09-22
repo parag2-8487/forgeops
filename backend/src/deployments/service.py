@@ -23,7 +23,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,8 +85,37 @@ def manifest_digest(manifests: list[str] | tuple[str, ...]) -> str:
     return "sha256:" + hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
+class DeploymentIncidentRecorder(Protocol):
+    """Filing an incident for a failed deployment, and nothing else.
+
+    A Protocol because `deployments` may not import `incidents` -- `check-chokepoint` enforces that, and
+    it is right to: the two domains have no other business together. Narrow on purpose: there is no method
+    here for reading incidents or for filing one of another kind, so this seam cannot become a general
+    dependency on the incidents domain.
+    """
+
+    async def record_deployment_failure(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        deployment_id: uuid.UUID,
+        environment: str,
+        reason: str,
+    ) -> None: ...
+
+
 class DeploymentService:
     """Writes and reads `deployments`."""
+
+    def __init__(self, incidents: DeploymentIncidentRecorder | None = None) -> None:
+        """`incidents` is optional and defaults to None.
+
+        Optional because a deployment must still fail cleanly on a deployment that does not run incident
+        ingestion, and defaulted so the existing construction sites -- which are many and all stateless --
+        keep working unchanged rather than being edited to pass None.
+        """
+        self._incidents = incidents
 
     async def create(
         self,
@@ -235,7 +264,25 @@ class DeploymentService:
             ),
             {"report": json.dumps({"error": reason}), "id": deployment_id, "open": list(_OPEN_STATUSES)},
         )
-        return await self.read(session, deployment_id=deployment_id)
+        record = await self.read(session, deployment_id=deployment_id)
+
+        # 2.11: FILE AN INCIDENT, and this is the site precisely because of what reaching it means. The
+        # agent RAN the command and it failed. A policy deny, a held approval and an agent timeout do not
+        # pass through here, so they cannot produce an incident -- the same structural argument as the
+        # circuit breaker's counting site. An ingestion hook placed one level up would have filed an
+        # incident for every refused request, which is noise that buries real failures.
+        #
+        # Through a Protocol and only when one is composed: `deployments` may not import `incidents`, and
+        # a deployment must still fail cleanly on a deployment that does not run incident ingestion.
+        if self._incidents is not None:
+            await self._incidents.record_deployment_failure(
+                session,
+                project_id=record.project_id,
+                deployment_id=deployment_id,
+                environment=str(record.environment_id),
+                reason=reason,
+            )
+        return record
 
     async def history(self, session: AsyncSession, *, project_id: uuid.UUID, limit: int = 50) -> list[DeploymentRecord]:
         """§2.3's timeline source: newest first."""

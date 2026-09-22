@@ -215,6 +215,14 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "monitoring-query-unknown": ProblemSpec(422, "No such monitoring query"),
     "monitoring-query-forbidden": ProblemSpec(403, "That monitoring query is operator-only"),
     "monitoring-query-invalid": ProblemSpec(422, "The monitoring query arguments are not valid"),
+    # 2.11's four. `incident-suggestion-already-submitted` is a 409 rather than a 422: the request is
+    # well formed and the conflict is with state, and two change sets proposing the same edit would both
+    # pass approval while the second conflicted with the first -- presenting to an operator as an
+    # unexplained refusal of their own change.
+    "incident-absent": ProblemSpec(404, "No such incident"),
+    "incident-suggestion-absent": ProblemSpec(404, "No such fix suggestion for this incident"),
+    "incident-suggestion-already-submitted": ProblemSpec(409, "That suggestion is already a change set"),
+    "incident-governance-absent": ProblemSpec(503, "Governance is not composed, so a fix cannot be proposed"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a

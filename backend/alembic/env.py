@@ -58,6 +58,12 @@ from src.governance.models import (  # noqa: F401, E402
     RollbackHandle,
     Validation,
 )
+from src.incidents.models import (  # noqa: F401, E402
+    Incident,
+    IncidentAnalysis,
+    IncidentEvidence,
+    IncidentFixSuggestion,
+)
 from src.integrations.models import GitHubAccountLink  # noqa: F401, E402
 from src.notifications.models import (  # noqa: F401, E402
     Notification,
