@@ -353,6 +353,15 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # otherwise be the overwhelming majority of every trace sample and every request-rate panel.
     telemetry.instrument_app(app)
 
+    # The read side of 2.10. A separate URL from the OTLP endpoint above, because writing telemetry
+    # and querying it are different services -- the collector receives, Prometheus answers -- and a
+    # deployment can legitimately do one without the other.
+    from .monitoring.reader import MetricsReader
+
+    app.state.metrics_reader = MetricsReader(
+        base_url=getattr(settings, "forgeops_prometheus_url", ""),
+    )
+
     # --- 2.2 and 2.4a: the durable deployment pipeline ------------------------
     #
     # The pipeline's steps are engine-agnostic handlers in `deployments/pipeline.py`; they need a session
@@ -1016,6 +1025,9 @@ def create_app() -> FastAPI:
     from .argocd.routes import router as argocd_router
 
     app.include_router(argocd_router, prefix=settings.api_prefix)
+    from .monitoring.routes import router as monitoring_router
+
+    app.include_router(monitoring_router, prefix=settings.api_prefix)
 
     # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
     # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory

@@ -25,6 +25,12 @@ apiVersion: 1
 datasources:
   - name: Prometheus
     type: prometheus
+    # THE UID IS PINNED. Grafana generates a random one when this is omitted, and every dashboard panel
+    # and every cross-datasource link here refers to `prometheus` by name -- so without this line the
+    # panels point at a datasource that does not exist. It was caught by provisioning a real Grafana and
+    # reading /api/datasources back, not by review: the config looked correct, and a panel with a dangling
+    # datasource uid renders as an error inside the panel rather than failing provisioning.
+    uid: prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true

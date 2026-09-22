@@ -646,6 +646,8 @@ services:
       GF_SECURITY_COOKIE_SAMESITE: "strict"
     volumes:
       - ./infra/observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/forgeops.yaml:ro
+      - ./infra/observability/grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/forgeops.yaml:ro
+      - ./infra/observability/dashboards:/etc/grafana/provisioning/dashboards/forgeops:ro
       - grafanadata:/var/lib/grafana
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"

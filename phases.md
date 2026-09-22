@@ -1098,11 +1098,64 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       compactor, because a filesystem-backed Loki with no retention fills the disk and then every write
       fails at once — including the lines describing why. Old samples are rejected, so a collector
       replaying a week-old queue cannot make a "last hour" query return week-old lines.
-- [ ] Grafana: Embedded dashboards (data sources: Prometheus/Mimir + Loki + Tempo)
-- [ ] Frontend: Unified monitoring dashboard with exemplar support
-- [ ] Frontend: Infrastructure health overview
-- [ ] Frontend: Application metrics (request rate, latency, errors) with trace correlation
-- [ ] Frontend: **AI cost dashboard** per tenant per model
+- [x] Grafana: Embedded dashboards (data sources: Prometheus/Mimir + Loki + Tempo) --
+      `infra/observability/grafana-dashboards.yaml` provisioning two dashboards from
+      `dashboards/*.json`, verified by provisioning a REAL Grafana and reading `/api/search` and
+      `/api/datasources` back: both dashboards in the ForgeOps folder, all four datasources present, no
+      provisioning errors. A panel expression was then executed through Grafana's own datasource proxy
+      and returned real spend for two models, so the chain datasource -> store -> recording rule ->
+      panel is proven rather than assumed. **That real run caught a defect review had not:** Grafana
+      generates a random datasource uid when one is not pinned, so Prometheus came up as
+      `PBFA97CFB590B2093` while every panel and every cross-datasource link referred to `prometheus` --
+      a dangling uid renders as an error inside the panel and does not fail provisioning, so it would
+      have shipped. `uid: prometheus` is now explicit. `allowUiUpdates: false` is deliberate and costs
+      something real: an operator cannot save an exploratory edit. It buys that the dashboard an engineer
+      reads is the dashboard in the repository, rather than one edited nine months ago by someone who
+      has left and reviewed by nobody. Every panel sets `noValue` to words and `spanNulls: false` --
+      interpolating a line across a collector outage draws spend that was never measured.
+- [x] Frontend: Unified monitoring dashboard with exemplar support --
+      `features/monitoring/MonitoringDashboard.tsx` at `/monitoring`, reading the backend's own
+      `/monitoring/query` route. **The browser never talks to Prometheus**, which is the load-bearing
+      decision of this whole section: Prometheus has no authentication, so a panel pointed at it means
+      either exposing every series in the deployment or writing a transparent proxy, which is the same
+      hole with an extra hop. Neither passes `require_principal`. The page's FIRST section is whether it
+      can tell you anything at all, before any figure appears, so an operator reading top to bottom
+      cannot reach a cost number without passing the reason it might be wrong. **Exemplars link out to
+      Grafana rather than being re-rendered here**: following one needs a trace viewer, Grafana's knows
+      about span links and service graphs, and a partial reimplementation would omit them silently --
+      discovered during an incident. When no Grafana is configured the page says exemplars cannot be
+      followed AND that the figures are unaffected, because an unexplained missing link makes an
+      operator distrust data that is fine. 25 tests.
+- [x] Frontend: Infrastructure health overview -- `features/monitoring/InfrastructurePanels.tsx`.
+      Shed spans and accepted spans are shown TOGETHER and neither alone, because an empty shed panel is
+      the good state and an empty shed panel caused by a dead collector looks identical; only the
+      accepted count separates them. Shedding is reported as the collector working as designed *and* as
+      a reason to distrust everything else on the page -- a latency percentile computed from the
+      requests that survived is biased towards the fast ones, and that sentence is in the panel. **Zero
+      accepted spans raises an alert rather than rendering blank**: the collector answered and is
+      receiving nothing, which is a measurement and not an absence. The good state is stated positively
+      ("no data is being lost here") rather than left as a gap, since a blank panel reads as "not
+      configured".
+- [x] Frontend: Application metrics (request rate, latency, errors) with trace correlation -- same file.
+      **The 5xx column is words, not 0%, where a route had no traffic**: the ratio's denominator is the
+      request count, so Prometheus returns no series at all, and rendering 0% would say a route nobody
+      called had no errors. A test asserts that cell contains no `0.00%`. Trace links carry the route and
+      window so they open narrowed, and **when no trace store is configured there is no link rather than
+      a dead one** -- a link that goes nowhere is worse than its absence because a human clicks it during
+      an incident. The panel says out loud that these figures are deployment-wide and not tenant-scoped,
+      because the instrumentation starts its timer before a principal exists; claiming otherwise would be
+      the more comfortable lie.
+- [x] Frontend: **AI cost dashboard** per tenant per model -- `features/monitoring/AiCostPanel.tsx`,
+      **verified against the real store with two tenants' series in it**: signed in as tenant A the route
+      returned only A's model at 1.55, while B's `bge-m3` at 4.6 and B's id appeared nowhere in the
+      response, and the test asserts non-vacuously that B's series IS in the store. **There is no tenant
+      control on the panel** -- that is the security property, not an omission: the matcher is composed
+      by the backend from the verified principal and there is no field through which another tenant or
+      any PromQL could be requested. The rendered PromQL is shown so the scoping is visible rather than
+      trusted. Cache hits are shown beside spend because a model served from L1 or L2 reports no cost, so
+      falling spend means either less work or more caching -- opposite responses. Input and output tokens
+      are never summed (they price differently, so a combined figure cannot be converted back into
+      money); a test asserts 1250 never appears beside 1000 and 250.
 
 > The former 3.2 "Frontend: Resource utilization charts" is not missing: it is the combined
 > resource-utilisation box in 2.4.

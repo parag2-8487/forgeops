@@ -626,6 +626,9 @@ class Settings(BaseSettings):
     # `Telemetry.enabled` is separate and the readiness report distinguishes unconfigured from
     # unreachable.
     forgeops_otel_endpoint: str = ""
+    # Where monitoring queries are answered. EMPTY MEANS the panels report themselves unconfigured
+    # rather than drawing empty charts, which read as "nothing is happening".
+    forgeops_prometheus_url: str = ""
     arq_queue_name: str = Field(default="forgeops")
     arq_max_jobs: int = Field(default=10, ge=1, le=1000)
     arq_job_timeout_seconds: int = Field(default=900, ge=1)

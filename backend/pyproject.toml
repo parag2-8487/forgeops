@@ -288,6 +288,11 @@ ignore = [
 # 2.6. A domain importing its own namespace is not a cross-domain import; the parse in
 # `scripts/chokepoint_graph.py` re-asserts the real boundary.
 "src/notifications/**/*.py" = ["TID251"]
+# 2.10. Same case: `monitoring/routes.py` importing `monitoring/queries.py` is a domain reaching its own
+# namespace, not a cross-domain import. The ban on `src.monitoring` is aimed at OTHER domains and still
+# holds -- `find_module_ban_violations` in `scripts/chokepoint_graph.py` re-asserts it by parsing, which
+# is the boundary; Ruff is only the fast feedback.
+"src/monitoring/**/*.py" = ["TID251"]
 
 # `src/auth` is exempted FILE BY FILE rather than by glob, which is the narrower form
 # of the rule above. Only `routes.py` composes the flow — it is the one module that must

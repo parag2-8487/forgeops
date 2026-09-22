@@ -1,0 +1,151 @@
+{
+  "__comment": [
+    "Phase 2 §2.10's infrastructure and application dashboard, with the metric-to-trace link that is the",
+    "reason for running all four stores rather than just Prometheus.",
+    "",
+    "EXEMPLARS ARE ENABLED ON THE LATENCY PANEL. An exemplar is a trace id attached to a histogram bucket, so",
+    "clicking a latency spike opens a request that was actually slow -- rather than searching traces for the",
+    "same time window and hoping. It requires three things to line up, and all three are elsewhere in this",
+    "directory: the collector emitting OpenMetrics (enable_open_metrics in otel-gateway.yaml), Prometheus",
+    "storing them (--enable-feature=exemplar-storage in docker-compose.yml), and the datasource naming a",
+    "trace destination (exemplarTraceIdDestinations in grafana-datasources.yaml). Miss any one and the link",
+    "silently does nothing -- there is no error, the dots simply never appear."
+  ],
+  "uid": "forgeops-infrastructure",
+  "title": "ForgeOps / Infrastructure and Application Health",
+  "tags": ["forgeops", "infrastructure"],
+  "timezone": "browser",
+  "editable": false,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Telemetry pipeline health -- read this before trusting anything below",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Spans shed by the collector",
+      "description": "Non-zero means memory_limiter is refusing data. That is the collector working as designed -- one that refuses loses only what it refused, one killed by the OOM killer loses everything it held -- but it means the traces and metrics on this page are INCOMPLETE. An empty panel here is the good state; an empty panel because the collector is down looks identical, which is why the panel beside it shows accepted spans.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum by (job) (rate(otelcol_processor_refused_spans_total[$__rate_interval]))",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "noValue": "never reported", "custom": { "spanNulls": false } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spans accepted by the collector",
+      "description": "The companion to the panel on the left. Zero here means nothing is being instrumented or the collector is down; that is a different problem from shedding, and without this panel the two are indistinguishable.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum by (job) (rate(otelcol_receiver_accepted_spans_total[$__rate_interval]))",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "noValue": "never reported", "custom": { "spanNulls": false } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Export queue depth",
+      "description": "Telemetry waiting to leave the collector. A queue that only grows means a downstream store is unreachable, and the queue is bounded -- so past its limit, data is dropped rather than held.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 1 },
+      "targets": [
+        { "expr": "max by (job) (otelcol_exporter_queue_size)", "legendFormat": "{{job}}" }
+      ],
+      "fieldConfig": { "defaults": { "noValue": "never reported", "custom": { "spanNulls": false } } }
+    },
+    {
+      "type": "row",
+      "title": "Store reachability",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 8 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Scrape targets up",
+      "description": "`up` is 1 or 0 per target. A target that has never been scraped is ABSENT rather than 0, which is why this panel shows a count and the table beside it lists names: a count alone cannot distinguish a target that is down from one that was never configured.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 9 },
+      "targets": [{ "expr": "sum(up)", "legendFormat": "up" }],
+      "fieldConfig": { "defaults": { "noValue": "never reported", "decimals": 0 } }
+    },
+    {
+      "type": "table",
+      "title": "Every scrape target, by name",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 18, "x": 6, "y": 9 },
+      "targets": [{ "expr": "up", "instant": true, "format": "table" }],
+      "fieldConfig": { "defaults": { "noValue": "no targets are configured" } }
+    },
+    {
+      "type": "row",
+      "title": "Application",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by route",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "expr": "sum by (http_route) (rate(http_server_duration_milliseconds_count[$__rate_interval]))",
+          "legendFormat": "{{http_route}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "noValue": "never reported", "custom": { "spanNulls": false } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 latency, with exemplars",
+      "description": "Click a dot to open the trace of a request that was actually that slow. If no dots appear, exemplars are not reaching Prometheus -- see this dashboard's __comment for the three settings that must all be present.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 17 },
+      "targets": [
+        {
+          "expr": "route:http_latency_p95:5m",
+          "legendFormat": "{{http_route}}",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "noValue": "never reported",
+          "custom": { "spanNulls": false }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "5xx ratio by route",
+      "description": "Deliberately ABSENT rather than zero where a route had no traffic: the ratio's denominator is the request rate, and rendering 0% for a route nobody called would say 'no errors' about something untested. A gap here means no requests, not no failures.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 17 },
+      "targets": [{ "expr": "route:http_errors:ratio5m", "legendFormat": "{{http_route}}" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "no requests in this window",
+          "custom": { "spanNulls": false }
+        }
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

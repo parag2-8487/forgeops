@@ -208,6 +208,13 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # A 422: the render request omits a field its kind requires, which is a caller error and not a
     # server one -- an ApplicationSet with no environments generates no Applications.
     "argocd-manifest-incomplete": ProblemSpec(422, "The manifest request is missing a required field"),
+    # 2.10's three. `monitoring-query-unknown` is a 422 rather than a 404 because the caller named a
+    # query that does not exist in a fixed catalogue -- the request is malformed, not the resource
+    # missing. `monitoring-query-forbidden` is a 403: the query is real and covers the whole
+    # deployment, which is operator information.
+    "monitoring-query-unknown": ProblemSpec(422, "No such monitoring query"),
+    "monitoring-query-forbidden": ProblemSpec(403, "That monitoring query is operator-only"),
+    "monitoring-query-invalid": ProblemSpec(422, "The monitoring query arguments are not valid"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a
