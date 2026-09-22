@@ -1458,9 +1458,35 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.14 Knowledge Base Mode _(former 3.6)_
 
-- [ ] Backend: Question-answering pipeline with RAG from codebase, deployments, incidents
-- [ ] Implemented topics: "Explain this Dockerfile", "Explain this error", "Best practices for..."
-- [ ] Always uses current project as example (not generic)
+- [x] Backend: Question-answering pipeline with RAG from codebase, deployments, incidents --
+      `src/knowledge/service.py`, 16 tests. **Scoping is derived from the verified principal and the path
+      parameter, never from the request body**, which is the same answer as the PromQL catalogue's and for
+      the same reason: `authorise_project` reads the project's owner from the DATABASE before any
+      retrieval runs, and every retrieval statement then filters on that project id. There is no request
+      field naming a tenant, a project filter, a threshold or a limit, so widening the search is
+      unexpressible -- asserted by posting each of those three fields and getting a 422.
+
+      **The cross-tenant test drives two real tenants with real indexed content.** Signed in as A and
+      naming B's project id exactly returns 404 with B's content nowhere in the response, and the refusal
+      is the SAME sentence as a project that does not exist -- a distinct message would let a caller probe
+      which ids exist elsewhere. A non-vacuous owner control proves B can read its own project, so the
+      isolation assertions cannot pass on a route that refuses everyone. The question is free text and
+      **never becomes part of a query**: it filters rows already retrieved, so `'; DROP TABLE projects; --`
+      matches nothing and the table survives, which is asserted.
+- [x] Implemented topics: "Explain this Dockerfile", "Explain this error", "Best practices for..." -- all
+      three, plus `project_state`, in a **closed set**. Topics are enumerated and the question is not, and
+      the asymmetry is deliberate: a topic decides WHICH retrieval runs, so an open topic would let a
+      caller choose the retrieval, while a question has to be free text to be a question at all. An
+      unknown topic is refused rather than defaulted.
+- [x] Always uses current project as example (not generic) -- **enforced, not requested**. With no
+      retrieved context the model is not asked at all: the state is `no_context`, because an answer from
+      general knowledge reads as if it were about your project and the person asking cannot tell the
+      difference from the text. The prompt carries this project's real indexed content and instructs
+      `### NO CONTEXT` rather than a general answer, and a model that replies with it is reported as a
+      real answer rather than a failure. Every answer carries its **sources** -- the file, deployment or
+      incident each claim came from -- because an answer whose sources are invisible is one nobody can
+      check. A deployment's `healthy` is rendered as three states, never two: NULL means nothing checked,
+      and collapsing that into "unhealthy" would put a false claim into an answer.
 
 ### Completion Criteria
 

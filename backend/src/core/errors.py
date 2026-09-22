@@ -241,6 +241,9 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # because the command does not exist to be authorised for.
     "command-refused": ProblemSpec(422, "That command is not one this system understands"),
     "command-incomplete": ProblemSpec(422, "That command is missing a required value"),
+    # 2.14's one. A 404, and the SAME sentence for an absent project and for one in another tenant --
+    # non-disclosing, so this cannot be used to probe which project ids exist elsewhere.
+    "knowledge-refused": ProblemSpec(404, "No such project, or that topic is not answerable"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a
