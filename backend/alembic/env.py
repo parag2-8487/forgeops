@@ -42,6 +42,7 @@ from src.argocd.models import ArgocdRepositoryEvent  # noqa: F401, E402
 from src.audit.models import AuditEvent  # noqa: F401, E402
 from src.auth.device_models import AgentDevice  # noqa: F401, E402
 from src.auth.models import Session, User  # noqa: F401, E402
+from src.commands.models import CommandHistory  # noqa: F401, E402
 from src.deployments.models import (  # noqa: F401, E402
     Deployment,
     DeploymentCircuitBreaker,

@@ -5354,6 +5354,8 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `learning-preference-invalid` | 422 | The correction changes nothing: neither a statement nor an active flag was supplied. |
 | `learning-preference-absent` | 404 | No preference with that id. |
 | `learning-turn-invalid` | 422 | A conversation turn's role is not `user` or `assistant`. |
+| `command-refused` | 422 | The utterance or intent is not one the closed command set can express, or a slot value failed its vocabulary. A 422 rather than a 403: there is no authority question, because the command does not exist to be authorised for. |
+| `command-incomplete` | 422 | The resolved command is missing a required slot. Refused rather than defaulted, because guessing a value the user did not give is how an automated system does something nobody asked for. |
 | `notification-absent` | 404 | The named notification does not belong to this project | A 404 rather than a 403 for the reason `environment-absent` is one: the caller is already authorised for the project that owns it, so concealing which notifications exist would buy nothing |
 | `notification-preference-invalid` | 422 | The notification preference cannot be stored as asked | Raised for one case above all: an ENABLED channel with no target. A preference that delivers nowhere is a setting that silently does nothing, and a user who set it believes they are covered — so it is refused at the point of saving rather than discovered when nothing arrives |
 

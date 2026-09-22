@@ -798,14 +798,76 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
 
 #### 2.5 AI Command Center
 
-- [ ] Backend: Intent classifier (router: deploy, diagnostic, generate, policy, chat)
-- [ ] Backend: NL → structured command pipeline (function calling)
-- [ ] Backend: Multi-agent orchestrator (deploy agent, diagnostic agent, etc.)
-- [ ] Backend: Defense-in-depth guard-rails (5 layers)
-- [ ] Frontend: Command input with autocomplete
-- [ ] Frontend: Command results display (structured + chat)
-- [ ] Frontend: Command history per session
-- [ ] Supported commands: "Deploy to staging", "Show pods", "Check logs", "Scale to 3 replicas", "Generate Dockerfile"
+- [x] Backend: Intent classifier (router: deploy, diagnostic, generate, policy, chat) --
+      `src/commands/intents.py`, 48 tests. Eight intents across the five categories, in a **closed
+      frozenset**, and `resolve` refuses any name outside it with no branch that dispatches on a best
+      effort -- the same structural fail-safe as `is_auto_executable`. An unmatched utterance falls to
+      `explain`, which is safe **by direction**: it resolves to a non-mutating command with no operation,
+      so the fallback answers and can change nothing. A test asserts `INTENTS` and the command table
+      agree, since a name in one and not the other is either unreachable or unresolvable.
+
+      The classifier is deterministic pattern matching, and that is a decision rather than a limitation:
+      an LLM can be substituted behind the same `Intent` return type and **every guard still holds**,
+      because they constrain the OUTPUT rather than trusting the producer. `scale` is matched before
+      `deploy`, because "scale the staging api to 3" names an environment and is not a deploy.
+- [x] Backend: NL to structured command pipeline (function calling) -- **natural language never becomes
+      an argument value**, which is the load-bearing decision of the section. The classifier emits an
+      intent NAME plus slots drawn from enumerated vocabularies; it never produces a command line, a path,
+      a flag or free text that reaches an operation. `operation` is a constant in the repository, never
+      assembled from a slot or a template.
+
+      The usual "function calling" shape -- the model emitting `{operation, args}` for a validator to
+      check -- was rejected in writing: it is safe only to the extent the validator is complete, and the
+      validator cannot be complete because it is defending against a string. **This pipeline never has a
+      string to defend against.** Ten adversarial utterances (`deploy to staging; rm -rf /`,
+      `deploy to $(whoami)`, `check logs for ../../etc/passwd`, `show pods in default' OR '1'='1`) are
+      asserted to produce arguments containing no `;`, `&`, `|`, `$`, backtick, newline, quote, space,
+      slash, `..`, `>` or `<` -- or a refusal.
+- [x] Backend: Multi-agent orchestrator (deploy agent, diagnostic agent, etc.) -- a **dispatch table, not
+      a set of autonomous agents calling each other**, and the difference is deliberate. Each category is
+      handled by the domain that already owns it: deployments by the governed deployment route,
+      diagnostics by the agent's existing read operations, generation by the generation pipeline. An
+      "agent" here is a handler with one job and no authority of its own. Agents able to invoke one
+      another would multiply the paths to the chokepoint and make the blast radius of a
+      mis-classification unbounded -- exactly the wrong property for a surface driven by natural language.
+- [x] Backend: Defense-in-depth guard-rails (5 layers) -- **five different KINDS of check, not five
+      whitelists in a row**, because five of the same thing all fail together the first time one is
+      bypassed. (1) Intent closure: membership in a frozenset, no second condition. (2) Slot vocabulary:
+      every value against an enumerated set, with exactly one pattern-matched slot -- DNS-1123, which
+      admits no space, slash, quote, semicolon or dollar sign, so a name cannot carry a second token into
+      an argument vector. (3) A forbidden-verb deny-list over resolved operations, **evaluated at import**,
+      with a negative-control test proving that adding `devtools.shell` to the table fails the build.
+      (4) Confirmation: interpret and execute are separate routes, so there is no `confirm: bool` one
+      field-flip away from a classifier's guess. (5) Governance: the plan is handed to the owning domain,
+      and this router mints nothing and signs nothing.
+
+      An unknown slot is **refused rather than dropped**, because dropping it lets a caller believe the
+      command was constrained when it was not. An out-of-range replica count is **dropped rather than
+      clamped**, because clamping "scale to 99999" to 20 would silently do something nobody asked for.
+- [x] Frontend: Command input with autocomplete -- `features/commands/CommandCenter.tsx`, 11 tests.
+      Suggestions come from the **server's published catalogue**, not a local list, so what the input
+      offers is exactly what can resolve -- a local list drifts and starts suggesting commands that no
+      longer exist. A test asserts typing a mutating sentence produces exactly ONE request, to
+      `interpret`, and that the confirm button appears rather than the action running.
+- [x] Frontend: Command results display (structured + chat) -- the confirmation shows the **resolved
+      operation and arguments verbatim** before anything runs, because the gap between what was said and
+      what was understood is the whole risk of a natural-language surface and this is the only place it
+      can be closed in time. A weak match raises an alert saying a guess shown like a certainty invites
+      confirming without looking. A missing value is a question, never a default. The execute request
+      carries **intent and slots and no operation field**, asserted by test, so a tampered client cannot
+      redirect what runs.
+- [x] Frontend: Command history per session -- every interpretation, dispatch and **refusal**, each with
+      one sentence describing what became of it. `ck_command_history_refusal_has_reason` refuses a refusal
+      row with no reason, because a history that says "declined" and nothing more leaves "nothing
+      happened" indistinguishable from a broken button. An empty history states that no command was
+      received rather than that one failed silently.
+- [x] Supported commands: "Deploy to staging", "Show pods", "Check logs", "Scale to 3 replicas",
+      "Generate Dockerfile" -- all five, parameterised over twelve utterances asserting the resolved
+      intent AND the exact arguments. **A real classifier bug was caught by that table**: "Scale to 3
+      replicas" extracted `workload="to"`, because "to" follows the verb and is a perfectly legal
+      Kubernetes name -- so the slot validator could not reject it, and a workload called `to` would have
+      been scaled. The fix belongs in extraction, not validation, and a stop-word set is now excluded
+      there. That is the quiet version of this failure: a valid name pointing at the wrong thing.
 
 #### 2.6 Notification Center (Basic)
 

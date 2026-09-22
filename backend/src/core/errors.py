@@ -236,6 +236,11 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "learning-preference-invalid": ProblemSpec(422, "The preference change is not valid"),
     "learning-preference-absent": ProblemSpec(404, "No such preference"),
     "learning-turn-invalid": ProblemSpec(422, "That conversation turn is not valid"),
+    # 2.5's two. Both 422: an utterance the command set cannot express, or a plan missing a required
+    # slot, is a malformed request rather than a forbidden one -- there is no authority question here,
+    # because the command does not exist to be authorised for.
+    "command-refused": ProblemSpec(422, "That command is not one this system understands"),
+    "command-incomplete": ProblemSpec(422, "That command is missing a required value"),
     # 2.6's two. `notification-absent` is a 404 for the same reason `environment-absent` is: the caller is
     # already authorised for the project that owns it. `notification-preference-invalid` is a 422 and is
     # raised for one specific case worth naming -- an enabled channel with no target, which would be a
