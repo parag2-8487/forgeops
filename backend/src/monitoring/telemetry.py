@@ -129,6 +129,10 @@ class Telemetry:
         self._service_name = service_name
         self._tracer: Any = None
         self._meter: Any = None
+        # Kept so `instrument_process` can attach to THIS provider rather than the global one. The
+        # global provider is set below, but passing it explicitly means an instrumentor attached before
+        # that assignment cannot silently bind to a no-op default.
+        self._meter_provider: Any = None
         self._cost_counter: Any = None
         self._input_tokens: Any = None
         self._output_tokens: Any = None
@@ -173,6 +177,7 @@ class Telemetry:
             export_interval_millis=15_000,
         )
         meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
+        self._meter_provider = meter_provider
         metrics.set_meter_provider(meter_provider)
         self._meter = metrics.get_meter(__name__)
 
@@ -248,6 +253,40 @@ class Telemetry:
         except ImportError:
             return
         FastAPIInstrumentor.instrument_app(app, excluded_urls="health,health/ready,metrics")
+
+    def instrument_process(self) -> bool:
+        """Emit this process's own CPU and memory as OTel metrics. Returns whether it was attached.
+
+        2.4's resource-utilisation box needs a SECOND source for a quantity the Docker probe already
+        reports, and this is the honest one. The alternative was giving the collector the Docker socket
+        so it could read container stats, which was rejected: mounting that socket `:ro` restricts
+        writes to the socket FILE and not to the Docker API through it, so the collector would gain
+        container-create -- the bind-mount-and-privileged authority this whole catalogue avoids -- in
+        order to draw a chart.
+
+        What this measures is deliberately NOT the same thing the Docker probe measures. This is the
+        Python process; the probe reports the container, which includes everything else in it. Reading
+        them as one number is the misreading 2.4's box exists to prevent, so the panel labels each by
+        its source and its method rather than reconciling them.
+        """
+        if not self.enabled:
+            return False
+        try:
+            from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
+        except ImportError:
+            return False
+        # An explicit, NARROW configuration rather than the default. The default set includes per-CPU
+        # time buckets and per-interface network counters, which on a many-core host multiplies series
+        # into the thousands -- high cardinality is how a monitoring system takes down what it monitors.
+        SystemMetricsInstrumentor(
+            config={
+                "process.runtime.cpu.utilization": None,
+                "process.runtime.memory": ["rss"],
+                # `gc_count` is deliberately NOT collected: it emits one series per GC generation
+                # and answers no question 2.4's box asks, which is cardinality bought for nothing.
+            }
+        ).instrument(meter_provider=self._meter_provider)
+        return True
 
 
 def _assert_no_forbidden(attributes: dict[str, Any]) -> None:

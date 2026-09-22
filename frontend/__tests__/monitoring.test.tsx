@@ -24,6 +24,10 @@ import {
 } from "@/features/monitoring/InfrastructurePanels";
 import type { MetricResult, MetricVerdict } from "@/features/monitoring/MetricVerdict";
 import { MonitoringDashboard } from "@/features/monitoring/MonitoringDashboard";
+import {
+  ResourceUtilisationPanel,
+  type ProbeResourceReading,
+} from "@/features/monitoring/ResourceUtilisationPanel";
 
 const post = vi.fn();
 const get = vi.fn();
@@ -426,5 +430,93 @@ describe("the unified dashboard", () => {
       expect(body).not.toHaveProperty("query");
       expect(body).not.toHaveProperty("promql");
     }
+  });
+});
+
+describe("resource utilisation shows two sources without reconciling them", () => {
+  function probe(overrides: Partial<ProbeResourceReading> = {}): ProbeResourceReading {
+    return {
+      container: "forgeops-backend-1",
+      cpu_percent: 12.5,
+      memory_bytes: 400 * 1024 * 1024,
+      memory_limit_bytes: 2048 * 1024 * 1024,
+      network_rx_bytes: 1024,
+      network_tx_bytes: 2048,
+      observed_at: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  it("states that the two sources are not reconciled and why", async () => {
+    post.mockResolvedValue(result());
+    mount(<ResourceUtilisationPanel probe={probe()} />);
+    const note = await screen.findByTestId("resource-two-sources");
+    expect(note.textContent).toContain("not");
+    expect(note.textContent).toContain("Where the");
+    expect(note.textContent).toContain("both can be correct");
+  });
+
+  it("keeps the two freshness verdicts separate, so a fresh probe cannot vouch for a dead collector", async () => {
+    // The probe was sampled a moment ago; the metrics tier is unreachable. Both facts must appear.
+    post.mockResolvedValue(
+      absent(
+        "unreachable",
+        "The metrics store did not answer, so the current value of this figure is unknown.",
+      ),
+    );
+    mount(<ResourceUtilisationPanel probe={probe()} />);
+    const probeSide = await screen.findByTestId("resource-probe-freshness");
+    const seriesSide = screen.getByTestId("resource-series-freshness");
+    expect(probeSide.textContent).toContain("Sampled");
+    // Awaited, because the probe renders synchronously while the query is still in flight -- which is
+    // itself the point: the panel shows the probe's verdict without waiting on the metrics tier, so one
+    // source being slow never blocks or vouches for the other.
+    await waitFor(() => expect(seriesSide.textContent).toContain("Metrics store unreachable"));
+    // And the metrics column must carry no digit, despite the probe column being full of them.
+    const cell = screen.getByTestId("resource-series-memory");
+    expect(cell.textContent).toContain("no figure to show");
+    expect(cell.textContent).not.toMatch(/\d/);
+  });
+
+  it("reports an unparsable probe timestamp as never-reported rather than as now", async () => {
+    post.mockResolvedValue(result());
+    mount(<ResourceUtilisationPanel probe={probe({ observed_at: "not a date" })} />);
+    const probeSide = await screen.findByTestId("resource-probe-freshness");
+    expect(probeSide.textContent).toContain("has not reported a sample");
+    expect(probeSide.textContent).toContain("not zero usage");
+    // And the probe columns must not show the values that came with the bad timestamp.
+    expect(screen.getByTestId("resource-probe-cpu").textContent).toBe("not measured");
+  });
+
+  it("says network is not collected by the metrics tier rather than leaving the cell blank", async () => {
+    post.mockResolvedValue(result());
+    mount(<ResourceUtilisationPanel probe={probe()} />);
+    const cell = await screen.findByTestId("resource-series-network");
+    expect(cell.textContent).toContain("not collected by the metrics tier");
+    // A blank cell would read as zero traffic.
+    expect(cell.textContent).not.toMatch(/^\s*$/);
+  });
+
+  it("does not average or prefer either source for the same quantity", async () => {
+    post.mockResolvedValue(
+      result({ series: [{ labels: {}, points: [{ at: 1, value: 50 * 1024 * 1024 }] }] }),
+    );
+    mount(<ResourceUtilisationPanel probe={probe()} />);
+    // Probe says 400 MiB (the container); the series says 50 MiB (the process). BOTH appear, unchanged.
+    const probeCell = await screen.findByTestId("resource-probe-memory");
+    await waitFor(() =>
+      expect(screen.getByTestId("resource-series-memory").textContent).toContain("50.0"),
+    );
+    expect(probeCell.textContent).toContain("400 MiB");
+    // 225 MiB -- the average -- must appear nowhere.
+    expect(document.body.textContent).not.toContain("225");
+  });
+
+  it("says the metrics column covers the process only, not the container", async () => {
+    post.mockResolvedValue(result());
+    mount(<ResourceUtilisationPanel probe={probe()} />);
+    await waitFor(() =>
+      expect(screen.getByText(/Covers the application process only/)).toBeInTheDocument(),
+    );
   });
 });

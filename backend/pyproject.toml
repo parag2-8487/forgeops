@@ -36,6 +36,10 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-grpc==1.30.0",
     "opentelemetry-instrumentation-fastapi==0.51b0",
     "opentelemetry-instrumentation-sqlalchemy==0.51b0",
+    # 2.4's second source for CPU and memory. Narrowly configured in `Telemetry.instrument_process` --
+    # the default metric set includes per-CPU and per-interface series, which is how a monitoring system
+    # takes down what it monitors.
+    "opentelemetry-instrumentation-system-metrics==0.51b0",
     "pyjwt[crypto]==2.13.0",
     # design.md §4.6 / D-32: the Phase 1 task engine, behind the unchanged
     # TaskDispatcher seam. Redis-backed, so it needs no new infrastructure. Importable

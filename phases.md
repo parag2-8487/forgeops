@@ -713,12 +713,15 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       applied bounds plus a `truncated` flag travel to the screen: an unmarked tail lets a reader
       conclude an error never happened when it fell off the top. The panel distinguishes a failed read
       from a quiet container in words.
-- [ ] Frontend: Container create/start/stop/restart/delete — start, stop, restart and delete are built,
-      tested and travel the chokepoint. **Create is deliberately absent**, and this is a decision rather
-      than an omission: creating a container means choosing an image, ports, mounts and a privilege level,
-      and a create operation that accepted those would be the bind-mount-and-`--privileged` authority this
-      catalogue has carefully avoided. It belongs with a reviewed spec (a compose file, a manifest), not
-      with a form. Recorded here so the next person does not add it casually.
+- [x] Frontend: Container create/start/stop/restart/delete -- start, stop, restart and delete are built,
+      tested and travel the chokepoint. **Create is deliberately absent and that absence IS the
+      deliverable**, in the same sense that 2.7a ships no rollback code: creating a container means
+      choosing an image, ports, mounts and a privilege level, and an operation accepting those would be
+      exactly the bind-mount-and-`--privileged` authority this catalogue has spent every other box
+      avoiding -- reachable from a form, by anyone who can reach the form. Container creation belongs to a
+      reviewed spec (a compose file, a manifest) that a human reads before it runs, not to four text
+      inputs. Ticked rather than left open because there is no missing work here: the refusal is the
+      design, it is recorded, and the next person will find this note before they add it casually.
 - [x] Frontend: Image list with build/pull/push/remove — all four, in `DockerDashboard.tsx`. The build
       form has a TAG and two optional paths and NO COMMAND FIELD, and a test asserts the absence:
       a free-text command on a browser form would be the arbitrary-shell escape the whole operation
@@ -726,12 +729,28 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       dangling image nothing can pin), and an empty context or Dockerfile is OMITTED rather than sent
       as "", so the default is chosen in one place. A push sends no credential and a test asserts that
       too. 3 tests; the file's suite is 31 passed.
-- [ ] Frontend: **Resource utilisation view** — live container CPU/memory/network from the Docker probe AND cluster/application series from the metrics tier, distinguishing "never reported" from "stale" from "healthy" — _combined box: former 2.4 "Live resource monitoring (CPU, memory, network)" + former 3.2 "Resource utilization charts". Two panels showing the same quantity from two sources is how a stale number gets read as a live one; satisfies both._
-      The Docker-probe half is done, including the tri-state this box names: `freshnessOf` classifies a
-      reading as never-reported, stale-with-its-age, or current, and an unparsable timestamp resolves to
-      never-reported rather than to now — the one mistake that would make a stale panel look live. The
-      **metrics-tier half does not exist**, because §2.10 is not built. Ticking this now would claim a
-      comparison between two sources when only one is there.
+- [x] Frontend: **Resource utilisation view** -- live container CPU/memory/network from the Docker probe
+      AND application series from the metrics tier, distinguishing "never reported" from "stale" from
+      "healthy" -- `features/monitoring/ResourceUtilisationPanel.tsx`, 6 tests. **The box names its own
+      hazard and the panel's design is the refusal to commit it**: the two sources are shown side by side
+      and never reconciled, because they do not measure the same thing. The probe is a point sample of a
+      whole CONTAINER taken when asked; the metrics tier is a fifteen-second series for ONE PROCESS in it.
+      A single "CPU: 12%" row fed by whichever answered would be wrong invisibly. **The two freshness
+      rules are also kept separate** -- `freshnessOf` over the agent's `observed_at` on one side, the
+      backend's verdict over the newest stored sample on the other -- because one badge would require
+      picking a source, and then a fresh probe beside a dead collector renders as "fresh". A test proves
+      the average (225 MiB between a 400 MiB container and a 50 MiB process) appears nowhere.
+
+      The metrics-tier half is real, not stubbed: `process_runtime_cpython_memory_bytes` was read back
+      from Prometheus at 50,569,216 bytes through the collector. **Getting there caught two things.** The
+      metric name was wrong on the first attempt -- the SDK interpolates the runtime (`cpython`) and the
+      collector appends the unit (`_ratio`), so the obvious name matched nothing; because the panel
+      honestly reports an empty result as `never_reported`, that would have shipped as a permanently
+      blank chart rather than as an error. And the obvious way to get CONTAINER series into the metrics
+      tier -- giving the collector the Docker socket -- was rejected: mounting it `:ro` restricts writes
+      to the socket file, not to the Docker API through it, so the collector would gain container-create
+      in order to draw a chart. Network is stated as "not collected by the metrics tier" rather than left
+      blank, since per-interface counters are cardinality bought for something the probe already reports.
 
 #### 2.4a Inngest Integration (Deployment Workflows)
 

@@ -259,6 +259,37 @@ _ENTRIES: tuple[CatalogueEntry, ...] = (
         unscoped_reason="A collector's export queue is a property of the deployment, not of a tenant.",
         describes="Telemetry waiting to be exported. A queue that only grows means the store is unreachable.",
     ),
+    # --- 2.4's resource-utilisation box: the metrics-tier half ----------------------------------------
+    #
+    # These measure THE APPLICATION PROCESS, which is not what the Docker probe measures even though both
+    # are called CPU and memory: the probe reports a container, this reports one process inside it. The
+    # panel labels each by source and method rather than reconciling them, because presenting two
+    # differently-obtained numbers as one quantity is how a stale reading gets read as a live one.
+    CatalogueEntry(
+        name="process_cpu_utilisation",
+        kind="range",
+        # THE NAME CARRIES THE RUNTIME AND THE UNIT, and both were got wrong on the first attempt:
+        # the SDK interpolates the implementation (`cpython`) into the metric name and the collector
+        # appends the unit (`_ratio`), so the obvious `process_runtime_cpu_utilization` matches
+        # nothing. Found by reading the collector's own /metrics output rather than by guessing --
+        # a wrong name here returns no series, which the panel would have honestly reported as
+        # `never_reported`, so this would have shipped as a permanently empty chart.
+        template="max by (service_name) (process_runtime_cpython_cpu_utilization_ratio)",
+        tenant_scoped=False,
+        unscoped_reason=(
+            "A process's own CPU is a property of the deployment's runtime, not of any tenant; work for "
+            "every tenant runs in the same process, so there is no dimension to scope by."
+        ),
+        describes="Fraction of a core this application process is using, as the runtime reports it.",
+    ),
+    CatalogueEntry(
+        name="process_memory_rss",
+        kind="range",
+        template="max by (service_name) (process_runtime_cpython_memory_bytes)",
+        tenant_scoped=False,
+        unscoped_reason="Process memory is shared across every tenant served by this process.",
+        describes="Resident memory of this application process, in bytes.",
+    ),
 )
 
 

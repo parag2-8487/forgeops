@@ -352,6 +352,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Health and readiness are EXCLUDED inside `instrument_app`: a liveness probe every second would
     # otherwise be the overwhelming majority of every trace sample and every request-rate panel.
     telemetry.instrument_app(app)
+    # 2.4's second source for CPU and memory. Narrowly configured -- see `instrument_process` for why
+    # the collector was NOT given the Docker socket to read container stats instead.
+    telemetry.instrument_process()
 
     # The read side of 2.10. A separate URL from the OTLP endpoint above, because writing telemetry
     # and querying it are different services -- the collector receives, Prometheus answers -- and a
