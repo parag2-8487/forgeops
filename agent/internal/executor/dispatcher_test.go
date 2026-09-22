@@ -132,8 +132,8 @@ func TestEveryDeclaredOperationHasAHandlerAndViceVersa(t *testing.T) {
 	// three actions (docker.container_action, docker.image_action, kubernetes.workload_action).
 	// 28 since Phase 2 2.2 added `iac.apply`. The count is pinned so growth stays deliberate: every
 	// entry here is a thing an operator's machine can be told to do.
-	if len(allOperations) != 29 {
-		t.Errorf("the catalogue is pinned at 29 operations; this build declares %d. If that is "+
+	if len(allOperations) != 30 {
+		t.Errorf("the catalogue is pinned at 30 operations; this build declares %d. If that is "+
 			"deliberate, change this number in the same commit as the table.", len(allOperations))
 	}
 }
@@ -644,7 +644,7 @@ func TestOperations_IsDerivedFromTheTable(t *testing.T) {
 	//
 	// Named individually rather than counted alone, because a count that matches for the wrong reason
 	// is the failure this pin exists to catch.
-	const expectedImplemented = 27
+	const expectedImplemented = 28
 	if implemented != expectedImplemented {
 		t.Errorf("%d operations report Implemented, expected %d: changeset.apply, changeset.revert, "+
 			"the six validate.* operations, readiness.inventory, secretscan.run, secrets.inject, "+

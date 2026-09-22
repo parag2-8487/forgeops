@@ -96,6 +96,13 @@ const (
 	// changing Git, so the cluster and the repository disagree and the next sync undoes it.
 	OpArgoAppAction Operation = "argocd.app_action"
 
+	// OpKubernetesRolloutDetail reads ONE Argo Rollout's progress in detail. 2.7a.
+	//
+	// Separate from `kubernetes.inventory` for the reason `pod_detail` is: an inventory answers what
+	// exists across a namespace, and this answers what is happening to this one Rollout right now.
+	// Folding it in would fetch analysis runs for every workload on every dashboard refresh.
+	OpKubernetesRolloutDetail Operation = "kubernetes.rollout_detail"
+
 	// OpDevToolsRun runs the PROJECT'S OWN tests, linters, build, compose stack or migrations. The argument
 	// is a KIND from a closed set, never a command line: this is where an arbitrary-shell operation would
 	// most naturally appear and it deliberately does not. Mutating and approval-required, because a
@@ -124,6 +131,7 @@ var allOperations = []Operation{
 	OpDevToolsRun,
 	OpIacApply,
 	OpArgoAppAction,
+	OpKubernetesRolloutDetail,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).

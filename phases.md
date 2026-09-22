@@ -901,7 +901,23 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       `abortScaleDownDelaySeconds: 30`, so an aborted canary's pods are not destroyed before anyone can
       read their logs. Asserted on the parsed manifest: both metrics carry a success condition and a
       failure limit, because a metric with no success condition is collected and never evaluated.
-- [ ] Frontend: Progressive rollout visualization (canary weight, metrics, promotion history)
+- [x] Frontend: Progressive rollout visualization (canary weight, metrics, promotion history) —
+      `features/rollouts/RolloutPanel.tsx`, behind a new READ operation `kubernetes.rollout_detail`
+      (approval-free, still admitted and signed) because there was no real source for this data and a
+      panel is not allowed to invent one. **A canary weight is a number an operator acts on**, so the
+      agent reports -1 for NOT REPORTED and the panel renders that in words: a test asserts the weight
+      cell contains no percentage at all in that state, because showing 0% would say the canary had not
+      started when it might be at 80%. An empty analysis list is stated as "nothing is gating this
+      rollout" rather than rendered as an empty table, which reads as "all checks passed".
+      **`Inconclusive` is carried through as its own verdict** — an idle service makes the error-rate
+      query 0/0 = NaN, which Rollouts reports as Inconclusive, and calling that a pass would promote a
+      release nothing measured. Replica tallies are shown separately from the weight, because the weight
+      is what the mesh was TOLD and the tallies are what is RUNNING; a panel showing only the weight
+      hides a rollout whose pods never became ready. Steps render 1-based, since "step 0 of 3" reads as
+      nothing having happened. Analysis runs are filtered by OWNERSHIP in the agent, because a namespace
+      holds every rollout's runs and showing another's would attribute a failure to the wrong release.
+      Loading, unread and stale are three distinct states. Catalogue re-pinned at 30 operations, 28
+      implemented. 15 frontend tests.
 
 #### 2.7b Service Mesh
 

@@ -198,6 +198,8 @@ var handlerTable = map[Operation]entry{
 	// Reads of output, approval-free for the reason the inventories are: a log panel refreshes.
 	OpDockerContainerLogs: {timeout: timeoutValidate, implemented: true, run: dockerContainerLogs},
 	OpKubernetesPodDetail: {timeout: timeoutValidate, implemented: true, run: k8sPodDetail},
+	// 2.7a. A read: it mutates nothing, so it is approval-free and still travels a signed envelope.
+	OpKubernetesRolloutDetail: {timeout: timeoutValidate, implemented: true, run: k8sRolloutDetail},
 	// Mutating: it executes the repository's own scripts. Approval-required for the same reason.
 	OpDevToolsRun: {
 		mutating: true, requiresApproval: true, timeout: timeoutDevTools, implemented: true,

@@ -50,6 +50,7 @@ from ..governance.chokepoint import (
     DOCKER_LOGS_OPERATION,
     KUBERNETES_INVENTORY_OPERATION,
     KUBERNETES_POD_DETAIL_OPERATION,
+    KUBERNETES_ROLLOUT_DETAIL_OPERATION,
     KUBERNETES_WORKLOAD_OPERATION,
     GovernanceChokepoint,
     Submission,
@@ -414,6 +415,40 @@ async def container_logs(
             principal=principal,
             operation=DOCKER_LOGS_OPERATION,
             args={"container": container, "tail_lines": tail_lines, "since_seconds": since_seconds},
+            timeout_seconds=_READ_TIMEOUT_SECONDS,
+        )
+    )
+
+
+@router.get(
+    "/kubernetes/namespaces/{namespace}/rollouts/{rollout}",
+    summary="One Argo Rollout's progress: weight, step, replicas and analysis verdicts",
+)
+async def rollout_detail(
+    project_id: uuid.UUID,
+    namespace: str,
+    rollout: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    cluster_context: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """A read behind 2.7a's progressive-delivery panel.
+
+    A MISSING ROLLOUT IS AN ERROR from the agent, not an empty report, and this route passes that
+    through unchanged. A panel rendering "0% canary, no analysis" for an object that does not exist is
+    the exact defect this codebase keeps finding: an absence that reads as a healthy zero.
+    """
+    args: dict[str, Any] = {"namespace": namespace, "rollout": rollout}
+    if cluster_context:
+        args["context"] = cluster_context
+    return dict(
+        await _chokepoint(request).read_inventory(
+            session,
+            project_id=project_id,
+            principal=principal,
+            operation=KUBERNETES_ROLLOUT_DETAIL_OPERATION,
+            args=args,
             timeout_seconds=_READ_TIMEOUT_SECONDS,
         )
     )

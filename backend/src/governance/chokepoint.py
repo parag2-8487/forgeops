@@ -141,12 +141,15 @@ KUBERNETES_INVENTORY_OPERATION: Final[str] = "kubernetes.inventory"
 #: answer so a tail is never mistaken for a whole log.
 DOCKER_LOGS_OPERATION: Final[str] = "docker.container_logs"
 KUBERNETES_POD_DETAIL_OPERATION: Final[str] = "kubernetes.pod_detail"
+#: 2.7a. One Argo Rollout's progress in detail: weight, step, replica tallies and analysis verdicts.
+KUBERNETES_ROLLOUT_DETAIL_OPERATION: Final[str] = "kubernetes.rollout_detail"
 READ_OPERATIONS: Final[frozenset[str]] = frozenset(
     {
         DOCKER_INVENTORY_OPERATION,
         KUBERNETES_INVENTORY_OPERATION,
         DOCKER_LOGS_OPERATION,
         KUBERNETES_POD_DETAIL_OPERATION,
+        KUBERNETES_ROLLOUT_DETAIL_OPERATION,
     }
 )
 #: 2.8. Running the project's own scripts is the largest execution authority in the catalogue, so it is a
