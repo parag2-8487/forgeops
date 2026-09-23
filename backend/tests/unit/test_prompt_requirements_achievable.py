@@ -131,3 +131,32 @@ class TestTheInstructedDockerfileSatisfiesTheGate:
         # the engine is most likely to lose.
         assert dockerfile_base_pinned(floating_builder) is False
         assert _checks(floating_builder)["dockerfile_base_pinned"] is False
+
+    def test_a_build_arg_base_image_is_correctly_refused(self) -> None:
+        """THE CONSTRUCT THE MODEL ACTUALLY CHOSE, found by the harness on the third iteration.
+
+        With `:latest` forbidden and an exact-version example given, 7b wrote:
+
+            ARG BASE_IMAGE=python:3.13-slim
+            FROM $BASE_IMAGE AS builder
+
+        which looks more careful than a hard-coded tag and is refused -- correctly. A build argument can
+        be overridden at build time, so the file does not establish what it builds on. The requirement now
+        names the construct rather than only describing the goal, which is the same lesson as `USER 10001`
+        for the third time: a small model needs the forbidden shape named, not inferred.
+        """
+        deferred = (
+            "ARG BASE_IMAGE=python:3.13-slim\n"
+            "FROM $BASE_IMAGE AS builder\nRUN true\n"
+            "FROM $BASE_IMAGE\nCOPY --from=builder /app /app\nUSER 10001\n"
+        )
+        assert dockerfile_base_pinned(deferred) is False
+        assert _checks(deferred)["dockerfile_base_pinned"] is False
+
+    def test_the_requirement_names_the_build_arg_construct(self) -> None:
+        """Describing the goal was not enough twice; the shape has to be named."""
+        requirements = " ".join(GATE_REQUIREMENTS["dockerfile"])
+        assert "ARG" in requirements
+        assert "$SOMETHING" in requirements or "$" in requirements
+        # And the instructed shape must not itself use one.
+        assert "ARG " not in INSTRUCTED_DOCKERFILE

@@ -84,7 +84,11 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         # the model something to copy instead of something to infer.
         "NO `FROM` line ends in `:latest`, and none omits a tag. Every `FROM` is either "
         "`image:<exact-version>` (for example `python:3.13-slim`, never `python:latest` and never bare "
-        "`python`) or `image@sha256:<digest>`. This applies to EVERY stage of a multi-stage build, "
+        "`python`) or `image@sha256:<digest>`. Do NOT write `FROM $SOMETHING` or define an `ARG` for the "
+        "base image: a build argument can be overridden at build time, so a Dockerfile that defers its "
+        "base to one does not establish what it builds on -- which is what `dockerfile_base_pinned` "
+        "refuses, and it refuses it deliberately rather than by oversight. This applies to EVERY stage "
+        "of a multi-stage build, "
         "including the builder: a build whose builder floats is not reproducible even when its final "
         "stage is pinned.",
         # The language is stated as a REQUIREMENT rather than left to the facts section. 7b read a Python

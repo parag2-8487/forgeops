@@ -106,6 +106,16 @@ def main() -> int:
     parser.add_argument("--print-prompt", action="store_true")
     parser.add_argument("--print-artifacts", action="store_true")
     parser.add_argument(
+        "--max-write-targets",
+        type=int,
+        default=None,
+        help=(
+            "the compiler's max_write_targets. NOTE it does not bound the number of FILES: 6 yields 8 "
+            "targets and 8 yields 10, because it counts instruction groups and one group can name three "
+            "manifests. Measured, not assumed."
+        ),
+    )
+    parser.add_argument(
         "--check",
         action="append",
         default=None,
@@ -130,6 +140,11 @@ def main() -> int:
         inventory={},
         selected_check_ids=args.check,
         project_name="checkout",
+        **(
+            {"max_write_targets": args.max_write_targets}
+            if args.max_write_targets is not None
+            else {}
+        ),
     )
     targets = getattr(compiled, "write_targets", None) or getattr(compiled, "paths", ())
     print(f"prompt: {len(compiled.text)} chars, targets: {list(targets)}")
