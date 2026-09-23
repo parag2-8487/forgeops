@@ -509,35 +509,164 @@ each a pytest invocation, invoked up to three times across the shard's tests. Pr
 regression, and the reason the coverage figure excludes that shard -- it captures no `src` coverage anyway,
 since it runs the gates as subprocesses.
 
+### The provenance defect, found: a cache that hit and was thrown away
+
+**The stated hypothesis was wrong, and disproving it cost minutes rather than the 1h32m a pytest
+round costs.** The carry-over said run 1 delivers artifacts, so run 2 compiles a different prompt and
+the cache key differs. Measured instead, by compiling twice against the real database:
+
+- The attempt-1 prompt is **byte-identical** across two runs (`e5d8c36b`, 1,708 chars both times).
+- **Zero** rows are added to `file_tree`, `file_contents` or `change_sets`. A run does not touch the
+  index at all, so the premise of the hypothesis never occurs.
+
+Four more layers were then exonerated by measurement, each with output: `remember` writes the key
+`lookup` asks for; a SECOND port finds the first port's write; and `router.complete`'s own lookup --
+which builds its params from `request` rather than from the port -- returns `l1` with zero endpoint
+calls. The cache was never broken.
+
+**So the lookup was instrumented on a real run, and it said:**
+
+```
+LOOKUP model='qwen2.5-coder:7b' params={'temperature': 0.0, 'max_tokens': 2048} -> L1_exact
+run 2: served_from='provider' iterations=3
+```
+
+**The cache hit. The run threw the answer away and called the provider three times.** Run 1 had been
+delivered with the template floor standing in for the artifacts the gate refused -- correctly recording
+`served_from='provider'`, because the substitution was partial -- and what it cached was the RAW MODEL
+TEXT the gate had just refused. Run 2 hit that entry, had it refused for the same reason, burned its
+first attempt, and went to the provider anyway.
+
+That is exactly the POISONED ENTRY the router's `store_in_cache=False` comment describes, arriving by
+the one route that guard does not cover. It is strictly worse than not caching: the run pays a lookup,
+receives a known-bad answer, spends an attempt rediscovering that it is bad, and still calls the
+provider. **An entry that can never serve is indistinguishable from a cache that is working and never
+hitting**, which is why it survived -- the hit rate was zero and every run looked correct.
+
+The fix is one clause: `and not substituted`. `tests/unit/test_generation_cache_not_poisoned.py`
+(4 tests, 6s) reproduces it deterministically with a stub, and **the guard was toggled off to prove the
+test fails without it** -- the first draft of that file used TOTAL model failure, which takes the
+template path and never reaches the cache write, so it passed without the fix and proved nothing. The
+scenario that matters is PARTIAL substitution, and the manifests it needs are the floor's own, captured
+from a real run rather than invented, because the floor's artifacts satisfy the gate by definition.
+
+**The two real-model tests had their PREMISE restated rather than their assertions lowered.**
+`second['served_from'] == 'l1'` conflated two things: whether the cache works, and whether 7b can
+satisfy a four-artifact prompt unaided. The first is deterministic and is now asserted as an invariant
+in both directions -- the cache is populated if and only if the delivery needed no floor, and when it is
+populated the second run must be `l1` with `iterations_used=0`. A violation of either direction fails.
+What no longer fails is the model needing the floor, which is not a defect and which the test now
+reports instead of hiding.
+
+### `max_write_targets` now bounds write targets
+
+It counted instruction GROUPS, and a group carries companions -- the Deployment group also names a
+Service and an Ingress. Measured before the fix: **6 produced EIGHT targets and 8 produced TEN**, so the
+bound was 30-40% loose in the one direction that matters, towards asking a small model for more files
+than it can complete.
+
+The name was kept and the count corrected, because every reason the cap exists is written in terms of
+FILES: eleven artifacts requested, a 1.5b model unable to emit eleven valid files, four demonstrably
+within reach. A cap named `max_write_targets` that does not bound write targets fails its own purpose.
+One group always survives -- the k8s group is three files against a cap of two, and deferring it would
+leave the run with no instruction -- and when that happens `budget_strategy` SAYS the cap was exceeded
+rather than reporting a bound it did not achieve. `tests/unit/test_prompt_write_target_cap.py` measures
+`len(write_targets)` across seven caps with a non-vacuity control; a test asserting on the loop passed
+throughout the defect, because the loop was bounding the wrong thing.
+
+### The instruction told a Node repository to build a Python image
+
+**My own fix from the previous pass caused this.** The Dockerfile requirement named
+`python:3.13-slim` as its example. Given the criterion-10 fixture -- a `package.json` and a
+`server.js`, no Python anywhere -- 7b wrote `ARG BASE_IMAGE=python:3.13-slim`, `COPY requirements.txt`
+and `pip install`. The prose rule "the base image and the build steps match the language of THIS
+repository" was already in the list and did not help: the only CONCRETE image name in the block was a
+Python one, and a small model copies the literal it can see over the sentence beside it.
+
+That is the `USER 10001` lesson a third time, arriving from the other direction: the copyable shape was
+right about pinning and wrong about language. The example is now resolved from the inventory through
+`BASE_IMAGE_BY_LANGUAGE`, exactly as linter configuration filenames already are, and an unrecognised
+language produces NO example rather than a guessed one -- a wrong literal is worse than an absent one,
+which is precisely what went wrong. Five tests assert the prompt's TEXT, including that a Node
+repository is never shown a Python image: a correct checker cannot rescue an instruction that tells the
+model the wrong thing.
+
+The harness gained `--language node` and, more importantly, a real `inventory`. It had been passing
+`inventory={}`, which compiles a prompt production never sends -- the base image is resolved FROM the
+inventory -- so it could not reproduce the journey's failure while that was true.
+
+### Criterion 10's journey: 6 of 13 steps pass against a real local stack
+
+The full stack was brought up on this host for the first time: postgres, redis, opa, cerbos, Authentik
+server and worker, backend, the mTLS agent listener, worker, frontend, the agent container and ollama
+with both models -- sixteen containers, five images built, the IdP provisioned and the migrations taken
+from **0029 to 0036**.
+
+Steps 1 to 6 pass, and that includes a **real OIDC redirect through a real browser**, a real agent
+pairing over mTLS, the readiness screen rendering the API's own numbers, and a 15.8-minute generation
+run against 7b. **Step 7 fails**, on its final clause and only that one: the SSE event names, their
+documented order and the single terminal event all pass, and then
+`SELECT status FROM generation_runs` returns `template_fallback` where `accepted` is required.
+
+So the criterion is NOT ticked, and the blocker is named precisely: 7b does not satisfy the readiness
+gate on the Node fixture within three attempts, so the audited template floor delivers and the run
+honestly records the fallback. Two genuine instruction defects were found and fixed along the way (the
+build-arg base image, and the Python image for a Node repository), each with a deterministic guard, and
+the gate still refuses. **Ticking this box would require either a model that can satisfy the gate or a
+relaxed assertion, and the assertion is right.**
+
+A resource fact for the next pass: with the full stack up, `go vet` failed on the HOST with
+"the paging file is too small" and `cannot allocate memory`, and a harness run against ollama timed
+out. Sixteen containers plus a 7b model plus a Go build does not fit. Tear the stack down before
+running the gates, or run them first.
+
 ### HANDOFF: where the next pass starts
 
 **Phase 2 is 120 of 123.** Tree clean, NOT pushed.
 
-Every section is complete: 2.1 through 2.14. Of the 20 completion criteria, 18 are ticked with evidence
-from a run. **Three boxes remain and all three are known quantities:**
+Sections 2.1 to 2.14 are all complete and 18 of the 20 completion criteria are ticked. **The same three
+boxes remain, and two of them now have a measured blocker rather than an unknown one:**
 
 1. **2.6's Novu box** -- stays open with its recorded reason. Do not revisit.
-2. **`End-to-end test: scan project -> deploy to staging -> verify health -> rollback`**
-3. **`End-to-end test: deploy -> inject failure -> AI detects -> AI suggests fix -> human approves`**
+2. **`scan -> deploy to staging -> verify health -> rollback`** -- `journey.spec.ts` reaches **6 of 13**
+   against a real local stack. Step 7's only failing clause is `status == 'accepted'`, and the run is
+   `template_fallback` because 7b cannot satisfy the readiness gate on the Node fixture in three
+   attempts. Every other clause of step 7 passes.
+3. **`deploy -> inject failure -> AI detects -> AI suggests fix -> human approves`** -- **no spec was
+   written.** The backend is built and tested; what is missing is the browser walk.
 
-The two E2E criteria need a Playwright run against the full stack, which is the one thing this pass did
-not do. The journey's generation step is already prepared for it: the budget was raised to 1800s from the
-measured 224-439s-per-attempt figure, and the workflow now warms 7b where it pulls it, because a cold load
-costs a measured 45s and a runner is always cold. Criterion 2 maps onto `journey.spec.ts`; criterion 3 has
-no spec yet and needs one, and every backend piece it would drive is built and tested
-(`test_phase2_criteria.py` drives incident -> auto-restart -> postmortem through the chokepoint already).
+**What box 2 actually needs.** Not more prompt engineering in the dark: the harness now reproduces the
+journey's exact prompt (`--language node`, with a real inventory) in minutes, so the next iteration
+should run it, read which check the gate refuses, and decide whether the instruction can be made
+copyable -- the route that already fixed two real defects this pass. If the gate keeps refusing, the
+honest options are a more capable model for that step or accepting `template_fallback` as the
+criterion's outcome, and the second is a change to what the criterion CLAIMS, not to the assertion.
 
-**Run the E2E specs bounded.** Nothing in this repository should be started without a wall-clock cap: the
-meta shard was observed running past an hour, and the cause (`mutation-harness.py` over 31 properties,
-invoked up to three times) is pre-existing. Use `Start-Process` with `WaitForExit(ms)` and poll.
+**What box 3 needs.** `POST /incidents/{id}/suggestions/{id}/submit` has **no button in the UI** -- it is
+backend-only, so a spec must post it through `page.request` as the journey does for most of its steps,
+and then approve in the BROWSER on `/approvals`, which is where the human gate genuinely lives
+(`ApprovalCenter.tsx`, and the approver is taken from the verified principal, never from the screen).
+The AI half is assertable through the UI already: `incident-list`, `incident-rca-content`,
+`incident-rca-provenance` and `diff-<suggestionId>` all exist and are tested in `incidents.test.tsx`.
 
-**Measured runtimes, so the next pass can plan:** unit shard 17m17s (2,134 passed), integration shard
-1h32m (1,310 passed), combined coverage 86.57%. One 7b generation attempt is 130-440s warm.
+**Bringing the stack up on this host, which took several attempts.** The published ports are NOT CI's:
+frontend **13000**, backend **18000**, Authentik **19000**, agent listener **18443**. Every
+browser-facing URL and the OIDC public origin must say so. `.env` needs the four `AUTHENTIK_*` values
+and the internal CA appended before anything starts, and the Authentik database script reads its
+password from the ENVIRONMENT rather than from `.env`. Under Git Bash, `MSYS_NO_PATHCONV=1` is required
+on every `docker compose` call carrying an absolute path, or `/bin/sh` is rewritten to
+`C:/Program Files/Git/bin/sh` and the container exits with `exec: "C:/Program"`. **The e2e database was
+at 0029** and the missing `learning_preferences` table took down the generation stream with a bare 500;
+`alembic upgrade head` before the first spec.
 
-Migrations are at **0036**. Five new problem types and four domains landed this pass (`incidents`,
-`learning`, `commands`, `knowledge`), each with its intra-domain `TID251` glob and, where it needed to
-reach another domain, a narrow Protocol in `core/` rather than an exemption -- `metrics_port`,
-`memory_port`, and `deployments.DeploymentIncidentRecorder`.
+**A resource limit, measured.** Sixteen containers plus a resident 7b plus a Go build does not fit on
+this host: `go vet` failed with "the paging file is too small" and `cannot allocate memory`, and a
+harness run timed out against a busy ollama. Run the gates before bringing the stack up, or tear it
+down first.
+
+**Measured runtimes.** Unit shard 17m17s (2,134 passed). Integration shard 1h32m (1,310 passed).
+Combined coverage 86.57%. One warm 7b generation attempt 130-440s; the journey's step 6 is ~16 minutes
+for three attempts. Migrations are at **0036**.
 
 ### Phase 2: 44 of 123. This pass closed four boxes in 2.2 and 2.4
 
