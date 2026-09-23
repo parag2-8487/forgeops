@@ -884,7 +884,12 @@ jobs:
       # `voyage` needs a paid key, and with it selected every scan writes `vectors_written = 0`
       # and the HNSW index on that table never holds a row.
       SELF_HOSTED_BASE_URL: http://localhost:11434/v1
-      SELF_HOSTED_MODEL_ID: qwen2.5-coder:1.5b
+      # 7b, not 1.5b, and the change is MEASURED rather than preferred: `1.5b` parses the `### FILE:`
+      # contract 2/2 but emits a HEALTHCHECK 0/2, so `dockerfile_healthcheck_present` can never pass and
+      # every generation run exhausts its attempts. `7b` is 2/2 on both. `test_self_hosted_defaults_agree`
+      # caught this file still on 1.5b after `.env.example` moved -- which is what that gate is for: a
+      # local run and a CI run exercising different models is a whole class of unreproducible failure.
+      SELF_HOSTED_MODEL_ID: qwen2.5-coder:7b
       SELF_HOSTED_EMBEDDING_MODEL_ID: bge-m3:567m
       EMBEDDING_BACKEND: bge_m3
       GENERATION_TIER: self_hosted
@@ -1060,12 +1065,19 @@ jobs:
             sleep 2
           done
           docker exec forgeops-ci-ollama ollama list >/dev/null
-          docker exec forgeops-ci-ollama ollama pull qwen2.5-coder:1.5b
+          docker exec forgeops-ci-ollama ollama pull qwen2.5-coder:7b
           docker exec forgeops-ci-ollama ollama pull bge-m3:567m
           # Asserted, not assumed: a completion and an embedding of the declared width. Without
           # this the tests would report "connection refused" from inside a fixture, which names
           # the symptom rather than the missing model.
           curl -fsS http://localhost:11434/v1/models >/dev/null
+          # WARM THE WEIGHTS HERE, in a step named for it. Loading 7b costs a measured 45s on top of the
+          # first completion, and attributing that to whichever test happened to be first would make it
+          # look like a slow test rather than a one-off load.
+          curl -fsS http://localhost:11434/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model": "qwen2.5-coder:7b", "messages": [{"role": "user", "content": "ready"}], "max_tokens": 8}' \
+            >/dev/null
           python scripts/ci/check-embedding-width.py
       # Criterion 11's BACKEND third rides on this step. `--cov=src --cov-branch --cov-fail-under=70` is in
       # `backend/pyproject.toml`'s addopts, so a plain `pytest` enforces the gate without naming it — which

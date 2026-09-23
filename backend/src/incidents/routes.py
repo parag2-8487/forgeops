@@ -4,7 +4,7 @@
 FOUR ROUTES, AND THREE OF THEM ARE READS. Listing incidents, reading one with its evidence and analyses, and
 previewing a suggested fix mutate nothing and touch no change set.
 
-THE FOURTH IS THE INTERESTING ONE. `POST .../suggestions/{id}/change-set` turns a stored suggestion into a
+THE FOURTH IS THE INTERESTING ONE. `POST .../suggestions/{id}/submit` turns a stored suggestion into a
 governed change set -- and it is the only way a suggestion ever becomes a file on disk. It does not apply
 anything: it submits to the chokepoint exactly as generation does, so the suggestion faces policy, approval,
 blast radius and audit like any other mutation. A route that wrote the file directly would be an AI
@@ -368,7 +368,7 @@ async def preview_suggestion(
     }
 
 
-@router.post("/incidents/{incident_id}/suggestions/{suggestion_id}/change-set")
+@router.post("/incidents/{incident_id}/suggestions/{suggestion_id}/submit")
 async def submit_suggestion(
     incident_id: uuid.UUID,
     suggestion_id: uuid.UUID,

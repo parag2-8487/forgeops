@@ -78,15 +78,39 @@ class TestPyprojectMetadata:
         for dep in all_deps:
             assert "celery" not in dep.lower(), f"Disallowed dependency found: {dep}. Celery is permanently banned."
 
-    def test_disallowed_dependency_opentelemetry(self):
-        """opentelemetry-* must not appear — OTel SDK is Phase 2."""
+    def test_opentelemetry_arrives_in_phase_2_and_is_exactly_pinned(self):
+        """OTel is REQUIRED as of Phase 2 §2.10, and this guard inverted rather than being deleted.
+
+        It previously asserted `opentelemetry-*` must NOT appear, and its own docstring said why: "OTel
+        SDK is Phase 2". That was a phase boundary, not a permanent ban like `celery` -- so the arrival
+        of §2.10 is the behaviour legitimately changing, and the authority is updated rather than the
+        test relaxed.
+
+        Inverting it keeps a guard where there was one. What matters now is that the SDK and the
+        instrumentation packages are EXACTLY pinned and that their two version lines move together:
+        they version separately (1.30.0 and 0.51b0), and mixing an SDK with instrumentation built for
+        another raises at import -- which presents as a broken application rather than as a dependency
+        mistake.
+        """
         data = _load_pyproject()
         all_deps = data["project"]["dependencies"]
         all_deps += data["project"]["optional-dependencies"].get("dev", [])
-        for dep in all_deps:
-            assert not dep.lower().startswith("opentelemetry"), (
-                f"Disallowed dependency found: {dep}. OTel SDK is Phase 2."
-            )
+        otel = [dep for dep in all_deps if dep.lower().startswith("opentelemetry")]
+        assert otel, (
+            "no opentelemetry package is declared, but Phase 2 2.10 requires OTel-native monitoring. "
+            "If that section were reverted this guard should be inverted back, not deleted."
+        )
+        for dep in otel:
+            assert "==" in dep, f"{dep} is not exactly pinned"
+        # The SDK and the instrumentation packages version SEPARATELY, and each family must be internally
+        # consistent: two different SDK versions, or two different instrumentation versions, is the
+        # mismatch that raises at import.
+        sdk = {dep.split("==")[1] for dep in otel if "-instrumentation-" not in dep}
+        instrumentation = {dep.split("==")[1] for dep in otel if "-instrumentation-" in dep}
+        assert len(sdk) <= 1, f"opentelemetry SDK packages disagree on version: {sorted(sdk)}"
+        assert len(instrumentation) <= 1, (
+            f"opentelemetry instrumentation packages disagree on version: {sorted(instrumentation)}"
+        )
 
     def test_disallowed_dependency_structlog(self):
         """structlog must not appear — stdlib logging is the choice (OQ-3)."""

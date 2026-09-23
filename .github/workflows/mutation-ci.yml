@@ -79,7 +79,9 @@ jobs:
       # listens on, deliberately: if a future change made the property depend on a live endpoint, it
       # would fail here rather than silently start requiring one.
       SELF_HOSTED_BASE_URL: http://127.0.0.1:1/v1
-      SELF_HOSTED_MODEL_ID: qwen2.5-coder:1.5b
+      # Matches `.env.example` and `ci.yml`; see the note there. Mutation runs do not call the model, so
+      # this costs nothing here -- it is set so the value cannot drift between workflows.
+      SELF_HOSTED_MODEL_ID: qwen2.5-coder:7b
       SELF_HOSTED_EMBEDDING_MODEL_ID: bge-m3:567m
       EMBEDDING_BACKEND: bge_m3
       GENERATION_TIER: self_hosted

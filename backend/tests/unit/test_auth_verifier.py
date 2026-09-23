@@ -263,11 +263,20 @@ class TestThePublicRouteSet:
         be satisfied. It is authenticated by a single-use `state` this server minted for a specific
         signed-in user.
 
+        The THIRTEENTH is `POST /argocd/webhook`, a repository event arriving from a forge. Public for
+        the same structural reason as the two above: a forge cannot hold an OIDC principal. It is
+        authenticated by an HMAC over the raw body compared with `hmac.compare_digest`, and with no
+        secret configured it accepts NOTHING rather than accepting everything -- so the unconfigured
+        state is closed. It also deliberately does not deploy: it records the event and notifies, and a
+        human syncs through the governed route, because an unauthenticated request causing a production
+        deployment is the wrong shape however well the signature is checked.
+
         The count is asserted so that adding a public route stays a deliberate act with a test to
-        update, which is the whole reason this number is written down.
+        update, which is the whole reason this number is written down -- and it did its job: the webhook
+        was added in an earlier pass without this number moving, and a full unit run caught it.
         """
-        assert len(PUBLIC_ROUTES) == 12
-        assert len(PUBLIC_PATHS) == 12
+        assert len(PUBLIC_ROUTES) == 13
+        assert len(PUBLIC_PATHS) == 13
 
     def test_the_github_callback_is_public_and_says_it_is_still_authenticated(self) -> None:
         """Same bar as the agent surrender: a reader auditing this list must not mistake it for open."""

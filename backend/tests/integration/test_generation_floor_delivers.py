@@ -151,7 +151,18 @@ class _ModelReturningAnUnpinnedDockerfile:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def complete(self, *, prompt, on_token=None):  # noqa: ANN001, ANN003
+    # The port gained `may_serve_from_cache` and `store_in_cache` when a generation run was found being
+    # served from the cache it had just written. This double did not follow, and the TypeError it raised
+    # is the Protocol change propagating correctly -- a double that silently accepted **kwargs would have
+    # hidden the widening and tested a signature production no longer has.
+    async def complete(  # noqa: ANN201
+        self,
+        *,
+        prompt,  # noqa: ANN001
+        on_token=None,  # noqa: ANN001
+        may_serve_from_cache: bool = True,
+        store_in_cache: bool = True,
+    ):
         self.calls += 1
         content = _completion_body()
         if on_token is not None:
@@ -164,6 +175,10 @@ class _ModelReturningAnUnpinnedDockerfile:
             usage={"prompt_tokens": 10, "completion_tokens": 20},
             streamed=True,
         )
+
+    async def remember(self, *, prompt, content: str) -> None:  # noqa: ANN001
+        """Called after the gate accepts. A no-op here: this file is about the floor, not the cache."""
+        self.remembered = getattr(self, "remembered", 0) + 1
 
 
 async def _run(service: GenerationService) -> tuple[list[str], list[dict], str]:
