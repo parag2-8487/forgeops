@@ -83,8 +83,8 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         # base image and an unambiguous failure. Naming the forbidden token and the accepted shape gives
         # the model something to copy instead of something to infer.
         "NO `FROM` line ends in `:latest`, and none omits a tag. Every `FROM` is either "
-        "`image:<exact-version>` (for example `python:3.13-slim`, never `python:latest` and never bare "
-        "`python`) or `image@sha256:<digest>`. Do NOT write `FROM $SOMETHING` or define an `ARG` for the "
+        "`image:<exact-version>` (never a floating tag such as `latest`, and never a bare image name "
+        "with no tag at all) or `image@sha256:<digest>`. Do NOT write `FROM $SOMETHING` or define an `ARG` for the "
         "base image: a build argument can be overridden at build time, so a Dockerfile that defers its "
         "base to one does not establish what it builds on -- which is what `dockerfile_base_pinned` "
         "refuses, and it refuses it deliberately rather than by oversight. This applies to EVERY stage "
@@ -125,6 +125,30 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
     ),
     "opentofu": ("There is at least one `terraform`, `provider` or `resource` block, and the file parses as HCL.",),
 }
+
+#: A copyable, pinned base image per language, used to make the Dockerfile requirement CONCRETE.
+#:
+#: MEASURED, AND IT WAS MY OWN INSTRUCTION'S FAULT. The requirement list named `python:3.13-slim` as its
+#: example. Given a NODE repository -- the criterion-10 journey's fixture -- 7b wrote
+#: `ARG BASE_IMAGE=python:3.13-slim` with `COPY requirements.txt` and `pip install`, for a project whose
+#: only source file is `server.js`. The prose requirement "the base image and the build steps match the
+#: language of THIS repository" was already present and was not enough: the only CONCRETE image name in
+#: the whole block was a Python one, and a small model copies the literal it can see over the sentence it
+#: has to reason about. That is the `USER 10001` lesson a third time, arriving from the other direction --
+#: the copyable shape was right about pinning and wrong about language.
+#:
+#: So the example is resolved from the inventory, exactly as linter configuration filenames are, and for
+#: the same stated reason: a language not listed produces NO example rather than a guessed one, because a
+#: wrong literal is worse than an absent one. It is the wrong literal that caused this.
+BASE_IMAGE_BY_LANGUAGE: Final[Mapping[str, str]] = {
+    "python": "python:3.13-slim",
+    "javascript": "node:22-slim",
+    "typescript": "node:22-slim",
+    "go": "golang:1.24-alpine",
+    "rust": "rust:1.84-slim",
+    "java": "eclipse-temurin:21-jre-alpine",
+}
+
 
 #: Files an artifact kind does not work without, written alongside it.
 #:
@@ -628,10 +652,23 @@ def compile_prompt(
                 "is discarded in full, so satisfy them literally:",
                 "",
             ]
+            # The language-resolved base image, appended to the Dockerfile's own rules so it sits with
+            # the pinning requirement it makes concrete rather than in a distant facts section.
+            base_image = ""
+            for name in (str(v).lower() for v in (inventory.get("languages") or [])):
+                if name in BASE_IMAGE_BY_LANGUAGE:
+                    base_image = BASE_IMAGE_BY_LANGUAGE[name]
+                    break
             for path, rules in mechanical:
                 body_lines.append(f"`{path}`:")
                 for rule in rules:
                     body_lines.append(f"  - {rule}")
+                if base_image and path.endswith("Dockerfile"):
+                    body_lines.append(
+                        f"  - Use `{base_image}` as the base image for every stage, written exactly "
+                        f"like that. It is pinned and it matches this repository's language. Do not "
+                        f"substitute another language's image."
+                    )
                 body_lines.append("")
         body_lines += ["", *_prohibitions()]
         if unaddressable:
@@ -666,6 +703,14 @@ def compile_prompt(
         body_lines += output_format_section(ordered)
         return "\n".join(body_lines) + "\n"
 
+    def _write_target_count(groups: list) -> int:  # noqa: ANN001 - the local Instruction type
+        """The number of FILES these sections ask the model to produce.
+
+        Derived by the SAME expression `CompiledPrompt.write_targets` uses, so the bound and the reported
+        targets cannot drift apart -- which is the drift that made a cap of 6 mean 8.
+        """
+        return len({i.path for i in groups} | {c for i in groups for c in i.companions})
+
     kept = list(instructions)
     text = render(kept)
     strategy = "the whole instruction fits the tier's context budget; nothing was deferred"
@@ -688,14 +733,43 @@ def compile_prompt(
     # DEFERRING IS NOT LOSING. The remainder goes to `deferred_checks`, which the run records and the UI
     # names, so the user is told precisely which recommendations this run did not attempt and can run
     # generation again for them. Six artifacts delivered beats eleven requested and none delivered.
-    while len(kept) > max_write_targets:
+    # COUNTED IN FILES, NOT IN SECTIONS, and that distinction was a real defect rather than a nicety.
+    #
+    # `len(kept)` counts INSTRUCTION GROUPS, and a group carries companions: the Deployment group also
+    # names a Service and an Ingress, because the parser only accepts a path it was told to expect. So the
+    # cap bounded the wrong quantity. MEASURED, before the fix: `max_write_targets=6` produced EIGHT write
+    # targets and `8` produced TEN. The bound was silently 30-40% loose in exactly the direction that
+    # matters -- towards asking a small model for more files than it can complete.
+    #
+    # Every reason this cap exists is written in terms of FILES: eleven artifacts requested, a 1.5b model
+    # unable to emit eleven complete valid files, four demonstrably within reach. A cap named
+    # `max_write_targets` that does not bound write targets fails its own stated purpose, so the count is
+    # corrected to match the name rather than the name loosened to match the count.
+    #
+    # ONE GROUP ALWAYS SURVIVES. A single group can exceed the cap by itself -- the k8s group is three
+    # files against a cap of two -- and popping it would leave an empty instruction, which is worse than
+    # an over-budget one: the run would deliver nothing at all. Delivering one group and SAYING it
+    # exceeded the cap keeps the run useful and the report honest.
+    while len(kept) > 1 and _write_target_count(kept) > max_write_targets:
         deferred.insert(0, kept.pop())
         strategy = (
             f"the run asked for more than {max_write_targets} artifacts, so "
-            f"{len(deferred)} were deferred to a later run, lowest weight first. A model asked for "
-            "more files than it can complete in one answer returns none of them usable."
+            f"{len(deferred)} instruction section(s) covering "
+            f"{_write_target_count(deferred)} file(s) were deferred to a later run, lowest weight "
+            "first. A model asked for more files than it can complete in one answer returns none of "
+            "them usable."
         )
         text = render(kept)
+
+    # The cap can still be exceeded by the one group that must survive, and the strategy must SAY so
+    # rather than report a bound it did not achieve. A run that quietly claims six and asks for eight is
+    # how the original defect stayed invisible.
+    if _write_target_count(kept) > max_write_targets:
+        strategy = (
+            f"one instruction section asks for {_write_target_count(kept)} files, which exceeds the "
+            f"{max_write_targets}-artifact cap on its own. It was kept rather than deferred, because "
+            "deferring it would leave the run with no instruction at all."
+        )
 
     # WHOLE SECTIONS, LOWEST WEIGHT FIRST, and never a partial one. A truncated instruction is acted on
     # by the model as though it were complete, so it is strictly more dangerous than a missing one.

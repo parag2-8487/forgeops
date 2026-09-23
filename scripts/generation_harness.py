@@ -73,7 +73,59 @@ FIXTURE_CONTENTS: dict[str, str] = {
 }
 
 
-def _evidence() -> IndexEvidence:
+#: A NODE fixture, because the criterion-10 journey's fixture project is Node and the Dockerfile
+#: requirements resolve differently for it -- `npm ci` rather than `pip install`, a different base
+#: image family, a different lint config filename. A harness that could only reproduce the Python
+#: shape could not reproduce the journey's failure, which is the failure that matters for the
+#: criterion. Mirrors `tests/e2e/fixture-project`: a package.json and a server.js.
+NODE_FIXTURE_PATHS: tuple[str, ...] = (
+    "server.js",
+    "package.json",
+    "README.md",
+)
+
+NODE_FIXTURE_CONTENTS: dict[str, str] = {
+    "server.js": (
+        "const http = require('http');\n"
+        "const server = http.createServer((req, res) => {\n"
+        "  res.writeHead(200, { 'Content-Type': 'application/json' });\n"
+        "  res.end(JSON.stringify({ status: 'ok' }));\n"
+        "});\n"
+        "server.listen(process.env.PORT || 3000);\n"
+    ),
+    "package.json": (
+        '{\n  "name": "checkout",\n  "version": "1.0.0",\n'
+        '  "main": "server.js",\n  "scripts": { "start": "node server.js" }\n}\n'
+    ),
+    "README.md": "# checkout\n",
+}
+
+
+def _inventory(language: str = "python") -> dict:
+    """The scan facts the REAL path supplies.
+
+    Passing `{}` here made the harness compile a prompt production never sends: the Dockerfile's base
+    image is resolved FROM the inventory, so an empty one omits the instruction entirely. The harness
+    could not reproduce the journey's failure while that was true.
+    """
+    if language == "node":
+        return {
+            "languages": ["javascript"],
+            "package_managers": ["npm"],
+            "entry_points": ["server.js"],
+            "file_count": len(NODE_FIXTURE_PATHS),
+        }
+    return {
+        "languages": ["python"],
+        "package_managers": ["pip"],
+        "entry_points": ["app/main.py"],
+        "file_count": len(FIXTURE_PATHS),
+    }
+
+
+def _evidence(language: str = "python") -> IndexEvidence:
+    if language == "node":
+        return IndexEvidence(paths=NODE_FIXTURE_PATHS, contents=NODE_FIXTURE_CONTENTS)
     return IndexEvidence(paths=FIXTURE_PATHS, contents=FIXTURE_CONTENTS)
 
 
@@ -106,6 +158,12 @@ def main() -> int:
     parser.add_argument("--print-prompt", action="store_true")
     parser.add_argument("--print-artifacts", action="store_true")
     parser.add_argument(
+        "--language",
+        choices=("python", "node"),
+        default="python",
+        help="which fixture shape to reproduce. `node` mirrors the criterion-10 journey's fixture.",
+    )
+    parser.add_argument(
         "--max-write-targets",
         type=int,
         default=None,
@@ -123,7 +181,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    evidence = _evidence()
+    evidence = _evidence(args.language)
     report = ReadinessEngine().evaluate(evidence)
     failing = [check for check in report.checks if not check.passed]
 
@@ -137,7 +195,7 @@ def main() -> int:
         checks=report.checks,
         paths=evidence.paths,
         contents=evidence.contents,
-        inventory={},
+        inventory=_inventory(args.language),
         selected_check_ids=args.check,
         project_name="checkout",
         **(

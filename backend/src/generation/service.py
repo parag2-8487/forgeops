@@ -760,10 +760,31 @@ class GenerationService:
             # THE GATE HAS PASSED, so this answer is fit to keep. Cached here rather than in the router
             # because only this line knows the artifacts survived validation.
             #
+            # AND ONLY IF THE MODEL'S OWN OUTPUT PASSED, which is what `not substituted` adds.
+            #
+            # MEASURED, end to end, on the real model. A run took three attempts, was delivered with the
+            # template floor standing in for the artifacts the gate refused, and correctly recorded
+            # `served_from='provider'` because the substitution was partial. It then cached THE RAW MODEL
+            # TEXT -- the text the gate had just refused. The next run with that prompt hit the entry
+            # (`LOOKUP -> L1_exact`, observed), had the content refused by the same gate for the same
+            # reason, burned its first attempt, and went to the provider anyway: `served_from='provider'`,
+            # `iterations_used=3`, for a run that began with a cache hit.
+            #
+            # That is precisely the POISONED ENTRY the `store_in_cache=False` comment in the router
+            # describes, arriving by the one route that guard does not cover. It is strictly worse than
+            # not caching: the run pays the lookup, receives a known-bad answer, spends an attempt
+            # rediscovering that it is bad, and still calls the provider. An entry that can never serve
+            # is indistinguishable from a cache that is working and never hitting -- which is how this
+            # survived: the hit rate was zero and every run looked correct.
+            #
+            # `substituted` is the floor's own record of which artifacts it supplied. Non-empty means the
+            # delivered set is model output PLUS template files, and the raw completion alone is not the
+            # thing that was accepted -- so it is not the thing to keep.
+            #
             # Skipped when the content came FROM the cache: rewriting an entry with itself is wasted work,
             # and it would refresh the TTL on every read, so a hot entry could never expire -- which is how
             # a cache comes to serve an answer from a model version that is no longer configured.
-            if served_from == "provider" and result.content and first_attempt_prompt is not None:
+            if served_from == "provider" and result.content and first_attempt_prompt is not None and not substituted:
                 await self._model.remember(
                     prompt=first_attempt_prompt,
                     content=result.content,

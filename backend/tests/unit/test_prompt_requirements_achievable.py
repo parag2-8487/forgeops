@@ -25,7 +25,11 @@ from __future__ import annotations
 from src.core.index_evidence import IndexEvidence
 from src.core.manifest_facts import dockerfile_base_pinned
 from src.core.readiness import ReadinessEngine
-from src.generation.prompt_compiler import GATE_REQUIREMENTS
+from src.generation.prompt_compiler import (
+    BASE_IMAGE_BY_LANGUAGE,
+    GATE_REQUIREMENTS,
+    compile_prompt,
+)
 
 
 def _checks(dockerfile: str) -> dict[str, bool]:
@@ -160,3 +164,72 @@ class TestTheInstructedDockerfileSatisfiesTheGate:
         assert "$SOMETHING" in requirements or "$" in requirements
         # And the instructed shape must not itself use one.
         assert "ARG " not in INSTRUCTED_DOCKERFILE
+
+
+class TestTheBaseImageMatchesTheRepositorysLanguage:
+    """The instruction must not hand a Node repository a Python image. Phase 2 2.3.
+
+    MEASURED, ON THE JOURNEY'S OWN FIXTURE. The requirement list named `python:3.13-slim` as its
+    example. Given the criterion-10 fixture -- a `package.json` and a `server.js`, no Python anywhere
+    -- 7b wrote `ARG BASE_IMAGE=python:3.13-slim`, `COPY requirements.txt .` and `pip install`. The
+    prose rule "the base image and the build steps match the language of THIS repository" was already
+    in the list and did not help: the only CONCRETE image name in the block was Python's, and a small
+    model copies the literal it can see rather than reasoning from the sentence beside it.
+
+    That made step 7 of the journey fail with `template_fallback` instead of `accepted`, three layers
+    from the cause. These tests assert the prompt's TEXT because that is where the defect was: a
+    correct checker cannot rescue an instruction that tells the model the wrong thing.
+    """
+
+    def _prompt_for(self, language: str, paths, contents) -> str:
+        report = ReadinessEngine().evaluate(IndexEvidence(paths=paths, contents=dict(contents)))
+        return compile_prompt(
+            checks=report.checks,
+            paths=paths,
+            contents=dict(contents),
+            inventory={"languages": [language]},
+            project_name="checkout",
+        ).text
+
+    def test_a_node_repository_is_given_a_node_image(self) -> None:
+        text = self._prompt_for(
+            "javascript",
+            ("server.js", "package.json", "README.md"),
+            {"server.js": "require('http')\n", "package.json": '{"name":"c"}\n'},
+        )
+        assert "node:22-slim" in text
+        # AND NOT the other language's image, which is the defect rather than merely a missing hint.
+        assert "python:3.13-slim" not in text, (
+            "the prompt offers a Node repository a Python base image, which is what 7b copied"
+        )
+
+    def test_a_python_repository_is_given_a_python_image(self) -> None:
+        text = self._prompt_for(
+            "python",
+            ("app/main.py", "requirements.txt", "README.md"),
+            {"app/main.py": "x = 1\n", "requirements.txt": "fastapi==0.139.2\n"},
+        )
+        assert "python:3.13-slim" in text
+        assert "node:22-slim" not in text
+
+    def test_an_unknown_language_is_given_no_image_rather_than_a_guess(self) -> None:
+        """The rule this file already applies to linter configuration: a language not listed produces NO
+        instruction rather than a guessed one. A wrong literal is worse than an absent one -- that is
+        precisely what went wrong here."""
+        text = self._prompt_for(
+            "cobol",
+            ("main.cob", "README.md"),
+            {"main.cob": "DISPLAY 'hi'.\n"},
+        )
+        for image in BASE_IMAGE_BY_LANGUAGE.values():
+            assert image not in text, f"an unrecognised language was handed {image}"
+
+    def test_every_mapped_image_is_pinned(self) -> None:
+        """An unpinned example would instruct the model to fail `dockerfile_base_pinned` -- the very
+        check these requirements exist to satisfy."""
+        for language, image in BASE_IMAGE_BY_LANGUAGE.items():
+            assert ":" in image, f"{language} maps to {image!r}, which has no tag"
+            assert not image.endswith(":latest"), f"{language} maps to a floating tag"
+            assert dockerfile_base_pinned(
+                f"FROM {image} AS builder\nRUN true\nFROM {image}\nCOPY --from=builder /a /a\nUSER 10001\n"
+            ), f"{language} maps to {image!r}, which the real check refuses"
