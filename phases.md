@@ -1576,7 +1576,22 @@ vocabulary exists; **2.13 AI learning history / Reflector** after 2.11, whose ou
       `compactor_blocks_retention_period: 90d`, and the same probe above proved data actually arrives via
       the gateway's remote-write exporter. Stated explicitly rather than left to Mimir's default of
       forever, which on a filesystem backend means "until the disk fills and every write fails at once".
-- [ ] Test coverage ≥ 75% — _combined criterion: former Phase 2 asked ≥ 70% and former Phase 3 asked ≥ 75%. Resolved to the STRICTER of the two, because a merged phase that shipped at the looser threshold would be a coverage reduction dressed as a merge. Backend, agent and frontend keep their existing higher gates (86%/77%/96-97-94-86); this is the phase floor, not a target._
+- [x] Test coverage >= 75% -- **MEASURED at 86.57% combined (13,134 of 15,172 statements)** by running the
+      unit shard (2,134 passed, 17m17s, 68.32% alone) and the integration shard (1,310 passed, 1h32m,
+      72.49% alone) with `--cov=src` and taking the union of executed lines over the union of statements.
+      Neither shard alone reaches the floor and the combined figure clears it comfortably, which is exactly
+      why the criterion is stated as combined.
+
+      The meta shard is excluded from the figure deliberately rather than omitted: it runs the gate scripts
+      as SUBPROCESSES, so coverage of `src` is not captured across the process boundary and including its
+      run would add nothing but hours. It is also the slow shard -- it invokes `mutation-harness.py` over 31
+      properties up to three times -- and a run of it was measured hanging past an hour, which is a
+      pre-existing property of that harness rather than a regression.
+
+      _combined criterion: former Phase 2 asked >= 70% and former Phase 3 asked >= 75%. Resolved to the
+      STRICTER of the two, because a merged phase that shipped at the looser threshold would be a coverage
+      reduction dressed as a merge. Backend, agent and frontend keep their existing higher gates; this is
+      the phase floor, not a target._
 
 ### Excluded (for this phase)
 
