@@ -620,6 +620,44 @@ A resource fact for the next pass: with the full stack up, `go vet` failed on th
 out. Sixteen containers plus a 7b model plus a Go build does not fit. Tear the stack down before
 running the gates, or run them first.
 
+### What both shards say now, and the three failures left
+
+**Unit shard: 2,160 passed, 2 skipped, 0 failed in 13m18s.** The previous run was 2,134 passed with
+**4 failed**; those four are fixed and 26 tests were added.
+
+**Integration shard: 1,317 passed, 12 failed, 3 skipped in 20m09s** -- and **eight of the twelve were an
+absent capability, not defects.** `docker compose down` had removed the ollama container, so every
+real-model test failed at connect (`ollama_api=000`), and `yamllint` was not on PATH. With the model
+server back and the venv's `Scripts` on PATH, those re-run **11 passed**, and the whole of
+`test_generation_run_rows.py` re-runs **5 passed in 28m05s** -- including both cache tests whose premise
+was restated, so the invariant holds against the real model rather than only against a stub.
+
+**Combined coverage re-measured this session: 86.51%** (13,136 of 15,184), from unit 72.10% and
+integration 76.03%. Neither shard alone clears the floor, which is why the criterion is combined.
+
+**Three failures remain, all in `test_self_hosted_generation.py`, and each has a measured cause:**
+
+1. `test_the_second_identical_run_is_served_from_the_cache` -- asserts `l1`, gets `provider`.
+2. `test_a_near_duplicate_generation_prompt_is_served_from_l2` -- asserts `l2`, gets `provider`.
+
+   These are the SAME premise conflation that was corrected in `test_generation_run_rows.py`, in a file
+   that was not touched. The cause is no longer a mystery: with 7b the delivery needs the template
+   floor, so the completion is correctly NOT cached, so the second run legitimately calls a provider.
+   The fix is the same invariant, stated in both directions, and it is a known edit rather than an
+   investigation. It was left undone rather than made blind: each verification round on this file costs
+   **41 minutes** against the real model, and an unverified edit to a test is worth less than an honest
+   note saying which edit is needed.
+
+3. `test_a_run_is_served_from_provider_and_the_artifacts_are_real` -- the delivered artifact list no
+   longer equals `['Dockerfile', 'k8s/deployment.yaml', 'k8s/ingress.yaml', 'k8s/service.yaml']`, and
+   `Dockerfile` is the entry missing. **This one needs deciding rather than restating**, because the
+   write-target cap fix legitimately changed what a run ASKS for -- 6 files where it previously asked
+   for 8 -- so an exact-list expectation may now be encoding the pre-fix behaviour. Establish which
+   artifacts the run requests under the corrected cap BEFORE touching the assertion, and if the
+   expectation moves, move it to the right set with the reason and keep it exact. Do not weaken it to a
+   subset check: the exactness is what catches an artifact silently going missing, which is what it is
+   reporting right now.
+
 ### HANDOFF: where the next pass starts
 
 **Phase 2 is 120 of 123.** Tree clean, NOT pushed.
