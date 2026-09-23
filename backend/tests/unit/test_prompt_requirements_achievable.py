@@ -233,3 +233,92 @@ class TestTheBaseImageMatchesTheRepositorysLanguage:
             assert dockerfile_base_pinned(
                 f"FROM {image} AS builder\nRUN true\nFROM {image}\nCOPY --from=builder /a /a\nUSER 10001\n"
             ), f"{language} maps to {image!r}, which the real check refuses"
+
+
+class TestThePromptNeverMentionsAnotherLanguagesToolchain:
+    """The whole compiled prompt, not only the requirement blocks. Phase 2 2.3.
+
+    The `python:3.13-slim` defect lived in a requirement block, and an audit of those blocks alone would
+    not have caught it anywhere else -- the prompt is assembled from several sources (the requirement
+    blocks, the findings table's explanations, the resolved linter filename, the facts section). A
+    literal in ANY of them is read as an instruction.
+
+    So this asserts on the ASSEMBLED TEXT and in both directions: a Node repository is never shown a
+    Python toolchain token, and a Python repository is never shown a Node one. Both directions matter --
+    a one-way check passes on a prompt that mentions neither, which is also wrong.
+    """
+
+    PY_TOKENS = ("python:", "pip install", "requirements.txt", "pyproject.toml", "uvicorn")
+    NODE_TOKENS = ("node:", "npm ci", "npm install", "package-lock.json", "pnpm")
+
+    NODE_PATHS = ("server.js", "package.json", "README.md")
+    NODE_CONTENTS = {
+        "server.js": "const http = require('http');\n",
+        "package.json": '{"name": "checkout", "main": "server.js"}\n',
+    }
+    PY_PATHS = ("app/main.py", "requirements.txt", "README.md")
+    PY_CONTENTS = {"app/main.py": "x = 1\n", "requirements.txt": "fastapi==0.139.2\n"}
+
+    def _text(self, paths, contents, language: str, manager: str, entry: str) -> str:
+        report = ReadinessEngine().evaluate(IndexEvidence(paths=paths, contents=dict(contents)))
+        return compile_prompt(
+            checks=report.checks,
+            paths=paths,
+            contents=dict(contents),
+            inventory={
+                "languages": [language],
+                "package_managers": [manager],
+                "entry_points": [entry],
+            },
+            project_name="checkout",
+        ).text
+
+    def test_a_node_prompt_carries_no_python_token(self) -> None:
+        text = self._text(self.NODE_PATHS, self.NODE_CONTENTS, "javascript", "npm", "server.js")
+        present = [t for t in self.PY_TOKENS if t in text]
+        assert present == [], (
+            f"a Node repository is being instructed with {present}. This is how 7b came to write "
+            f"`pip install` for a project whose only source file is server.js."
+        )
+
+    def test_a_python_prompt_carries_no_node_token(self) -> None:
+        text = self._text(self.PY_PATHS, self.PY_CONTENTS, "python", "pip", "app/main.py")
+        present = [t for t in self.NODE_TOKENS if t in text]
+        assert present == [], present
+
+    def test_each_prompt_does_name_its_own_toolchain(self) -> None:
+        """NON-VACUITY. A prompt mentioning NEITHER language would satisfy both tests above while
+        telling the model nothing about what to build."""
+        node = self._text(self.NODE_PATHS, self.NODE_CONTENTS, "javascript", "npm", "server.js")
+        py = self._text(self.PY_PATHS, self.PY_CONTENTS, "python", "pip", "app/main.py")
+        assert any(t in node for t in self.NODE_TOKENS), "the Node prompt names no Node toolchain"
+        assert any(t in py for t in self.PY_TOKENS), "the Python prompt names no Python toolchain"
+
+    def test_no_requirement_block_carries_a_version_shaped_literal(self) -> None:
+        """The audit that found the defect, kept. A literal naming a language, an image family or a
+        version is repository-DEPENDENT, so it cannot live in a repository-independent rule. Universal
+        shapes (`AS builder`, `:latest` as a prohibition, `USER 10001`) are not that."""
+        import re
+
+        allowed = {
+            ":latest",
+            " AS builder",
+            "COPY --from=builder",
+            "image:<exact-version>",
+            "image@sha256:<digest>",
+        }
+        offenders: list[str] = []
+        for rules in GATE_REQUIREMENTS.values():
+            for rule in rules:
+                for literal in re.findall(r"`([^`]+)`", rule):
+                    if literal in allowed:
+                        continue
+                    if re.search(
+                        r"python|node:|golang|rust:|temurin|slim|alpine|bookworm|\d+\.\d+",
+                        literal,
+                    ):
+                        offenders.append(literal)
+        assert offenders == [], (
+            f"repository-dependent literals in repository-independent rules: {offenders}. A literal is "
+            f"read as an instruction, so it must be resolved from the inventory instead."
+        )

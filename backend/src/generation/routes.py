@@ -45,7 +45,7 @@ from ..core.index_evidence import load_index_evidence
 from ..core.readiness import ReadinessEngine
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from ..governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, MutationRequest
-from .prompt_compiler import CompiledPrompt, compile_prompt
+from .prompt_compiler import CompiledPrompt, compile_prompt, compile_repair_prompts
 from .retrieval import retrieve_generation_context
 from .service import GenerationOutcome, GenerationService
 
@@ -265,7 +265,7 @@ async def create_generation_run(
         # prohibitions that describe how generated infrastructure goes wrong. A model asked for "a
         # Dockerfile" with no facts has to guess the language, the entry point and the port, and a guess
         # that reads plausibly is indistinguishable from a fact until it fails.
-        compiled, existing_contents = await _compile_generation_plan(
+        compiled, existing_contents, repair_prompts = await _compile_generation_plan(
             session,
             project_id=body.project_id,
             selected_check_ids=body.target_checks,
@@ -302,6 +302,7 @@ async def create_generation_run(
             project=project_row,
             retrieval=retrieval,
             compiled=compiled,
+            repair_prompts=repair_prompts,
             existing=existing_contents,
         ):
             if _is_terminal(frame):
@@ -473,7 +474,7 @@ async def _compile_generation_plan(
     *,
     project_id: uuid.UUID,
     selected_check_ids: list[str] | None,
-) -> tuple[CompiledPrompt | None, Mapping[str, str]]:
+) -> tuple[CompiledPrompt | None, Mapping[str, str], dict[str, CompiledPrompt]]:
     """Build the instruction from this project's own index and its failing checks.
 
     Returns None when the project has never been scanned. That is deliberate rather than a fallback to a
@@ -484,7 +485,7 @@ async def _compile_generation_plan(
     evidence = await load_index_evidence(session, project_id=project_id)
     if not evidence.paths:
         # No index: no facts to compile from, and no stored text to compare a rewrite against.
-        return None, {}
+        return None, {}, {}
     inventory = (
         await session.execute(
             text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
@@ -501,14 +502,28 @@ async def _compile_generation_plan(
     # THE CONTENTS TRAVEL WITH THE PROMPT, because the same index answers both questions: what to
     # tell the model, and what each file it rewrites already satisfied. Loading the index twice would
     # let the two drift apart between the compile and the gate.
-    return compile_prompt(
-        checks=report.checks,
-        paths=evidence.paths,
-        contents=evidence.contents,
-        inventory=inventory,
-        selected_check_ids=selected_check_ids,
-        project_name=str(project_name),
-    ), evidence.contents
+    return (
+        compile_prompt(
+            checks=report.checks,
+            paths=evidence.paths,
+            contents=evidence.contents,
+            inventory=inventory,
+            selected_check_ids=selected_check_ids,
+            project_name=str(project_name),
+        ),
+        evidence.contents,
+        # ONE PROMPT PER ARTIFACT, for the repair loop. Built here, from the SAME readiness report that
+        # produced the opening ask, so a repair cannot disagree with it about what is failing -- loading
+        # the index twice is how the compile and the gate drift apart.
+        compile_repair_prompts(
+            checks=report.checks,
+            paths=evidence.paths,
+            contents=evidence.contents,
+            inventory=inventory,
+            selected_check_ids=selected_check_ids,
+            project_name=str(project_name),
+        ),
+    )
 
 
 async def _record_compiled_prompt(session: AsyncSession, *, run_id: uuid.UUID, compiled: CompiledPrompt | None) -> None:

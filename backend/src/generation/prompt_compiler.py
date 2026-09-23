@@ -449,6 +449,73 @@ def _prohibitions() -> list[str]:
     ]
 
 
+def compile_repair_prompts(
+    *,
+    checks: Sequence[ReadinessCheck],
+    paths: Sequence[str],
+    contents: Mapping[str, str],
+    inventory: Mapping[str, Any],
+    selected_check_ids: Sequence[str] | None = None,
+    token_budget: int = 24_000,
+    project_name: str = "",
+) -> dict[str, CompiledPrompt]:
+    """One prompt per artifact, each carrying ONLY that artifact's requirements, keyed by write target.
+
+    WHY THIS EXISTS, MEASURED. The whole-plan prompt asks for six files and states 55 mechanical
+    requirements in one call. Asked that way, `qwen2.5-coder:7b` produced a Dockerfile whose base image
+    was `node:$NODE_VERSION` -- unpinned -- and **kept producing it when the finding was fed back, twice**.
+    Asked for the Dockerfile ALONE, with that artifact's 24 requirements, it produced the same fault once
+    and then fixed it on the first correction: `FROM node:22-slim`.
+
+        ASK A  6 artifacts, 55 requirements:  FAIL, FAIL, FAIL   (node:$NODE_VERSION each time)
+        ASK B  1 artifact,  24 requirements:  FAIL, PASS         (FROM node:22-slim)
+
+    Same model, same check, same repository. It is not capability: every other requirement was satisfied
+    in both asks (two stages, USER, HEALTHCHECK). What fails under a wide ask is the model's ability to
+    ACT ON A CORRECTION while regenerating five unrelated files at the same time.
+
+    So the repair is narrowed and the first ask is left alone. The budget of model calls is unchanged --
+    this buys compliance rather than spending wall clock, which matters because the journey's generation
+    step is already the slowest thing in CI.
+
+    KEYED BY WRITE TARGET so the service can look up the artifact the gate rejected without knowing
+    anything about readiness checks. The three Kubernetes manifests share one prompt, because they share
+    one instruction: a Deployment without its Service is reachable by nothing, which is why
+    `ARTIFACT_COMPANIONS` exists. The group is the unit of repair for the same reason it is the unit of
+    generation.
+    """
+    failing = [c for c in checks if not c.passed]
+    if selected_check_ids is not None:
+        wanted = set(selected_check_ids)
+        failing = [c for c in failing if c.id in wanted]
+
+    by_kind: dict[str, list[str]] = {}
+    for check in failing:
+        explanation = CHECK_EXPLANATIONS.get(check.id)
+        if explanation is None or not explanation.artifact or not check.generatable:
+            # Unaddressable here for the same reason `compile_prompt` skips it: no generated artifact
+            # fixes it, so there is no repair prompt to build.
+            continue
+        by_kind.setdefault(explanation.artifact, []).append(check.id)
+
+    repairs: dict[str, CompiledPrompt] = {}
+    for kind in sorted(by_kind):
+        one = compile_prompt(
+            checks=checks,
+            paths=paths,
+            contents=contents,
+            inventory=inventory,
+            selected_check_ids=by_kind[kind],
+            token_budget=token_budget,
+            project_name=project_name,
+        )
+        for target in one.write_targets:
+            # `setdefault`: the first kind to claim a path owns it. Two kinds naming one path would be
+            # a contradiction in the findings table rather than something to merge here.
+            repairs.setdefault(target, one)
+    return repairs
+
+
 def compile_prompt(
     *,
     checks: Sequence[ReadinessCheck],

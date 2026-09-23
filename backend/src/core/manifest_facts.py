@@ -381,10 +381,22 @@ def dockerfile_base_pinned(body: str) -> bool:
             stages.add(parts[3].lower())
         if image.lower() in stages:
             continue
-        if image.startswith("$"):
+        if "$" in image:
+            # A BUILD ARGUMENT ANYWHERE IN THE REFERENCE, not only as the whole of it.
+            #
             # `FROM $BASE_IMAGE` defers the decision to a build argument, which cannot be read here.
             # Treated as unpinned rather than assumed pinned, because assuming would credit the
             # repository for a property this file does not establish.
+            #
+            # `startswith` was the test, and it let `FROM node:$NODE_VERSION` PASS -- caught by
+            # asking 7b for a Dockerfile and reading what satisfied the check: a tag supplied at build
+            # time, which establishes exactly as little as a whole image supplied at build time. The
+            # worst form, `FROM node:$V` with `ARG V` and no default, also passed; it resolves to
+            # `node:` and builds nothing reproducible. A check that can be satisfied by the thing it
+            # exists to forbid is worse than an absent check, because the score claims the property.
+            #
+            # No legitimate tag or repository name contains `$`: the grammar is
+            # `[a-zA-Z0-9_.-]` for a tag, so the character can only be interpolation.
             return False
         if "@sha256:" in image:
             continue

@@ -378,6 +378,7 @@ class GenerationService:
         retrieval: RetrievalContext | None = None,
         compiled: CompiledPrompt | None = None,
         existing: Mapping[str, str] | None = None,
+        repair_prompts: Mapping[str, CompiledPrompt] | None = None,
     ) -> AsyncGenerator[str]:
         """Yield §7.4 frames for one generation run.
 
@@ -408,6 +409,7 @@ class GenerationService:
                 report=report,
                 retrieval=retrieval,
                 compiled=compiled,
+                repair_prompts=repair_prompts,
                 existing=existing,
             ):
                 yield frame
@@ -441,6 +443,7 @@ class GenerationService:
         report: _ModelReport,
         retrieval: RetrievalContext | None = None,
         compiled: CompiledPrompt | None = None,
+        repair_prompts: Mapping[str, CompiledPrompt] | None = None,
     ) -> AsyncGenerator[str]:
         """Route through the cascade, streaming real deltas, up to `max_attempts` times.
 
@@ -462,6 +465,17 @@ class GenerationService:
         # reached the floor, and leaving it unbound raised UnboundLocalError on the ordinary happy path --
         # caught immediately by `test_generation_routing.py`, which is what those tests are for.
         substituted: tuple[str, ...] = ()
+        # ARTIFACTS THAT ALREADY PASSED, kept across attempts so a repair does not have to reproduce them.
+        #
+        # Before this, a rejected artifact made the whole set be asked for again. MEASURED on the real
+        # model: asked for six files with 55 requirements, 7b produced an unpinned `node:$NODE_VERSION`
+        # base image and REPRODUCED IT on both corrections; asked for the Dockerfile alone with its own 24
+        # requirements, it made the same mistake once and fixed it on the first correction. Every other
+        # requirement was satisfied in both asks, so this is not capability -- what a wide ask costs is the
+        # model's ability to act on a correction while regenerating five unrelated files.
+        carried: dict[str, GeneratedFile] = {}
+        # The artifact a repair attempt is for, or None for the opening whole-plan ask.
+        repair_for: str | None = None
         for attempt in range(1, self._max_attempts + 1):
             yield format_event(
                 SSEEventType.PROGRESS,
@@ -482,7 +496,17 @@ class GenerationService:
             # `build_generation_prompt` remains the path for a free-text prompt with no readiness
             # findings behind it, which is still a legitimate request.
             if compiled is not None:
-                model_prompt = compiled.text
+                # THE OPENING ASK IS THE WHOLE PLAN; A REPAIR IS ONE ARTIFACT.
+                #
+                # The first call is unchanged deliberately: it is what produces most of the set in one
+                # round, it is the cache key of the run, and nothing measured argues against it. Only the
+                # REPAIR is narrowed, because that is where the measurement shows the loss.
+                active = compiled
+                if repair_for is not None and repair_prompts is not None:
+                    narrow = repair_prompts.get(repair_for)
+                    if narrow is not None:
+                        active = narrow
+                model_prompt = active.text
                 if findings:
                     # THE VALIDATOR'S OWN WORDS, fed back verbatim. A repair attempt that is told only
                     # "it failed" has to guess what to change, and guessing is what produced the
@@ -623,15 +647,26 @@ class GenerationService:
                 # Falls back to the old default when no plan was compiled, so an operator typing a free
                 # prompt still gets the previous contract rather than a run that requires nothing and
                 # therefore accepts an empty answer.
+                # AGAINST WHAT THIS CALL ASKED FOR, which on a repair is one artifact rather than six.
+                # Parsing a repair answer against the whole plan's targets would report five missing files
+                # the model was deliberately not asked for.
                 if compiled is not None and compiled.write_targets:
-                    parsed = parse_artifacts(result.content, required=(), requested=tuple(compiled.write_targets))
+                    asked_for = tuple(
+                        active.write_targets if active is not None and active.write_targets else compiled.write_targets
+                    )
+                    parsed = parse_artifacts(result.content, required=(), requested=asked_for)
                 else:
                     parsed = parse_artifacts(result.content, required=REQUIRED_ARTIFACTS)
             except ArtifactParseError as exc:
                 findings = (str(exc),)
                 continue
 
-            files = tuple(GeneratedFile(path=path, content=content) for path, content in parsed.items())
+            # WHAT THIS CALL PRODUCED, PLUS WHAT EARLIER CALLS ALREADY GOT RIGHT. The new answer wins for
+            # a path it covers, so a repair replaces the artifact it was asked to repair and nothing else.
+            merged = dict(carried)
+            for path, content in parsed.items():
+                merged[path] = GeneratedFile(path=path, content=content)
+            files = tuple(merged.values())
             passed, gate_findings = self._validate(files, existing)
             yield format_event(
                 SSEEventType.VALIDATION,
@@ -647,7 +682,44 @@ class GenerationService:
                 # RETRY WHILE THERE IS AN ATTEMPT LEFT, because the model can usually repair what the
                 # gate named and a fully valid set is the better outcome.
                 if attempt < self._max_attempts:
-                    findings = gate_findings
+                    # KEEP WHAT PASSED, AND ASK AGAIN FOR ONE THING.
+                    #
+                    # The artifacts the gate did not name are correct; re-asking for them invites the model
+                    # to change them and, measured, stops it from fixing the one that is wrong. So they are
+                    # carried forward and the next call is narrowed to a single rejected artifact with only
+                    # that artifact's requirements.
+                    rejected_paths = [
+                        artifact.path
+                        for artifact in files
+                        if any(finding.startswith(f"{artifact.path}: ") for finding in gate_findings)
+                    ]
+                    # An artifact the model was asked for and did not produce at all is also a repair
+                    # target: it is missing rather than wrong, and a narrow ask is the better second try.
+                    missing = [
+                        path
+                        for path in (compiled.write_targets if compiled is not None else ())
+                        if path not in {artifact.path for artifact in files}
+                    ]
+                    for artifact in files:
+                        if artifact.path not in rejected_paths:
+                            carried[artifact.path] = artifact
+                    # HIGHEST STAKES FIRST when several failed, because the attempt budget is finite and a
+                    # Dockerfile carries more of the score than a `.gitleaks.toml`. `repair_prompts` is
+                    # keyed by write target, so a path with no repair prompt is one no artifact instruction
+                    # claims and there is nothing narrower to ask.
+                    candidates = [
+                        path
+                        for path in rejected_paths + missing
+                        if repair_prompts is not None and path in repair_prompts
+                    ]
+                    repair_for = candidates[0] if candidates else None
+                    if repair_for is not None:
+                        # ONLY THIS ARTIFACT'S FINDINGS. Handing over five other files' complaints is the
+                        # wide ask again, in the one place it does the most harm.
+                        narrowed = tuple(finding for finding in gate_findings if finding.startswith(f"{repair_for}: "))
+                        findings = narrowed or gate_findings
+                    else:
+                        findings = gate_findings
                     continue
 
                 # LAST ATTEMPT. Keep the artifacts that PASSED rather than discarding them because a
