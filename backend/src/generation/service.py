@@ -477,6 +477,13 @@ class GenerationService:
         # The artifact a repair attempt is for, or None for the opening whole-plan ask.
         repair_for: str | None = None
         asked_for_order: tuple[str, ...] = ()
+        # EVERY PATH THE GATE EVER REJECTED IN THIS RUN. A later attempt can pass while one of them is
+        # simply absent, and an absent artifact produces no finding -- so without this the run would
+        # report success on a set quietly missing a file. Measured on the criterion-10 fixture: a
+        # Deployment was rejected on attempt 1, the repair went to the Dockerfile, and the run was
+        # accepted delivering a Service and an Ingress with no Deployment -- the exact gap
+        # `ARTIFACT_COMPANIONS` exists to prevent, reintroduced by narrowing the repair.
+        ever_rejected: set[str] = set()
         for attempt in range(1, self._max_attempts + 1):
             yield format_event(
                 SSEEventType.PROGRESS,
@@ -705,6 +712,8 @@ class GenerationService:
                         for path in (compiled.write_targets if compiled is not None else ())
                         if path not in {artifact.path for artifact in files}
                     ]
+                    ever_rejected.update(rejected_paths)
+                    ever_rejected.update(missing)
                     for artifact in files:
                         if artifact.path not in rejected_paths:
                             carried[artifact.path] = artifact
@@ -806,19 +815,56 @@ class GenerationService:
                     },
                 )
 
-            # DELIVERED IN THE ORDER THE RUN ASKED FOR. Applied HERE, where the set is final, rather
-            # than after the parse: the floor reassigns `files` when it substitutes, so an ordering
-            # applied earlier is silently overwritten by whichever order the floor happened to build.
-            # Measured that way round first -- the order stayed wrong with the sort in place.
+            # THE FLOOR COVERS WHAT WAS REJECTED AND NEVER REPAIRED.
             #
-            # Order is a property of the PLAN, not of the model's emission order, not of which attempt
-            # produced what, and not of the floor's iteration order. It reaches `change_items.ordinal`,
-            # so before this the diff a reviewer reads was sequenced by something nobody chose and
-            # `ORDER BY ordinal` gave different answers for identical inputs.
+            # The attempt budget is finite, so when several artifacts fail only some get a narrow repair.
+            # The rest must be SUBSTITUTED, not dropped: the audited template is the known-good answer for
+            # exactly this case, and `check-template-readiness.py` proves it satisfies its target checks.
             #
-            # A path the plan did not name sorts after the named ones by its own name rather than being
-            # dropped: this is a tie-break, and discarding a delivered file here would be the worst
-            # possible reading of 'canonical order'.
+            # This weakens nothing. The model's rejected artifact is still never accepted, and the
+            # assembled set goes back through the SAME `_validate` -- including the regression and
+            # score-lowering rules -- so a substitution that would make the set worse is refused and the
+            # withholding stands.
+            outstanding = tuple(
+                path
+                for path in asked_for_order
+                if path in ever_rejected and path not in {artifact.path for artifact in files}
+            )
+            if outstanding:
+                filled, also_substituted = self._apply_floor(
+                    accepted=files,
+                    rejected=outstanding,
+                    prompt=prompt,
+                    project=project,
+                    existing=existing,
+                )
+                recheck_passed, recheck_findings = self._validate(filled, existing)
+                if recheck_passed:
+                    files = filled
+                    substituted = tuple(sorted(set(substituted) | set(also_substituted)))
+                    yield format_event(
+                        SSEEventType.VALIDATION,
+                        {
+                            "run_id": str(run_id),
+                            "passed": True,
+                            "findings": [],
+                            "substituted": list(substituted),
+                            "served_from": served_from,
+                            "attempt": attempt,
+                        },
+                    )
+                else:
+                    # The floor could not satisfy the checks either, so the withholding stands and the
+                    # shortfall is reported rather than papered over.
+                    report.findings = recheck_findings
+
+            # DELIVERED IN THE ORDER THE RUN ASKED FOR, applied where the set is FINAL -- after both the
+            # repair and the floor have had their say. Order is a property of the PLAN, not of the
+            # model's emission order, not of which attempt produced what, and not of the floor's
+            # iteration order. It reaches `change_items.ordinal`, so before this the diff a reviewer
+            # reads was sequenced by something nobody chose and `ORDER BY ordinal` gave different
+            # answers for identical inputs. A path the plan did not name sorts after the named ones by
+            # its own name rather than being dropped.
             delivery_order = {path: i for i, path in enumerate(asked_for_order)}
             files = tuple(
                 sorted(
@@ -826,6 +872,7 @@ class GenerationService:
                     key=lambda f: (delivery_order.get(f.path, len(delivery_order)), f.path),
                 )
             )
+
             if outcome is not None:
                 outcome.files = list(files)
                 outcome.prompt_tokens = (result.usage or {}).get("prompt_tokens", 0) or max(

@@ -343,3 +343,112 @@ class TestTheDeliveredOrderIsThePlansOrder:
         second, _, _, _ = await _run([BAD_DOCKERFILE + PASSING_MANIFESTS, GOOD_DOCKERFILE])
 
         assert [a.path for a in first.files] == [a.path for a in second.files]
+
+
+# A Deployment the gate refuses, so it is rejected and -- with the Dockerfile also rejected and the
+# attempt budget finite -- never gets a narrow repair of its own.
+REFUSED_DEPLOYMENT = """### FILE: k8s/deployment.yaml
+```
+apiVersion: v1
+kind: NotADeployment
+```
+"""
+
+
+PASSING_SERVICE_AND_INGRESS = """### FILE: k8s/service.yaml
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout-api
+  labels:
+    app: checkout-api
+spec:
+  type: ClusterIP
+  selector:
+    app: checkout-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+```
+### FILE: k8s/ingress.yaml
+```
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: checkout-api
+  labels:
+    app: checkout-api
+spec:
+  rules:
+    - host: checkout-api.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: checkout-api
+                port:
+                  number: 80
+```
+"""
+
+
+class TestAnArtifactRejectedAndNeverRepairedIsNotDropped:
+    """THE REGRESSION NARROWING THE REPAIR INTRODUCED, caught by reading the delivered list.
+
+    With several artifacts rejected, only some get a narrow repair -- the budget is finite. A later
+    attempt then PASSES on the shorter set, because an artifact that is absent produces no finding. So
+    the run reported success while quietly delivering one file fewer than it asked for.
+
+    MEASURED ON THE CRITERION-10 FIXTURE: attempt 1 rejected the Dockerfile and the Deployment, the
+    repair went to the Dockerfile, and the run was accepted delivering
+    `['Dockerfile', 'k8s/ingress.yaml', 'k8s/service.yaml']` -- a Service and an Ingress with no
+    Deployment, which is exactly the gap `ARTIFACT_COMPANIONS` exists to prevent.
+
+    The audited floor covers what was rejected and never repaired. That weakens nothing: the model's
+    rejected artifact is still never accepted, and the assembled set is re-validated through the same
+    gate, so a substitution that would make the set worse is refused.
+    """
+
+    async def test_the_scenario_rejects_two_artifacts(self) -> None:
+        """GUARDS THE ASSERTION BELOW. One rejection would be repaired and prove nothing."""
+        outcome, model, _, _ = await _run(
+            [BAD_DOCKERFILE + REFUSED_DEPLOYMENT + PASSING_SERVICE_AND_INGRESS, GOOD_DOCKERFILE],
+            attempts=2,
+        )
+        assert model.prompts, "the model was never called"
+        assert outcome.files, "the run delivered nothing"
+
+    async def test_the_deployment_is_still_delivered(self) -> None:
+        """The assertion that was false. It is delivered by the floor rather than by the model, which is
+        the point: substituted, not dropped."""
+        outcome, _, _, _ = await _run(
+            [BAD_DOCKERFILE + REFUSED_DEPLOYMENT + PASSING_SERVICE_AND_INGRESS, GOOD_DOCKERFILE],
+            attempts=2,
+        )
+        delivered = {artifact.path for artifact in outcome.files}
+        assert "k8s/deployment.yaml" in delivered, (
+            f"delivered {sorted(delivered)}. A Service and an Ingress with no Deployment is reachable "
+            f"by nothing, and the run reported success."
+        )
+
+    async def test_no_requested_artifact_is_missing_from_an_accepted_run(self) -> None:
+        """The general property, so the next artifact to go missing is caught without anyone knowing
+        which one it will be."""
+        outcome, _, compiled, _ = await _run(
+            [BAD_DOCKERFILE + REFUSED_DEPLOYMENT + PASSING_SERVICE_AND_INGRESS, GOOD_DOCKERFILE],
+            attempts=2,
+        )
+        assert outcome.status == "accepted", (
+            f"the run ended {outcome.status!r}; this scenario is built to be accepted, and a skip here "
+            f"would hide exactly the regression this test exists to catch"
+        )
+        delivered = {artifact.path for artifact in outcome.files}
+        # Every artifact the model produced or the floor supplied for a REJECTED path must be present.
+        for path in ("Dockerfile", "k8s/deployment.yaml", "k8s/service.yaml", "k8s/ingress.yaml"):
+            if path in compiled.write_targets:
+                assert path in delivered, f"{path} was requested and is not in {sorted(delivered)}"
