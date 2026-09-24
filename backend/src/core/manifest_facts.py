@@ -28,6 +28,7 @@ nothing rather than a guess. Every function returns the PATH that decided the an
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Final
 
@@ -216,13 +217,14 @@ def _is_real_quantity(value: object) -> bool:
     text_value = str(value).strip()
     if not text_value:
         return False
-    # A quantity carries a suffix (`100m`, `128Mi`) or is a bare number. Strip the suffix and read it.
-    digits = text_value.rstrip("EPTGMKikeimn").strip()
-    try:
-        return float(digits) > 0
-    except ValueError:
+    # A Kubernetes quantity is a number with an optional suffix (`100m`, `128Mi`, `1.5`). The LEADING
+    # NUMBER is read rather than the suffix stripped: `rstrip` over a set of characters removes any of
+    # them in any order, so `128Mi` worked by accident and a malformed `12Mi8` would too.
+    match = re.match(r"^([0-9]+\.?[0-9]*|\.[0-9]+)", text_value)
+    if match is None:
         # Unparseable is not proof of a bound, and an unrecognised unit is exactly where a typo hides.
         return False
+    return float(match.group(1)) > 0
 
 
 def _probe_declares_a_handler(probe: object) -> bool:
