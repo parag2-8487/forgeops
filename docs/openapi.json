@@ -208,6 +208,28 @@
         "title": "ArchiveRequest",
         "type": "object"
       },
+      "AskRequest": {
+        "additionalProperties": false,
+        "description": "A question about one project.\n\nNOTE WHAT IS ABSENT: no tenant, no project filter, no similarity threshold, no retrieval limit. Scoping\ncomes from the path parameter and the verified principal, so no field here can widen what is searched.",
+        "properties": {
+          "question": {
+            "maxLength": 2000,
+            "minLength": 3,
+            "title": "Question",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "question"
+        ],
+        "title": "AskRequest",
+        "type": "object"
+      },
       "AuditEventOut": {
         "description": "One record, as the API renders it.\n\n`prev_hash` and `hash` are hex, so a caller can verify the chain independently without this\nservice being trusted to answer honestly about itself \u2014 which is the only kind of tamper\nevidence worth having.",
         "properties": {
@@ -1912,6 +1934,84 @@
         "title": "ExchangeResponse",
         "type": "object"
       },
+      "ExecuteRequest": {
+        "additionalProperties": false,
+        "description": "A confirmed plan, named by intent rather than by operation.\n\nNOTE WHAT IS ABSENT: no `operation` field. A client cannot name an operation, so no request can reach an\noperation the resolver would not have chosen. `slots` are re-validated against the same vocabularies.",
+        "properties": {
+          "intent": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Intent",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "session_key": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Session Key",
+            "type": "string"
+          },
+          "slots": {
+            "additionalProperties": true,
+            "title": "Slots",
+            "type": "object"
+          }
+        },
+        "required": [
+          "intent",
+          "project_id"
+        ],
+        "title": "ExecuteRequest",
+        "type": "object"
+      },
+      "FeedbackRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Artifact Path",
+            "type": "string"
+          },
+          "comment": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Comment",
+            "type": "string"
+          },
+          "final_content": {
+            "default": "",
+            "title": "Final Content",
+            "type": "string"
+          },
+          "generation_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Run Id"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_path",
+          "verdict"
+        ],
+        "title": "FeedbackRequest",
+        "type": "object"
+      },
       "FindingResponse": {
         "properties": {
           "code": {
@@ -2341,16 +2441,82 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealRequest": {
+        "additionalProperties": false,
+        "description": "What a caller may say about a heal.\n\nNOTE WHAT IS ABSENT: no container name, no namespace, no replica count, no `auto` flag. The target is\nderived from the incident, which is what makes \"an auto action cannot widen its own scope\" true by\nconstruction rather than by validation. `remedy` can only ever make the outcome MORE restrictive.",
+        "properties": {
+          "environment": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Environment",
+            "type": "string"
+          },
+          "remedy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remedy"
+          }
+        },
+        "required": [
+          "environment"
+        ],
+        "title": "HealRequest",
+        "type": "object"
+      },
       "ImageActionRequest": {
-        "description": "One action against one named image reference.",
+        "description": "One action against one named image reference.\n\nFOUR VERBS ON ONE AUTHORITY. `build` and `push` join `pull` and `remove` rather than getting routes of\ntheir own: the permission being granted is \"act on an image in this project\", and minting a second\noperation would mean a second policy resource and a second approval row describing one permission.\n\nA build and a push each need fields the other two do not, and they are OPTIONAL here with a validator\nbelow refusing the combinations that make no sense -- a push with a registry user and no secret, or a\nbuild with no tag. The alternative, a separate model per verb, would put the same four checks in four\nplaces and let them drift.",
         "properties": {
           "action": {
             "enum": [
               "pull",
-              "remove"
+              "remove",
+              "build",
+              "push"
             ],
             "title": "Action",
             "type": "string"
+          },
+          "build_args": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Args"
+          },
+          "build_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Context"
+          },
+          "dockerfile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dockerfile"
           },
           "image": {
             "maxLength": 512,
@@ -2363,6 +2529,28 @@
             "maxLength": 500,
             "title": "Reason",
             "type": "string"
+          },
+          "registry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry"
+          },
+          "registry_user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry User"
           }
         },
         "required": [
@@ -2432,6 +2620,181 @@
         "title": "IndexResult",
         "type": "object"
       },
+      "InterpretRequest": {
+        "additionalProperties": false,
+        "description": "What the user typed.\n\n`utterance` is the ONLY free text in this API, and it never leaves this route: `classify` turns it into an\nintent name and enumerated slots, and nothing downstream sees the string. That is the boundary the whole\nsection is built around.",
+        "properties": {
+          "session_key": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Session Key",
+            "type": "string"
+          },
+          "utterance": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Utterance",
+            "type": "string"
+          }
+        },
+        "required": [
+          "utterance"
+        ],
+        "title": "InterpretRequest",
+        "type": "object"
+      },
+      "ManifestRendered": {
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "prerequisites": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "filename",
+          "content",
+          "prerequisites"
+        ],
+        "title": "ManifestRendered",
+        "type": "object"
+      },
+      "ManifestRequest": {
+        "description": "What to render. One request, one kind, so a caller cannot get a partially rendered set.",
+        "properties": {
+          "analysis_template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Template"
+          },
+          "app_name": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "App Name",
+            "type": "string"
+          },
+          "automated": {
+            "default": false,
+            "title": "Automated",
+            "type": "boolean"
+          },
+          "destination_namespace": {
+            "default": "default",
+            "maxLength": 253,
+            "title": "Destination Namespace",
+            "type": "string"
+          },
+          "environments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "image": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Image",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "application",
+              "app-of-apps",
+              "applicationset",
+              "rollout-canary",
+              "rollout-bluegreen",
+              "analysis-template"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "path": {
+            "default": "k8s",
+            "maxLength": 1024,
+            "title": "Path",
+            "type": "string"
+          },
+          "prune": {
+            "default": false,
+            "title": "Prune",
+            "type": "boolean"
+          },
+          "repo_url": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Repo Url",
+            "type": "string"
+          },
+          "self_heal": {
+            "default": false,
+            "title": "Self Heal",
+            "type": "boolean"
+          },
+          "target_revision": {
+            "default": "main",
+            "maxLength": 255,
+            "title": "Target Revision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "app_name"
+        ],
+        "title": "ManifestRequest",
+        "type": "object"
+      },
+      "MetricsQueryRequest": {
+        "additionalProperties": false,
+        "description": "What a panel sends. Note the absence of any field that could carry PromQL.\n\n`model_config` forbids extra fields, so a client that sent `query=\"...\"` hoping for a passthrough gets a\n422 naming the field rather than having it silently ignored -- an ignored field is indistinguishable from\nan honoured one from the caller's side.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Arguments",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "window": {
+            "default": "1h",
+            "title": "Window",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "MetricsQueryRequest",
+        "type": "object"
+      },
       "PairingCodeRequest": {
         "additionalProperties": false,
         "description": "Which project the code pairs a device to.",
@@ -2471,6 +2834,35 @@
           "expires_at"
         ],
         "title": "PairingCodeResponse",
+        "type": "object"
+      },
+      "PipelineAccepted": {
+        "description": "202: the run was accepted, not completed.",
+        "properties": {
+          "dispatcher": {
+            "title": "Dispatcher",
+            "type": "string"
+          },
+          "next_step": {
+            "title": "Next Step",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "workflow": {
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "workflow",
+          "dispatcher",
+          "next_step"
+        ],
+        "title": "PipelineAccepted",
         "type": "object"
       },
       "PlanAnalysisRequest": {
@@ -2805,53 +3197,36 @@
         "title": "PolicyUpdate",
         "type": "object"
       },
-      "PreferenceRequest": {
-        "description": "One user's setting for one channel and one kind.",
+      "PreferenceUpdate": {
+        "additionalProperties": false,
+        "description": "A correction. Both fields optional so a user can retext without reactivating, or vice versa.",
         "properties": {
-          "channel": {
-            "enum": [
-              "in_app",
-              "slack",
-              "discord",
-              "email"
-            ],
-            "title": "Channel",
-            "type": "string"
-          },
-          "enabled": {
-            "default": true,
-            "title": "Enabled",
-            "type": "boolean"
-          },
-          "kind": {
-            "enum": [
-              "deploy_completed",
-              "deploy_failed",
-              "policy_violated",
-              "approval_required",
-              "self_healed"
-            ],
-            "title": "Kind",
-            "type": "string"
-          },
-          "target": {
+          "active": {
             "anyOf": [
               {
-                "maxLength": 500,
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Target"
+            "title": "Statement"
           }
         },
-        "required": [
-          "channel",
-          "kind"
-        ],
-        "title": "PreferenceRequest",
+        "title": "PreferenceUpdate",
         "type": "object"
       },
       "ProjectCreateRequest": {
@@ -3289,6 +3664,52 @@
           "recommendations"
         ],
         "title": "ReadinessReportResponse",
+        "type": "object"
+      },
+      "ReleaseAccepted": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "released_by": {
+            "title": "Released By",
+            "type": "string"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "released_by",
+          "detail"
+        ],
+        "title": "ReleaseAccepted",
+        "type": "object"
+      },
+      "ReleasePipelineRequest": {
+        "description": "Releasing one gated step.",
+        "properties": {
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "step": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "reason"
+        ],
+        "title": "ReleasePipelineRequest",
         "type": "object"
       },
       "RepositoryItem": {
@@ -4052,6 +4473,137 @@
         "title": "SecretUpdate",
         "type": "object"
       },
+      "StartPipelineRequest": {
+        "description": "What a durable deployment run needs to know.",
+        "properties": {
+          "build_args": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Args"
+          },
+          "build_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Context"
+          },
+          "cluster_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Context"
+          },
+          "dockerfile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dockerfile"
+          },
+          "environment_id": {
+            "format": "uuid",
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "health_timeout_seconds": {
+            "default": 300,
+            "maximum": 3600.0,
+            "minimum": 10.0,
+            "title": "Health Timeout Seconds",
+            "type": "integer"
+          },
+          "image": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Image",
+            "type": "string"
+          },
+          "manifests": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "minItems": 1,
+            "title": "Manifests",
+            "type": "array"
+          },
+          "namespace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Namespace"
+          },
+          "registry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registry"
+          }
+        },
+        "required": [
+          "environment_id",
+          "image",
+          "manifests"
+        ],
+        "title": "StartPipelineRequest",
+        "type": "object"
+      },
+      "SuggestionSubmission": {
+        "additionalProperties": false,
+        "properties": {
+          "environment": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Environment",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 10,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment",
+          "reason"
+        ],
+        "title": "SuggestionSubmission",
+        "type": "object"
+      },
       "SymbolQueryResponse": {
         "properties": {
           "chunk_id": {
@@ -4106,6 +4658,76 @@
           "chunk_id"
         ],
         "title": "SymbolQueryResponse",
+        "type": "object"
+      },
+      "SyncAccepted": {
+        "properties": {
+          "change_set_id": {
+            "title": "Change Set Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "change_set_id",
+          "status",
+          "outcome"
+        ],
+        "title": "SyncAccepted",
+        "type": "object"
+      },
+      "SyncRequest": {
+        "properties": {
+          "action": {
+            "enum": [
+              "sync",
+              "refresh",
+              "wait"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "app": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "App",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server"
+          }
+        },
+        "required": [
+          "action",
+          "app"
+        ],
+        "title": "SyncRequest",
         "type": "object"
       },
       "TagRequest": {
@@ -4255,6 +4877,34 @@
         "title": "TokenLinkRequest",
         "type": "object"
       },
+      "TurnRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "session_key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Session Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_key",
+          "role",
+          "content"
+        ],
+        "title": "TurnRequest",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -4318,6 +4968,24 @@
           "value"
         ],
         "title": "VariableWrite",
+        "type": "object"
+      },
+      "WebhookAccepted": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recorded",
+          "detail"
+        ],
+        "title": "WebhookAccepted",
         "type": "object"
       },
       "WorkloadActionRequest": {
@@ -4410,6 +5078,76 @@
           "namespace"
         ],
         "title": "WorkloadActionRequest",
+        "type": "object"
+      },
+      "src__learning__routes__PreferenceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "statement": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "statement"
+        ],
+        "title": "PreferenceRequest",
+        "type": "object"
+      },
+      "src__notifications__routes__PreferenceRequest": {
+        "description": "One user's setting for one channel and one kind.",
+        "properties": {
+          "channel": {
+            "enum": [
+              "in_app",
+              "slack",
+              "discord",
+              "email"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "deploy_completed",
+              "deploy_failed",
+              "policy_violated",
+              "approval_required",
+              "self_healed"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "channel",
+          "kind"
+        ],
+        "title": "PreferenceRequest",
         "type": "object"
       }
     }
@@ -5767,6 +6505,56 @@
         ]
       }
     },
+    "/api/v1/argocd/webhook": {
+      "post": {
+        "description": "Record that a repository changed. DOES NOT SYNC \u2014 see the module docstring for why.\n\nPUBLIC BY NECESSITY and therefore signed. It is in `PUBLIC_ROUTES` because a git forge cannot hold a\nuser session, and the HMAC is what authenticates it: without one, anybody who can reach the endpoint\ncould write rows and raise notifications naming somebody else's repository.",
+        "operationId": "argocd_webhook_api_v1_argocd_webhook_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-hub-signature-256",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Hub-Signature-256"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record a repository change (does NOT sync)",
+        "tags": [
+          "argocd"
+        ]
+      }
+    },
     "/api/v1/audit/events": {
       "get": {
         "description": "Newest first, filtered, cursor-paginated.\n\n**Tenant scope is taken from the principal, never from a parameter.** A `tenant_id` query\nargument would be a cross-tenant read waiting for a caller to try it, and D-35 leaves the\ncolumn nullable in Phase 1 with no RLS policy behind it \u2014 so the confinement has to be here.\n\n`actor_kind` and `outcome` are typed `Literal`, so an unknown value is refused by FastAPI's\nown validation. Raising a hand-made problem here instead would mean inventing a type Appendix\nC.1 does not register, which is exactly what the registry exists to prevent.",
@@ -6139,6 +6927,174 @@
         ]
       }
     },
+    "/api/v1/commands/catalogue": {
+      "get": {
+        "description": "Every command that exists, for autocomplete and for inspection.\n\nPublished so the closed set is verifiable from outside rather than asserted in a docstring: an operator\ncan see exactly what natural language is able to resolve to.",
+        "operationId": "read_catalogue_api_v1_commands_catalogue_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Catalogue Api V1 Commands Catalogue Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Catalogue",
+        "tags": [
+          "commands"
+        ]
+      }
+    },
+    "/api/v1/commands/execute": {
+      "post": {
+        "description": "Run a confirmed plan. The plan is REBUILT from the intent, never accepted as a structure.",
+        "operationId": "execute_api_v1_commands_execute_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecuteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Execute Api V1 Commands Execute Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Execute",
+        "tags": [
+          "commands"
+        ]
+      }
+    },
+    "/api/v1/commands/history": {
+      "get": {
+        "description": "What was asked and what was understood, per session.\n\nTHE REFUSALS ARE IN HERE. A user whose sentence was not understood needs to see that it was received and\ndeclined, with the reason -- otherwise \"nothing happened\" is indistinguishable from a broken button.",
+        "operationId": "history_api_v1_commands_history_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session_key",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Session Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response History Api V1 Commands History Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "History",
+        "tags": [
+          "commands"
+        ]
+      }
+    },
+    "/api/v1/commands/interpret": {
+      "post": {
+        "description": "Classify and resolve. Changes nothing.",
+        "operationId": "interpret_api_v1_commands_interpret_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterpretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Interpret Api V1 Commands Interpret Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interpret",
+        "tags": [
+          "commands"
+        ]
+      }
+    },
     "/api/v1/generation/runs": {
       "post": {
         "description": "Stream one generation run, then persist it and submit its artifacts for approval.\n\nThe frames are \u00a712.6 step 7's sequence: `status`, one `token` per chunk, `validation`, then\n`complete` \u2014 or `error` in place of `complete`, never neither.",
@@ -6226,6 +7182,30 @@
         ]
       }
     },
+    "/api/v1/healing/remedies": {
+      "get": {
+        "description": "The closed remedy vocabulary, and which tier each is in.\n\nPublished so the split is inspectable rather than implied. An operator can see exactly what this system\nwill do without being asked, which is a precondition for trusting it with anything.",
+        "operationId": "list_remedies_api_v1_healing_remedies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Remedies Api V1 Healing Remedies Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Remedies",
+        "tags": [
+          "self-healing"
+        ]
+      }
+    },
     "/api/v1/health": {
       "get": {
         "description": "Versioned informational echo of liveness, also dependency-free.",
@@ -6241,6 +7221,468 @@
           }
         },
         "summary": "Api V1 Health"
+      }
+    },
+    "/api/v1/incidents/{incident_id}": {
+      "get": {
+        "description": "One incident with every piece of evidence and every analysis.\n\nEVERY analysis, not the latest: a first attempt that reached two sources and a later one that reached\nfive are both part of the record, and replacing the first would hide that the conclusion changed.",
+        "operationId": "read_incident_api_v1_incidents__incident_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Incident Api V1 Incidents  Incident Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Incident",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/v1/incidents/{incident_id}/analysis": {
+      "post": {
+        "description": "Collect evidence and analyse. THE PRODUCTION CALLER of the RCA pipeline.\n\nA POST because it writes evidence and analysis rows, but NOT a governed mutation: it changes nothing\noutside this domain's own bookkeeping, mints no agent command and touches no file. The chokepoint is\nfor actions that alter the world; reading metrics and recording what was concluded is not one.\n\nIT DOES NOT REPLACE THE PREVIOUS ANALYSIS. Each run appends, so a first attempt that reached two\nsources and a later one that reached five are both in the record -- overwriting would hide that the\nconclusion changed, and which evidence changed it.\n\nA REPEAT IS PERMITTED AND CHEAP TO JUSTIFY: evidence that was unreachable an hour ago may be readable\nnow, and that is exactly when re-analysing is worth doing.",
+        "operationId": "analyse_incident_api_v1_incidents__incident_id__analysis_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Analyse Incident Api V1 Incidents  Incident Id  Analysis Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyse Incident",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/v1/incidents/{incident_id}/heal": {
+      "post": {
+        "description": "Execute a safe remedy. Refuses anything else.",
+        "operationId": "heal_api_v1_incidents__incident_id__heal_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Heal Api V1 Incidents  Incident Id  Heal Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heal",
+        "tags": [
+          "self-healing"
+        ]
+      }
+    },
+    "/api/v1/incidents/{incident_id}/heal/propose": {
+      "post": {
+        "description": "Record a remedy as proposed. Mints nothing and sends nothing.\n\nAccepts SAFE remedies too: an operator may legitimately want a human to look at a restart before it\nhappens, and refusing to propose something merely because it could have been automatic would be a worse\ndefault than allowing the more cautious path.",
+        "operationId": "propose_api_v1_incidents__incident_id__heal_propose_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HealRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Propose Api V1 Incidents  Incident Id  Heal Propose Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Propose",
+        "tags": [
+          "self-healing"
+        ]
+      }
+    },
+    "/api/v1/incidents/{incident_id}/healing": {
+      "get": {
+        "description": "Every healing action for this incident, INCLUDING refusals, with the remaining budget.",
+        "operationId": "healing_log_api_v1_incidents__incident_id__healing_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Healing Log Api V1 Incidents  Incident Id  Healing Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Healing Log",
+        "tags": [
+          "self-healing"
+        ]
+      }
+    },
+    "/api/v1/incidents/{incident_id}/postmortem": {
+      "get": {
+        "description": "Every postmortem for this incident, newest first.",
+        "operationId": "read_postmortems_api_v1_incidents__incident_id__postmortem_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Postmortems Api V1 Incidents  Incident Id  Postmortem Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Postmortems",
+        "tags": [
+          "self-healing"
+        ]
+      },
+      "post": {
+        "description": "Generate the post-incident summary and the long-term recommendations.",
+        "operationId": "write_postmortem_api_v1_incidents__incident_id__postmortem_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Write Postmortem Api V1 Incidents  Incident Id  Postmortem Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Postmortem",
+        "tags": [
+          "self-healing"
+        ]
+      }
+    },
+    "/api/v1/incidents/{incident_id}/suggestions/{suggestion_id}/preview": {
+      "get": {
+        "description": "A unified diff of the suggestion against what the file held when it was made.\n\nTHE DIFF IS RENDERED, NOT STORED. A stored diff can disagree with the file it claims to patch once the\nfile moves on, and a preview that lies about the current state is worse than no preview -- a human\napproves a change believing it does one thing.\n\nWhether the file STILL holds what was observed is deliberately not answered here, because this route\ncannot read the working tree -- only the agent touches the filesystem. It is answered at apply time,\nwhere the agent recomputes the pre-image hash and aborts the set on a mismatch. The caveat says so\nrather than implying a freshness this route cannot establish.",
+        "operationId": "preview_suggestion_api_v1_incidents__incident_id__suggestions__suggestion_id__preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "suggestion_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Suggestion Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Suggestion Api V1 Incidents  Incident Id  Suggestions  Suggestion Id  Preview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Suggestion",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/v1/incidents/{incident_id}/suggestions/{suggestion_id}/submit": {
+      "post": {
+        "description": "Turn a suggestion into a governed change set. The only path from suggestion to file.\n\nSubmits through the chokepoint exactly as generation does, so the suggestion faces policy, approval,\nblast radius and audit. Nothing is written here.",
+        "operationId": "submit_suggestion_api_v1_incidents__incident_id__suggestions__suggestion_id__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "suggestion_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Suggestion Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestionSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Submit Suggestion Api V1 Incidents  Incident Id  Suggestions  Suggestion Id  Submit Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Suggestion",
+        "tags": [
+          "incidents"
+        ]
       }
     },
     "/api/v1/integrations/github": {
@@ -6473,6 +7915,130 @@
         ]
       }
     },
+    "/api/v1/knowledge/topics": {
+      "get": {
+        "description": "The closed topic set, so what can be asked is inspectable.",
+        "operationId": "list_topics_api_v1_knowledge_topics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Topics Api V1 Knowledge Topics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Topics",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/learning/preferences/{preference_id}": {
+      "delete": {
+        "description": "Delete a preference outright.\n\nOffered alongside deactivation because they mean different things -- see the module docstring. The\nfeedback that produced it is NOT deleted: that is the evidence, and removing a conclusion should not\nremove the observations behind it.",
+        "operationId": "forget_preference_api_v1_learning_preferences__preference_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "preference_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Preference Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Forget Preference Api V1 Learning Preferences  Preference Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forget Preference",
+        "tags": [
+          "learning"
+        ]
+      },
+      "patch": {
+        "description": "Correct or deactivate a preference. The feature that makes this store trustworthy.",
+        "operationId": "correct_preference_api_v1_learning_preferences__preference_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "preference_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Preference Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferenceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Correct Preference Api V1 Learning Preferences  Preference Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Correct Preference",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
     "/api/v1/mcp": {
       "post": {
         "description": "Single MCP ingress. Dispatch is chosen from headers, never from the body.\n\nTwo orchestration paths exist and share no generic \"forward then authorise\"\nhelper (Design \u00a75.3):\n\n  tools/list  verify \u2192 route \u2192 cache|upstream \u2192 OPA filter \u2192 return\n  tools/call  verify \u2192 route \u2192 parse \u2192 resolve metadata \u2192 OPA authorise\n              \u2192 invoke upstream only on allow",
@@ -6594,6 +8160,98 @@
         "summary": "List Servers",
         "tags": [
           "mcp"
+        ]
+      }
+    },
+    "/api/v1/monitoring/queries": {
+      "get": {
+        "description": "The catalogue, so the frontend does not restate query names.\n\nAlso the honest answer to \"what can I ask for\": there is no hidden query, and a name absent here will be\nrefused by the route below.",
+        "operationId": "list_queries_api_v1_monitoring_queries_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Queries Api V1 Monitoring Queries Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Queries",
+        "tags": [
+          "monitoring"
+        ]
+      }
+    },
+    "/api/v1/monitoring/query": {
+      "post": {
+        "description": "Run one catalogue entry, scoped to the caller's tenant.",
+        "operationId": "run_query_api_v1_monitoring_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetricsQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Run Query Api V1 Monitoring Query Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Query",
+        "tags": [
+          "monitoring"
+        ]
+      }
+    },
+    "/api/v1/monitoring/readiness": {
+      "get": {
+        "description": "Whether this deployment can answer monitoring questions at all.\n\nSeparate from the application's own `/readyz`, deliberately: monitoring being absent must not make the\napplication look unhealthy, because it is an optional tier. What it must do is let a panel say \"not\nconfigured\" instead of drawing an empty chart that reads as \"nothing is happening\".",
+        "operationId": "monitoring_readiness_api_v1_monitoring_readiness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Monitoring Readiness Api V1 Monitoring Readiness Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Monitoring Readiness",
+        "tags": [
+          "monitoring"
         ]
       }
     },
@@ -7543,6 +9201,114 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/argocd/manifests": {
+      "post": {
+        "description": "Render one manifest. A read, as far as governance is concerned: nothing leaves this process.",
+        "operationId": "render_manifest_api_v1_projects__project_id__argocd_manifests_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManifestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManifestRendered"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Render an ArgoCD or Rollouts manifest",
+        "tags": [
+          "argocd"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/argocd/sync": {
+      "post": {
+        "description": "202: the answer is a governance decision, not the sync's outcome.",
+        "operationId": "sync_application_api_v1_projects__project_id__argocd_sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync one ArgoCD Application",
+        "tags": [
+          "argocd"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/clone": {
       "post": {
         "description": "Send the clone through the governance chokepoint. No other path can reach the operation.\n\nA ROUTE THAT DECIDES NOTHING. It loads the project, fetches a usable credential, and hands both to\n`chokepoint.clone_repository`, which runs admission, policy, the approval gate, the blast-radius\ncheck, the audit record and the rollback handle before minting a signed envelope. \u00a72.2.1 confines\n`send_command` to `governance/` exactly so that this cannot be a route that sends a command.\n\nSEPARATE FROM CREATION, because an agent must be paired for the project before it can be told to do\nanything, and pairing is a step the user performs. A create that tried to clone in the same request\nwould fail for every user who has not paired yet \u2014 which is every user, the first time.",
@@ -8083,7 +9849,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Pull or remove one image (through the chokepoint)",
+        "summary": "Build, push, pull or remove one image (through the chokepoint)",
         "tags": [
           "host-operations"
         ]
@@ -8625,6 +10391,118 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/incidents": {
+      "get": {
+        "description": "The incident list, newest first, with the latest analysis state on each row.\n\nTHE ANALYSIS STATE IS JOINED IN rather than left to the detail view, because a list that showed only\ntitles would make an operator open every row to find which ones were diagnosed. `not_analysed` where\nthere is no analysis row at all -- the LEFT JOIN's null is translated rather than rendered as blank.",
+        "operationId": "list_incidents_api_v1_projects__project_id__incidents_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_resolved",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Resolved",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Incidents Api V1 Projects  Project Id  Incidents Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Incidents",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/knowledge/ask": {
+      "post": {
+        "description": "Answer from this project's own content, or say why it cannot.",
+        "operationId": "ask_api_v1_projects__project_id__knowledge_ask_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ask Api V1 Projects  Project Id  Knowledge Ask Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ask",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/kubernetes/inventory": {
       "get": {
         "description": "Read the cluster inventory through the agent.\n\nReturned unaltered, for the reason the Docker read gives, plus one specific to clusters:\n`partial_reasons` names each family that could not be read and why. Flattening that into an empty list\nwould tell an operator their cluster has no ingresses when the truth is that they may not list them.",
@@ -8827,6 +10705,86 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/kubernetes/namespaces/{namespace}/rollouts/{rollout}": {
+      "get": {
+        "description": "A read behind 2.7a's progressive-delivery panel.\n\nA MISSING ROLLOUT IS AN ERROR from the agent, not an empty report, and this route passes that\nthrough unchanged. A panel rendering \"0% canary, no analysis\" for an object that does not exist is\nthe exact defect this codebase keeps finding: an absence that reads as a healthy zero.",
+        "operationId": "rollout_detail_api_v1_projects__project_id__kubernetes_namespaces__namespace__rollouts__rollout__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "rollout",
+            "required": true,
+            "schema": {
+              "title": "Rollout",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cluster_context",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster Context"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rollout Detail Api V1 Projects  Project Id  Kubernetes Namespaces  Namespace  Rollouts  Rollout  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One Argo Rollout's progress: weight, step, replicas and analysis verdicts",
+        "tags": [
+          "host-operations"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/kubernetes/workloads/actions": {
       "post": {
         "description": "202, for the reason above.\n\nTHE ENVIRONMENT IS READ HERE AND HANDED DOWN, exactly as the deployment route does it and for the same\nreason: the transit lives in `governance/`, TID251 forbids it importing `environments/`, and the\ntransit's job is to ENFORCE an approval requirement rather than to discover one. An unknown\nenvironment id is a 404 naming it rather than a silent fall back to \"no approval needed\".",
@@ -8878,6 +10836,366 @@
         "summary": "Scale, restart or roll back one workload (through the chokepoint)",
         "tags": [
           "host-operations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/learning/feedback": {
+      "post": {
+        "description": "Record what a human did with an artifact. Append-only.",
+        "operationId": "record_feedback_api_v1_projects__project_id__learning_feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Record Feedback Api V1 Projects  Project Id  Learning Feedback Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Feedback",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/learning/history": {
+      "get": {
+        "description": "The raw feedback record, and every skill file that was injected.\n\nBoth halves, because they answer \"what did I tell it\" and \"what did it use\" -- and the gap between them\nis where a user's confusion about why a preference had no effect actually lives.",
+        "operationId": "read_history_api_v1_projects__project_id__learning_history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read History Api V1 Projects  Project Id  Learning History Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read History",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/learning/preferences": {
+      "get": {
+        "description": "Everything the system believes about this project, active or not.\n\nINACTIVE ONES ARE INCLUDED. A user who switched a preference off needs to see that it is still there and\nstill off; hiding it would make the list look like the system had forgotten, and the next reflection pass\nfinding the same statement would then look like it had learned something new.",
+        "operationId": "list_preferences_api_v1_projects__project_id__learning_preferences_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Preferences Api V1 Projects  Project Id  Learning Preferences Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Preferences",
+        "tags": [
+          "learning"
+        ]
+      },
+      "post": {
+        "description": "State a preference directly. Needs no model and no feedback.",
+        "operationId": "state_preference_api_v1_projects__project_id__learning_preferences_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/src__learning__routes__PreferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response State Preference Api V1 Projects  Project Id  Learning Preferences Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "State Preference",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/learning/reflect": {
+      "post": {
+        "description": "Synthesise preferences from recorded feedback. The Reflector's production caller.",
+        "operationId": "run_reflection_api_v1_projects__project_id__learning_reflect_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Run Reflection Api V1 Projects  Project Id  Learning Reflect Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Reflection",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/learning/skill-file": {
+      "get": {
+        "description": "What would actually be injected, and what was left out for budget.\n\nCompiled fresh rather than read from the last stored row, because the question is \"what would a prompt\nget now\" -- a stale answer would be worse than none for a user debugging why their preference had no\neffect.",
+        "operationId": "read_skill_file_api_v1_projects__project_id__learning_skill_file_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read Skill File Api V1 Projects  Project Id  Learning Skill File Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Skill File",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/learning/turns": {
+      "post": {
+        "description": "Append a conversation turn to short-term memory, trimming to the bound.\n\nTRIMMED AT THE WRITE SITE rather than by a periodic sweep, so the bound holds at every moment rather\nthan on average -- a sweep leaves the window unbounded between runs, which is exactly when a long\nconversation would blow a prompt budget.",
+        "operationId": "record_turn_api_v1_projects__project_id__learning_turns_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Record Turn Api V1 Projects  Project Id  Learning Turns Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record Turn",
+        "tags": [
+          "learning"
         ]
       }
     },
@@ -9000,7 +11318,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PreferenceRequest"
+                "$ref": "#/components/schemas/src__notifications__routes__PreferenceRequest"
               }
             }
           },
@@ -9755,6 +12073,114 @@
           }
         },
         "summary": "Health Ready"
+      }
+    },
+    "/projects/{project_id}/pipelines/deployment": {
+      "post": {
+        "description": "202, because a durable run outlives this request by design.\n\nThe environment is resolved HERE rather than inside the pipeline so a request naming another project's\nenvironment fails now, with a 404 a caller can act on, instead of three steps later after an image has\nalready been built and pushed.",
+        "operationId": "start_pipeline_projects__project_id__pipelines_deployment_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartPipelineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start the durable deployment pipeline",
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
+    "/projects/{project_id}/pipelines/deployment/release": {
+      "post": {
+        "description": "Send the approval event that un-suspends a gated step.\n\nTHE STEP NAME IS CHECKED AGAINST THE WORKFLOW'S GATED STEPS. Sending an arbitrary event name would\nsilently do nothing \u2014 the run would stay suspended and the operator would believe they had released it,\nwhich is the worst available outcome for an approval mechanism.",
+        "operationId": "release_pipeline_step_projects__project_id__pipelines_deployment_release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleasePipelineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release a gated pipeline step (does not replace the environment's own approval)",
+        "tags": [
+          "deployments"
+        ]
       }
     }
   }
