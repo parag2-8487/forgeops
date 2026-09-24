@@ -31,7 +31,7 @@ THE FOUR PROPERTIES THAT MAKE IT TRUSTWORTHY
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Final
 
 from pydantic import BaseModel
@@ -191,6 +191,17 @@ DEFAULT_MAX_WRITE_TARGETS: Final = 6
 
 MAX_QUOTED_LINES: Final = 120
 
+#: The file a DIRECTORY remedy path resolves to when the repository has none of that kind indexed.
+#:
+#: Only for kinds where the convention is unambiguous. Anything absent from here resolves to "" and the
+#: check is reported as unaddressable with its reason, which is the established treatment for a location
+#: this scan cannot determine -- a fabricated path in an instruction is worse than an artifact the run
+#: does not attempt.
+DIRECTORY_DEFAULT_FILENAME: Final[Mapping[str, str]] = {
+    # The name the sibling CI checks already state, so there is one spelling of it.
+    "github_workflow": "ci.yml",
+}
+
 
 #: Where each ecosystem puts a linter configuration, keyed by the language the scan detected.
 #:
@@ -226,7 +237,13 @@ def _slugify(name: str) -> str:
     return slug[:63]
 
 
-def _resolve_target(artifact: str, remedy_path: str, languages: Sequence[str], project_slug: str = "") -> str:
+def _resolve_target(
+    artifact: str,
+    remedy_path: str,
+    languages: Sequence[str],
+    project_slug: str = "",
+    indexed: Collection[str] = (),
+) -> str:
     """Turn a remedy path into a concrete file, or return "" when it cannot be known.
 
     A remedy path containing a parenthesis is a CONVENTION rather than a location, and one containing
@@ -239,8 +256,42 @@ def _resolve_target(artifact: str, remedy_path: str, languages: Sequence[str], p
     fabricated path into an instruction — and `charts/<name>/Chart.yaml` reaching a model verbatim is
     exactly that, because the model would either invent a name or write the angle brackets into the tree.
     """
+    first = remedy_path.split(",")[0].strip() if remedy_path else ""
+
+    # A PATH ENDING IN `/` IS A DIRECTORY, AND A DIRECTORY IS NOT A FILE THE MODEL CAN WRITE.
+    #
+    # `pipeline_actions_pinned` states its remedy location as `.github/workflows/`, which is right for a
+    # human -- the fix is "every unpinned action in every workflow that was found", and that is not one
+    # file. It was returned verbatim as a write target.
+    #
+    # WHAT THAT COST, MEASURED. The criterion-10 journey asked for
+    # `['.env.example', '.github/workflows/', 'Dockerfile', 'k8s/deployment.yaml', 'k8s/ingress.yaml',
+    # 'k8s/service.yaml']`. No model can produce a file AT a directory, and `parse_artifacts` accepts only
+    # a path it was told to expect, so that target could never be satisfied by anything. Every run on the
+    # fixture reached the template path with `iterations_used=0` -- and the fixture is not unusual: any
+    # repository that already has a `.github/workflows/` directory and an unpinned action lands here.
+    # The harness's own fixture has no workflows directory, which is why it passed while the journey did
+    # not, and why this needed the journey's real files to find.
+    #
+    # Resolved against the INDEX: an existing workflow is what the check is complaining about, so fixing
+    # THAT file is both the correct action and a `modify` rather than a `create`. With none indexed, a
+    # conventional filename is used -- the same one the sibling CI checks already name, so there is one
+    # spelling of it.
+    if first.endswith("/"):
+        candidates = sorted(
+            path
+            for path in indexed
+            if path.lower().startswith(first.lower()) and path.lower().endswith((".yml", ".yaml"))
+        )
+        if candidates:
+            return candidates[0]
+        default = DIRECTORY_DEFAULT_FILENAME.get(artifact)
+        # No default rather than a guessed filename, for the reason stated below: a fabricated path in an
+        # instruction is worse than an artifact this run does not attempt.
+        return f"{first}{default}" if default else ""
+
     if remedy_path and "(" not in remedy_path and "<" not in remedy_path:
-        return remedy_path.split(",")[0].strip()
+        return first
 
     if artifact == "lint_config":
         for language in languages:
@@ -560,7 +611,11 @@ def compile_prompt(
         # ecosystem puts the file. A path containing a parenthetical is a convention rather than a
         # location and is resolved against the repository instead of used literally.
         languages = [str(v) for v in (inventory.get("languages") or [])]
-        resolved = [path for c in group if (path := _resolve_target(artifact, c.remedy_path, languages, project_slug))]
+        resolved = [
+            path
+            for c in group
+            if (path := _resolve_target(artifact, c.remedy_path, languages, project_slug, indexed=indexed))
+        ]
         target = resolved[0] if resolved else ""
         if not target:
             # No concrete path could be derived, so no instruction is written. The failing checks are

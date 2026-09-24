@@ -101,3 +101,96 @@ class TestDeferringStaysTruthful:
         assert "exceeds" in compiled.budget_strategy or "on its own" in compiled.budget_strategy, (
             compiled.budget_strategy
         )
+
+
+class TestNoWriteTargetIsADirectory:
+    """A write target must be a file the model can produce and the parser can match. Phase 2 2.3.
+
+    THE DEFECT, MEASURED ON THE CRITERION-10 FIXTURE. `pipeline_actions_pinned` states its remedy
+    location as `.github/workflows/`, which is right for a human: the fix is every unpinned action in
+    every workflow that was found, and that is not one file. It was passed through as a write target.
+
+    The journey's run then asked for:
+
+        ['.env.example', '.github/workflows/', 'Dockerfile', 'k8s/deployment.yaml',
+         'k8s/ingress.yaml', 'k8s/service.yaml']
+
+    No model can write a file AT a directory, and `parse_artifacts` accepts only a path it was told to
+    expect, so that target could never be satisfied by anything any model produced. Every run on that
+    fixture reached the template path with `iterations_used=0`, and the failure surfaced three layers
+    away as `template_fallback` in an SSE-ordering test.
+
+    It is not an unusual repository: ANY project that already has a `.github/workflows/` directory and
+    one unpinned action lands here. The harness's own fixture has no workflows directory, which is why
+    it passed while the journey did not.
+    """
+
+    # A repository that already HAS a workflow, which is the condition that produced the defect.
+    WITH_WORKFLOW = (
+        "server.js",
+        "package.json",
+        "README.md",
+        ".github/workflows/build.yml",
+    )
+    WORKFLOW_CONTENTS = {
+        "server.js": "const http = require('http');\n",
+        "package.json": '{"name": "checkout", "main": "server.js"}\n',
+        # Unpinned on purpose: this is what `pipeline_actions_pinned` objects to.
+        ".github/workflows/build.yml": (
+            "name: build\non: [push]\njobs:\n  b:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - uses: actions/checkout@v4\n"
+        ),
+    }
+
+    def _targets(self, paths, contents) -> list[str]:
+        report = ReadinessEngine().evaluate(IndexEvidence(paths=paths, contents=dict(contents)))
+        return list(
+            compile_prompt(
+                checks=report.checks,
+                paths=paths,
+                contents=dict(contents),
+                inventory={"languages": ["javascript"], "package_managers": ["npm"]},
+                project_name="checkout",
+            ).write_targets
+        )
+
+    def test_no_target_ends_in_a_slash(self) -> None:
+        targets = self._targets(self.WITH_WORKFLOW, self.WORKFLOW_CONTENTS)
+        directories = [t for t in targets if t.endswith("/")]
+        assert directories == [], (
+            f"{directories} cannot be produced by a model or matched by the parser, so the artifact "
+            f"set can never be complete and every run falls through to the template path"
+        )
+
+    def test_it_resolves_to_the_workflow_that_is_actually_indexed(self) -> None:
+        """The check complains about the workflow that EXISTS, so that is the file to fix -- and it is a
+        modify rather than a create."""
+        targets = self._targets(self.WITH_WORKFLOW, self.WORKFLOW_CONTENTS)
+        assert ".github/workflows/build.yml" in targets, targets
+
+    def test_with_no_workflow_indexed_it_names_a_conventional_file(self) -> None:
+        """A repository with no workflow at all still gets a concrete filename, and it is the one the
+        sibling CI checks already name so there is a single spelling of it."""
+        paths = ("server.js", "package.json", "README.md")
+        contents = {
+            "server.js": "const http = require('http');\n",
+            "package.json": '{"name": "checkout", "main": "server.js"}\n',
+        }
+        targets = self._targets(paths, contents)
+        workflows = [t for t in targets if t.startswith(".github/workflows/")]
+        assert workflows, targets
+        assert all(t.endswith((".yml", ".yaml")) for t in workflows), workflows
+
+    def test_every_target_looks_like_a_file(self) -> None:
+        """The general property, over both fixtures: a target has a basename with an extension or is a
+        known extensionless filename. This is the assertion that would have caught the defect without
+        anyone knowing which check produced it."""
+        extensionless = {"Dockerfile", "Makefile", "Jenkinsfile"}
+        for paths, contents in (
+            (self.WITH_WORKFLOW, self.WORKFLOW_CONTENTS),
+            (PATHS, CONTENTS),
+        ):
+            for target in self._targets(paths, contents):
+                base = target.rsplit("/", 1)[-1]
+                assert base, f"{target!r} has no filename"
+                assert "." in base or base in extensionless, f"{target!r} does not name a file"
