@@ -739,62 +739,138 @@ round first: the order stayed wrong with the sort in place. The assertion was no
 The three `test_self_hosted_generation.py` failures are resolved and confirmed in a full shard run, not
 only in isolation. `go test -race` passes across every agent package.
 
+### There is no route/service prompt divergence, and the bytes now prove it
+
+The route and the service were suspected of sending different prompts. They do not.
+`tests/integration/test_generation_sent_bytes.py` records the prompt at the PORT BOUNDARY -- the last
+place the text exists before it leaves the process -- on both paths, for one indexed project, and
+asserts they are byte-identical. They are.
+
+What the earlier reproduction got wrong was its own fixture. It hand-supplied
+`package_managers: ["npm"]`; the real scan of that fixture detects **no package manager at all**,
+because the detector reads the LOCK FILE and the fixture has none -- `package.json` says nothing about
+npm versus pnpm, which is a deliberate and defensible authority. So the reproduction and production
+were reading different facts, and the difference was in the test, not the product. **The fixture
+differed from production in exactly one detail, for the third time this cycle.**
+
+Re-run with the faithful inventory -- `hcl` first so the base-image lookup must skip an unmapped
+language, and no package managers -- the service path is still accepted: `served_from='provider'`,
+`iterations=2`, all six artifacts.
+
+**The audit moved to the sent text.** `generation/routes.py` appends this project's learned
+preferences after compilation, so the compile-time audit could never see them: a stored preference
+naming an image or a version would steer the model exactly as `python:3.13-slim` did, and nothing
+would flag it. The new test asserts over the SENT bytes in both directions, and the write-target
+check runs there too. An audit that stops one step short of the boundary has a gap by construction.
+
+One inconsistency found while reading and worth naming: the injection updates `compiled` and NOT
+`repair_prompts`, so a repair would carry the un-injected instruction. Harmless while memory is empty,
+wrong once it is not.
+
+### The guard sweep: five of seven checks had a hole
+
+`dockerfile_base_pinned` was satisfied by `FROM node:$NODE_VERSION`. That was a category, not an
+incident, and sweeping every readiness guard with values a real repository could contain found six more
+holes. **13 of the 40 sweep assertions fail against the pre-fix predicates.**
+
+- **`dockerfile_healthcheck` accepted `HEALTHCHECK NONE`** -- Docker's syntax for DISABLING one. The
+  purest form of the defect: an image built from that file has its inherited healthcheck REMOVED, so
+  the score did not merely overstate the property, it reported the opposite of the truth.
+- **`kubernetes_image_tags_pinned` accepted `image: app:${TAG}`** -- the identical interpolation hole,
+  in the Kubernetes twin of the check that had just been fixed. Kustomize, Helm and envsubst all reach
+  a cluster this way.
+- **`kubernetes_resource_limits` accepted `cpu: ""`, `cpu: null` and `cpu: "0"`** -- a membership test
+  where a value test was meant. Kubernetes refuses the empty string outright, and a zero limit is the
+  absence of a limit written as a number. The check exists so one container cannot evict its
+  neighbours, and all three left it able to.
+- **`kubernetes_probes` accepted `livenessProbe: {}`** -- a Mapping with no handler. The API server
+  refuses it, so the manifest does not deploy while the score reported the workload as probed.
+- **`pipeline_runs_tests` accepted a commented-out `# npm test`** -- a substring match over a joined
+  script where an executed-line match was meant. A pipeline with its tests commented out reported as
+  running them, and such a pipeline is green for every change.
+
+`pipeline_actions_pinned` and `pipeline_stages_declared` were swept with the same crafted values and
+held; that is recorded in the test rather than assumed, so the conclusion is "five of seven had holes"
+and not "five had holes and two were not looked at". Every group also asserts the honest value is still
+accepted, because refusing everything would satisfy a table of refusals and destroy the checks.
+
+`_is_real_quantity` reads the LEADING NUMBER with a regex rather than stripping a character set: ruff's
+B005 was right that `rstrip("EPTGMKikeimn")` is misleading, and it was also wrong -- `128Mi` worked by
+accident and `12Mi8` would have too.
+
+**The template-readiness audit passes against the tightened checks**, which is the thing that had to
+hold: the audited floor is what the gate substitutes, and a tightening the floor could not satisfy
+would have broken every fallback. The unit shard is 2,226 passed with them in place.
+
+### What the never-run gates found
+
+`verify-release.py` had never run this cycle. Twelve problems, eleven of them artifact-shaped -- JUnit
+XML and coverage files from all three shards, and a CI run for HEAD, none of which exist before a push.
+One was real and local: **`docs/openapi.json` had drifted from the live schema** and is regenerated
+(123 paths). Frontend gates, also never run this cycle, pass: `tsc` clean, 48 test files, and coverage
+94.23 statements / 94.69 lines / 90.86 functions / 83.97 branches against thresholds of 90/90/90/80.
+
 ### HANDOFF: where the next pass starts
 
-**Phase 2 is 120 of 123. The journey is 6 of 13. Tree clean, NOT pushed** -- verification is not
-clean, and pushing a red tree is the rule this repository keeps.
+**Phase 2 is 120 of 123. The journey is 6 of 13. The self-healing spec is 2 of 9. NOT pushed** --
+local verification is not clean, and not pushing a red tree is the rule this repository keeps.
 
-**The one thing standing between here and criterion 2, stated precisely.**
+**Criterion 3, and it is the closer of the two.** `self-healing.spec.ts` now runs rather than merely
+collecting, and running it found five real defects in itself -- an unauthenticated token mint, a
+per-test session that had to be carried like the journey carries it, three wrong table and column
+names, and two MISSING LINKS in the chain it claims to drive. Steps 1 and 2 pass: a real OIDC login, a
+project, a staging environment, a published policy bundle, a paired agent and a LIVE agent session.
 
-The generation pipeline is PROVEN correct on the journey's own fixture with the journey's own prompt:
-`served_from='provider'`, `status='accepted'`, `iterations=2`, all six artifacts delivered, measured
-twice. The ROUTE, given what looks like the same inputs, records `template_fallback`.
+It blocks in step 3. The chain is longer than the spec first assumed:
 
-What has been ruled out by measurement, so the next pass does not repeat it:
+    request a deployment  ->  202 `pending_approval`
+    approve the change set ->  the envelope is delivered to the agent  (this now succeeds)
+    the agent applies      ->  it fails, there being no cluster
+    `DeploymentService.fail` ->  files the incident
 
-- The compiled prompt is correct in the route. The recorded `compiled_prompt` names `node:22-slim`,
-  detects `javascript`, and no longer contains a directory write target.
-- The index is complete: 9 paths with 9 contents, identical to the fixture on disk.
-- The model, the gate, the repair loop and the floor are all correct on those inputs.
+The deployment ROW stays `pending_approval` for the full 240s wait. `deployments/routes.py` sets
+`applying` only at REQUEST time, from the chokepoint's own verdict, so approving the change set does
+not move that row -- something must report the agent's outcome back, and I did not identify what. Start
+there: find what advances a deployment out of `pending_approval` once the envelope is delivered, and
+whether the agent's apply is reported at all in this stack. The 409 `device-not-connected` that
+preceded this was genuine and is now fixed by starting `forgeops-agent run` detached.
 
-What is left to check, in the order I would check it:
+**Local versus CI for this spec: it is legitimately LOCAL-CAPABLE and needs no cluster.** The absence
+of a cluster IS the injection -- the apply cannot succeed, which is what files the incident. Nothing in
+it needs kind. It is registered as its own Playwright project and wired into `e2e-ci.yml`.
 
-1. **`retrieval`**. The route passes a `RetrievalContext` and the direct reproduction passed `None`.
-   `render_context_section` appends to the prompt, so it changes the ask.
-2. **The memory injection** in `generation/routes.py`, which appends to the compiled text after
-   compilation. If a learning preference is injected, the prompt the model sees is not the prompt that
-   was tested.
-3. **`max_attempts` on the composed service** versus the 3 the helper uses.
-
-The cheapest way to settle it is to drive the ROUTE rather than the service -- `httpx` against
-`/api/v1/generation/runs` with the stack up -- and diff the prompt the model receives against the
-prompt the direct reproduction sends. Both are recoverable: the route records its prompt, and the
-harness can print one.
-
-**Criterion 3 is written but never run.** `frontend/e2e/self-healing.spec.ts`, 8 steps, registered as
-its own Playwright project and added to `e2e-ci.yml`. It collects. It has NOT been executed against a
-live stack, so nothing about it is verified beyond collection -- run it before believing any of it. Its
-failure injection is honest rather than fabricated: the incident is filed by `DeploymentService.fail`,
-the only site that files one, and this host has no cluster so the apply genuinely cannot succeed.
+**Criterion 2.** The journey is still 6 of 13 at step 7's final clause. The service path is accepted on
+the journey's own fixture with the journey's own prompt and its REAL inventory, and the route sends
+byte-identical bytes -- both now measured, the second by a permanent test. So the remaining difference
+is not the prompt. What has NOT been done is driving the route with a REAL model and reading the
+validation frames; every route measurement so far used a recording port that refuses content. Do that
+next: `test_generation_sent_bytes.py` has the whole harness, and swapping the recorder for the real
+port turns it into the comparison that is left.
 
 **2.6's Novu box stays open** with its recorded reason.
 
-**Running the stack on this host.** Ports are not CI's: frontend **13000**, backend **18000**,
-Authentik **19000**, agent listener **18443**. `.env` needs the four `AUTHENTIK_*` values and the
-internal CA appended before anything starts, and the Authentik database script reads its password from
-the ENVIRONMENT rather than from `.env`. Under Git Bash, `MSYS_NO_PATHCONV=1` is required on every
-`docker compose` call carrying an absolute path or `/bin/sh` becomes `C:/Program Files/Git/bin/sh`.
-`alembic upgrade head` before the first spec: a stale e2e database took the generation stream down
-with a bare 500 on a missing `learning_preferences`.
+**One inconsistency to close while you are in there:** the memory injection updates `compiled` and not
+`repair_prompts`, so a repair carries the un-injected instruction. Harmless while no preference is
+stored, wrong the moment one is.
 
-**A resource limit, measured.** Sixteen containers plus a resident 7b plus a Go build does not fit:
-`go vet` failed with "the paging file is too small". Run the gates and `go test -race` BEFORE bringing
-the stack up, and tear it down afterwards.
+**Carry-over, still open and now categorised:** `automated_tests_present` and
+`centralised_configuration` are presence checks of exactly the class the guard sweep addressed -- sweep
+them the same way, with a value that is present and means nothing. Also open: `sse-paint`
+cross-invocation session recovery; the host-apply failure on `5de7d1e`; the Inngest dev-server EOF;
+lockfile and provider-lock generation by real tool execution; no change set may lower the readiness
+score; predicted reachable score equal to achieved; cache-key versioning for the prompt-and-gate
+contract; `backend-coverage`'s `needs.backend.result != 'skipped'` self-skip; Linux watch mode.
 
-**Measured runtimes.** Unit shard 13m30s (2,186 passed). Integration shard 1h27m (1,329 passed).
-Combined coverage 86.73%. One warm 7b generation attempt 33-400s; the journey's step 6 is 11-19
-minutes. A verification round on `test_self_hosted_generation.py` is 41-61 minutes. Migrations are at
-**0036**.
+**Stack and resource notes.** Ports are not CI's: frontend **13000**, backend **18000**, Authentik
+**19000**, agent listener **18443**. `.env` needs the four `AUTHENTIK_*` values and the internal CA
+appended first, and the Authentik database script reads its password from the ENVIRONMENT. Under Git
+Bash, `MSYS_NO_PATHCONV=1` on every `docker compose` call carrying an absolute path. `alembic upgrade
+head` before the first spec. Sixteen containers plus a resident 7b plus a Go build does not fit -- run
+the gates and `go test -race` BEFORE the stack.
+
+**Measured runtimes.** Unit shard 13m30s (2,226 passed). Integration shard 1h27m (1,329 passed).
+Combined coverage 86.73%. Journey step 6 is 11-19 minutes. A self-healing iteration is ~4 minutes,
+which is what made five defects affordable to fix in one sitting. Migrations at **0036**.
 
 ### Phase 2: 44 of 123. This pass closed four boxes in 2.2 and 2.4
 
