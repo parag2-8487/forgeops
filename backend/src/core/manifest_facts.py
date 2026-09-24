@@ -187,8 +187,49 @@ def kubernetes_resource_limits(paths: Iterable[str], contents: Mapping[str, str]
                     for key in REQUIRED_RESOURCE_KEYS:
                         if key not in limits or key not in requests:
                             return False, path
+                        # PRESENT IS NOT BOUNDED. `cpu: ""`, `cpu: null` and `cpu: "0"` all satisfied a
+                        # membership test, and none of them bounds anything: Kubernetes rejects the empty
+                        # string as an invalid quantity, and a zero limit is the absence of a limit
+                        # expressed as a number. The check exists so one container cannot evict its
+                        # neighbours, and all three of these leave it able to.
+                        for mapping in (limits, requests):
+                            if not _is_real_quantity(mapping.get(key)):
+                                return False, path
                     first_bounded = first_bounded or path
     return bool(first_bounded), first_bounded
+
+
+#: The handlers a Kubernetes probe may declare. Exactly one is required; a probe with none is refused by
+#: the API server, so a manifest carrying `livenessProbe: {}` does not deploy -- and it satisfied the
+#: check, which reported the workload as probed.
+PROBE_HANDLERS: Final = ("httpGet", "tcpSocket", "exec", "grpc")
+
+
+def _is_real_quantity(value: object) -> bool:
+    """Is this a resource quantity that actually bounds something?
+
+    `None`, `""` and any zero are all "declared" and none of them is a bound. Kubernetes refuses the empty
+    string outright; a zero limit is the absence of a limit written as a number.
+    """
+    if value is None:
+        return False
+    text_value = str(value).strip()
+    if not text_value:
+        return False
+    # A quantity carries a suffix (`100m`, `128Mi`) or is a bare number. Strip the suffix and read it.
+    digits = text_value.rstrip("EPTGMKikeimn").strip()
+    try:
+        return float(digits) > 0
+    except ValueError:
+        # Unparseable is not proof of a bound, and an unrecognised unit is exactly where a typo hides.
+        return False
+
+
+def _probe_declares_a_handler(probe: object) -> bool:
+    """A probe must say HOW to probe. `livenessProbe: {}` says only that somebody meant to."""
+    if not isinstance(probe, Mapping):
+        return False
+    return any(probe.get(handler) for handler in PROBE_HANDLERS)
 
 
 def kubernetes_probes(paths: Iterable[str], contents: Mapping[str, str]) -> tuple[bool, str]:
@@ -207,7 +248,10 @@ def kubernetes_probes(paths: Iterable[str], contents: Mapping[str, str]) -> tupl
                     # An init container runs to completion, so the same reasoning applies to it.
                     if container in (pod_spec.get("initContainers") or []):
                         continue
-                    if not all(isinstance(container.get(p), Mapping) for p in LIVENESS_PROBES):
+                    # A HANDLER, NOT JUST A KEY. `livenessProbe: {}` is a Mapping and satisfied this,
+                    # and the API server refuses it -- so the manifest does not deploy while the score
+                    # reports the workload as probed. Found by the crafted-value sweep.
+                    if not all(_probe_declares_a_handler(container.get(p)) for p in LIVENESS_PROBES):
                         return False, path
                     first_probed = first_probed or path
     return bool(first_probed), first_probed
@@ -235,6 +279,15 @@ def kubernetes_image_tags_pinned(paths: Iterable[str], contents: Mapping[str, st
                     tail = image.rsplit("/", 1)[-1]
                     _, _, tag = tail.partition(":")
                     if not tag or tag == "latest":
+                        return False, path
+                    # A SUBSTITUTED TAG IS NOT A PINNED TAG -- the same hole as `FROM node:$NODE_VERSION`,
+                    # in the Kubernetes twin of that check. `image: app:${TAG}` and `image: app:$(TAG)`
+                    # defer the decision to whatever renders the manifest, so the file establishes nothing
+                    # about which image runs. Kustomize, Helm and envsubst all reach the cluster this way.
+                    #
+                    # Checked on the WHOLE reference rather than the tag alone, because `${REG}/app:1.2.3`
+                    # is equally unresolved: the registry decides which `app` this is.
+                    if any(marker in image for marker in ("${", "$(", "$")):
                         return False, path
                     first_pinned = first_pinned or path
     return bool(first_pinned), first_pinned
@@ -288,6 +341,19 @@ def pipeline_stages_declared(paths: Iterable[str], contents: Mapping[str, str]) 
     return False, ""
 
 
+def _runs_a_test_command(script: str) -> bool:
+    """Does any EXECUTED line of a shell step invoke a test runner?
+
+    A `#` comment is stripped first. Naive but correct for the shape that matters: a step whose test
+    line was commented out while the rest of the script stayed.
+    """
+    for raw in script.splitlines():
+        line = raw.split("#", 1)[0].strip().lower()
+        if line and any(marker in line for marker in _TEST_COMMAND_MARKERS):
+            return True
+    return False
+
+
 def pipeline_runs_tests(paths: Iterable[str], contents: Mapping[str, str]) -> tuple[bool, str]:
     """Does a pipeline step actually invoke a test runner?
 
@@ -299,7 +365,13 @@ def pipeline_runs_tests(paths: Iterable[str], contents: Mapping[str, str]) -> tu
         for _, job in _jobs(document):
             for step in _steps(job):
                 command = step.get("run")
-                if isinstance(command, str) and any(m in command.lower() for m in _TEST_COMMAND_MARKERS):
+                # A COMMENTED COMMAND IS NOT A COMMAND. A multi-line `run:` block containing
+                # `# npm test` satisfied a substring match over the whole script, so a pipeline that
+                # had its tests commented out reported as running them -- and a pipeline with no tests
+                # is green for every change, which the docstring already calls worse than no pipeline.
+                #
+                # Matched per LINE with comments stripped, rather than over the joined script.
+                if isinstance(command, str) and _runs_a_test_command(command):
                     return True, path
                 action = step.get("uses")
                 if isinstance(action, str) and "playwright" in action.lower():
@@ -351,8 +423,19 @@ def dockerfile_healthcheck(body: str) -> bool:
     """
     for raw in body.splitlines():
         line = raw.strip()
-        if line.upper().startswith("HEALTHCHECK "):
-            return True
+        if not line.upper().startswith("HEALTHCHECK "):
+            continue
+        # `HEALTHCHECK NONE` IS DOCKER'S SYNTAX FOR DISABLING ONE, and it satisfied this check.
+        #
+        # Found by a crafted-value sweep after `dockerfile_base_pinned` turned out to accept
+        # `FROM node:$NODE_VERSION`. It is the purest form of the defect: a check for a property accepting
+        # the instruction that switches the property off, and then the score reports the image as health-
+        # checked. An image built from that Dockerfile has its inherited healthcheck removed, so the answer
+        # is not merely unproven -- it is the opposite of what the check claims.
+        argument = line[len("HEALTHCHECK ") :].strip().upper()
+        if argument.startswith("NONE"):
+            return False
+        return True
     return False
 
 
