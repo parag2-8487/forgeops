@@ -658,53 +658,143 @@ integration 76.03%. Neither shard alone clears the floor, which is why the crite
    subset check: the exactness is what catches an artifact silently going missing, which is what it is
    reporting right now.
 
+### The gate refusal: not capability, and not one cause but four
+
+The previous conclusion -- "blocked on model capability" -- was wrong, and the measurement that
+disproved it took one afternoon. Same model, same repository, same check, two shapes of ask:
+
+```
+ASK A   6 artifacts, 55 mechanical requirements in one call    FAIL, FAIL, FAIL
+ASK B   1 artifact,  24 requirements                           FAIL, PASS
+```
+
+In ASK A the finding was fed back twice and 7b reproduced the same `FROM node:$NODE_VERSION` each
+time. In ASK B the identical finding landed on the first correction and the answer became
+`FROM node:22-slim`. Every other requirement was satisfied in both -- two stages, `USER`,
+`HEALTHCHECK`. **What a wide ask costs is not the model's ability to write a file; it is the model's
+ability to ACT ON A CORRECTION while regenerating five unrelated files.** Four separate defects were
+underneath, each fixed and each with a test proven to fail without the fix.
+
+**1. `dockerfile_base_pinned` was satisfied by an unpinned image.** The guard was
+`image.startswith("$")`, so `FROM $BASE_IMAGE` was refused and `FROM node:$NODE_VERSION` PASSED --
+the `$` was in the tag, not at the front. The worst form passed too: `ARG V` with no default and
+`FROM node:$V`, which resolves to `node:` and builds nothing reproducible. Found by asking 7b for a
+Dockerfile and reading what SATISFIED the check rather than what failed it. A check that can be
+satisfied by the thing it exists to forbid is worse than an absent check, because the score claims the
+property and nobody is looking. No legitimate tag contains `$`, so the fix is `"$" in image`.
+
+**2. The repair ask is now one artifact.** `compile_repair_prompts` returns one prompt per write
+target, each carrying only that artifact's requirements. The OPENING ask is deliberately unchanged --
+it produces most of the set in one round and it is the cache key of the run -- and the model-call
+budget is unchanged, so this buys compliance rather than spending wall clock. On the real model the
+same fixture that failed three whole-plan attempts now reports `served_from='provider'`,
+`status='accepted'`, **iterations=2**, with `FROM node:22-slim AS builder`.
+
+**3. A write target that was a DIRECTORY.** `pipeline_actions_pinned` states its remedy location as
+`.github/workflows/`, which is right for a human -- the fix is every unpinned action in every workflow
+found, and that is not one file. It was passed through as a write target, so the journey asked for
+`['.env.example', '.github/workflows/', 'Dockerfile', ...]`. **No model can write a file at a
+directory, and the parser accepts only a path it was told to expect, so that target could never be
+satisfied by anything.** Every run on such a repository reached the template path with
+`iterations_used=0` -- and it is not an unusual repository: any project with a workflows directory and
+one unpinned action lands there. The harness's own fixture has no workflows directory, which is why it
+passed while the journey did not, and why this needed the journey's real files to find. A directory
+remedy path now resolves against the INDEX, to the workflow that exists, as a `modify`.
+
+**4. A regression I introduced, caught by reading the delivered list.** With several artifacts
+rejected, only some get a narrow repair -- the budget is finite. A later attempt then PASSED on the
+shorter set, because an artifact that is ABSENT produces no finding. The run reported success
+delivering `['Dockerfile', 'k8s/ingress.yaml', 'k8s/service.yaml']`: a Service and an Ingress with no
+Deployment, which is precisely the gap `ARTIFACT_COMPANIONS` exists to prevent. The audited floor now
+covers anything rejected and never repaired, and the assembled set is re-validated through the same
+gate. The first version of that test passed with the fix removed, because a good Deployment in the
+fixture overrode the refused one -- the same vacuity trap as the first cache-poisoning draft.
+
+**The requirement-block audit the brief asked for: 0 flagged.** No remaining rule carries a
+language-, image- or version-specific literal, and a test now asserts that over the ASSEMBLED prompt
+in both directions -- a Node repository is never shown a Python toolchain token and vice versa,
+with a non-vacuity control that each prompt does name its own.
+
+**Measured end to end on the journey's own fixture and prompt:** attempt 1 rejects the Dockerfile and
+the Deployment, the narrow repair passes, the floor supplies `.env.example`,
+`.github/workflows/build.yml` and `k8s/deployment.yaml`, and the run is `accepted` with all six
+artifacts delivered. **The route driving the same inputs still records `template_fallback`**, and that
+difference is unexplained -- see the handoff.
+
+### Delivery order is now a property of the plan
+
+`test_self_hosted_generation.py` asserted an exact ORDERED artifact list and got
+`['k8s/service.yaml', ...]`. The order was the model's emission order, and once repairs existed it
+would have become carried-then-repaired. Both reach `change_items.ordinal`, so the diff a reviewer
+reads was sequenced by something nobody chose and `ORDER BY ordinal` gave different answers for
+identical inputs. Rather than relax the assertion to a set comparison, the delivered order is now the
+order the plan asked for -- applied where the set is FINAL, after both the repair and the floor, because
+the floor reassigns the list and an ordering applied earlier is silently overwritten. Measured that way
+round first: the order stayed wrong with the sort in place. The assertion was not touched.
+
+### Both shards are green
+
+**Unit: 2,186 passed, 2 skipped, 0 failed (13m30s). Integration: 1,329 passed, 3 skipped, 0 failed
+(1h27m).** Combined coverage **86.73%** (13,223 of 15,247), from unit 72.29% and integration 76.58%.
+The three `test_self_hosted_generation.py` failures are resolved and confirmed in a full shard run, not
+only in isolation. `go test -race` passes across every agent package.
+
 ### HANDOFF: where the next pass starts
 
-**Phase 2 is 120 of 123.** Tree clean, NOT pushed.
+**Phase 2 is 120 of 123. The journey is 6 of 13. Tree clean, NOT pushed** -- verification is not
+clean, and pushing a red tree is the rule this repository keeps.
 
-Sections 2.1 to 2.14 are all complete and 18 of the 20 completion criteria are ticked. **The same three
-boxes remain, and two of them now have a measured blocker rather than an unknown one:**
+**The one thing standing between here and criterion 2, stated precisely.**
 
-1. **2.6's Novu box** -- stays open with its recorded reason. Do not revisit.
-2. **`scan -> deploy to staging -> verify health -> rollback`** -- `journey.spec.ts` reaches **6 of 13**
-   against a real local stack. Step 7's only failing clause is `status == 'accepted'`, and the run is
-   `template_fallback` because 7b cannot satisfy the readiness gate on the Node fixture in three
-   attempts. Every other clause of step 7 passes.
-3. **`deploy -> inject failure -> AI detects -> AI suggests fix -> human approves`** -- **no spec was
-   written.** The backend is built and tested; what is missing is the browser walk.
+The generation pipeline is PROVEN correct on the journey's own fixture with the journey's own prompt:
+`served_from='provider'`, `status='accepted'`, `iterations=2`, all six artifacts delivered, measured
+twice. The ROUTE, given what looks like the same inputs, records `template_fallback`.
 
-**What box 2 actually needs.** Not more prompt engineering in the dark: the harness now reproduces the
-journey's exact prompt (`--language node`, with a real inventory) in minutes, so the next iteration
-should run it, read which check the gate refuses, and decide whether the instruction can be made
-copyable -- the route that already fixed two real defects this pass. If the gate keeps refusing, the
-honest options are a more capable model for that step or accepting `template_fallback` as the
-criterion's outcome, and the second is a change to what the criterion CLAIMS, not to the assertion.
+What has been ruled out by measurement, so the next pass does not repeat it:
 
-**What box 3 needs.** `POST /incidents/{id}/suggestions/{id}/submit` has **no button in the UI** -- it is
-backend-only, so a spec must post it through `page.request` as the journey does for most of its steps,
-and then approve in the BROWSER on `/approvals`, which is where the human gate genuinely lives
-(`ApprovalCenter.tsx`, and the approver is taken from the verified principal, never from the screen).
-The AI half is assertable through the UI already: `incident-list`, `incident-rca-content`,
-`incident-rca-provenance` and `diff-<suggestionId>` all exist and are tested in `incidents.test.tsx`.
+- The compiled prompt is correct in the route. The recorded `compiled_prompt` names `node:22-slim`,
+  detects `javascript`, and no longer contains a directory write target.
+- The index is complete: 9 paths with 9 contents, identical to the fixture on disk.
+- The model, the gate, the repair loop and the floor are all correct on those inputs.
 
-**Bringing the stack up on this host, which took several attempts.** The published ports are NOT CI's:
-frontend **13000**, backend **18000**, Authentik **19000**, agent listener **18443**. Every
-browser-facing URL and the OIDC public origin must say so. `.env` needs the four `AUTHENTIK_*` values
-and the internal CA appended before anything starts, and the Authentik database script reads its
-password from the ENVIRONMENT rather than from `.env`. Under Git Bash, `MSYS_NO_PATHCONV=1` is required
-on every `docker compose` call carrying an absolute path, or `/bin/sh` is rewritten to
-`C:/Program Files/Git/bin/sh` and the container exits with `exec: "C:/Program"`. **The e2e database was
-at 0029** and the missing `learning_preferences` table took down the generation stream with a bare 500;
-`alembic upgrade head` before the first spec.
+What is left to check, in the order I would check it:
 
-**A resource limit, measured.** Sixteen containers plus a resident 7b plus a Go build does not fit on
-this host: `go vet` failed with "the paging file is too small" and `cannot allocate memory`, and a
-harness run timed out against a busy ollama. Run the gates before bringing the stack up, or tear it
-down first.
+1. **`retrieval`**. The route passes a `RetrievalContext` and the direct reproduction passed `None`.
+   `render_context_section` appends to the prompt, so it changes the ask.
+2. **The memory injection** in `generation/routes.py`, which appends to the compiled text after
+   compilation. If a learning preference is injected, the prompt the model sees is not the prompt that
+   was tested.
+3. **`max_attempts` on the composed service** versus the 3 the helper uses.
 
-**Measured runtimes.** Unit shard 17m17s (2,134 passed). Integration shard 1h32m (1,310 passed).
-Combined coverage 86.57%. One warm 7b generation attempt 130-440s; the journey's step 6 is ~16 minutes
-for three attempts. Migrations are at **0036**.
+The cheapest way to settle it is to drive the ROUTE rather than the service -- `httpx` against
+`/api/v1/generation/runs` with the stack up -- and diff the prompt the model receives against the
+prompt the direct reproduction sends. Both are recoverable: the route records its prompt, and the
+harness can print one.
+
+**Criterion 3 is written but never run.** `frontend/e2e/self-healing.spec.ts`, 8 steps, registered as
+its own Playwright project and added to `e2e-ci.yml`. It collects. It has NOT been executed against a
+live stack, so nothing about it is verified beyond collection -- run it before believing any of it. Its
+failure injection is honest rather than fabricated: the incident is filed by `DeploymentService.fail`,
+the only site that files one, and this host has no cluster so the apply genuinely cannot succeed.
+
+**2.6's Novu box stays open** with its recorded reason.
+
+**Running the stack on this host.** Ports are not CI's: frontend **13000**, backend **18000**,
+Authentik **19000**, agent listener **18443**. `.env` needs the four `AUTHENTIK_*` values and the
+internal CA appended before anything starts, and the Authentik database script reads its password from
+the ENVIRONMENT rather than from `.env`. Under Git Bash, `MSYS_NO_PATHCONV=1` is required on every
+`docker compose` call carrying an absolute path or `/bin/sh` becomes `C:/Program Files/Git/bin/sh`.
+`alembic upgrade head` before the first spec: a stale e2e database took the generation stream down
+with a bare 500 on a missing `learning_preferences`.
+
+**A resource limit, measured.** Sixteen containers plus a resident 7b plus a Go build does not fit:
+`go vet` failed with "the paging file is too small". Run the gates and `go test -race` BEFORE bringing
+the stack up, and tear it down afterwards.
+
+**Measured runtimes.** Unit shard 13m30s (2,186 passed). Integration shard 1h27m (1,329 passed).
+Combined coverage 86.73%. One warm 7b generation attempt 33-400s; the journey's step 6 is 11-19
+minutes. A verification round on `test_self_hosted_generation.py` is 41-61 minutes. Migrations are at
+**0036**.
 
 ### Phase 2: 44 of 123. This pass closed four boxes in 2.2 and 2.4
 
