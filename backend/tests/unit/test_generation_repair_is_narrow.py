@@ -309,3 +309,37 @@ class TestWorkThatPassedIsNotThrownAway:
         dockerfile = next(a for a in outcome.files if a.path == "Dockerfile")
         assert "node:22-slim" in dockerfile.content
         assert "node:latest" not in dockerfile.content
+
+
+class TestTheDeliveredOrderIsThePlansOrder:
+    """Order is a property of the PLAN, not of the model or of which attempt produced what.
+
+    It was neither. A whole-plan answer arrived in whatever order the model wrote, and once repairs
+    existed the carried artifacts would have come first with the repaired one last. Both orders reach
+    `change_items.ordinal`, so the diff a reviewer reads was sequenced by something nobody chose and
+    `ORDER BY ordinal` gave different answers for identical inputs.
+    """
+
+    async def test_the_order_follows_the_write_targets(self) -> None:
+        outcome, _, compiled, _ = await _run([BAD_DOCKERFILE + PASSING_MANIFESTS, GOOD_DOCKERFILE])
+
+        delivered = [artifact.path for artifact in outcome.files]
+        expected = [path for path in compiled.write_targets if path in set(delivered)]
+        assert delivered == expected, f"delivered {delivered}, but the plan asked in the order {expected}"
+
+    async def test_a_repair_does_not_move_the_repaired_artifact(self) -> None:
+        """The specific regression a repair introduces: the fixed file landing last."""
+        outcome, _, compiled, _ = await _run([BAD_DOCKERFILE + PASSING_MANIFESTS, GOOD_DOCKERFILE])
+
+        delivered = [artifact.path for artifact in outcome.files]
+        if len(delivered) < 2:
+            pytest.fail(f"only {delivered} was delivered, so ordering proves nothing")
+        # `Dockerfile` is first in the plan, and it is the artifact that was repaired.
+        assert delivered[0] == "Dockerfile", delivered
+
+    async def test_the_same_inputs_give_the_same_order_twice(self) -> None:
+        """Reproducible, which is the point: an ordinal that varies run to run is not an ordinal."""
+        first, _, _, _ = await _run([BAD_DOCKERFILE + PASSING_MANIFESTS, GOOD_DOCKERFILE])
+        second, _, _, _ = await _run([BAD_DOCKERFILE + PASSING_MANIFESTS, GOOD_DOCKERFILE])
+
+        assert [a.path for a in first.files] == [a.path for a in second.files]

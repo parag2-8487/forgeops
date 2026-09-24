@@ -476,6 +476,7 @@ class GenerationService:
         carried: dict[str, GeneratedFile] = {}
         # The artifact a repair attempt is for, or None for the opening whole-plan ask.
         repair_for: str | None = None
+        asked_for_order: tuple[str, ...] = ()
         for attempt in range(1, self._max_attempts + 1):
             yield format_event(
                 SSEEventType.PROGRESS,
@@ -655,8 +656,12 @@ class GenerationService:
                         active.write_targets if active is not None and active.write_targets else compiled.write_targets
                     )
                     parsed = parse_artifacts(result.content, required=(), requested=asked_for)
+                    # The PLAN's order, not this call's: a repair asks for one file and must not
+                    # reorder the set around it.
+                    asked_for_order = tuple(compiled.write_targets)
                 else:
                     parsed = parse_artifacts(result.content, required=REQUIRED_ARTIFACTS)
+                    asked_for_order = tuple(REQUIRED_ARTIFACTS)
             except ArtifactParseError as exc:
                 findings = (str(exc),)
                 continue
@@ -801,6 +806,26 @@ class GenerationService:
                     },
                 )
 
+            # DELIVERED IN THE ORDER THE RUN ASKED FOR. Applied HERE, where the set is final, rather
+            # than after the parse: the floor reassigns `files` when it substitutes, so an ordering
+            # applied earlier is silently overwritten by whichever order the floor happened to build.
+            # Measured that way round first -- the order stayed wrong with the sort in place.
+            #
+            # Order is a property of the PLAN, not of the model's emission order, not of which attempt
+            # produced what, and not of the floor's iteration order. It reaches `change_items.ordinal`,
+            # so before this the diff a reviewer reads was sequenced by something nobody chose and
+            # `ORDER BY ordinal` gave different answers for identical inputs.
+            #
+            # A path the plan did not name sorts after the named ones by its own name rather than being
+            # dropped: this is a tie-break, and discarding a delivered file here would be the worst
+            # possible reading of 'canonical order'.
+            delivery_order = {path: i for i, path in enumerate(asked_for_order)}
+            files = tuple(
+                sorted(
+                    files,
+                    key=lambda f: (delivery_order.get(f.path, len(delivery_order)), f.path),
+                )
+            )
             if outcome is not None:
                 outcome.files = list(files)
                 outcome.prompt_tokens = (result.usage or {}).get("prompt_tokens", 0) or max(
