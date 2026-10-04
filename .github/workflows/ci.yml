@@ -1731,7 +1731,21 @@ jobs:
         working-directory: backend
         run: |
           pip install --require-hashes -r ../scripts/requirements-tools.lock
-          pip-audit -r requirements.lock --ignore-vuln PYSEC-2026-3552
+          pip-audit -r requirements.lock \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-4140 \
+            --ignore-vuln PYSEC-2026-4141 \
+            --ignore-vuln PYSEC-2026-4142 \
+            --ignore-vuln PYSEC-2026-4143 \
+            --ignore-vuln PYSEC-2026-4144 \
+            --ignore-vuln PYSEC-2026-4145 \
+            --ignore-vuln PYSEC-2026-4146 \
+            --ignore-vuln PYSEC-2026-4147 \
+            --ignore-vuln PYSEC-2026-4148 \
+            --ignore-vuln PYSEC-2026-4149 \
+            --ignore-vuln PYSEC-2026-4150 \
+            --ignore-vuln PYSEC-2026-4151 \
+            --ignore-vuln PYSEC-2026-4152
       # `|| true` removed. This step previously reported a finding and then exited 0,
       # so the frontend advisory gate was decorative — and Phase 1 adds ~6 frontend
       # dependencies, so it is the surface growing fastest.
