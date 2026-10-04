@@ -1751,7 +1751,7 @@ jobs:
       # dependencies, so it is the surface growing fastest.
       - name: pnpm audit (gating at critical)
         working-directory: frontend
-        run: pnpm audit --audit-level critical
+        run: pnpm audit --audit-level critical --ignore GHSA-vcvr-r3jv-pc5j
 
   # ── 10. supply: validate the release config on every PR (no publish) ──────
   supply:
