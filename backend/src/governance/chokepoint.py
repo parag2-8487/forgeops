@@ -1815,6 +1815,27 @@ class GovernanceChokepoint:
                 blast_radius_verdict=str(row["blast_radius_verdict"]),
             )
 
+        if operation == DEPLOY_OPERATION:
+            stored_args = dict(row["operation_args"] or {})
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(event.seq),
+                decision=decision,
+                report=None,
+                operation=DEPLOY_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    **stored_args,
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"]),
+                blast_radius_verdict=str(row["blast_radius_verdict"]),
+            )
+
         return await self._deliver(
             session,
             change_set_id=change_set_id,
@@ -2460,7 +2481,10 @@ class GovernanceChokepoint:
 
     async def _set_status(self, session: AsyncSession, change_set_id: uuid.UUID, status: str) -> None:
         await session.execute(
-            text("UPDATE change_sets SET status = :status WHERE id = :id"),
+            text(
+                "UPDATE change_sets SET status = :status WHERE id = :id "
+                "AND status NOT IN ('applied', 'rolled_back', 'reverted')"
+            ),
             {"status": status, "id": change_set_id},
         )
 
@@ -2681,11 +2705,8 @@ class GovernanceChokepoint:
             operation=operation,
             args=args,
         )
-        await self._sink.send_command(device_id=admitted.device_id, command=command)
-        # WHICH COMMAND CARRIED THIS, recorded after a successful send. §2.2's live-log stream needs it to
-        # subscribe to the agent's per-command progress channel, and the audit chain gains a correlation it
-        # previously left to matching timestamps. After the send, like the status, so a failed delivery
-        # does not claim a command that never left.
+        # Advance to applying and commit BEFORE sending to the socket so any immediate agent
+        # response sees status = 'applying' in the database instead of dropping the result.
         await session.execute(
             text("UPDATE change_sets SET command_id = :command WHERE id = :id"),
             {"command": str(command.envelope.get("command_id") or ""), "id": change_set_id},
@@ -2700,9 +2721,6 @@ class GovernanceChokepoint:
         # logs and the rollback target all read a deployment still waiting for approval while its command
         # was already with the agent. `DeploymentSettler` exists because `complete` had no production
         # caller; this is the same defect one transition earlier.
-        #
-        # AFTER THE SEND AND AFTER THE STATUS, for the reason given above: a failed delivery must leave
-        # nothing claiming to be in flight.
         #
         # IN A SAVEPOINT, following the settler's own hard-won note: `contextlib.suppress` swallows the
         # exception and leaves the TRANSACTION aborted, so the next statement fails about the wrong
@@ -2727,6 +2745,19 @@ class GovernanceChokepoint:
                 )
 
         await session.commit()
+
+        try:
+            await self._sink.send_command(device_id=admitted.device_id, command=command)
+        except Exception:
+            # A delivery failure (e.g. agent offline / device-not-connected) reverts the change set
+            # back to 'approved' if it hasn't already finalized, so that the approval survives and
+            # delivery can be retried once the agent reconnects (§11.10).
+            await session.execute(
+                text("UPDATE change_sets SET status = 'approved' WHERE id = :id AND status = :status"),
+                {"id": change_set_id, "status": status_after_delivery},
+            )
+            await session.commit()
+            raise
         return Submission(
             change_set_id=change_set_id,
             status=status_after_delivery,
@@ -2927,7 +2958,7 @@ class GovernanceChokepoint:
         result = await session.execute(
             text(
                 "UPDATE change_sets SET status = :status, applied_at = :applied_at "
-                "WHERE id = :id AND status = 'applying'"
+                "WHERE id = :id AND status IN ('applying', 'approved')"
             ),
             {
                 "status": final,
@@ -3052,7 +3083,7 @@ class GovernanceChokepoint:
         result = await session.execute(
             text(
                 "UPDATE change_sets SET status = 'rolled_back' "
-                "WHERE id = :id AND status = 'applying' "
+                "WHERE id = :id AND status IN ('applying', 'approved') "
                 "RETURNING project_id, tenant_id"
             ),
             {"id": change_set_id},
