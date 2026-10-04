@@ -146,12 +146,26 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
 
   if (inventory.isError) {
     return (
-      <section aria-label="Kubernetes" data-testid="k8s-dashboard">
-        <p data-testid="k8s-error" role="alert">
+      <section
+        aria-label="Kubernetes"
+        data-testid="k8s-dashboard"
+        className="rounded-lg border border-border bg-card p-5 space-y-3"
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-base">Cluster status</h3>
+          <span className="rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs px-2 py-0.5 font-medium">
+            Agent Disconnected
+          </span>
+        </div>
+        <p data-testid="k8s-error" role="alert" className="text-sm text-muted-foreground">
           The agent did not report the cluster: {inventory.error.message}. This is not the same as
           an empty cluster.
         </p>
-        <button type="button" onClick={() => void inventory.refetch()}>
+        <button
+          type="button"
+          onClick={() => void inventory.refetch()}
+          className="inline-flex items-center justify-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           Ask again
         </button>
       </section>

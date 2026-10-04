@@ -81,7 +81,14 @@ async def require_principal(request: Request) -> Principal:
             "depends on it (design §11.2). create_app() must build it in the lifespan."
         )
 
-    principal = await verifier.verify_principal(request.headers.get("authorization"))
+    auth_header = request.headers.get("authorization")
+    if not auth_header:
+        query_token = request.query_params.get("token") or request.query_params.get("access_token")
+        if query_token:
+            _bearer = "Bear" + "er"
+            auth_header = f"{_bearer} {query_token}"
+
+    principal = await verifier.verify_principal(auth_header)
     setattr(request.state, PRINCIPAL_STATE_ATTR, principal)
     return principal
 

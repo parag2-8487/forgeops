@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -111,6 +112,13 @@ class GenerationOutcome:
     tier: str = "template"
     #: Which endpoint answered, for the NFR-04 evidence `generation_runs.endpoint_id` exists for.
     endpoint_id: str | None = None
+    #: ONE RECORD PER MODEL ATTEMPT, so a run that served templates can say which attempt failed and why.
+    #:
+    #: Built because three investigations this cycle needed it and had to rebuild it from a live stream that
+    #: no longer existed. The cause it exposed was a 300s client budget against attempts measured at
+    #: 155-817s: every one was cut off mid-flight and recorded as a refusal. A truncated attempt and a
+    #: refused artifact look identical in a row that does not carry the duration.
+    attempts: list[dict[str, object]] = field(default_factory=list)
     #: FR-13's retrieval record: which retrievers ran, how many chunks reached the prompt, and their
     #: paths. Persisted to `generation_runs.retrieval`, a column that has existed since revision `0006`
     #: and was never written.
@@ -551,6 +559,7 @@ class GenerationService:
                 # that is working and never hitting.
                 first_attempt_prompt = redacted
 
+            attempt_started = time.monotonic()
             deltas: asyncio.Queue[str | None] = asyncio.Queue()
 
             async def _sink(text: str, queue: asyncio.Queue[str | None] = deltas) -> None:
@@ -609,11 +618,40 @@ class GenerationService:
                     task.cancel()
 
             result = await task
+            attempt_seconds = round(time.monotonic() - attempt_started, 3)
+
+            def _record_attempt(
+                verdict: str,
+                reason: str = "",
+                *,
+                _n: int = attempt,
+                _seconds: float = attempt_seconds,
+                _repairing: str | None = repair_for,
+            ) -> None:
+                """One row of evidence per attempt.
+
+                `seconds` is the point of it. A refusal recorded at 300.0s against a 300s client budget is a
+                TRUNCATION rather than a verdict, and without the duration beside the reason that is
+                unrecoverable once the request has ended -- which is how a truncating timeout went unseen
+                through three investigations.
+                """
+                if outcome is not None:
+                    outcome.attempts.append(
+                        {
+                            "attempt": _n,
+                            "seconds": _seconds,
+                            "verdict": verdict,
+                            "reason": reason[:400],
+                            "repairing": _repairing or "",
+                        }
+                    )
+
             if not result.ok or not result.content:
                 # The port reports a transport fault and an exhausted cascade the same way, in the
                 # words the next prompt can quote. Both are repairable by a retry; neither is a
                 # reason to fail the run while the template fallback is still available.
                 findings = result.failure_reasons
+                _record_attempt("no_content", "; ".join(findings))
                 continue
 
             served_from = result.served_from
@@ -671,6 +709,7 @@ class GenerationService:
                     asked_for_order = tuple(REQUIRED_ARTIFACTS)
             except ArtifactParseError as exc:
                 findings = (str(exc),)
+                _record_attempt("parse_failed", str(exc))
                 continue
 
             # WHAT THIS CALL PRODUCED, PLUS WHAT EARLIER CALLS ALREADY GOT RIGHT. The new answer wins for
@@ -691,6 +730,7 @@ class GenerationService:
                 },
             )
             if not passed:
+                _record_attempt("gate_refused", "; ".join(gate_findings))
                 # RETRY WHILE THERE IS AN ATTEMPT LEFT, because the model can usually repair what the
                 # gate named and a fully valid set is the better outcome.
                 if attempt < self._max_attempts:
@@ -934,6 +974,7 @@ class GenerationService:
                     content=result.content,
                 )
 
+            _record_attempt("accepted")
             report.succeeded = True
             yield format_event(
                 SSEEventType.COMPLETE,

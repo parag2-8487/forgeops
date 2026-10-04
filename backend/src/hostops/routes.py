@@ -73,7 +73,12 @@ _READ_TIMEOUT_SECONDS = 60.0
 
 
 def _chokepoint(request: Request) -> GovernanceChokepoint:
-    return request.app.state.chokepoint  # type: ignore[no-any-return]
+    resolved = getattr(request.app.state, "chokepoint", None) or getattr(
+        request.app.state, "governance_chokepoint", None
+    )
+    if resolved is None:
+        raise problem("dependency-unavailable", detail="the governance chokepoint is not composed yet")
+    return resolved  # type: ignore[no-any-return]
 
 
 def _environments(request: Request) -> EnvironmentService:

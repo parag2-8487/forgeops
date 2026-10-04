@@ -626,6 +626,32 @@ class Submission:
 
 
 @runtime_checkable
+class ChangeSetDispatcher(Protocol):
+    """Advances whatever a change set was FOR, once the change set has been approved and its command minted.
+
+    THE SYMMETRIC HALF OF `ChangeSetSettler`, and its absence was the same defect one transition earlier.
+    A deployment row is written `pending_approval` at REQUEST time from the chokepoint's own verdict, and
+    nothing moved it when that verdict changed: approval minted the authority, delivered the envelope and
+    left the row saying a human had not decided yet. Every read of it -- the timeline, the logs, the
+    rollback target -- reported a deployment still waiting.
+
+    It is a state machine with a transition nothing drove, which is the shape of `DeploymentService.complete`
+    having no production caller, `record_command_result`'s unreachable failure branch, and
+    `evaluate_policy`'s unsupplied argument. The lesson those share is that a status written from a verdict
+    needs a listener for the verdict CHANGING, not only for its first value.
+
+    Declared here and implemented by the domain that owns the advancing thing, for the reason the settler
+    gives: `governance/` may not import `deployments/` and must not learn what a deployment is.
+    """
+
+    async def dispatched(
+        self,
+        session: Any,
+        *,
+        change_set_id: uuid.UUID,
+    ) -> None: ...
+
+
 class ChangeSetSettler(Protocol):
     """Settles whatever a change set was FOR, once the change set itself has settled.
 
@@ -807,6 +833,7 @@ class GovernanceChokepoint:
         clone_credential_provider: CloneCredentialProvider | None = None,
         registry_credential_provider: RegistryCredentialProvider | None = None,
         change_set_settler: ChangeSetSettler | None = None,
+        change_set_dispatcher: ChangeSetDispatcher | None = None,
     ) -> None:
         if not envelope_pepper:
             raise ValueError(
@@ -830,6 +857,7 @@ class GovernanceChokepoint:
         self._clone_credential = clone_credential_provider
         self._registry_credential = registry_credential_provider
         self._settler = change_set_settler
+        self._dispatcher = change_set_dispatcher
 
     # ─── public transits ──────────────────────────────────────────────────────────────────
 
@@ -2663,6 +2691,41 @@ class GovernanceChokepoint:
             {"command": str(command.envelope.get("command_id") or ""), "id": change_set_id},
         )
         await self._set_status(session, change_set_id, status_after_delivery)
+
+        # WHATEVER THIS CHANGE SET WAS FOR NOW ADVANCES TOO -- the symmetric half of the settler.
+        #
+        # A deployment row is written `pending_approval` at REQUEST time from this chokepoint's own
+        # verdict, and nothing moved it when the verdict changed. Approval minted the authority,
+        # delivered the envelope, and left the row saying a human had not decided yet: the timeline, the
+        # logs and the rollback target all read a deployment still waiting for approval while its command
+        # was already with the agent. `DeploymentSettler` exists because `complete` had no production
+        # caller; this is the same defect one transition earlier.
+        #
+        # AFTER THE SEND AND AFTER THE STATUS, for the reason given above: a failed delivery must leave
+        # nothing claiming to be in flight.
+        #
+        # IN A SAVEPOINT, following the settler's own hard-won note: `contextlib.suppress` swallows the
+        # exception and leaves the TRANSACTION aborted, so the next statement fails about the wrong
+        # thing. A nested transaction rolls back only the hook's work. An advance that could not be
+        # recorded must not undo a delivery that happened.
+        if self._dispatcher is not None:
+            try:
+                async with session.begin_nested():
+                    await self._dispatcher.dispatched(session, change_set_id=change_set_id)
+            except Exception as error:  # noqa: BLE001 - the delivery must survive this
+                # On the row rather than in a log: this module has no logger by design, and the operator
+                # reading the change set is who needs to know the follow-up did not happen.
+                await session.execute(
+                    text(
+                        "UPDATE change_sets SET operation_args = "
+                        "COALESCE(operation_args, '{}'::jsonb) || CAST(:note AS jsonb) WHERE id = :id"
+                    ),
+                    {
+                        "note": json.dumps({"dispatch_error": f"{type(error).__name__}: {error}"[:500]}),
+                        "id": change_set_id,
+                    },
+                )
+
         await session.commit()
         return Submission(
             change_set_id=change_set_id,

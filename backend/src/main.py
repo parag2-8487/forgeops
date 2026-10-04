@@ -492,6 +492,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # the service records "no adapter for this channel is composed" against a preference that names one,
     # which is a true statement an operator can act on.
     app.state.notification_service = NotificationService(channels=compose_channels(settings))
+    from .deployments.dispatcher import DeploymentDispatcher
     from .deployments.settler import DeploymentSettler
 
     # 2.11: the deployment service files an incident when an apply it sent actually failed. Composed
@@ -670,11 +671,17 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             deployments=app.state.deployment_service,
             notifications=app.state.notification_service,
         ),
+        # THE APPROVAL-TIME HALF, beside the result-time half it mirrors. A deployment's row is written
+        # `pending_approval` from this chokepoint's verdict at request time, and nothing advanced it when
+        # the verdict changed -- the same missing listener as `DeploymentService.complete` having no
+        # production caller, which is why `DeploymentSettler` above exists.
+        change_set_dispatcher=DeploymentDispatcher(),
         # 2.2. A registry push needs a credential at the instant the envelope is signed and at no
         # other time. Composed here for the same reason the clone provider is: the chokepoint knows a
         # push needs one and must not learn that this deployment keeps it in Infisical.
         registry_credential_provider=SecretStoreRegistryCredentials(app.state.secret_store),
     )
+    app.state.chokepoint = app.state.governance_chokepoint
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()
     app.state.mcp_gateway = McpGateway(

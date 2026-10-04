@@ -26,6 +26,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { api, ApiProblemError, queryKeys } from "@/lib/api";
 
 /** Mirrors `GitHubLinkStatus` in `backend/src/integrations/routes.py`. */
@@ -120,13 +122,19 @@ export function GitHubConnection() {
   });
 
   if (status.isPending) {
-    return <p data-testid="github-link-loading">Checking the GitHub connection…</p>;
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-border p-4 text-sm text-muted-foreground">
+        <p data-testid="github-link-loading">Checking the GitHub connection…</p>
+      </div>
+    );
   }
   if (status.isError || !status.data) {
     return (
-      <p data-testid="github-link-error" role="alert">
-        The GitHub connection status could not be read: {describe(status.error)}
-      </p>
+      <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+        <p data-testid="github-link-error" role="alert">
+          The GitHub connection status could not be read: {describe(status.error)}
+        </p>
+      </div>
     );
   }
 
@@ -134,112 +142,165 @@ export function GitHubConnection() {
 
   if (!link.connected) {
     return (
-      <section data-testid="github-link-disconnected" aria-labelledby="github-connect-heading">
-        <h3 id="github-connect-heading">Connect a GitHub account</h3>
-        <p>
-          Linking GitHub lets you pick a repository to clone onto your machine. It does not change
-          how you sign in to ForgeOps, and it grants ForgeOps nothing beyond what you allow.
-        </p>
-
-        {/*
-          THE TOKEN PATH IS FIRST AND IS THE DEFAULT, because it is the one that stays inside ForgeOps.
-          The authorization flow has to send the person to github.com — that is where consent is given —
-          so it shows GitHub's sign-in and account-selection screens, and on a machine signed into more
-          than one GitHub account that chooser is a way to link the wrong one by accident. Pasting a
-          token avoids the round trip entirely, needs no GitHub App configured on this server, and is
-          verified against GitHub before it is stored, so a wrong value is refused here rather than
-          discovered later as a repository list that fails.
-        */}
-        <form
-          data-testid="github-token-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            linkWithToken.mutate();
-          }}
-        >
-          <label htmlFor="github-token">GitHub token</label>
-          <input
-            id="github-token"
-            data-testid="github-token-input"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            placeholder="Paste a token from GitHub → Settings → Developer settings"
-          />
-          <p>
-            This stays on this page — no GitHub sign-in and no account-selection screen. A
-            fine-grained token needs <strong>Contents: read</strong> and{" "}
-            <strong>Metadata: read</strong> on the repositories you want. It is encrypted before it
-            is stored and is never shown again.
-          </p>
-          <Button
-            type="submit"
-            data-testid="github-token-submit"
-            disabled={linkWithToken.isPending || token.trim().length < 8}
+      <Card data-testid="github-link-disconnected" aria-labelledby="github-connect-heading">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle id="github-connect-heading" className="text-lg font-semibold">
+              Connect a GitHub account
+            </CardTitle>
+            <Badge variant="outline">Not Connected</Badge>
+          </div>
+          <CardDescription>
+            Linking GitHub lets you pick a repository to clone onto your machine. It does not change
+            how you sign in to ForgeOps, and it grants ForgeOps nothing beyond what you allow.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/*
+            THE TOKEN PATH IS FIRST AND IS THE DEFAULT, because it is the one that stays inside ForgeOps.
+          */}
+          <form
+            data-testid="github-token-form"
+            className="space-y-4 rounded-lg border border-border bg-muted/20 p-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              linkWithToken.mutate();
+            }}
           >
-            {linkWithToken.isPending ? "Checking with GitHub…" : "Link with a token"}
-          </Button>
-        </form>
+            <div className="space-y-1.5">
+              <label htmlFor="github-token" className="block text-sm font-medium">
+                GitHub token
+              </label>
+              <input
+                id="github-token"
+                data-testid="github-token-input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="Paste a token from GitHub → Settings → Developer settings"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
 
-        {link.configured ? (
-          <details data-testid="github-oauth-alternative">
-            <summary>Or authorise through the GitHub App</summary>
-            <p>
-              This opens github.com, where you sign in if you are not already and choose which
-              account to authorise. Use it if you would rather not create a token.
-            </p>
+            <div className="rounded-md border border-border/60 bg-background/50 p-3 text-xs text-muted-foreground space-y-1.5">
+              <p>
+                This stays on this page — no GitHub sign-in and no account-selection screen. A
+                fine-grained token needs <strong>Contents: read</strong> and{" "}
+                <strong>Metadata: read</strong> on the repositories you want. It is encrypted before
+                it is stored and is never shown again.
+              </p>
+            </div>
+
             <Button
-              type="button"
-              variant="secondary"
-              data-testid="github-connect"
-              disabled={connect.isPending}
-              onClick={() => connect.mutate()}
+              type="submit"
+              data-testid="github-token-submit"
+              disabled={linkWithToken.isPending || token.trim().length < 8}
+              className="w-full sm:w-auto"
             >
-              {connect.isPending ? "Opening GitHub…" : "Continue on GitHub"}
+              {linkWithToken.isPending ? "Checking with GitHub…" : "Link with a token"}
             </Button>
-          </details>
-        ) : (
-          <p data-testid="github-link-hint">
-            The GitHub App route is not set up on this server, so the token above is the way to
-            connect. An administrator can enable it as well: {link.configuration_hint}
-          </p>
-        )}
+          </form>
 
-        {error ? (
-          <p data-testid="github-link-problem" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </section>
+          {link.configured ? (
+            <details
+              data-testid="github-oauth-alternative"
+              className="rounded-lg border border-border p-4 text-sm"
+            >
+              <summary className="cursor-pointer font-medium text-foreground hover:underline">
+                Or authorise through the GitHub App
+              </summary>
+              <div className="mt-3 space-y-3">
+                <p className="text-muted-foreground">
+                  This opens github.com, where you sign in if you are not already and choose which
+                  account to authorise. Use it if you would rather not create a token.
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-testid="github-connect"
+                  disabled={connect.isPending}
+                  onClick={() => connect.mutate()}
+                >
+                  {connect.isPending ? "Opening GitHub…" : "Continue on GitHub"}
+                </Button>
+              </div>
+            </details>
+          ) : (
+            <div
+              data-testid="github-link-hint"
+              className="rounded-lg border border-border/80 bg-muted/40 p-3 text-xs text-muted-foreground"
+            >
+              The GitHub App route is not set up on this server, so the token above is the way to
+              connect. An administrator can enable it as well: {link.configuration_hint}
+            </div>
+          )}
+
+          {error ? (
+            <div
+              data-testid="github-link-problem"
+              role="alert"
+              className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+            >
+              {error}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <section data-testid="github-link-connected" aria-labelledby="github-connected-heading">
-      <h3 id="github-connected-heading">Connected as {link.login}</h3>
-      <dl>
-        <dt>Connected</dt>
-        <dd data-testid="github-connected-at">{link.connected_at ?? "unknown"}</dd>
-        <dt>Last used</dt>
-        <dd data-testid="github-last-use">{describeLastUse(link)}</dd>
-      </dl>
-      <Button
-        type="button"
-        variant="destructive"
-        data-testid="github-disconnect"
-        disabled={disconnect.isPending}
-        onClick={() => disconnect.mutate()}
-      >
-        {disconnect.isPending ? "Disconnecting…" : "Disconnect GitHub"}
-      </Button>
-      {error ? (
-        <p data-testid="github-link-problem" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
+    <Card data-testid="github-link-connected" aria-labelledby="github-connected-heading">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle id="github-connected-heading" className="text-lg font-semibold">
+            Connected as {link.login}
+          </CardTitle>
+          <Badge variant="success">Connected</Badge>
+        </div>
+        <CardDescription>
+          Your account is linked to GitHub. Repositories can be selected for project imports.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 rounded-lg border border-border bg-muted/20 p-4">
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">Connected</dt>
+            <dd data-testid="github-connected-at" className="mt-1 font-mono text-xs">
+              {link.connected_at ?? "unknown"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">Last used</dt>
+            <dd data-testid="github-last-use" className="mt-1 text-xs">
+              {describeLastUse(link)}
+            </dd>
+          </div>
+        </dl>
+
+        <Button
+          type="button"
+          variant="destructive"
+          data-testid="github-disconnect"
+          disabled={disconnect.isPending}
+          onClick={() => disconnect.mutate()}
+        >
+          {disconnect.isPending ? "Disconnecting…" : "Disconnect GitHub"}
+        </Button>
+
+        {error ? (
+          <div
+            data-testid="github-link-problem"
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          >
+            {error}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 

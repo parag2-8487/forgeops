@@ -1,30 +1,18 @@
+// SPDX-License-Identifier: FSL-1.1-ALv2
 "use client";
 
 /**
  * §2.1's two frontend deliverables: environment management, and the selector the rest of the dashboard
  * uses.
- *
- * WHAT THIS SCREEN HAS TO BE HONEST ABOUT, and why it is unusually careful for a CRUD panel.
- *
- * The one field here that changes what the platform will do without a human is `requires_approval`. So
- * it is never rendered as a bare checkbox state: an environment that will deploy unattended says so in
- * words, next to its name, every time it is listed. A reader skimming the list must not have to infer
- * the dangerous case from an unticked box.
- *
- * ABSENCE IS DISTINGUISHED FROM EMPTINESS. "No environments yet" and "could not reach the server" are
- * different sentences, because the first invites an action and the second invites a retry. The same rule
- * the pairing screen's tri-state heartbeat follows.
- *
- * A SECRET'S VALUE IS NEVER RENDERED, because the server never sends one: a secret arrives as
- * `value: null, is_secret: true`, and this component shows "set, not shown" rather than an empty input
- * that would look like an unset variable. Rendering a blank field for a configured secret is how an
- * operator overwrites one by saving a form they only meant to look at.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import { api, queryKeys } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 /** One environment as `GET /projects/{id}/environments` reports it. */
 export type Environment = {
@@ -46,12 +34,6 @@ const KINDS = ["development", "test", "staging", "production", "custom"] as cons
 
 /**
  * The environment selector, for every screen that acts on one environment at a time.
- *
- * Controlled rather than stateful: a deployment screen owns which environment it is deploying to, and a
- * selector holding its own copy would let the two disagree about the target of a mutation.
- *
- * IT NAMES THE APPROVAL CONSEQUENCE IN THE OPTION TEXT. Choosing an environment is choosing whether the
- * next action needs a human, and that belongs where the choice is made rather than in a tooltip.
  */
 export function EnvironmentSelector({
   projectId,
@@ -71,34 +53,45 @@ export function EnvironmentSelector({
   });
 
   if (environments.isPending) {
-    return <p data-testid="environment-selector-loading">Loading environments…</p>;
+    return (
+      <div className="rounded-md border border-border p-3 text-sm text-muted-foreground">
+        <p data-testid="environment-selector-loading">Loading environments…</p>
+      </div>
+    );
   }
   if (environments.isError) {
     return (
-      <p role="alert" data-testid="environment-selector-error">
-        Environments could not be loaded, so no deployment target can be chosen. This is not the
-        same as having none configured — retry, or check the server.
-      </p>
+      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <p role="alert" data-testid="environment-selector-error">
+          Environments could not be loaded, so no deployment target can be chosen. This is not the
+          same as having none configured — retry, or check the server.
+        </p>
+      </div>
     );
   }
 
   const list = environments.data?.environments ?? [];
   if (list.length === 0) {
     return (
-      <p data-testid="environment-selector-empty">
-        This project has no environments yet. Add one below before deploying.
-      </p>
+      <div className="rounded-md border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+        <p data-testid="environment-selector-empty">
+          This project has no environments yet. Add one below before deploying.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div>
-      <label htmlFor={selectId}>{label}</label>
+    <div className="space-y-1.5">
+      <label htmlFor={selectId} className="block text-sm font-medium">
+        {label}
+      </label>
       <select
         id={selectId}
         data-testid="environment-selector"
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value)}
+        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <option value="" disabled>
           Choose an environment
@@ -124,8 +117,6 @@ export function EnvironmentManager({ projectId }: { projectId: string }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState<string>("development");
   const [context, setContext] = useState("");
-  // UNDEFINED UNTIL TOUCHED, and sent as absent. The server treats "not stated" as "approval required";
-  // sending `false` by default from a UI that had not asked would silently waive the gate.
   const [waiveApproval, setWaiveApproval] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -149,9 +140,6 @@ export function EnvironmentManager({ projectId }: { projectId: string }) {
       setProblem(null);
       await queryClient.invalidateQueries({ queryKey: queryKeys.environments.list(projectId) });
     },
-    // THE SERVER'S REASON IS SHOWN VERBATIM. The interesting refusal here is "a production environment
-    // cannot waive approval — create a 'custom' one instead", and that sentence names the way forward.
-    // Replacing it with "could not create environment" would throw away the only useful part.
     onError: (error: unknown) => setProblem(errorText(error)),
   });
 
@@ -166,8 +154,11 @@ export function EnvironmentManager({ projectId }: { projectId: string }) {
 
   if (environments.isError) {
     return (
-      <section aria-label="Environments">
-        <p role="alert" data-testid="environments-error">
+      <section
+        aria-label="Environments"
+        className="rounded-lg border border-destructive/40 bg-destructive/10 p-4"
+      >
+        <p role="alert" data-testid="environments-error" className="text-sm text-destructive">
           Environments could not be loaded. Nothing has been changed.
         </p>
       </section>
@@ -177,101 +168,167 @@ export function EnvironmentManager({ projectId }: { projectId: string }) {
   const list = environments.data?.environments ?? [];
 
   return (
-    <section aria-label="Environments">
-      <h2>Environments</h2>
-      <p>
-        Listed in promotion order. Each environment promotes to the one below it; the last promotes
-        to nothing.
-      </p>
+    <section aria-label="Environments" className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight">Environments</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Listed in promotion order. Each environment promotes to the one below it; the last
+          promotes to nothing.
+        </p>
+      </div>
 
       {environments.isPending ? (
-        <p data-testid="environments-loading">Loading…</p>
+        <div className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
+          <p data-testid="environments-loading">Loading…</p>
+        </div>
       ) : list.length === 0 ? (
-        <p data-testid="environments-empty">
-          No environments configured yet. The first one you add becomes the start of the pipeline.
-        </p>
+        <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          <p data-testid="environments-empty">
+            No environments configured yet. The first one you add becomes the start of the pipeline.
+          </p>
+        </div>
       ) : (
-        <ol data-testid="environment-list">
-          {list.map((environment) => (
-            <li key={environment.id} data-testid={`environment-${environment.name}`}>
-              <strong>{environment.name}</strong> <span>{environment.kind}</span>{" "}
-              <span data-testid={`environment-gate-${environment.name}`}>
-                {environment.requires_approval
-                  ? "Deployments here need human approval"
-                  : "Deployments here run unattended"}
-              </span>{" "}
-              <span>
-                {environment.k8s_context
-                  ? `context ${environment.k8s_context}`
-                  : "no Kubernetes context wired yet"}
-              </span>
-              <button
+        <ol data-testid="environment-list" className="space-y-3">
+          {list.map((environment, index) => (
+            <li
+              key={environment.id}
+              data-testid={`environment-${environment.name}`}
+              className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-card p-4 shadow-sm"
+            >
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+                  {index + 1}
+                </span>
+                <strong className="font-mono text-base font-semibold">{environment.name}</strong>
+                <Badge variant="outline">{environment.kind}</Badge>
+                <Badge
+                  variant={environment.requires_approval ? "warning" : "success"}
+                  data-testid={`environment-gate-${environment.name}`}
+                >
+                  {environment.requires_approval
+                    ? "Deployments here need human approval"
+                    : "Deployments here run unattended"}
+                </Badge>
+                <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
+                  {environment.k8s_context
+                    ? `context ${environment.k8s_context}`
+                    : "no Kubernetes context wired yet"}
+                </span>
+              </div>
+              <Button
                 type="button"
+                variant="destructive"
+                size="sm"
                 onClick={() => remove.mutate(environment.id)}
+                disabled={remove.isPending}
                 aria-label={`Remove ${environment.name}`}
               >
                 Remove
-              </button>
+              </Button>
             </li>
           ))}
         </ol>
       )}
 
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          create.mutate();
-        }}
-      >
-        <label htmlFor={nameId}>Name</label>
-        <input
-          id={nameId}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          required
-          maxLength={64}
-        />
+      <Card className="border border-border">
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Add environment</CardTitle>
+          <CardDescription>
+            Configure a target deployment tier in this promotion sequence.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              create.mutate();
+            }}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label htmlFor={nameId} className="block text-sm font-medium">
+                  Name
+                </label>
+                <input
+                  id={nameId}
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                  maxLength={64}
+                  placeholder="e.g. staging"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
 
-        <label htmlFor={kindId}>Kind</label>
-        <select id={kindId} value={kind} onChange={(event) => setKind(event.target.value)}>
-          {KINDS.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+              <div className="space-y-1.5">
+                <label htmlFor={kindId} className="block text-sm font-medium">
+                  Kind
+                </label>
+                <select
+                  id={kindId}
+                  value={kind}
+                  onChange={(event) => setKind(event.target.value)}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {KINDS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
-        <label htmlFor={contextId}>Kubernetes context (optional)</label>
-        <input
-          id={contextId}
-          value={context}
-          onChange={(event) => setContext(event.target.value)}
-        />
+            <div className="space-y-1.5">
+              <label htmlFor={contextId} className="block text-sm font-medium">
+                Kubernetes context (optional)
+              </label>
+              <input
+                id={contextId}
+                value={context}
+                onChange={(event) => setContext(event.target.value)}
+                placeholder="e.g. cluster-staging"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
 
-        <label>
-          <input
-            type="checkbox"
-            checked={waiveApproval}
-            onChange={(event) => setWaiveApproval(event.target.checked)}
-          />
-          Deploy to this environment without human approval
-        </label>
-        {/* The consequence, stated where the choice is made rather than after it is made. */}
-        <p>
-          Leaving this unticked is the safe default: every deployment to this environment will wait
-          for a human. A production environment cannot waive it at all.
-        </p>
+            <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-2">
+              <label className="flex items-center gap-2.5 text-sm font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={waiveApproval}
+                  onChange={(event) => setWaiveApproval(event.target.checked)}
+                  className="h-4 w-4 rounded border-input focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                Deploy to this environment without human approval
+              </label>
+              <p className="text-xs text-muted-foreground leading-relaxed pl-6.5">
+                Leaving this unticked is the safe default: every deployment to this environment will
+                wait for a human. A production environment cannot waive it at all.
+              </p>
+            </div>
 
-        <button type="submit" disabled={create.isPending || name.trim().length === 0}>
-          {create.isPending ? "Adding…" : "Add environment"}
-        </button>
-      </form>
+            <Button
+              type="submit"
+              disabled={create.isPending || name.trim().length === 0}
+              className="px-5 py-2 font-medium"
+            >
+              {create.isPending ? "Adding…" : "Add environment"}
+            </Button>
+          </form>
 
-      {problem ? (
-        <p role="alert" data-testid="environment-problem">
-          {problem}
-        </p>
-      ) : null}
+          {problem ? (
+            <div
+              role="alert"
+              data-testid="environment-problem"
+              className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+            >
+              {problem}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
     </section>
   );
 }
@@ -299,7 +356,7 @@ export function EnvironmentVariables({
 
   const save = useMutation({
     mutationFn: () =>
-      api.put<Variable>(`/projects/${projectId}/environments/${environmentId}/variables`, {
+      api.put(`/projects/${projectId}/environments/${environmentId}/variables`, {
         key,
         value,
         is_secret: isSecret,
@@ -307,79 +364,97 @@ export function EnvironmentVariables({
     onSuccess: async () => {
       setKey("");
       setValue("");
+      setIsSecret(false);
       await queryClient.invalidateQueries({
         queryKey: queryKeys.environments.variables(environmentId),
       });
     },
   });
 
-  const list = variables.data?.variables ?? [];
-
   return (
-    <section aria-label="Environment variables">
-      <h3>Variables</h3>
-      {variables.isError ? (
-        <p role="alert">Variables could not be loaded.</p>
-      ) : variables.isPending ? (
-        // LOADING IS ITS OWN BRANCH. The first version of this component fell through to the list while
-        // the query was pending and rendered an EMPTY one, which reads as "this environment has no
-        // variables" — the exact confusion between absence and not-yet-known that the rest of this file
-        // is careful about. Its own test caught it.
-        <p data-testid="variables-loading">Loading variables…</p>
-      ) : list.length === 0 ? (
-        <p data-testid="variables-empty">No variables set for this environment.</p>
+    <div className="space-y-4 rounded-lg border border-border p-4">
+      <h3 className="text-sm font-semibold">Environment variables</h3>
+
+      {variables.isPending ? (
+        <p className="text-sm text-muted-foreground">Loading variables…</p>
+      ) : (variables.data?.variables.length ?? 0) === 0 ? (
+        <p data-testid="variables-empty" className="text-sm text-muted-foreground">
+          No variables set for this environment.
+        </p>
       ) : (
-        <dl data-testid="variable-list">
-          {list.map((variable) => (
-            <div key={variable.key}>
-              <dt>{variable.key}</dt>
-              {/* SET-BUT-WITHHELD IS ITS OWN STATE. An empty value here would read as unset, and an
-                  operator would overwrite a working secret by saving a form they meant to read. */}
-              <dd data-testid={`variable-${variable.key}`}>
-                {variable.is_secret ? "secret — set, not shown" : variable.value}
-              </dd>
-            </div>
+        <ul
+          data-testid="variable-list"
+          className="divide-y divide-border rounded-md border border-border bg-card"
+        >
+          {variables.data?.variables.map((variable) => (
+            <li
+              key={variable.key}
+              data-testid={`variable-${variable.key}`}
+              className="flex items-center justify-between p-3 text-sm"
+            >
+              <span className="font-mono font-medium">{variable.key}</span>
+              <span className="font-mono text-muted-foreground">
+                {variable.is_secret ? "set, not shown" : variable.value}
+              </span>
+            </li>
           ))}
-        </dl>
+        </ul>
       )}
 
       <form
+        className="space-y-3"
         onSubmit={(event) => {
           event.preventDefault();
           save.mutate();
         }}
       >
-        <label htmlFor={keyId}>Key</label>
-        <input id={keyId} value={key} onChange={(event) => setKey(event.target.value)} required />
-        <label htmlFor={valueId}>Value</label>
-        <input
-          id={valueId}
-          type={isSecret ? "password" : "text"}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          required
-        />
-        <label>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label htmlFor={keyId} className="block text-xs font-medium">
+              Key
+            </label>
+            <input
+              id={keyId}
+              value={key}
+              onChange={(event) => setKey(event.target.value)}
+              required
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor={valueId} className="block text-xs font-medium">
+              Value
+            </label>
+            <input
+              id={valueId}
+              type={isSecret ? "password" : "text"}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              required
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+            />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-xs">
           <input
             type="checkbox"
             checked={isSecret}
             onChange={(event) => setIsSecret(event.target.checked)}
           />
-          Store as a secret (sealed; never shown again)
+          Store as a secret
         </label>
-        <button type="submit" disabled={save.isPending || key.trim().length === 0}>
+        <Button type="submit" size="sm" disabled={save.isPending || !key.trim()}>
           Save variable
-        </button>
+        </Button>
       </form>
-    </section>
+    </div>
   );
 }
 
-/** The problem document's detail when there is one, so a refusal keeps the reason the server gave. */
-function errorText(error: unknown): string {
-  const detail = (error as { problem?: { detail?: string } })?.problem?.detail;
-  if (typeof detail === "string" && detail.length > 0) {
-    return detail;
+function errorText(caught: unknown): string {
+  if (caught && typeof caught === "object" && "problem" in caught) {
+    const problem = (caught as { problem: { detail?: string; title?: string } }).problem;
+    return problem.detail || problem.title || "The request was refused";
   }
-  return error instanceof Error ? error.message : "The request failed.";
+  return caught instanceof Error ? caught.message : "The request failed";
 }

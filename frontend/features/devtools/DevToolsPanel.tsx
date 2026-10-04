@@ -1,20 +1,17 @@
+// SPDX-License-Identifier: FSL-1.1-ALv2
 "use client";
 
 /**
  * §2.8's dev-tools panel.
- *
- * Five buttons, one per kind, and no free-text field — the same constraint the operation has: a panel that
- * could type a command would need the agent to accept one.
- *
- * Every run is a mutation and reports a GOVERNANCE OUTCOME, not a result. "Run the tests" sounds read-only
- * and is not: the command is code the repository controls. The panel says so, because an operator who thinks
- * a button is harmless will press it on production credentials.
  */
 
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const KINDS = ["tests", "lint", "build", "compose", "migrations"] as const;
 export type DevToolKind = (typeof KINDS)[number];
@@ -44,35 +41,68 @@ export function DevToolsPanel({ projectId }: { projectId: string }) {
   });
 
   return (
-    <section aria-label="Developer tools" data-testid="devtools-panel">
-      <p data-testid="devtools-warning">
-        Each of these runs a command this repository defines, on the machine your agent runs on.
-        They are mutations and go through the same approval path as a deployment.
-      </p>
-      <ul>
-        {KINDS.map((kind) => (
-          <li key={kind}>
-            <button
-              type="button"
-              data-testid={`devtools-run-${kind}`}
-              disabled={run.isPending}
-              onClick={() => run.mutate({ kind })}
+    <Card
+      aria-label="Developer tools"
+      data-testid="devtools-panel"
+      className="border border-border"
+    >
+      <CardHeader>
+        <CardTitle className="text-base font-semibold">Repository developer tools</CardTitle>
+        <CardDescription data-testid="devtools-warning">
+          Each of these runs a command this repository defines, on the machine your agent runs on.
+          They are mutations and go through the same approval path as a deployment.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="space-y-3">
+          {KINDS.map((kind) => (
+            <li
+              key={kind}
+              className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-card p-3 shadow-sm"
             >
-              {kind}
-            </button>{" "}
-            <span data-testid={`devtools-describe-${kind}`}>{KIND_DESCRIPTIONS[kind]}</span>{" "}
-            {outcomes[kind] && (
-              <span data-testid={`devtools-outcome-${kind}`}>
-                {outcomes[kind] === "applying"
-                  ? "sent to the agent"
-                  : outcomes[kind] === "approval-required"
-                    ? "waiting for a human to approve it — nothing has run yet"
-                    : outcomes[kind]}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid={`devtools-run-${kind}`}
+                  disabled={run.isPending}
+                  onClick={() => run.mutate({ kind })}
+                  className="font-mono font-semibold min-w-28 uppercase text-xs"
+                >
+                  {kind}
+                </Button>
+                <span
+                  data-testid={`devtools-describe-${kind}`}
+                  className="text-xs text-muted-foreground"
+                >
+                  {KIND_DESCRIPTIONS[kind]}
+                </span>
+              </div>
+
+              {outcomes[kind] && (
+                <div data-testid={`devtools-outcome-${kind}`}>
+                  <Badge
+                    variant={
+                      outcomes[kind] === "applying"
+                        ? "success"
+                        : outcomes[kind] === "approval-required"
+                          ? "warning"
+                          : "outline"
+                    }
+                  >
+                    {outcomes[kind] === "applying"
+                      ? "sent to the agent"
+                      : outcomes[kind] === "approval-required"
+                        ? "waiting for a human to approve it — nothing has run yet"
+                        : outcomes[kind]}
+                  </Badge>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }

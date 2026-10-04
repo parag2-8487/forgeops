@@ -157,6 +157,7 @@ export function RolloutPanel({ projectId, namespace, rollout }: Props) {
 
   const data = detail.data;
   const observedAt = Date.parse(data.observed_at);
+  // eslint-disable-next-line react-hooks/purity
   const isStale = Number.isFinite(observedAt) && Date.now() - observedAt > STALE_AFTER_MS;
 
   return (

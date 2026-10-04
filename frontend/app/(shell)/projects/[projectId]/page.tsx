@@ -7,7 +7,8 @@ import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
-import { GovernanceRefusal } from "@/components/ui/governance-refusal";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { CodebaseIndexPanel } from "@/features/codebase/CodebaseIndexPanel";
 import { DeploymentDashboard } from "@/features/deployments/DeploymentDashboard";
 import { DevToolsPanel } from "@/features/devtools/DevToolsPanel";
@@ -30,15 +31,6 @@ import {
 
 /**
  * Everything about one project — phases.md §1.2 "Frontend: Project detail page".
- *
- * `GET /api/v1/projects/{id}` existed, was tested, and had no caller: the projects screen listed rows
- * and then rendered a pane saying "Viewing details for X", which is the name it already had. So the
- * one endpoint that answers "what is the state of this project" was unreachable, and the facts a user
- * needs before doing anything — has it been scanned, does it have a policy bundle, is an agent paired,
- * what has happened to it — were spread across five screens that each needed a project id typed in.
- *
- * This is a ROUTE rather than a pane, so it is linkable and refreshable, and every panel on it is
- * scoped by the id in the path rather than by a picker.
  */
 export default function ProjectDetailPage() {
   const params = useParams<{ projectId: string }>();
@@ -51,20 +43,22 @@ export default function ProjectDetailPage() {
   });
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="space-y-8 w-full pb-16">
+      <div className="border-b border-border pb-5">
         <p className="text-xs text-muted-foreground">
           <Link
             href="/projects"
-            className="underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex items-center gap-1 font-medium underline underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             ← All projects
           </Link>
         </p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight">
-          {project.data?.name ?? "Project"}
-        </h1>
-        <p className="mt-1 font-mono text-xs text-muted-foreground">{projectId}</p>
+        <div className="mt-2 flex flex-wrap items-baseline justify-between gap-4">
+          <h1 className="text-3xl font-bold tracking-tight">{project.data?.name ?? "Project"}</h1>
+          <p className="font-mono text-xs text-muted-foreground rounded bg-muted px-2.5 py-1">
+            {projectId}
+          </p>
+        </div>
       </div>
 
       <AsyncState
@@ -74,135 +68,222 @@ export default function ProjectDetailPage() {
         label="project"
       >
         {project.data ? (
-          <div className="space-y-8">
+          <div className="space-y-10">
             <ProjectFacts project={project.data} />
 
             <TagEditor project={project.data} />
 
-            <section aria-labelledby="index-heading" className="space-y-3">
-              <h2 id="index-heading" className="text-lg font-semibold">
-                Codebase index
-              </h2>
+            <section
+              aria-labelledby="index-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <h2 id="index-heading" className="text-lg font-semibold tracking-tight">
+                  Codebase index
+                </h2>
+                <Badge variant="outline">§1.3</Badge>
+              </div>
               <CodebaseIndexPanel projectId={projectId} projectPath={project.data.path} />
             </section>
 
-            <section aria-labelledby="readiness-heading" className="space-y-3">
-              <h2 id="readiness-heading" className="text-lg font-semibold">
-                Readiness
-              </h2>
+            <section
+              aria-labelledby="readiness-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <h2 id="readiness-heading" className="text-lg font-semibold tracking-tight">
+                  Readiness
+                </h2>
+                <Badge variant="outline">§1.4</Badge>
+              </div>
               <ReadinessSummary projectId={projectId} />
             </section>
 
-            <section aria-labelledby="history-heading" className="space-y-3">
-              <h2 id="history-heading" className="text-lg font-semibold">
-                Change history
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Every change set submitted for this project, newest first, with what each status
-                means. Read from <code>GET /api/v1/approvals?project_id=…</code>.
-              </p>
+            <section
+              aria-labelledby="history-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="history-heading" className="text-lg font-semibold tracking-tight">
+                    Change history
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Every change set submitted for this project, newest first, with what each status
+                    means. Read from <code>GET /api/v1/approvals?project_id=…</code>.
+                  </p>
+                </div>
+                <Badge variant="outline">§1.7</Badge>
+              </div>
               <ChangeHistoryTimeline projectId={projectId} />
             </section>
 
-            <section aria-labelledby="environments-heading" className="space-y-3">
-              <h2 id="environments-heading" className="text-lg font-semibold">
-                Environments
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                §2.1. The deployment targets of this project, in promotion order. Whether a
-                deployment here waits for a human is a property of the environment, and it is stated
-                in words on every row rather than left to a checkbox.
-              </p>
+            <section
+              aria-labelledby="environments-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="environments-heading" className="text-lg font-semibold tracking-tight">
+                    Environments
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    §2.1. The deployment targets of this project, in promotion order. Whether a
+                    deployment here waits for a human is a property of the environment, and it is
+                    stated in words on every row rather than left to a checkbox.
+                  </p>
+                </div>
+                <Badge variant="outline">§2.1</Badge>
+              </div>
               <EnvironmentManager projectId={projectId} />
             </section>
 
-            <section aria-labelledby="deployments-heading" className="space-y-3">
-              <h2 id="deployments-heading" className="text-lg font-semibold">
-                Deployments
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                §2.2. A deployment is a mutation, so it goes through the same governance chokepoint
-                as every other: policy, approval, blast radius, audit, rollback handle. Whether it
-                waits for a human is decided by the environment, the approval gate and the policy —
-                and any of the three can demand one.
-              </p>
+            <section
+              aria-labelledby="deployments-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="deployments-heading" className="text-lg font-semibold tracking-tight">
+                    Deployments
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    §2.2. A deployment is a mutation, so it goes through the same governance
+                    chokepoint as every other: policy, approval, blast radius, audit, rollback
+                    handle.
+                  </p>
+                </div>
+                <Badge variant="outline">§2.2</Badge>
+              </div>
               <DeploymentDashboard projectId={projectId} />
             </section>
 
-            <section aria-labelledby="releases-heading" className="space-y-3">
-              <h2 id="releases-heading" className="text-lg font-semibold">
-                Releases
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                2.3. Promotion and rollback are deployments: both travel the chokepoint, and the
-                target environment&apos;s approval requirement governs. Only a deployment whose
-                workloads converged can be rolled back to.
-              </p>
+            <section
+              aria-labelledby="releases-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="releases-heading" className="text-lg font-semibold tracking-tight">
+                    Releases
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    2.3. Promotion and rollback are deployments: both travel the chokepoint, and the
+                    target environment&apos;s approval requirement governs.
+                  </p>
+                </div>
+                <Badge variant="outline">§2.3</Badge>
+              </div>
               <ReleaseTimeline projectId={projectId} />
             </section>
 
-            <section aria-labelledby="notifications-heading" className="space-y-3">
-              <h2 id="notifications-heading" className="text-lg font-semibold">
-                Notifications
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                2.6. Every notification records what reached each channel, so one rejected by Slack
-                says so rather than appearing delivered. A webhook URL is a credential and is never
-                shown again.
-              </p>
-              <NotificationBell projectId={projectId} />
-              <NotificationPreferences projectId={projectId} />
+            <section
+              aria-labelledby="notifications-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="notifications-heading" className="text-lg font-semibold tracking-tight">
+                    Notifications
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    2.6. Every notification records what reached each channel. A webhook URL is a
+                    credential and is never shown again.
+                  </p>
+                </div>
+                <Badge variant="outline">§2.6</Badge>
+              </div>
+              <div className="space-y-4">
+                <NotificationBell projectId={projectId} />
+                <NotificationPreferences projectId={projectId} />
+              </div>
             </section>
 
-            <section aria-labelledby="devtools-heading" className="space-y-3">
-              <h2 id="devtools-heading" className="text-lg font-semibold">
-                Developer tools
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                2.8. Five named kinds, no command field. The agent chooses the argument vector from
-                the workspace&apos;s own manifests, and each run is a mutation through the
-                chokepoint.
-              </p>
+            <section
+              aria-labelledby="devtools-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="devtools-heading" className="text-lg font-semibold tracking-tight">
+                    Developer tools
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    2.8. Five named kinds, no command field. The agent chooses the argument vector
+                    from the workspace&apos;s own manifests.
+                  </p>
+                </div>
+                <Badge variant="outline">§2.8</Badge>
+              </div>
               <DevToolsPanel projectId={projectId} />
             </section>
 
-            <section aria-labelledby="docker-heading" className="space-y-3">
-              <h2 id="docker-heading" className="text-lg font-semibold">
-                Docker
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                2.4. Read from the operator&apos;s own daemon through the agent. Every measured
-                figure distinguishes &ldquo;not measured&rdquo; from zero, and the reading carries
-                the time the HOST took it, so a stale panel cannot look live. Actions travel the
-                same chokepoint as a deployment.
-              </p>
+            <section
+              aria-labelledby="docker-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="docker-heading" className="text-lg font-semibold tracking-tight">
+                    Docker
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    2.4. Read from the operator&apos;s own daemon through the agent. Every measured
+                    figure distinguishes &ldquo;not measured&rdquo; from zero.
+                  </p>
+                </div>
+                <Badge variant="outline">§2.4</Badge>
+              </div>
               <DockerDashboard projectId={projectId} />
             </section>
 
-            <section aria-labelledby="kubernetes-heading" className="space-y-3">
-              <h2 id="kubernetes-heading" className="text-lg font-semibold">
-                Kubernetes
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                2.9. Scale, restart and roll back are mutations and go through the chokepoint;
-                against a recorded environment they inherit that environment&apos;s approval
-                requirement. A family the cluster would not disclose is named as unreadable rather
-                than shown as empty.
-              </p>
+            <section
+              aria-labelledby="kubernetes-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="kubernetes-heading" className="text-lg font-semibold tracking-tight">
+                    Kubernetes
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    2.9. Scale, restart and roll back are mutations and go through the chokepoint.
+                  </p>
+                </div>
+                <Badge variant="outline">§2.9</Badge>
+              </div>
               <KubernetesDashboard projectId={projectId} />
             </section>
 
-            <section aria-labelledby="secrets-heading" className="space-y-3">
-              <h2 id="secrets-heading" className="text-lg font-semibold">
-                Secret references
-              </h2>
+            <section
+              aria-labelledby="secrets-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div>
+                  <h2 id="secrets-heading" className="text-lg font-semibold tracking-tight">
+                    Secret references
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Map secret keys and vault references to this project for injection into
+                    deployment workloads.
+                  </p>
+                </div>
+                <Badge variant="outline">§1.8</Badge>
+              </div>
               <ProjectSecrets projectId={projectId} />
             </section>
 
-            <section aria-labelledby="activity-heading" className="space-y-3">
-              <h2 id="activity-heading" className="text-lg font-semibold">
-                Activity
-              </h2>
+            <section
+              aria-labelledby="activity-heading"
+              className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <h2 id="activity-heading" className="text-lg font-semibold tracking-tight">
+                  Activity
+                </h2>
+                <Badge variant="outline">Audit</Badge>
+              </div>
               <ProjectActivity projectId={projectId} />
             </section>
           </div>
@@ -228,18 +309,19 @@ function ProjectFacts({ project }: { project: ProjectResponse }) {
 
 function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="rounded-lg border border-border bg-background p-4">
-      <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className={mono ? "mt-1 break-all font-mono text-xs" : "mt-1 text-sm"}>{value}</dd>
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <dt className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+        {label}
+      </dt>
+      <dd className={mono ? "mt-1 break-all font-mono text-xs" : "mt-1 text-sm font-medium"}>
+        {value}
+      </dd>
     </div>
   );
 }
 
 /**
  * Add and remove tags — PRD FR-02's write half.
- *
- * Tags are lower-cased server-side, and the input says so rather than letting someone add `Prod` and
- * then wonder why the `prod` filter does not include it.
  */
 function TagEditor({ project }: { project: ProjectResponse }) {
   const queryClient = useQueryClient();
@@ -264,80 +346,75 @@ function TagEditor({ project }: { project: ProjectResponse }) {
   });
 
   return (
-    <section aria-labelledby="tags-heading" className="space-y-3">
-      <h2 id="tags-heading" className="text-lg font-semibold">
-        Tags
-      </h2>
-      <ul className="flex flex-wrap gap-2">
-        {project.tags.length === 0 ? (
-          <li className="text-sm text-muted-foreground">No tags yet.</li>
-        ) : (
-          project.tags.map((tag) => (
-            <li key={tag}>
-              <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs">
-                {tag}
-                <button
-                  type="button"
-                  aria-label={`Remove the tag ${tag}`}
-                  data-testid={`remove-tag-${tag}`}
-                  onClick={() => remove.mutate(tag)}
-                  disabled={remove.isPending}
-                  className="text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                >
-                  ×
-                </button>
-              </span>
-            </li>
-          ))
-        )}
-      </ul>
+    <section
+      aria-labelledby="tags-heading"
+      className="rounded-xl border border-border bg-card/40 p-6 shadow-sm space-y-4"
+    >
+      <div className="flex items-center justify-between border-b border-border/60 pb-3">
+        <h2 id="tags-heading" className="text-lg font-semibold tracking-tight">
+          Tags
+        </h2>
+        <Badge variant="outline">Metadata</Badge>
+      </div>
+      <div className="space-y-3">
+        <ul className="flex flex-wrap gap-2">
+          {project.tags.length === 0 ? (
+            <li className="text-sm text-muted-foreground">No tags yet.</li>
+          ) : (
+            project.tags.map((tag) => (
+              <li key={tag}>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs font-medium">
+                  {tag}
+                  <button
+                    type="button"
+                    onClick={() => remove.mutate(tag)}
+                    disabled={remove.isPending}
+                    data-testid={`remove-tag-${tag}`}
+                    aria-label={`Remove tag ${tag}`}
+                    className="hover:text-destructive text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            ))
+          )}
+        </ul>
 
-      <form
-        className="flex flex-wrap items-end gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const tag = draft.trim();
-          if (tag !== "") add.mutate(tag);
-        }}
-      >
-        <div className="min-w-[12rem]">
-          <label htmlFor="new-tag" className="block text-sm font-medium">
+        <form
+          className="flex flex-wrap items-center gap-2 pt-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const trimmed = draft.trim();
+            if (trimmed !== "") add.mutate(trimmed);
+          }}
+        >
+          <label htmlFor="tag-draft" className="text-xs text-muted-foreground font-medium">
             Add a tag
           </label>
           <input
-            id="new-tag"
+            id="tag-draft"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             maxLength={64}
-            aria-describedby="new-tag-help"
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder="e.g. production"
+            className="flex h-8 w-44 rounded-md border border-input bg-background px-2.5 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
-          <p id="new-tag-help" className="mt-1 text-xs text-muted-foreground">
-            Stored lower-cased, so <code>Prod</code> and <code>prod</code> are one tag rather than
-            two that split the filter.
-          </p>
-        </div>
-        <button
-          type="submit"
-          disabled={draft.trim() === "" || add.isPending}
-          className="rounded-md border border-border px-3 py-2 text-sm font-medium disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Add
-        </button>
-      </form>
-
-      <GovernanceRefusal error={add.error ?? remove.error} action="change this project's tags" />
+          <Button
+            type="submit"
+            size="sm"
+            disabled={draft.trim() === "" || add.isPending}
+            className="h-8 px-3 text-xs"
+          >
+            Add
+          </Button>
+          <span className="text-xs text-muted-foreground">stored lower-cased</span>
+        </form>
+      </div>
     </section>
   );
 }
 
-/**
- * The score, with a link to the full breakdown rather than a second copy of it.
- *
- * One `ReadinessEngine` evaluation per view of one project. That is why the list screen reports an
- * index file count instead of a score: this is the query that costs an index walk, and running it per
- * row of a list would run it twenty-five times.
- */
 function ReadinessSummary({ projectId }: { projectId: string }) {
   const readiness = useQuery({
     queryKey: queryKeys.projects.readiness(projectId),
@@ -353,37 +430,59 @@ function ReadinessSummary({ projectId }: { projectId: string }) {
       label="readiness"
     >
       {readiness.data ? (
-        <div className="rounded-lg border border-border bg-background p-4">
-          {readiness.data.indexed ? (
-            <>
-              <p className="text-sm">
-                <span className="text-2xl font-bold" data-testid="detail-readiness-score">
-                  {readiness.data.score}
-                </span>
-                <span className="text-muted-foreground">/100 — {readiness.data.level}</span>
+        <div className="space-y-4">
+          {!readiness.data.indexed ? (
+            <div
+              data-testid="detail-readiness-unscanned"
+              className="rounded-lg border border-border bg-muted/20 p-4 text-sm"
+            >
+              <p className="font-semibold text-foreground">Not scanned.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Readiness is measured from the codebase index, and this project has none, so there
+                is no score — not a score of zero. Pair an agent or scan the codebase in the index
+                panel above.
               </p>
-              <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
-                {Object.entries(readiness.data.categories).map(([key, score]) => (
-                  <div key={key} className="flex justify-between gap-2">
-                    <dt className="text-muted-foreground">{categoryLabel(key)}</dt>
-                    <dd className="font-medium">{score}</dd>
-                  </div>
-                ))}
-              </dl>
-            </>
+            </div>
           ) : (
-            <p className="text-sm text-muted-foreground" data-testid="detail-readiness-unscanned">
-              <strong>Not scanned.</strong> Readiness is measured from the codebase index, and this
-              project has none, so there is no score — not a score of zero. The scan command is in
-              the index panel above.
-            </p>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div
+                  data-testid="detail-readiness-score"
+                  className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-xl font-bold text-primary"
+                >
+                  {readiness.data.score}
+                </div>
+                <div>
+                  <span className="text-sm font-semibold">
+                    Overall readiness score ({readiness.data.score}/100 — {readiness.data.level})
+                  </span>
+                  <p className="text-xs text-muted-foreground">
+                    Based on Dockerfiles, K8s manifests, and deployment configuration
+                  </p>
+                </div>
+              </div>
+
+              {readiness.data.categories && Object.keys(readiness.data.categories).length > 0 && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {Object.entries(readiness.data.categories).map(([key, score]) => (
+                    <div
+                      key={key}
+                      className="rounded-lg border border-border bg-card p-3 shadow-sm"
+                    >
+                      <dt className="text-xs text-muted-foreground">{categoryLabel(key)}</dt>
+                      <dd className="mt-1 text-lg font-bold">{score}</dd>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
-          <p className="mt-3 text-xs">
+          <p className="text-xs pt-1">
             <Link
               href="/readiness"
-              className="underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="font-medium text-primary underline underline-offset-4 hover:opacity-80"
             >
-              Open the full breakdown, with each check and why it matters
+              Open the full breakdown, with each check and why it matters →
             </Link>
           </p>
         </div>
@@ -400,14 +499,28 @@ function ProjectSecrets({ projectId }: { projectId: string }) {
   });
 
   return (
-    <AsyncState
-      isPending={secrets.isPending}
-      error={secrets.error}
-      isEmpty={secrets.data?.length === 0}
-      emptyMessage="No secret references are registered for this project. The Vault screen adds them."
-      label="secret references"
-    >
-      <SecretVault secrets={secrets.data ?? []} projectId={projectId} readOnly />
+    <AsyncState isPending={secrets.isPending} error={secrets.error} label="secret references">
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border/80 bg-muted/20 p-4 text-xs space-y-2">
+          <p className="font-semibold text-foreground text-sm">Managing Secrets for this Project</p>
+          <p className="text-muted-foreground leading-relaxed">
+            Secret references map sensitive credentials (such as database passwords, API tokens, or
+            private keys) to your deployment manifests without ever hardcoding secrets in Git.
+            Whenever your deployment manifests or developer tools reference an environment variable,
+            register its key and target environment below.
+          </p>
+          <div className="pt-1">
+            <Link
+              href="/vault"
+              className="inline-flex items-center text-xs font-medium text-primary underline underline-offset-4 hover:opacity-80"
+            >
+              Open global Vault dashboard →
+            </Link>
+          </div>
+        </div>
+
+        <SecretVault secrets={secrets.data ?? []} projectId={projectId} />
+      </div>
     </AsyncState>
   );
 }
@@ -427,16 +540,16 @@ function ProjectActivity({ projectId }: { projectId: string }) {
       emptyMessage="No governance events have been recorded against this project yet."
       label="activity"
     >
-      <ul className="divide-y divide-border rounded-lg border border-border bg-background">
+      <ul className="divide-y divide-border rounded-lg border border-border bg-card shadow-sm">
         {activity.data?.map((item) => (
           <li key={item.id} className="p-4 text-sm">
             <div className="flex items-baseline justify-between gap-4">
-              <span className="font-medium">{item.action}</span>
+              <span className="font-medium text-foreground">{item.action}</span>
               <time className="font-mono text-xs text-muted-foreground" dateTime={item.timestamp}>
                 {item.timestamp}
               </time>
             </div>
-            <p className="mt-1 text-muted-foreground">{item.details}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{item.details}</p>
           </li>
         ))}
       </ul>

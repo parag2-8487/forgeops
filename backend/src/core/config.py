@@ -74,6 +74,7 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "AI_RATE_LIMIT_REFILL_PER_SECOND",
         "AI_RATE_LIMIT_FAIL_MODE",
         "OUTBOUND_HTTP_TIMEOUT_SECONDS",
+        "MODEL_HTTP_TIMEOUT_SECONDS",
         # BYO-Key
         "LLM_KEY_RESOLVER",
         "LLM_KEY_OPENAI",

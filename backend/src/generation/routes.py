@@ -287,7 +287,19 @@ async def create_generation_run(
         if compiled is not None and memory_port is not None:
             memory = await memory_port.memory_for_prompt(session, project_id=body.project_id)
             if not memory.is_empty:
-                compiled = replace(compiled, text=compiled.text + nl_join(memory.content))
+                skill_file = nl_join(memory.content)
+                compiled = replace(compiled, text=compiled.text + skill_file)
+                # THE REPAIR PROMPTS GET IT TOO, and leaving them out was a latent defect rather than a
+                # harmless omission. A repair is a model call like any other; injecting the project's
+                # learned preferences into the opening ask and not into the retry means the model is
+                # told one thing first and a different thing when it is corrected -- and the retry is
+                # the call that has to land, because it is the one the gate already refused once.
+                #
+                # Invisible while no preference is stored, which is exactly why it had to be fixed
+                # before something stored one.
+                repair_prompts = {
+                    path: replace(prompt, text=prompt.text + skill_file) for path, prompt in repair_prompts.items()
+                }
                 await memory_port.record_injection(session, project_id=body.project_id, memory=memory)
 
         # Persisted BEFORE the stream, not after. A run that crashes mid-generation is exactly the run
@@ -448,7 +460,12 @@ async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: Gene
             # FR-13. This column has existed since revision `0006` and was never written, so a run's
             # grounding was unrecoverable after the request finished — which made "generated using RAG
             # context" a claim with no record behind it.
-            "retrieval = CAST(:retrieval AS jsonb), finished_at = now() "
+            "retrieval = CAST(:retrieval AS jsonb), "
+            # PER-ATTEMPT EVIDENCE, revision `0037`. A row that says `template_fallback` must be able to
+            # name which attempt failed and why -- and, because each record carries its duration, whether
+            # it was refused on its merits or cut off by a client budget. That distinction is what three
+            # investigations this cycle lacked.
+            "attempts = CAST(:attempts AS jsonb), finished_at = now() "
             "WHERE id = :id"
         ),
         {
@@ -464,6 +481,7 @@ async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: Gene
             # to a JSONB parameter through `text()` leaves the driver to guess, and the guess differs
             # between asyncpg and psycopg.
             "retrieval": json.dumps(outcome.retrieval) if outcome.retrieval is not None else None,
+            "attempts": json.dumps(outcome.attempts),
         },
     )
     await session.commit()
