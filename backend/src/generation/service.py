@@ -636,7 +636,8 @@ class GenerationService:
                 through three investigations.
                 """
                 if outcome is not None:
-                    outcome.attempts.append(
+                    attempts_list: list[dict[str, Any]] = outcome.attempts
+                    attempts_list.append(
                         {
                             "attempt": _n,
                             "seconds": _seconds,
