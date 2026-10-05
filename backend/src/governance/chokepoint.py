@@ -3117,6 +3117,29 @@ class GovernanceChokepoint:
             project_id=row["project_id"],
             tenant_id=row["tenant_id"],
         )
+
+        # WHATEVER THIS CHANGE SET WAS FOR NOW SETTLES TOO.
+        if self._settler is not None:
+            try:
+                async with session.begin_nested():
+                    await self._settler.settle(
+                        session,
+                        change_set_id=change_set_id,
+                        succeeded=False,
+                        report={"error": reason},
+                    )
+            except Exception as error:  # noqa: BLE001 - the transition must survive this
+                await session.execute(
+                    text(
+                        "UPDATE change_sets SET operation_args = "
+                        "COALESCE(operation_args, '{}'::jsonb) || CAST(:note AS jsonb) WHERE id = :id"
+                    ),
+                    {
+                        "note": json.dumps({"settlement_error": f"{type(error).__name__}: {error}"[:500]}),
+                        "id": change_set_id,
+                    },
+                )
+
         await session.commit()
         return "rolled_back"
 

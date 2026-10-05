@@ -249,7 +249,14 @@ class DeploymentService:
             )
         return await self.read(session, deployment_id=deployment_id)
 
-    async def fail(self, session: AsyncSession, *, deployment_id: uuid.UUID, reason: str) -> DeploymentRecord:
+    async def fail(
+        self,
+        session: AsyncSession,
+        *,
+        deployment_id: uuid.UUID,
+        reason: str,
+        environment: str | None = None,
+    ) -> DeploymentRecord:
         """The apply itself was refused. Nothing was verified, so `healthy` stays NULL.
 
         NULL rather than False, deliberately: False asserts that the workloads were checked and were not
@@ -279,7 +286,7 @@ class DeploymentService:
                 session,
                 project_id=record.project_id,
                 deployment_id=deployment_id,
-                environment=str(record.environment_id),
+                environment=environment or str(record.environment_id),
                 reason=reason,
             )
         return record

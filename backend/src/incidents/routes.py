@@ -368,14 +368,14 @@ async def preview_suggestion(
     }
 
 
-@router.post("/incidents/{incident_id}/suggestions/{suggestion_id}/submit")
+@router.post("/incidents/{incident_id}/suggestions/{suggestion_id}/submit", status_code=201)
 async def submit_suggestion(
     incident_id: uuid.UUID,
     suggestion_id: uuid.UUID,
-    body: SuggestionSubmission,
     principal: Annotated[Principal, Depends(require_principal)],
     session: Annotated[AsyncSession, Depends(get_session)],
     chokepoint: Annotated[GovernanceChokepoint, Depends(_chokepoint)],
+    body: SuggestionSubmission | None = None,
 ) -> dict[str, Any]:
     """Turn a suggestion into a governed change set. The only path from suggestion to file.
 
@@ -414,6 +414,13 @@ async def submit_suggestion(
             ),
         )
 
+    env = (body.environment if body else None) or "staging"
+    reason = (
+        f"incident {incident_id} suggested fix: {body.reason}"
+        if (body and body.reason)
+        else f"incident {incident_id} suggested fix"
+    )
+
     submission = await chokepoint.submit(
         session,
         MutationRequest(
@@ -435,14 +442,14 @@ async def submit_suggestion(
                     new_content=row["proposed_content"],
                 ),
             ),
-            reason=f"incident {incident_id} suggested fix: {body.reason}",
+            reason=reason,
             # `manual`, not a new origin value. A human read the diff and submitted, which is what
             # `manual` means -- and `approve()` branches on origin, so a fourth value risks an unhandled
             # branch for no gain. The AI provenance is not lost: it is
             # `incident_fix_suggestions.change_set_id`, a foreign key, which is a better record than an
             # enum string because it joins back to the analysis and the evidence behind it.
             origin="manual",
-            environment=body.environment,
+            environment=env,
         ),
         principal=principal,
     )

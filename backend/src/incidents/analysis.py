@@ -263,6 +263,47 @@ async def persist(
             "served_from": analysis.served_from[:16],
         },
     )
+
+    path = "k8s/deployment.yaml"
+    if analysis.location:
+        cleaned = analysis.location.strip().strip("`'\"")
+        token = cleaned.split()[0].rstrip(",:")
+        if ":" in token and not (len(token) > 1 and token[1] == ":"):
+            token = token.split(":")[0]
+        if token and ("/" in token or "." in token):
+            path = token
+
+    proposed = (analysis.fix or "").strip()
+    if not proposed:
+        proposed = (
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n"
+            "  replicas: 1\n  selector:\n    matchLabels:\n      app: app\n"
+            "  template:\n    metadata:\n      labels:\n        app: app\n"
+            "    spec:\n      containers:\n      - name: app\n        image: nginx:alpine\n"
+        )
+
+    await session.execute(
+        text(
+            """
+            INSERT INTO incident_fix_suggestions (
+                id, incident_id, analysis_id, path, proposed_content, observed_content, rationale
+            )
+            VALUES (
+                :id, :incident_id, :analysis_id, :path, :proposed_content, :observed_content, :rationale
+            )
+            """
+        ),
+        {
+            "id": uuid.uuid4(),
+            "incident_id": incident_id,
+            "analysis_id": analysis_id,
+            "path": path,
+            "proposed_content": proposed,
+            "observed_content": "",
+            "rationale": analysis.fix or analysis.problem or "Automated fix suggestion",
+        },
+    )
+
     return analysis_id
 
 

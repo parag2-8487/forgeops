@@ -91,8 +91,9 @@ class DeploymentSettler:
         project_name = await self._project_name(session, row["project_id"])
 
         if not succeeded:
+            reason = _failure_reason(report)
             record = await self.deployments.fail(
-                session, deployment_id=deployment_id, reason="the agent reported the command failed"
+                session, deployment_id=deployment_id, reason=reason, environment=environment
             )
             await self._notify_failure(
                 session,
@@ -102,7 +103,7 @@ class DeploymentSettler:
                 environment=environment,
                 deployment_id=deployment_id,
                 status=record.status,
-                detail="the agent reported the command failed",
+                detail=reason,
             )
             # THE BREAKER COUNTS THIS AND COUNTS NOTHING ELSE. This branch is reached only when the
             # AGENT RAN THE COMMAND AND IT FAILED, which is the repeating failure the breaker is for: a
@@ -114,7 +115,7 @@ class DeploymentSettler:
                 session,
                 project_id=row["project_id"],
                 environment=environment,
-                reason=_failure_reason(report),
+                reason=reason,
             )
             return
 
