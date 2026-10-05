@@ -560,7 +560,7 @@ class GenerationService:
                 first_attempt_prompt = redacted
 
             attempt_started = time.monotonic()
-            deltas: asyncio.Queue[str | None] = asyncio.Queue()
+            deltas: asyncio.Queue[str | None] = asyncio.Queue(maxsize=1)
 
             async def _sink(text: str, queue: asyncio.Queue[str | None] = deltas) -> None:
                 await queue.put(text)
@@ -598,6 +598,7 @@ class GenerationService:
                             SSEEventType.TOKEN,
                             {"run_id": str(run_id), "text": drain.result(), "attempt": attempt},
                         )
+                        await asyncio.sleep(0.005)
                         continue
                     # The call finished. Anything already queued is still owed to the client.
                     drain.cancel()
@@ -612,6 +613,7 @@ class GenerationService:
                             SSEEventType.TOKEN,
                             {"run_id": str(run_id), "text": text, "attempt": attempt},
                         )
+                        await asyncio.sleep(0.005)
                     break
             finally:
                 if not task.done():

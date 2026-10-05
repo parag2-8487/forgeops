@@ -30,10 +30,10 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0037"
-down_revision = "0036"
-branch_labels = None
-depends_on = None
+revision: str = "0037"
+down_revision: str | None = "0036"
+branch_labels: str | None = None
+depends_on: str | None = None
 
 
 def upgrade() -> None:
