@@ -414,7 +414,7 @@ async def submit_suggestion(
             ),
         )
 
-    env = (body.environment if body else None) or "staging"
+    env = body.environment if body else None
     reason = (
         f"incident {incident_id} suggested fix: {body.reason}"
         if (body and body.reason)
