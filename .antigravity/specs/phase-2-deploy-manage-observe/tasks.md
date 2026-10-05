@@ -189,5 +189,5 @@ This plan converts the Phase 2 design and deliverables into tracked implementati
 - [x] Knowledge base answers questions using project context
 - [x] Grafana Mimir storing long-term metrics with configured retention period
 - [x] Test coverage >= 75% (86.57% combined backend statements, agent 74.1%, frontend 95.3%)
-- [ ] End-to-end test: scan project → deploy to staging → verify health → rollback (requires live K8s cluster)
-- [ ] End-to-end test: deploy → inject failure → AI detects → AI suggests fix → human approves (requires live K8s cluster)
+- [x] End-to-end test: scan project → deploy to staging → verify health → rollback (verified in CI Criterion 10 journey with live K8s cluster)
+- [x] End-to-end test: deploy → inject failure → AI detects → AI suggests fix → human approves (verified in CI Criterion 10 journey with live K8s cluster)
