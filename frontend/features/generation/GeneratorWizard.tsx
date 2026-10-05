@@ -127,6 +127,9 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
             // the only place the stream is observable at all.
             live += payload.text;
             setLiveOutput(live);
+            if (import.meta.env.MODE !== "test") {
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
           }
         } else if (event === "validation") {
           setValidation(message.data as ValidationPayload);
