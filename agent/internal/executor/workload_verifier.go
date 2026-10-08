@@ -127,14 +127,15 @@ func VerifyWorkloadHealth(ctx context.Context, workDir string, bp *models.Projec
 				req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 				resp, err := client.Do(req)
 				if err == nil {
-					defer resp.Body.Close()
-					if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+					status := resp.StatusCode
+					_ = resp.Body.Close()
+					if status >= 200 && status < 400 {
 						return &WorkloadVerificationResult{
 							Healthy:        true,
 							WorkloadType:   string(bp.WorkloadType),
 							TargetEndpoint: url,
 							Latency:        time.Since(start),
-							Message:        fmt.Sprintf("HTTP health check succeeded (status %d)", resp.StatusCode),
+							Message:        fmt.Sprintf("HTTP health check succeeded (status %d)", status),
 						}, nil
 					}
 				}

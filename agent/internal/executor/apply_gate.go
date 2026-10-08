@@ -54,7 +54,11 @@ func ExecuteApplyGate(ctx context.Context, workDir string, bp *models.ProjectBlu
 
 	// Startup stability observation: ensure container does not crash immediately
 	observationPeriod := 5 * time.Second
-	time.Sleep(observationPeriod)
+	select {
+	case <-time.After(observationPeriod):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 
 	// Check container status
 	var psCmd *exec.Cmd

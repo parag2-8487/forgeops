@@ -84,88 +84,89 @@ CMD ["npm", "start"]
     assert g3_result.passed is True, f"G3 Consistency Gate failed: {g3_result.errors}"
     print(f"[G3 PASSED] Consistency verified: build context and COPY sources valid on disk.")
 
-    # -------------------------------------------------------------
-    # Stage 4: G4 Build / Compile Gate
-    # -------------------------------------------------------------
-    print("[G4 BUILDING] Executing container build...")
-    build_cmd = [
-        "docker", "build",
-        "-f", str(generated_dockerfile),
-        "-t", "forgeops-e2e-codereview:test",
-        str(REAL_REPO_PATH)
-    ]
-    build_res = subprocess.run(build_cmd, capture_output=True, text=True)
-    assert build_res.returncode == 0, f"G4 Build failed:\nSTDOUT:\n{build_res.stdout}\nSTDERR:\n{build_res.stderr}"
-    print(f"[G4 PASSED] Build succeeded on Attempt 1. Zero exit code 127.")
+    try:
+        # -------------------------------------------------------------
+        # Stage 4: G4 Build / Compile Gate
+        # -------------------------------------------------------------
+        print("[G4 BUILDING] Executing container build...")
+        build_cmd = [
+            "docker", "build",
+            "-f", str(generated_dockerfile),
+            "-t", "forgeops-e2e-codereview:test",
+            str(REAL_REPO_PATH)
+        ]
+        build_res = subprocess.run(build_cmd, capture_output=True, text=True)
+        assert build_res.returncode == 0, f"G4 Build failed:\nSTDOUT:\n{build_res.stdout}\nSTDERR:\n{build_res.stderr}"
+        print(f"[G4 PASSED] Build succeeded on Attempt 1. Zero exit code 127.")
 
-    # -------------------------------------------------------------
-    # Stage 5: G5 Apply / Startup Gate
-    # -------------------------------------------------------------
-    print("[G5 APPLYING] Starting container...")
-    # Clean up any preexisting container
-    subprocess.run(["docker", "rm", "-f", "forgeops-e2e-codereview"], capture_output=True)
+        # -------------------------------------------------------------
+        # Stage 5: G5 Apply / Startup Gate
+        # -------------------------------------------------------------
+        print("[G5 APPLYING] Starting container...")
+        # Clean up any preexisting container
+        subprocess.run(["docker", "rm", "-f", "forgeops-e2e-codereview"], capture_output=True)
 
-    run_cmd = [
-        "docker", "run", "-d",
-        "--name", "forgeops-e2e-codereview",
-        "-p", "31337:3000",
-        "-e", "PORT=3000",
-        "forgeops-e2e-codereview:test"
-    ]
-    run_res = subprocess.run(run_cmd, capture_output=True, text=True)
-    assert run_res.returncode == 0, f"G5 Run failed: {run_res.stderr}"
+        run_cmd = [
+            "docker", "run", "-d",
+            "--name", "forgeops-e2e-codereview",
+            "-p", "31337:3000",
+            "-e", "PORT=3000",
+            "forgeops-e2e-codereview:test"
+        ]
+        run_res = subprocess.run(run_cmd, capture_output=True, text=True)
+        assert run_res.returncode == 0, f"G5 Run failed: {run_res.stderr}"
 
-    # Allow container startup stabilization
-    time.sleep(5)
-    inspect_res = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.Status}}", "forgeops-e2e-codereview"],
-        capture_output=True,
-        text=True
-    )
-    status = inspect_res.stdout.strip().lower()
-    assert status == "running", f"Container exited prematurely: state={status}"
-    print(f"[G5 PASSED] Container started successfully and is in state '{status}'.")
+        # Allow container startup stabilization
+        time.sleep(5)
+        inspect_res = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Status}}", "forgeops-e2e-codereview"],
+            capture_output=True,
+            text=True
+        )
+        status = inspect_res.stdout.strip().lower()
+        assert status == "running", f"Container exited prematurely: state={status}"
+        print(f"[G5 PASSED] Container started successfully and is in state '{status}'.")
 
-    # -------------------------------------------------------------
-    # Stage 6: G6 Workload Verification Gate
-    # -------------------------------------------------------------
-    print("[G6 VERIFYING] Polling HTTP health on http://127.0.0.1:31337/ ...")
-    health_passed = False
-    last_status = None
-    start_poll = time.time()
+        # -------------------------------------------------------------
+        # Stage 6: G6 Workload Verification Gate
+        # -------------------------------------------------------------
+        print("[G6 VERIFYING] Polling HTTP health on http://127.0.0.1:31337/ ...")
+        health_passed = False
+        last_status = None
+        start_poll = time.time()
 
-    while time.time() - start_poll < 30:
-        try:
-            r = requests.get("http://127.0.0.1:31337/", timeout=3)
-            last_status = r.status_code
-            if 200 <= r.status_code < 400:
-                health_passed = True
-                break
-        except Exception:
-            time.sleep(2)
+        while time.time() - start_poll < 30:
+            try:
+                r = requests.get("http://127.0.0.1:31337/", timeout=3)
+                last_status = r.status_code
+                if 200 <= r.status_code < 400:
+                    health_passed = True
+                    break
+            except Exception:
+                time.sleep(2)
 
-    assert health_passed, f"G6 Workload health check failed (status: {last_status})"
-    print(f"[G6 PASSED] Workload verified healthy: HTTP {last_status} response received.")
+        assert health_passed, f"G6 Workload health check failed (status: {last_status})"
+        print(f"[G6 PASSED] Workload verified healthy: HTTP {last_status} response received.")
 
-    # -------------------------------------------------------------
-    # Stage 7: G7 Final Deployment Gate
-    # -------------------------------------------------------------
-    print("[G7 SIGN-OFF] Certifying deployment readiness.")
-    # Final assertion: container still running, zero restarts
-    inspect_restart = subprocess.run(
-        ["docker", "inspect", "-f", "{{.State.RestartCount}}", "forgeops-e2e-codereview"],
-        capture_output=True,
-        text=True
-    )
-    restart_count = int(inspect_restart.stdout.strip() or 0)
-    assert restart_count == 0, f"Container experienced {restart_count} unexpected restarts."
+        # -------------------------------------------------------------
+        # Stage 7: G7 Final Deployment Gate
+        # -------------------------------------------------------------
+        print("[G7 SIGN-OFF] Certifying deployment readiness.")
+        # Final assertion: container still running, zero restarts
+        inspect_restart = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.RestartCount}}", "forgeops-e2e-codereview"],
+            capture_output=True,
+            text=True
+        )
+        restart_count = int(inspect_restart.stdout.strip() or 0)
+        assert restart_count == 0, f"Container experienced {restart_count} unexpected restarts."
 
-    print(f"[G7 PASSED] Deployment verified with 0 restarts. Traffic ready at http://localhost:31337")
-
-    # Cleanup container, test image, build cache, and temporary file
-    subprocess.run(["docker", "rm", "-f", "forgeops-e2e-codereview"], capture_output=True)
-    subprocess.run(["docker", "rmi", "-f", "forgeops-e2e-codereview:test"], capture_output=True)
-    subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
-    if generated_dockerfile.exists():
-        generated_dockerfile.unlink()
-    print("[CLEANUP COMPLETED] Test container, test image, and builder cache cleared.")
+        print(f"[G7 PASSED] Deployment verified with 0 restarts. Traffic ready at http://localhost:31337")
+    finally:
+        # Cleanup container, test image, build cache, and temporary file
+        subprocess.run(["docker", "rm", "-f", "forgeops-e2e-codereview"], capture_output=True)
+        subprocess.run(["docker", "rmi", "-f", "forgeops-e2e-codereview:test"], capture_output=True)
+        subprocess.run(["docker", "builder", "prune", "-f"], capture_output=True)
+        if generated_dockerfile.exists():
+            generated_dockerfile.unlink()
+        print("[CLEANUP COMPLETED] Test container, test image, and builder cache cleared.")
