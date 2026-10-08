@@ -1,9 +1,9 @@
 # Generic Deployment Engine Step-by-Step Implementation Plan
 
-**Plan Version:** 1.0.0  
-**Date:** 2026-10-08  
-**Architecture Spec:** [`2026-10-08-generic-deployment-engine-design.md`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/docs/superpowers/specs/2026-10-08-generic-deployment-engine-design.md)  
-**Status:** Pending Operator Approval (Step 9 of Brainstorming / Pre-Implementation)  
+**Plan Version:** 1.0.0
+**Date:** 2026-10-08
+**Architecture Spec:** [`2026-10-08-generic-deployment-engine-design.md`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/docs/superpowers/specs/2026-10-08-generic-deployment-engine-design.md)
+**Status:** Pending Operator Approval (Step 9 of Brainstorming / Pre-Implementation)
 **Target Systems:**
 
 - Backend: [`prompt_compiler.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/prompt_compiler.py), [`service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py), [`routes.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/routes.py)
@@ -392,7 +392,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 
 ---
 
-### Phase 5: Workload-Aware Verification & Final Deployment Gate (G6 & G7 Gates)
+### Stage 5: Workload-Aware Verification & Final Deployment Gate (G6 & G7 Gates)
 
 #### Step 5.1: Target-Aware Workload Verification Engine
 
@@ -453,7 +453,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 
 ---
 
-### Phase 6: Bounded AI Recovery, Diagnostic Bundling & User Source Protection
+### Stage 6: Bounded AI Recovery, Diagnostic Bundling & User Source Protection
 
 #### Step 6.1: Diagnostic Bundle Aggregation Engine
 
@@ -521,7 +521,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 
 ---
 
-### Phase 7: Heterogeneous Archetype Validation, Failure Injection & Anti-Pattern Linter
+### Stage 7: Heterogeneous Archetype Validation, Failure Injection & Anti-Pattern Linter
 
 #### Step 7.1: Anti-Pattern Regression Linter
 
@@ -618,7 +618,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 
 ---
 
-### Phase 8: Logging, Observability, Migration & Rollout
+### Stage 8: Logging, Observability, Migration & Rollout
 
 #### Step 8.1: Logging, Diagnostics & Real-Time Observability
 
@@ -669,10 +669,10 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 | **Phase 2** | Artifact Validation        | Dockerfiles, Compose, and K8s validate for syntax (Level 1) and blueprint compatibility (Level 2). Incompatible artifacts rejected with diagnostic reason.                                  | Inspect artifact validation test results on valid and broken Dockerfiles.     |
 | **Phase 3** | Synthesis & Consistency    | Generated prompts strictly parameterized by blueprint. Ad-hoc directory replacements removed from backend. G3 catches missing files/ports before execution.                                 | Inspect generated Dockerfiles for nested apps and prompt compiler unit tests. |
 | **Phase 4** | Execution & Classification | Blind 10-attempt loop removed from `deployment.go`. Deterministic errors fast-fail on Attempt 1. Transient errors retry <= 2 times with 3s/6s backoff. G4 and G5 gates separated.           | Run failure-injection tests verifying Attempt 1 fast-fail for compile errors. |
-| **Phase 5** | Workload Verification      | G6 health checks tailored to workload type (HTTP, TCP, worker, batch). Background workers verify without HTTP probes. G7 gives final sign-off before `SUCCESS`.                             | Run worker fixture test and web service health verification.                  |
-| **Phase 6** | Diagnostic Recovery        | Comprehensive diagnostic bundle emitted on failure. AI recovery strictly bounded to 1–3 iterations. Zero modifications to user application source code.                                     | Verify source code protection and bounded recovery test cases.                |
-| **Phase 7** | Validation & Anti-Patterns | Anti-pattern linter passes with zero hardcoded directory names. All 12 heterogeneous archetypes deploy cleanly. Original nested Next.js regression test passes on Attempt 1.                | Review complete 12-archetype test matrix report and linter output.            |
-| **Phase 8** | Migration & Observability  | Structured SSE events emitted for G1–G7 transitions. Feature flag operational. System ready for production deployment.                                                                      | End-to-end deployment verification on live test containers.                   |
+| **Stage 5** | Workload Verification      | G6 health checks tailored to workload type (HTTP, TCP, worker, batch). Background workers verify without HTTP probes. G7 gives final sign-off before `SUCCESS`.                             | Run worker fixture test and web service health verification.                  |
+| **Stage 6** | Diagnostic Recovery        | Comprehensive diagnostic bundle emitted on failure. AI recovery strictly bounded to 1–3 iterations. Zero modifications to user application source code.                                     | Verify source code protection and bounded recovery test cases.                |
+| **Stage 7** | Validation & Anti-Patterns | Anti-pattern linter passes with zero hardcoded directory names. All 12 heterogeneous archetypes deploy cleanly. Original nested Next.js regression test passes on Attempt 1.                | Review complete 12-archetype test matrix report and linter output.            |
+| **Stage 8** | Migration & Observability  | Structured SSE events emitted for G1–G7 transitions. Feature flag operational. System ready for production deployment.                                                                      | End-to-end deployment verification on live test containers.                   |
 
 ---
 
