@@ -103,6 +103,7 @@ export function CloudDeployModal({
   });
 
   const [quickVercelConnecting, setQuickVercelConnecting] = useState(false);
+  const [vercelTestSuccess, setVercelTestSuccess] = useState<string | null>(null);
 
   // Fetch Vercel config check
   const vercelCheck = useQuery<VercelConfigCheckResponse>({
@@ -135,13 +136,22 @@ export function CloudDeployModal({
     }
   };
 
-  // Connect Vercel token
+  // Connect & test Vercel token
   const handleQuickConnectVercel = async () => {
     if (!vercelToken.trim()) return;
     setQuickVercelConnecting(true);
     setVercelError(null);
+    setVercelTestSuccess(null);
     try {
-      await api.put("/integrations/vercel/token", { token: vercelToken.trim() });
+      const res = await api.put<{ connected: boolean; username?: string }>(
+        "/integrations/vercel/token",
+        { token: vercelToken.trim() },
+      );
+      setVercelTestSuccess(
+        res.username
+          ? `Connection verified: connected as @${res.username}`
+          : "Connection verified and saved successfully.",
+      );
       await queryClient.invalidateQueries({ queryKey: queryKeys.integrations.vercel() });
     } catch (err: unknown) {
       const msg = err instanceof ApiProblemError ? err.problem.detail : String(err);
@@ -231,11 +241,11 @@ export function CloudDeployModal({
         </div>
 
         {/* Tab Selector */}
-        <div className="flex gap-2 border-b border-border pb-2">
+        <div className="flex items-center gap-2 border-b border-border pb-2 overflow-x-auto">
           <button
             type="button"
             onClick={() => setActiveTab("github")}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            className={`px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap shrink-0 transition-colors ${
               activeTab === "github"
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-muted"
@@ -246,7 +256,7 @@ export function CloudDeployModal({
           <button
             type="button"
             onClick={() => setActiveTab("vercel")}
-            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+            className={`px-4 py-2 text-sm font-medium rounded-md whitespace-nowrap shrink-0 transition-colors ${
               activeTab === "vercel"
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-muted"
@@ -468,12 +478,18 @@ export function CloudDeployModal({
             )}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <Button variant="outline" size="sm" onClick={onClose}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onClose}
+                className="whitespace-nowrap shrink-0"
+              >
                 Cancel
               </Button>
               <Button
                 size="sm"
                 onClick={() => pushMutation.mutate()}
+                className="whitespace-nowrap shrink-0"
                 disabled={
                   pushMutation.isPending ||
                   !githubLink.data?.connected ||
@@ -531,7 +547,11 @@ export function CloudDeployModal({
                       : "Paste Vercel Token (vcp_...)"
                   }
                   value={vercelToken}
-                  onChange={(e) => setVercelToken(e.target.value)}
+                  onChange={(e) => {
+                    setVercelToken(e.target.value);
+                    setVercelTestSuccess(null);
+                    setVercelError(null);
+                  }}
                   className="text-sm font-mono flex-1"
                 />
                 {vercelToken.trim().length >= 10 && (
@@ -541,11 +561,17 @@ export function CloudDeployModal({
                     size="sm"
                     disabled={quickVercelConnecting}
                     onClick={handleQuickConnectVercel}
+                    className="whitespace-nowrap shrink-0"
                   >
-                    {quickVercelConnecting ? "Saving…" : "Save to Integrations"}
+                    {quickVercelConnecting ? "Testing…" : "Test Connection"}
                   </Button>
                 )}
               </div>
+              {vercelTestSuccess && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                  {vercelTestSuccess}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 Your token is securely stored and sealed with AES-256-GCM envelope encryption.
               </p>
@@ -636,12 +662,18 @@ export function CloudDeployModal({
             )}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <Button variant="outline" size="sm" onClick={onClose}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onClose}
+                className="whitespace-nowrap shrink-0"
+              >
                 Cancel
               </Button>
               <Button
                 size="sm"
                 onClick={() => deployMutation.mutate()}
+                className="whitespace-nowrap shrink-0"
                 disabled={
                   deployMutation.isPending || (!vercelToken.trim() && !vercelLink.data?.connected)
                 }

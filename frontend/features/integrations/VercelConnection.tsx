@@ -45,6 +45,7 @@ export function VercelConnection() {
   const client = useQueryClient();
   const status = useVercelLink();
   const [error, setError] = useState<string | null>(null);
+  const [testSuccess, setTestSuccess] = useState<string | null>(null);
   const [token, setToken] = useState("");
 
   const linkWithToken = useMutation({
@@ -52,16 +53,31 @@ export function VercelConnection() {
       api.put<VercelLinkStatus>("/integrations/vercel/token", { token: token.trim() }),
     onSuccess: () => {
       setError(null);
+      setTestSuccess(null);
       setToken("");
       void client.invalidateQueries({ queryKey: queryKeys.integrations.vercel() });
     },
     onError: (caught: unknown) => setError(describe(caught)),
   });
 
+  const testConnection = useMutation({
+    mutationFn: () => api.post<VercelLinkStatus>("/integrations/vercel/test"),
+    onSuccess: (data) => {
+      setError(null);
+      setTestSuccess(`Connection verified: connected as @${data.username || "Vercel User"}`);
+      void client.invalidateQueries({ queryKey: queryKeys.integrations.vercel() });
+    },
+    onError: (caught: unknown) => {
+      setTestSuccess(null);
+      setError(describe(caught));
+    },
+  });
+
   const disconnect = useMutation({
     mutationFn: () => api.delete<VercelLinkStatus>("/integrations/vercel"),
     onSuccess: () => {
       setError(null);
+      setTestSuccess(null);
       void client.invalidateQueries({ queryKey: queryKeys.integrations.vercel() });
     },
     onError: (caught: unknown) => setError(describe(caught)),
@@ -141,9 +157,9 @@ export function VercelConnection() {
               type="submit"
               data-testid="vercel-token-submit"
               disabled={linkWithToken.isPending || token.trim().length < 10}
-              className="w-full sm:w-auto"
+              className="w-full sm:w-auto whitespace-nowrap shrink-0"
             >
-              {linkWithToken.isPending ? "Validating with Vercel…" : "Connect Vercel"}
+              {linkWithToken.isPending ? "Validating with Vercel…" : "Test & Connect Vercel"}
             </Button>
           </form>
 
@@ -192,17 +208,37 @@ export function VercelConnection() {
           </div>
         </dl>
 
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="vercel-test-connection"
+            disabled={testConnection.isPending || disconnect.isPending}
+            onClick={() => testConnection.mutate()}
+            className="whitespace-nowrap shrink-0"
+          >
+            {testConnection.isPending ? "Testing connection…" : "Test Connection"}
+          </Button>
           <Button
             type="button"
             variant="destructive"
             data-testid="vercel-disconnect"
-            disabled={disconnect.isPending}
+            disabled={disconnect.isPending || testConnection.isPending}
             onClick={() => disconnect.mutate()}
+            className="whitespace-nowrap shrink-0"
           >
             {disconnect.isPending ? "Disconnecting…" : "Disconnect Vercel"}
           </Button>
         </div>
+
+        {testSuccess ? (
+          <div
+            data-testid="vercel-test-success"
+            className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-600 dark:text-emerald-400 font-medium"
+          >
+            {testSuccess}
+          </div>
+        ) : null}
 
         {error ? (
           <div

@@ -14,6 +14,7 @@ import { ApiProblemError } from "@/lib/api";
 
 const get = vi.fn();
 const put = vi.fn();
+const post = vi.fn();
 const del = vi.fn();
 
 vi.mock("@/lib/api", async () => {
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", async () => {
     api: {
       get: (...args: unknown[]) => get(...args),
       put: (...args: unknown[]) => put(...args),
+      post: (...args: unknown[]) => post(...args),
       delete: (...args: unknown[]) => del(...args),
     },
   };
@@ -60,6 +62,7 @@ function renderWithQuery(element: ReactElement) {
 beforeEach(() => {
   get.mockReset();
   put.mockReset();
+  post.mockReset();
   del.mockReset();
 });
 
@@ -152,6 +155,47 @@ describe("VercelConnection", () => {
 
     expect(await screen.findByTestId("vercel-link-problem")).toHaveTextContent(
       "Network disconnect error",
+    );
+  });
+
+  it("tests connection successfully when test connection button is clicked", async () => {
+    get.mockResolvedValue(CONNECTED);
+    post.mockResolvedValue({
+      ...CONNECTED,
+      username: "parag-tester",
+    });
+
+    renderWithQuery(<VercelConnection />);
+
+    const testBtn = await screen.findByTestId("vercel-test-connection");
+    await userEvent.click(testBtn);
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith("/integrations/vercel/test");
+    });
+    expect(await screen.findByTestId("vercel-test-success")).toHaveTextContent(
+      "Connection verified: connected as @parag-tester",
+    );
+  });
+
+  it("surfaces error when test connection fails", async () => {
+    get.mockResolvedValue(CONNECTED);
+    post.mockRejectedValue(
+      new ApiProblemError({
+        type: "https://forgeops.dev/problems/vercel-deploy-failed",
+        title: "Test Connection Failed",
+        status: 401,
+        detail: "Vercel refused token: token expired",
+      }),
+    );
+
+    renderWithQuery(<VercelConnection />);
+
+    const testBtn = await screen.findByTestId("vercel-test-connection");
+    await userEvent.click(testBtn);
+
+    expect(await screen.findByTestId("vercel-link-problem")).toHaveTextContent(
+      "Vercel refused token: token expired",
     );
   });
 });

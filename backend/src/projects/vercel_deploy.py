@@ -243,7 +243,10 @@ async def deploy_project_to_vercel(
     # 4. Prepare File Payload for Vercel Deployments API
     deploy_files: list[dict[str, Any]] = []
     for path, content in files.items():
-        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        if content.startswith("__forgeops_b64__:"):
+            encoded = content.removeprefix("__forgeops_b64__:")
+        else:
+            encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
         deploy_files.append(
             {
                 "file": path,

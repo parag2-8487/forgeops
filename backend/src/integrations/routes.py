@@ -811,3 +811,69 @@ async def disconnect_vercel(
     )
     await session.commit()
     return VercelLinkStatus(connected=False)
+
+
+@router.post(
+    "/vercel/test",
+    response_model=VercelLinkStatus,
+    summary="Test current Vercel connection",
+)
+async def test_vercel_connection(
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VercelLinkStatus:
+    """Test the stored Vercel token live against api.vercel.com."""
+    from sqlalchemy import text
+    from .github_link import derive_link_key, unseal_token
+
+    result = await session.execute(
+        text("SELECT encrypted_value, value_hint FROM provider_credentials WHERE key_ref = :ref"),
+        {"ref": f"vercel:{principal.user_id}"},
+    )
+    row = result.mappings().first()
+    if not row or not row.get("encrypted_value"):
+        raise problem("validation-error", detail="No Vercel token is linked. Please connect Vercel first.")
+
+    seal_key = derive_link_key(request.app.state.settings.envelope_pepper)
+    try:
+        raw_token = unseal_token(row["encrypted_value"], user_id=principal.user_id, key=seal_key)
+    except Exception as exc:
+        raise problem("vercel-deploy-failed", detail=f"Failed to unseal token: {exc}") from exc
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        resp = await client.get(
+            "https://api.vercel.com/v2/user",
+            headers={AUTH_HEADER: f"{BEARER_SCHEME} {raw_token}"},
+        )
+        if resp.status_code != 200:
+            detail = resp.text
+            try:
+                detail = resp.json().get("error", {}).get("message", detail)
+            except Exception:
+                pass
+            raise problem("vercel-deploy-failed", detail=f"Vercel refused token ({resp.status_code}): {detail}")
+
+        user_data = resp.json().get("user", {})
+        username = user_data.get("username") or user_data.get("email") or "Vercel User"
+        email = user_data.get("email")
+
+    detail_str = f"connected as {username}"
+    await session.execute(
+        text(
+            "UPDATE provider_credentials SET last_tested_at = now(), last_test_ok = true, "
+            "last_test_detail = :detail WHERE key_ref = :ref"
+        ),
+        {"detail": detail_str, "ref": f"vercel:{principal.user_id}"},
+    )
+    await session.commit()
+    return VercelLinkStatus(
+        configured=True,
+        connected=True,
+        username=username,
+        email=email,
+        token_hint=row.get("value_hint"),
+        last_test_ok=True,
+        last_test_detail=detail_str,
+    )
+

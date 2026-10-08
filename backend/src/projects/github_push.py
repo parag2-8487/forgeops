@@ -91,7 +91,7 @@ async def push_project_to_github(
                     name=req.new_repo_name.strip(),
                     description=req.new_repo_description.strip(),
                     private=req.new_repo_private,
-                    auto_init=False,
+                    auto_init=True,
                     client=client,
                 )
             except Exception as exc:
@@ -130,13 +130,41 @@ async def push_project_to_github(
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
+        # 2b. Ensure Target Repository is Initialized
+        # GitHub's Git Data API (/git/blobs) returns 409 "Git Repository is empty" if called on
+        # a repository with 0 commits. Check if branches exist; if empty, seed an initial commit.
+        branch = req.branch.strip() or "main"
+        branches_resp = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/branches",
+            headers=headers,
+        )
+        if branches_resp.status_code == 200 and len(branches_resp.json()) == 0:
+            init_content = base64.b64encode(f"# {repo}\n\nProject export from ForgeOps\n".encode("utf-8")).decode("ascii")
+            init_resp = await client.put(
+                f"https://api.github.com/repos/{owner}/{repo}/contents/README.md",
+                headers=headers,
+                json={
+                    "message": "Initial commit",
+                    "content": init_content,
+                    "branch": branch,
+                },
+            )
+            if init_resp.status_code not in (200, 201):
+                raise problem(
+                    "github-init-failed",
+                    detail=f"Failed to initialize empty repository: {init_resp.status_code} {init_resp.text}",
+                )
+
         # 3. Create Blobs on GitHub for each file
         blob_entries: list[dict[str, Any]] = []
         semaphore = asyncio.Semaphore(10)
 
         async def _upload_blob(path: str, content: str) -> dict[str, Any]:
             norm_path = path.replace("\\", "/").lstrip("/")
-            encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+            if content.startswith("__forgeops_b64__:"):
+                encoded = content.removeprefix("__forgeops_b64__:")
+            else:
+                encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
             async with semaphore:
                 resp = await client.post(
                     f"https://api.github.com/repos/{owner}/{repo}/git/blobs",

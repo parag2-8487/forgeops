@@ -257,6 +257,7 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     # ─── Direct Export & Deployment ──────────────────────────────────────────
     "github-push-failed": ProblemSpec(502, "Failed to push to GitHub"),
     "github-create-failed": ProblemSpec(502, "Failed to create GitHub repository"),
+    "github-init-failed": ProblemSpec(502, "Failed to initialize GitHub repository"),
     "github-blob-upload-failed": ProblemSpec(502, "Failed to upload file to GitHub"),
     "github-tree-failed": ProblemSpec(502, "Failed to create GitHub tree"),
     "github-commit-failed": ProblemSpec(502, "Failed to create GitHub commit"),

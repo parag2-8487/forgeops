@@ -72,6 +72,7 @@ def test_export_and_deploy_problem_types_registered():
     expected_types = [
         "github-push-failed",
         "github-create-failed",
+        "github-init-failed",
         "github-blob-upload-failed",
         "github-tree-failed",
         "github-commit-failed",
@@ -85,3 +86,43 @@ def test_export_and_deploy_problem_types_registered():
         prob = problem(p_type, detail="test detail")
         assert prob.problem.type.endswith(p_type)
         assert prob.problem.detail == "test detail"
+
+
+def test_vercel_deploy_binary_base64_payload():
+    import base64
+
+    raw_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    b64_str = base64.b64encode(raw_bytes).decode("ascii")
+    files = {
+        "index.html": "<html><body>test</body></html>",
+        "public/images/logo.png": f"__forgeops_b64__:{b64_str}",
+    }
+
+    deploy_files = []
+    for path, content in files.items():
+        if content.startswith("__forgeops_b64__:"):
+            encoded = content.removeprefix("__forgeops_b64__:")
+        else:
+            encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        deploy_files.append({"file": path, "data": encoded, "encoding": "base64"})
+
+    logo_entry = next(f for f in deploy_files if f["file"] == "public/images/logo.png")
+    assert logo_entry["data"] == b64_str
+    assert base64.b64decode(logo_entry["data"]) == raw_bytes
+
+
+def test_github_push_binary_base64_decoding():
+    import base64
+
+    raw_bytes = b"\xff\xd8\xff\xe0\x00\x10JFIF"
+    b64_str = base64.b64encode(raw_bytes).decode("ascii")
+    content = f"__forgeops_b64__:{b64_str}"
+
+    if content.startswith("__forgeops_b64__:"):
+        encoded = content.removeprefix("__forgeops_b64__:")
+    else:
+        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+
+    assert encoded == b64_str
+    assert base64.b64decode(encoded) == raw_bytes
+
