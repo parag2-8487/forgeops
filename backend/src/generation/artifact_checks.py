@@ -112,6 +112,15 @@ def validate_dockerfile(content: str) -> list[str]:
                 "Dockerfile references hallucinated/typoed directory 'frontent'. Copy files directly from root: "
                 "`COPY package*.json ./`."
             )
+    # Check if final stage invokes npm start or node without package.json copied
+    stages = re.split(r"(?i)^\s*FROM\s+", content, flags=re.MULTILINE)
+    if len(stages) > 1:
+        final_stage = stages[-1]
+        if re.search(r'(?i)(CMD|ENTRYPOINT)\s+.*["\']npm["\']', final_stage) and not re.search(r'(?i)COPY\s+.*package.*\.json', final_stage):
+            findings.append(
+                "Dockerfile final stage executes 'npm' but does not copy 'package*.json' (e.g. `COPY package*.json ./`). "
+                "This will fail with ENOENT: Could not read package.json at runtime."
+            )
     findings.extend(_port_disagreements(content))
     return findings
 

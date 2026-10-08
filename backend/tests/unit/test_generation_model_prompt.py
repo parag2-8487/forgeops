@@ -42,8 +42,7 @@ def _complete(**overrides: str) -> str:
 
 
 class TestTheParseYieldsTheRequiredSetOrNamesWhatIsMissing:
-    def test_a_well_formed_response_yields_all_five_in_order(self) -> None:
-        assert "docker-compose.yml" in REQUIRED_ARTIFACTS
+    def test_a_well_formed_response_yields_all_four_in_order(self) -> None:
         parsed = parse_artifacts(_complete())
         assert list(parsed) == list(REQUIRED_ARTIFACTS)
 

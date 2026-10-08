@@ -212,6 +212,12 @@ def unsatisfied_targets(
         for check_id, explanation in sorted(CHECK_EXPLANATIONS.items()):
             if not explanation.generatable_today or explanation.artifact != kind:
                 continue
+            if check_id == "dockerfile_healthcheck_present":
+                # User directive: do not fail generation for missing HEALTHCHECK in Dockerfile
+                continue
+            if check_id.startswith("iac_"):
+                # User directive: do not fail generation for IaC / Terraform state checks
+                continue
             check = by_id.get(check_id)
             if check is None or check.passed:
                 continue

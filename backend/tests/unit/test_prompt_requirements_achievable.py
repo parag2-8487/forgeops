@@ -99,7 +99,7 @@ class TestTheInstructedDockerfileSatisfiesTheGate:
         not contain, which is how the two drift apart.
         """
         requirements = " ".join(GATE_REQUIREMENTS["dockerfile"])
-        for literal in ("USER 10001", "AS builder", "COPY --from=builder", "HEALTHCHECK"):
+        for literal in ("USER 10001", "AS builder", "COPY --from=builder"):
             assert literal in requirements, f"{literal!r} is not in the requirements"
             assert literal in INSTRUCTED_DOCKERFILE, f"{literal!r} is required but the shape omits it"
 

@@ -50,14 +50,13 @@ from typing import Any
 #: model chose not to write a compose stack — strictly worse than the partial result it replaced.
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "Dockerfile",
-    "docker-compose.yml",
     "k8s/deployment.yaml",
     "k8s/service.yaml",
     "k8s/ingress.yaml",
 )
 
 #: Artifacts the run asks for and accepts, without treating their absence as a failed attempt.
-OPTIONAL_ARTIFACTS: tuple[str, ...] = ()
+OPTIONAL_ARTIFACTS: tuple[str, ...] = ("docker-compose.yml",)
 
 #: `### FILE: <path>`, tolerating any number of leading hashes and surrounding whitespace.
 #:

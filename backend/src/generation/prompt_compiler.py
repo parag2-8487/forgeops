@@ -110,8 +110,8 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "./`). Never use relative paths like `./dist` or `dist`, which resolve to `/` "
         "(container root) and cause build failures.",
         "For frontend client applications (Vite, React, Vue, Svelte, static web apps) without a backend server, "
-        "do not assume a Node entry file exists. Serve the built static directory with a static file server "
-        "instead of starting a process that is not there.",
+        "if you run `npm start` in the final image, you MUST also `COPY package*.json ./` to the final stage so npm can find package.json. "
+        "Better yet, serve the built static directory with a lightweight static server (e.g. `npx serve -s dist -l $PORT`) or copy `package*.json` so `npm` commands do not fail with ENOENT.",
         "Install with the package manager this repository's lockfile names, using that manager's own "
         "install command. Do not invent flags it does not have, and never run an install command whose "
         "lockfile is absent from section 1.",
@@ -120,13 +120,10 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         # healthy — the healthcheck probes inside the container, so it passed — while the browser got
         # an empty response from the published port nothing was listening on.
         "EVERY PORT IN THE FILE IS THE SAME NUMBER. The port in `EXPOSE`, the port the CMD or "
-        "ENTRYPOINT binds, the port `ENV PORT` sets, and the port the HEALTHCHECK probes must all be "
+        "ENTRYPOINT binds, and the port `ENV PORT` sets must all be "
         "identical. `EXPOSE` is a declaration no runtime reads, so a different number there does not "
         "move the listener — it only misdirects whatever publishes the port, and the result is a "
         "container that reports healthy and answers nothing.",
-        "There is a `HEALTHCHECK` instruction. Write it as a single line beginning `HEALTHCHECK ` with "
-        "`--interval`, `--timeout` and `--retries` options and a `CMD` that exercises the service's own "
-        "health endpoint. A comment mentioning health does not count; the instruction must be present.",
         "The base image and the build steps match the language of THIS repository, as stated in the "
         "facts section above. Do not write a build for a different language.",
         "All repository source files are located at the root of the repository unless "
@@ -667,6 +664,9 @@ def compile_prompt(
         if explanation is None or not explanation.artifact or not check.generatable:
             reason = check.blocked_because or "no generated artifact addresses this check"
             unaddressable.append(f"{check.id}: {reason}")
+            continue
+        if explanation.artifact == "opentofu" or check.id.startswith("iac_"):
+            unaddressable.append(f"{check.id}: infrastructure-as-code state management is out of scope for container deployment generation")
             continue
         by_artifact.setdefault(explanation.artifact, []).append(check)
 

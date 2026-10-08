@@ -22,7 +22,6 @@ const ADDRESSABLE: Readonly<Record<string, string>> = {
   dockerfile_multi_stage: "use a multi-stage build so build tools are absent from the final image",
   dockerfile_non_root: "run as a non-root user created in the image",
   dockerfile_base_pinned: "pin the base image to an explicit version tag rather than latest",
-  dockerfile_healthcheck_present: "declare a HEALTHCHECK",
 
   // ── Compose: local development & container grouping ──
   compose_file_present:
@@ -44,6 +43,7 @@ const ADDRESSABLE: Readonly<Record<string, string>> = {
  * suggestion instead of silently omitting it. An unexplained omission reads as an oversight.
  */
 const OUT_OF_SCOPE: Readonly<Record<string, string>> = {
+  dockerfile_healthcheck_present: "a HEALTHCHECK",
   dockerignore_present: "a .dockerignore",
   helm_chart_present: "a Helm chart",
   ci_pipeline_present: "a CI workflow",

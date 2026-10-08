@@ -542,12 +542,25 @@ class GenerationService:
                     # "it failed" has to guess what to change, and guessing is what produced the
                     # failure. The findings are appended rather than merged into the instruction so the
                     # model can see which of its own output is being objected to.
+                    locked_port = facts.port
+                    for carried_file in carried.values():
+                        if carried_file.path.startswith("k8s/") and ("deployment" in carried_file.path or "service" in carried_file.path):
+                            kp_set = _extract_k8s_workload_ports(carried_file.content) or _extract_k8s_service_ports(carried_file.content)
+                            if kp_set:
+                                locked_port = sorted(kp_set)[0]
+                                break
+                        elif carried_file.path == "Dockerfile":
+                            df_set = _extract_dockerfile_container_ports(carried_file.content)
+                            if df_set:
+                                locked_port = sorted(df_set)[0]
+                                break
+
                     model_prompt = (
                         model_prompt
                         + "\n## 7. WHAT THE VALIDATORS SAID ABOUT YOUR PREVIOUS ATTEMPT\n\n"
                         + "Your last output was rejected. Fix exactly these and change nothing else:\n\n"
                         + "\n".join(f"  - {finding}" for finding in findings)
-                        + f"\n\nCRITICAL CONSISTENCY REQUIREMENT: The application port is locked to {facts.port} and service name is '{facts.app_name}'. Every port declaration (EXPOSE, containerPort, targetPort, compose port mapping) and service reference across all files must match this exact port and name.\n"
+                        + f"\n\nCRITICAL CONSISTENCY REQUIREMENT: The application port is locked to {locked_port} and service name is '{facts.app_name}'. Every port declaration (EXPOSE, containerPort, targetPort, compose port mapping) and service reference across all files must match this exact port {locked_port} and name '{facts.app_name}'.\n"
                     )
             else:
                 model_prompt = build_generation_prompt(
