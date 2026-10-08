@@ -387,10 +387,12 @@ spec:
         ports:
         - containerPort: 8080
 """
-    findings = validate_artifacts([
-        _Artifact("Dockerfile", dockerfile),
-        _Artifact("k8s/deployment.yaml", deployment),
-    ])
+    findings = validate_artifacts(
+        [
+            _Artifact("Dockerfile", dockerfile),
+            _Artifact("k8s/deployment.yaml", deployment),
+        ]
+    )
     assert any("cross-artifact: port mismatch" in f and "3000" in f and "8080" in f for f in findings), findings
 
 
@@ -408,10 +410,12 @@ CMD ["node", "server.js"]
     ports:
       - "8080:8080"
 """
-    findings = validate_artifacts([
-        _Artifact("Dockerfile", dockerfile),
-        _Artifact("docker-compose.yml", compose),
-    ])
+    findings = validate_artifacts(
+        [
+            _Artifact("Dockerfile", dockerfile),
+            _Artifact("docker-compose.yml", compose),
+        ]
+    )
     assert any("cross-artifact: port mismatch" in f for f in findings), findings
 
 
@@ -460,12 +464,14 @@ spec:
       port: 80
       targetPort: 3000
 """
-    findings = validate_artifacts([
-        _Artifact("Dockerfile", dockerfile),
-        _Artifact("docker-compose.yml", compose),
-        _Artifact("k8s/deployment.yaml", deployment),
-        _Artifact("k8s/service.yaml", service),
-    ])
+    findings = validate_artifacts(
+        [
+            _Artifact("Dockerfile", dockerfile),
+            _Artifact("docker-compose.yml", compose),
+            _Artifact("k8s/deployment.yaml", deployment),
+            _Artifact("k8s/service.yaml", service),
+        ]
+    )
     assert not any("cross-artifact:" in f for f in findings), findings
 
 
@@ -501,10 +507,12 @@ spec:
       port: 80
       targetPort: 3000
 """
-    findings = validate_artifacts([
-        _Artifact("k8s/deployment.yaml", deployment),
-        _Artifact("k8s/service.yaml", service),
-    ])
+    findings = validate_artifacts(
+        [
+            _Artifact("k8s/deployment.yaml", deployment),
+            _Artifact("k8s/service.yaml", service),
+        ]
+    )
     assert any("cross-artifact:" in f and "selector" in f for f in findings), findings
 
 
@@ -538,9 +546,10 @@ spec:
             port:
               number: 80
 """
-    findings = validate_artifacts([
-        _Artifact("k8s/service.yaml", service),
-        _Artifact("k8s/ingress.yaml", ingress),
-    ])
+    findings = validate_artifacts(
+        [
+            _Artifact("k8s/service.yaml", service),
+            _Artifact("k8s/ingress.yaml", ingress),
+        ]
+    )
     assert any("cross-artifact:" in f and "references backend service" in f for f in findings), findings
-

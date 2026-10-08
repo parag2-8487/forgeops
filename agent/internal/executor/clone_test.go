@@ -314,8 +314,9 @@ func TestClone_AcceptsParentWhenTargetMatchesRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected target matching workspace root to succeed, got %v", err)
 	}
-	if !strings.EqualFold(filepath.Clean(target), filepath.Clean(root)) {
-		t.Errorf("expected target to be %q, got %q", root, target)
+	expected := normaliseDeepestExisting(root)
+	if !strings.EqualFold(filepath.Clean(target), filepath.Clean(expected)) {
+		t.Errorf("expected target to be %q, got %q", expected, target)
 	}
 }
 

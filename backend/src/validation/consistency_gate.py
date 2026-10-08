@@ -6,35 +6,39 @@ with the physical filesystem and the authoritative ProjectBlueprint before conta
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 import yaml
 
-from backend.src.blueprint.models import ProjectBlueprint
+try:
+    from src.blueprint.models import ProjectBlueprint
+except ImportError:
+    from backend.src.blueprint.models import ProjectBlueprint
 
 
 @dataclass
 class ConsistencyGateResult:
     """Outcome of the G3 Pre-Execution Consistency Gate."""
+
     gate_id: str = "G3"
     passed: bool = False
     message: str = ""
-    errors: List[str] = field(default_factory=list)
-    details: Dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 def verify_consistency_gate(
     repo_path: str | Path,
     dockerfile_path: str | Path,
-    compose_path: Optional[str | Path],
+    compose_path: str | Path | None,
     blueprint: ProjectBlueprint,
 ) -> ConsistencyGateResult:
     """Performs static assertion of build context, COPY targets, and port alignment."""
     root = Path(repo_path).resolve()
     df_path = Path(dockerfile_path).resolve() if not Path(dockerfile_path).is_absolute() else Path(dockerfile_path)
-    errors: List[str] = []
+    errors: list[str] = []
 
     # 1. Assert Dockerfile exists
     if not df_path.exists():
@@ -47,10 +51,10 @@ def verify_consistency_gate(
         cp_path = Path(compose_path).resolve() if not Path(compose_path).is_absolute() else Path(compose_path)
         if cp_path.exists():
             try:
-                with open(cp_path, "r", encoding="utf-8") as f:
+                with open(cp_path, encoding="utf-8") as f:
                     compose_data = yaml.safe_load(f) or {}
                 services = compose_data.get("services", {})
-                for svc_name, svc_cfg in services.items():
+                for _svc_name, svc_cfg in services.items():
                     build_info = svc_cfg.get("build")
                     if isinstance(build_info, str):
                         build_context = (cp_path.parent / build_info).resolve()
@@ -93,12 +97,14 @@ def verify_consistency_gate(
     # 4. Port alignment check
     if blueprint.network.listen_port:
         target_port = blueprint.network.listen_port
-        exposed_in_df = f"EXPOSE {target_port}" in content or f"EXPOSE" not in content  # Non-blocking if EXPOSE omitted
+        exposed_in_df = f"EXPOSE {target_port}" in content or "EXPOSE" not in content  # Non-blocking if EXPOSE omitted
         if not exposed_in_df:
             errors.append(f"Dockerfile EXPOSE directive does not include blueprint listen_port {target_port}")
 
     passed = len(errors) == 0
-    message = "Pre-execution consistency verified." if passed else f"G3 Consistency Gate failed with {len(errors)} error(s)."
+    message = (
+        "Pre-execution consistency verified." if passed else f"G3 Consistency Gate failed with {len(errors)} error(s)."
+    )
 
     return ConsistencyGateResult(
         gate_id="G3",

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package executor
 
 import (
@@ -65,7 +67,7 @@ func VerifyWorkloadHealth(ctx context.Context, workDir string, bp *models.Projec
 		if bp.Network.ListenPort != nil {
 			port = *bp.Network.ListenPort
 		}
-		target := fmt.Sprintf("%s:%d", host, port)
+		target := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 		timeout := time.After(25 * time.Second)
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
@@ -83,7 +85,7 @@ func VerifyWorkloadHealth(ctx context.Context, workDir string, bp *models.Projec
 				start := time.Now()
 				conn, err := net.DialTimeout("tcp", target, 2*time.Second)
 				if err == nil {
-					conn.Close()
+					_ = conn.Close()
 					return &WorkloadVerificationResult{
 						Healthy:        true,
 						WorkloadType:   string(bp.WorkloadType),

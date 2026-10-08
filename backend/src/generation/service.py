@@ -544,8 +544,12 @@ class GenerationService:
                     # model can see which of its own output is being objected to.
                     locked_port = facts.port
                     for carried_file in carried.values():
-                        if carried_file.path.startswith("k8s/") and ("deployment" in carried_file.path or "service" in carried_file.path):
-                            kp_set = _extract_k8s_workload_ports(carried_file.content) or _extract_k8s_service_ports(carried_file.content)
+                        if carried_file.path.startswith("k8s/") and (
+                            "deployment" in carried_file.path or "service" in carried_file.path
+                        ):
+                            kp_set = _extract_k8s_workload_ports(carried_file.content) or _extract_k8s_service_ports(
+                                carried_file.content
+                            )
                             if kp_set:
                                 locked_port = sorted(kp_set)[0]
                                 break
@@ -560,7 +564,10 @@ class GenerationService:
                         + "\n## 7. WHAT THE VALIDATORS SAID ABOUT YOUR PREVIOUS ATTEMPT\n\n"
                         + "Your last output was rejected. Fix exactly these and change nothing else:\n\n"
                         + "\n".join(f"  - {finding}" for finding in findings)
-                        + f"\n\nCRITICAL CONSISTENCY REQUIREMENT: The application port is locked to {locked_port} and service name is '{facts.app_name}'. Every port declaration (EXPOSE, containerPort, targetPort, compose port mapping) and service reference across all files must match this exact port {locked_port} and name '{facts.app_name}'.\n"
+                        + f"\n\nCRITICAL CONSISTENCY REQUIREMENT: The application port is locked to {locked_port} "
+                        + f"and service name is '{facts.app_name}'. Every port declaration (EXPOSE, containerPort, "
+                        + "targetPort, compose port mapping) and service reference across all files must match this "
+                        + f"exact port {locked_port} and name '{facts.app_name}'.\n"
                     )
             else:
                 model_prompt = build_generation_prompt(
@@ -777,19 +784,15 @@ class GenerationService:
                     # to change them and, measured, stops it from fixing the one that is wrong. So they are
                     # carried forward and the next call is narrowed to a single rejected artifact with only
                     # that artifact's requirements.
-                    def _is_rejected(path: str) -> bool:
-                        for finding in gate_findings:
+                    def _is_rejected(path: str, findings: list[str] = gate_findings) -> bool:
+                        for finding in findings:
                             if finding.startswith(f"{path}: "):
                                 return True
                             if finding.startswith("cross-artifact: ") and path in finding:
                                 return True
                         return False
 
-                    rejected_paths = [
-                        artifact.path
-                        for artifact in files
-                        if _is_rejected(artifact.path)
-                    ]
+                    rejected_paths = [artifact.path for artifact in files if _is_rejected(artifact.path)]
                     # An artifact the model was asked for and did not produce at all is also a repair
                     # target: it is missing rather than wrong, and a narrow ask is the better second try.
                     missing = [
@@ -840,11 +843,7 @@ class GenerationService:
                 # Include artifacts that passed in earlier attempts and were carried forward
                 all_current = {**carried, **{artifact.path: artifact for artifact in files}}
                 candidate_files = tuple(all_current.values())
-                accepted = tuple(
-                    artifact
-                    for artifact in candidate_files
-                    if not _is_rejected(artifact.path)
-                )
+                accepted = tuple(artifact for artifact in candidate_files if not _is_rejected(artifact.path))
                 # THE FLOOR IS PER ARTIFACT, NOT PER RUN — AND THAT IS THE DEFECT THE JOURNEY CAUGHT.
                 #
                 # Everything below `if not accepted` reaches the template path. So the floor applied
@@ -1007,6 +1006,7 @@ class GenerationService:
                         compose_content = rendered.content
                         if resolved_port is not None:
                             import re as _re
+
                             compose_content = _re.sub(
                                 r'"\d{1,5}:\d{1,5}"',
                                 f'"{resolved_port}:{resolved_port}"',

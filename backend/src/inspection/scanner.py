@@ -9,10 +9,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
 
-
-IGNORED_DIRECTORIES: Set[str] = {
+IGNORED_DIRECTORIES: set[str] = {
     ".git",
     ".hg",
     ".svn",
@@ -37,7 +35,7 @@ IGNORED_DIRECTORIES: Set[str] = {
     ".vscode",
 }
 
-MANIFEST_FILENAMES: Set[str] = {
+MANIFEST_FILENAMES: set[str] = {
     "package.json",
     "pnpm-workspace.yaml",
     "pom.xml",
@@ -57,7 +55,7 @@ MANIFEST_FILENAMES: Set[str] = {
     "Gemfile",
 }
 
-LOCKFILE_FILENAMES: Set[str] = {
+LOCKFILE_FILENAMES: set[str] = {
     "pnpm-lock.yaml",
     "yarn.lock",
     "bun.lockb",
@@ -71,7 +69,7 @@ LOCKFILE_FILENAMES: Set[str] = {
     "Gemfile.lock",
 }
 
-RUNTIME_HINT_FILENAMES: Set[str] = {
+RUNTIME_HINT_FILENAMES: set[str] = {
     ".nvmrc",
     ".node-version",
     ".python-version",
@@ -79,7 +77,7 @@ RUNTIME_HINT_FILENAMES: Set[str] = {
     "runtime.txt",
 }
 
-EXISTING_CONTAINER_FILENAMES: Set[str] = {
+EXISTING_CONTAINER_FILENAMES: set[str] = {
     "Dockerfile",
     "docker-compose.yml",
     "docker-compose.yaml",
@@ -91,6 +89,7 @@ EXISTING_CONTAINER_FILENAMES: Set[str] = {
 @dataclass
 class DiscoveredFile:
     """Metadata regarding a discovered file in the repository tree."""
+
     relative_path: str
     absolute_path: str
     filename: str
@@ -101,14 +100,15 @@ class DiscoveredFile:
 @dataclass
 class DiscoveredRepository:
     """Aggregated manifest, lockfile, and container discoveries across a repository."""
+
     root_path: str
-    manifests: List[DiscoveredFile] = field(default_factory=list)
-    lockfiles: List[DiscoveredFile] = field(default_factory=list)
-    runtime_hints: List[DiscoveredFile] = field(default_factory=list)
-    existing_artifacts: List[DiscoveredFile] = field(default_factory=list)
+    manifests: list[DiscoveredFile] = field(default_factory=list)
+    lockfiles: list[DiscoveredFile] = field(default_factory=list)
+    runtime_hints: list[DiscoveredFile] = field(default_factory=list)
+    existing_artifacts: list[DiscoveredFile] = field(default_factory=list)
     directory_tree_snippet: str = ""
 
-    def get_manifests_by_type(self, filename: str) -> List[DiscoveredFile]:
+    def get_manifests_by_type(self, filename: str) -> list[DiscoveredFile]:
         return [m for m in self.manifests if m.filename == filename]
 
     def has_manifest(self, filename: str) -> bool:
@@ -117,12 +117,12 @@ class DiscoveredRepository:
 
 def scan_repository_tree(root_path: str | Path, max_depth: int = 6) -> DiscoveredRepository:
     """Recursively scans a repository root up to max_depth, ignoring cache/vendor dirs.
-    
+
     Zero assumptions are made regarding directory names.
     """
     root = Path(root_path).resolve()
     discovered = DiscoveredRepository(root_path=str(root))
-    tree_lines: List[str] = []
+    tree_lines: list[str] = []
 
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune ignored directories in-place to avoid descending into them

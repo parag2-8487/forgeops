@@ -8,20 +8,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from backend.src.blueprint.models import ProjectBlueprint, WorkloadType
+try:
+    from src.blueprint.models import ProjectBlueprint, WorkloadType
+except ImportError:
+    from backend.src.blueprint.models import ProjectBlueprint, WorkloadType
 
 
 @dataclass
 class GateResult:
     """Standardized result of a pipeline verification gate."""
+
     gate_id: str
     passed: bool
     status: str  # "PASSED", "FAILED", "AWAITING_OPERATOR_INPUT"
     message: str
-    details: Dict[str, Any] = field(default_factory=dict)
-    candidates: List[str] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
+    candidates: list[str] = field(default_factory=list)
 
 
 def verify_blueprint_gate(blueprint: ProjectBlueprint) -> GateResult:
@@ -89,15 +93,21 @@ def verify_blueprint_gate(blueprint: ProjectBlueprint) -> GateResult:
                 gate_id="G1",
                 passed=False,
                 status="FAILED",
-                message=f"Workload {blueprint.workload_type.value} requires an exposed listen_port in network contract.",
+                message=(
+                    f"Workload {blueprint.workload_type.value} requires an exposed listen_port in network contract."
+                ),
                 details={"network": blueprint.network.to_dict()},
             )
 
+    fw = blueprint.runtime.framework or "standard"
     return GateResult(
         gate_id="G1",
         passed=True,
         status="PASSED",
-        message=f"Blueprint verified successfully for {blueprint.runtime.language} ({blueprint.runtime.framework or 'standard'}) at source_dir '{blueprint.build_config.source_dir}'.",
+        message=(
+            f"Blueprint verified successfully for {blueprint.runtime.language} ({fw}) "
+            f"at source_dir '{blueprint.build_config.source_dir}'."
+        ),
         details={
             "source_dir": blueprint.build_config.source_dir,
             "workload_type": blueprint.workload_type.value,

@@ -2,38 +2,41 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
-from backend.src.blueprint.models import ProjectBlueprint
+try:
+    from src.blueprint.models import ProjectBlueprint
+except ImportError:
+    from backend.src.blueprint.models import ProjectBlueprint
 
 
 @dataclass
 class DiagnosticBundle:
     """Aggregates all contextual and forensic telemetry upon gate failure."""
+
     gate_identifier: str
     stage: str
-    blueprint: Optional[ProjectBlueprint] = None
-    deployment_manifest: Dict[str, str] = field(default_factory=dict)
+    blueprint: ProjectBlueprint | None = None
+    deployment_manifest: dict[str, str] = field(default_factory=dict)
     command_line: str = ""
     exit_code: int = 1
     attempt_count: int = 1
     stdout: str = ""
     stderr: str = ""
     error_classification: str = "DETERMINISTIC"
-    container_state: Dict[str, Any] = field(default_factory=dict)
+    container_state: dict[str, Any] = field(default_factory=dict)
     container_logs: str = ""
     tree_snippet: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         if self.blueprint:
             data["blueprint"] = self.blueprint.to_dict()
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> DiagnosticBundle:
+    def from_dict(cls, data: dict[str, Any]) -> DiagnosticBundle:
         bp_data = data.get("blueprint")
         bp = ProjectBlueprint.from_dict(bp_data) if bp_data else None
         return cls(

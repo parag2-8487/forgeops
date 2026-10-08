@@ -7,21 +7,25 @@ banning any modification of user source code and bounding attempts to 1-3 iterat
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
 
-from backend.src.blueprint.models import ProjectBlueprint
-from backend.src.diagnostics.bundle import DiagnosticBundle
+try:
+    from src.blueprint.models import ProjectBlueprint
+    from src.diagnostics.bundle import DiagnosticBundle
+except ImportError:
+    from backend.src.blueprint.models import ProjectBlueprint
+    from backend.src.diagnostics.bundle import DiagnosticBundle
 
 
 @dataclass
 class RecoveryPlan:
     """Actionable recovery plan produced by AI resolution."""
+
     status: str  # "PROPOSED", "HALTED_MAX_ITERATIONS", "HALTED_APPLICATION_CODE_DEFECT", "HALTED_INFRASTRUCTURE"
     iteration: int
     root_cause_category: str  # "BLUEPRINT_MISMATCH", "ARTIFACT_DEFECT", "APPLICATION_CODE", "INFRASTRUCTURE"
     operator_message: str
-    suggested_manifests: Dict[str, str] = field(default_factory=dict)
-    updated_blueprint: Optional[ProjectBlueprint] = None
+    suggested_manifests: dict[str, str] = field(default_factory=dict)
+    updated_blueprint: ProjectBlueprint | None = None
 
 
 def resolve_failure_with_ai(bundle: DiagnosticBundle, current_iteration: int) -> RecoveryPlan:
@@ -55,13 +59,15 @@ def resolve_failure_with_ai(bundle: DiagnosticBundle, current_iteration: int) ->
     # 3. Classify artifact defect vs blueprint mismatch
     stderr_lower = (bundle.stderr + "\n" + bundle.stdout).lower()
     root_cause = "ARTIFACT_DEFECT"
-    suggested_manifests: Dict[str, str] = {}
+    suggested_manifests: dict[str, str] = {}
     updated_bp = bundle.blueprint
 
     if "file not found in build context" in stderr_lower or "copy failed" in stderr_lower:
         root_cause = "BLUEPRINT_MISMATCH"
         # Adjust build context or source_dir in blueprint if needed
-        operator_msg = "Identified mismatch between build context and Dockerfile COPY instructions. Correcting manifest paths."
+        operator_msg = (
+            "Identified mismatch between build context and Dockerfile COPY instructions. Correcting manifest paths."
+        )
     elif "bind: address already in use" in stderr_lower:
         root_cause = "INFRASTRUCTURE"
         return RecoveryPlan(
@@ -72,7 +78,10 @@ def resolve_failure_with_ai(bundle: DiagnosticBundle, current_iteration: int) ->
         )
     else:
         root_cause = "ARTIFACT_DEFECT"
-        operator_msg = f"AI analyzed build/apply failure in gate {bundle.gate_identifier} and synthesized corrected deployment manifests."
+        operator_msg = (
+            f"AI analyzed build/apply failure in gate {bundle.gate_identifier} "
+            "and synthesized corrected deployment manifests."
+        )
 
     return RecoveryPlan(
         status="PROPOSED",

@@ -8,24 +8,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from backend.src.blueprint.models import ProjectBlueprint
-from backend.src.validation.blueprint_compatibility import (
-    validate_compose_blueprint_compatibility,
-    validate_dockerfile_blueprint_compatibility,
-)
+try:
+    from src.blueprint.models import ProjectBlueprint
+    from src.validation.blueprint_compatibility import (
+        validate_compose_blueprint_compatibility,
+        validate_dockerfile_blueprint_compatibility,
+    )
+except ImportError:
+    from backend.src.blueprint.models import ProjectBlueprint
+    from backend.src.validation.blueprint_compatibility import (
+        validate_compose_blueprint_compatibility,
+        validate_dockerfile_blueprint_compatibility,
+    )
 
 
 @dataclass
 class ArtifactGateDecision:
     """Decision output of the G2 Existing Artifact Gate."""
+
     gate_id: str = "G2"
     action: str = "REGENERATE"  # "REUSE" or "REGENERATE"
-    reusable_dockerfile: Optional[str] = None
-    reusable_compose: Optional[str] = None
-    rejection_reasons: List[str] = field(default_factory=list)
-    details: Dict[str, Any] = field(default_factory=dict)
+    reusable_dockerfile: str | None = None
+    reusable_compose: str | None = None
+    rejection_reasons: list[str] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 def evaluate_existing_artifact_gate(
@@ -42,7 +50,7 @@ def evaluate_existing_artifact_gate(
         (root / blueprint.build_config.source_dir / "Dockerfile").resolve(),
     ]
 
-    valid_dockerfile: Optional[Path] = None
+    valid_dockerfile: Path | None = None
     for df in possible_dockerfiles:
         if df.exists() and df.is_file():
             comp_res = validate_dockerfile_blueprint_compatibility(df, blueprint)
@@ -63,7 +71,7 @@ def evaluate_existing_artifact_gate(
         root / "compose.yaml",
     ]
 
-    valid_compose: Optional[Path] = None
+    valid_compose: Path | None = None
     for cf in possible_compose:
         if cf.exists() and cf.is_file():
             comp_res = validate_compose_blueprint_compatibility(cf, blueprint)

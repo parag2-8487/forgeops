@@ -6,33 +6,50 @@ before evaluating semantic blueprint compatibility.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 import yaml
 
 
 @dataclass
 class ValidationResult:
     """Outcome of a syntax or schema validation check."""
+
     is_valid: bool
     artifact_type: str  # "dockerfile", "compose", "kubernetes"
     message: str
-    errors: List[str] = field(default_factory=list)
-    parsed_metadata: Dict[str, Any] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    parsed_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 DOCKERFILE_INSTRUCTIONS = {
-    "FROM", "RUN", "CMD", "LABEL", "EXPOSE", "ENV", "ADD", "COPY",
-    "ENTRYPOINT", "VOLUME", "USER", "WORKDIR", "ARG", "ONBUILD",
-    "STOPSIGNAL", "HEALTHCHECK", "SHELL"
+    "FROM",
+    "RUN",
+    "CMD",
+    "LABEL",
+    "EXPOSE",
+    "ENV",
+    "ADD",
+    "COPY",
+    "ENTRYPOINT",
+    "VOLUME",
+    "USER",
+    "WORKDIR",
+    "ARG",
+    "ONBUILD",
+    "STOPSIGNAL",
+    "HEALTHCHECK",
+    "SHELL",
 }
 
 
 def validate_dockerfile_syntax(content_or_path: str | Path) -> ValidationResult:
     """Validates Dockerfile syntax, instruction ordering, and base images."""
-    if isinstance(content_or_path, Path) or (isinstance(content_or_path, str) and "\n" not in content_or_path and Path(content_or_path).exists()):
+    if isinstance(content_or_path, Path) or (
+        isinstance(content_or_path, str) and "\n" not in content_or_path and Path(content_or_path).exists()
+    ):
         try:
             content = Path(content_or_path).read_text(encoding="utf-8")
         except Exception as e:
@@ -46,9 +63,9 @@ def validate_dockerfile_syntax(content_or_path: str | Path) -> ValidationResult:
         content = str(content_or_path)
 
     lines = content.splitlines()
-    errors: List[str] = []
+    errors: list[str] = []
     has_from = False
-    metadata: Dict[str, Any] = {
+    metadata: dict[str, Any] = {
         "base_images": [],
         "exposed_ports": [],
         "workdirs": [],
@@ -118,7 +135,9 @@ def validate_dockerfile_syntax(content_or_path: str | Path) -> ValidationResult:
     return ValidationResult(
         is_valid=is_valid,
         artifact_type="dockerfile",
-        message="Dockerfile syntax valid." if is_valid else f"Dockerfile syntax validation failed with {len(errors)} error(s).",
+        message="Dockerfile syntax valid."
+        if is_valid
+        else f"Dockerfile syntax validation failed with {len(errors)} error(s).",
         errors=errors,
         parsed_metadata=metadata,
     )
@@ -126,7 +145,9 @@ def validate_dockerfile_syntax(content_or_path: str | Path) -> ValidationResult:
 
 def validate_compose_schema(content_or_path: str | Path) -> ValidationResult:
     """Validates Docker Compose schema and service definitions."""
-    if isinstance(content_or_path, Path) or (isinstance(content_or_path, str) and "\n" not in content_or_path and Path(content_or_path).exists()):
+    if isinstance(content_or_path, Path) or (
+        isinstance(content_or_path, str) and "\n" not in content_or_path and Path(content_or_path).exists()
+    ):
         try:
             content = Path(content_or_path).read_text(encoding="utf-8")
         except Exception as e:
@@ -157,12 +178,12 @@ def validate_compose_schema(content_or_path: str | Path) -> ValidationResult:
             errors=["Root is not a dictionary"],
         )
 
-    errors: List[str] = []
+    errors: list[str] = []
     services = data.get("services")
     if not services or not isinstance(services, dict):
         errors.append("Compose file must contain a non-empty 'services' dictionary.")
 
-    metadata: Dict[str, Any] = {"service_names": [], "services": {}}
+    metadata: dict[str, Any] = {"service_names": [], "services": {}}
 
     if isinstance(services, dict):
         for svc_name, svc_cfg in services.items():
@@ -187,7 +208,9 @@ def validate_compose_schema(content_or_path: str | Path) -> ValidationResult:
     return ValidationResult(
         is_valid=is_valid,
         artifact_type="compose",
-        message="Compose schema valid." if is_valid else f"Compose schema validation failed with {len(errors)} error(s).",
+        message="Compose schema valid."
+        if is_valid
+        else f"Compose schema validation failed with {len(errors)} error(s).",
         errors=errors,
         parsed_metadata=metadata,
     )

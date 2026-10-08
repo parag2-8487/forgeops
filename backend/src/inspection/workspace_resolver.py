@@ -7,25 +7,36 @@ across single applications, nested directories, and monorepos without hardcoded 
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from backend.src.blueprint.models import (
-    AmbiguityResolution,
-    BuildConfig,
-    NetworkContract,
-    ProjectBlueprint,
-    ProtocolType,
-    RuntimeContract,
-    WorkloadType,
-)
-from backend.src.inspection.scanner import DiscoveredFile, DiscoveredRepository
+try:
+    from src.blueprint.models import (
+        AmbiguityResolution,
+        BuildConfig,
+        NetworkContract,
+        ProjectBlueprint,
+        ProtocolType,
+        RuntimeContract,
+        WorkloadType,
+    )
+    from src.inspection.scanner import DiscoveredFile, DiscoveredRepository
+except ImportError:
+    from backend.src.blueprint.models import (
+        AmbiguityResolution,
+        BuildConfig,
+        NetworkContract,
+        ProjectBlueprint,
+        ProtocolType,
+        RuntimeContract,
+        WorkloadType,
+    )
+    from backend.src.inspection.scanner import DiscoveredFile, DiscoveredRepository
 
 
-def _read_json_safe(path: Path) -> Optional[Dict[str, Any]]:
+def _read_json_safe(path: Path) -> dict[str, Any] | None:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
@@ -33,7 +44,7 @@ def _read_json_safe(path: Path) -> Optional[Dict[str, Any]]:
 
 def _read_text_safe(path: Path) -> str:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return f.read()
     except Exception:
         return ""
@@ -41,26 +52,29 @@ def _read_text_safe(path: Path) -> str:
 
 class WorkspacePackageInfo:
     """Parsed metadata for a package/module within the repository."""
+
     def __init__(self, manifest: DiscoveredFile):
         self.manifest = manifest
         self.directory = manifest.directory
         self.name = manifest.directory
         self.is_runnable = False
         self.is_library = False
-        self.framework: Optional[str] = None
+        self.framework: str | None = None
         self.package_manager = "npm"
         self.start_command = ""
-        self.build_command: Optional[str] = None
-        self.install_command: Optional[str] = None
-        self.output_dir: Optional[str] = None
-        self.listen_port: Optional[int] = 3000
+        self.build_command: str | None = None
+        self.install_command: str | None = None
+        self.output_dir: str | None = None
+        self.listen_port: int | None = 3000
         self.workload_type = WorkloadType.WEB_SERVICE
-        self.dependencies: List[str] = []
+        self.dependencies: list[str] = []
         self.is_workspace_root = False
-        self.declared_workspaces: List[str] = []
+        self.declared_workspaces: list[str] = []
 
 
-def _inspect_node_package(pkg_path: Path, manifest: DiscoveredFile, repo_lockfiles: List[DiscoveredFile]) -> WorkspacePackageInfo:
+def _inspect_node_package(
+    pkg_path: Path, manifest: DiscoveredFile, repo_lockfiles: list[DiscoveredFile]
+) -> WorkspacePackageInfo:
     info = WorkspacePackageInfo(manifest)
     data = _read_json_safe(pkg_path) or {}
     info.name = data.get("name", manifest.directory)
@@ -137,7 +151,7 @@ def _inspect_node_package(pkg_path: Path, manifest: DiscoveredFile, repo_lockfil
     return info
 
 
-def _inspect_python_package(manifest: DiscoveredFile, repo_lockfiles: List[DiscoveredFile]) -> WorkspacePackageInfo:
+def _inspect_python_package(manifest: DiscoveredFile, repo_lockfiles: list[DiscoveredFile]) -> WorkspacePackageInfo:
     info = WorkspacePackageInfo(manifest)
     info.package_manager = "pip"
     content = _read_text_safe(Path(manifest.absolute_path))
@@ -211,10 +225,10 @@ def _inspect_rust_package(manifest: DiscoveredFile) -> WorkspacePackageInfo:
 def resolve_repository_blueprint(
     discovered: DiscoveredRepository,
     blueprint_id: str = "bp-auto",
-    requested_target: Optional[str] = None,
+    requested_target: str | None = None,
 ) -> ProjectBlueprint:
     """Deterministically resolves the repository into an authoritative ProjectBlueprint."""
-    packages: List[WorkspacePackageInfo] = []
+    packages: list[WorkspacePackageInfo] = []
 
     # 1. Parse all discovered manifests
     for manifest in discovered.manifests:
@@ -232,7 +246,7 @@ def resolve_repository_blueprint(
     # 2. Filter candidates
     runnable_candidates = [p for p in packages if p.is_runnable]
 
-    selected_package: Optional[WorkspacePackageInfo] = None
+    selected_package: WorkspacePackageInfo | None = None
     ambiguity = AmbiguityResolution(is_ambiguous=False, confidence_score=1.0)
 
     # If operator explicitly requested a target directory or name
@@ -247,8 +261,12 @@ def resolve_repository_blueprint(
     if not selected_package and workspace_roots:
         root_ws = workspace_roots[0]
         declared_candidates = [
-            p for p in packages
-            if not p.is_workspace_root and any(p.directory == dw or p.name == dw or p.directory.startswith(dw) for dw in root_ws.declared_workspaces)
+            p
+            for p in packages
+            if not p.is_workspace_root
+            and any(
+                p.directory == dw or p.name == dw or p.directory.startswith(dw) for dw in root_ws.declared_workspaces
+            )
         ]
         if len(declared_candidates) == 1:
             selected_package = declared_candidates[0]
@@ -321,8 +339,10 @@ def resolve_repository_blueprint(
                 version = ver_text.replace("python-", "")
 
     # Network contract
-    proto = ProtocolType.HTTP if selected_package.workload_type in {WorkloadType.WEB_SERVICE, WorkloadType.STATIC_SPA} else (
-        ProtocolType.TCP if selected_package.workload_type == WorkloadType.TCP_SERVICE else ProtocolType.NONE
+    proto = (
+        ProtocolType.HTTP
+        if selected_package.workload_type in {WorkloadType.WEB_SERVICE, WorkloadType.STATIC_SPA}
+        else (ProtocolType.TCP if selected_package.workload_type == WorkloadType.TCP_SERVICE else ProtocolType.NONE)
     )
 
     network = NetworkContract(

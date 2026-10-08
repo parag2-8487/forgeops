@@ -116,10 +116,12 @@ def validate_dockerfile(content: str) -> list[str]:
     stages = re.split(r"(?i)^\s*FROM\s+", content, flags=re.MULTILINE)
     if len(stages) > 1:
         final_stage = stages[-1]
-        if re.search(r'(?i)(CMD|ENTRYPOINT)\s+.*["\']npm["\']', final_stage) and not re.search(r'(?i)COPY\s+.*package.*\.json', final_stage):
+        if re.search(r'(?i)(CMD|ENTRYPOINT)\s+.*["\']npm["\']', final_stage) and not re.search(
+            r"(?i)COPY\s+.*package.*\.json", final_stage
+        ):
             findings.append(
-                "Dockerfile final stage executes 'npm' but does not copy 'package*.json' (e.g. `COPY package*.json ./`). "
-                "This will fail with ENOENT: Could not read package.json at runtime."
+                "Dockerfile final stage executes 'npm' but does not copy 'package*.json' "
+                "(e.g. `COPY package*.json ./`). This will fail with ENOENT: Could not read package.json at runtime."
             )
     findings.extend(_port_disagreements(content))
     return findings
@@ -572,10 +574,10 @@ def _check_k8s_service_and_workload_consistency(files: Sequence[Any]) -> list[st
                                                     backend_names.append(str(svc["name"]))
                 ingresses.append((path, backend_names))
 
-    for s_path, selector, s_name in services:
+    for s_path, selector, _s_name in services:
         if not selector:
             continue
-        for d_path, labels, d_name in deployments:
+        for d_path, labels, _d_name in deployments:
             if not labels:
                 continue
             mismatch = False
@@ -616,7 +618,9 @@ def validate_cross_artifact_consistency(files: Sequence[Any]) -> list[str]:
             df_ports = _extract_dockerfile_container_ports(content)
             if df_ports:
                 ports_by_file[path] = df_ports
-        elif norm in ("docker-compose.yml", "docker-compose.yaml") or norm.endswith(("/docker-compose.yml", "/docker-compose.yaml")):
+        elif norm in ("docker-compose.yml", "docker-compose.yaml") or norm.endswith(
+            ("/docker-compose.yml", "/docker-compose.yaml")
+        ):
             cp_ports = _extract_compose_container_ports(content)
             if cp_ports:
                 ports_by_file[path] = cp_ports

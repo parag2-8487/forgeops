@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 package executor
 
 import (
@@ -26,7 +28,7 @@ func VerifyConsistencyGate(repoDir string, dockerfilePath string, bp *models.Pro
 	if err != nil {
 		return fmt.Errorf("G3 consistency gate failed: Dockerfile missing at %s: %w", absDF, err)
 	}
-	defer dfFile.Close()
+	defer func() { _ = dfFile.Close() }()
 
 	buildContext := absRepo
 	scanner := bufio.NewScanner(dfFile)
