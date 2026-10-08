@@ -42,12 +42,12 @@ by hand.
 
 ### Before you start
 
-| Requirement | Why | If it is missing |
-| :--- | :--- | :--- |
-| **~10 GB free disk** | four images plus their base layers | the script stops with the measured free space rather than failing deep inside a build |
-| **Internet access** | Docker's repository, PyPI, and base images | — |
-| **sudo rights** | Docker and system packages | — |
-| **~4 GB RAM** | Authentik alone wants about 1 GB | under 2.5 GB with no swap, a 2 GB swapfile is created automatically |
+| Requirement          | Why                                        | If it is missing                                                                      |
+| :------------------- | :----------------------------------------- | :------------------------------------------------------------------------------------ |
+| **~10 GB free disk** | four images plus their base layers         | the script stops with the measured free space rather than failing deep inside a build |
+| **Internet access**  | Docker's repository, PyPI, and base images | —                                                                                     |
+| **sudo rights**      | Docker and system packages                 | —                                                                                     |
+| **~4 GB RAM**        | Authentik alone wants about 1 GB           | under 2.5 GB with no swap, a 2 GB swapfile is created automatically                   |
 
 A first run takes roughly **10–20 minutes**, most of it pulling base images and building. Later
 runs detect the existing images and finish in seconds.
@@ -55,7 +55,7 @@ runs detect the existing images and finish in seconds.
 ### What `setup.sh` handles automatically
 
 1. **Balances the package-manager lock.** A freshly booted Ubuntu is usually running
-   `unattended-upgrades`, which holds the `dpkg` lock. The script configures `apt` to *wait* for it
+   `unattended-upgrades`, which holds the `dpkg` lock. The script configures `apt` to _wait_ for it
    (up to 5 minutes) instead of failing — so a normal first boot does not produce a spurious
    "could not install Docker".
 2. **Docker Engine and Compose V2.** Adds Docker's official GPG keyring and repository
@@ -102,10 +102,10 @@ runs detect the existing images and finish in seconds.
 
 The script stops at the first real problem and prints what to do next. The two most common:
 
-| Symptom | Cause and fix |
-| :--- | :--- |
-| `Docker daemon did not answer after starting.` | Inside WSL2 or a container, systemd is absent. Start Docker Desktop, or run `sudo service docker start` and re-run `./setup.sh`. |
-| `only N GB free on the filesystem holding /var/lib/docker` | Free space, or reclaim what Docker is holding: `docker system prune -a --volumes`, then re-run. |
+| Symptom                                                    | Cause and fix                                                                                                                    |
+| :--------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------- |
+| `Docker daemon did not answer after starting.`             | Inside WSL2 or a container, systemd is absent. Start Docker Desktop, or run `sudo service docker start` and re-run `./setup.sh`. |
+| `only N GB free on the filesystem holding /var/lib/docker` | Free space, or reclaim what Docker is holding: `docker system prune -a --volumes`, then re-run.                                  |
 
 To see why the stack itself is unhappy: `docker compose logs -f backend`.
 
@@ -121,14 +121,15 @@ docker run --rm -v "$PWD:/mnt" -w /mnt ubuntu:24.04 bash scripts/test-start-forg
 
 Once `setup.sh` finishes, the stack is fully operational:
 
-| Surface | Local URL | Notes |
-| :--- | :--- | :--- |
-| **Frontend Web Dashboard** | <http://localhost:13000> | Main UI for codebase analysis and deployments |
-| **Backend REST API & Docs** | <http://localhost:18000/docs> | Interactive Swagger documentation |
-| **Readiness Health Probe** | <http://localhost:18000/health/ready> | Comprehensive microservice readiness status |
-| **Authentik Admin Portal** | <http://localhost:19000/if/admin/> | Identity provider administration |
+| Surface                     | Local URL                             | Notes                                         |
+| :-------------------------- | :------------------------------------ | :-------------------------------------------- |
+| **Frontend Web Dashboard**  | <http://localhost:13000>              | Main UI for codebase analysis and deployments |
+| **Backend REST API & Docs** | <http://localhost:18000/docs>         | Interactive Swagger documentation             |
+| **Readiness Health Probe**  | <http://localhost:18000/health/ready> | Comprehensive microservice readiness status   |
+| **Authentik Admin Portal**  | <http://localhost:19000/if/admin/>    | Identity provider administration              |
 
 **Default Login Credentials:**
+
 - **Admin**: Username `parag` | Password `parag1111`
 - **Developer**: Username `parag-developer` | Password `parag1111`
 - **Viewer**: Username `parag-viewer` | Password `parag1111`
@@ -142,23 +143,27 @@ addresses actually in use.
 ## Core Features & Capabilities
 
 ### 1. Codebase Analysis & Production Readiness Scoring
+
 - Scans target codebases across five operational pillars: Docker, CI/CD, Kubernetes, Observability, and Cloud/IaC.
 - Indexes project files into PostgreSQL with `pgvector` semantic vector embeddings powered by Ollama.
 - Generates tailored Dockerfiles, Kubernetes manifests, and OpenTofu configurations with AI RAG context grounding and deterministic template fallbacks.
 
 ### 2. Push to GitHub (Cloud Source Sync)
+
 - Synchronize your generated deployment artifacts and code directly to GitHub.
 - **Push to Existing Repository**: Select from any repository accessible to your GitHub Personal Access Token (`repo` scope).
 - **Create New Repository**: Create a brand new GitHub repository on the fly, with customizable repository name, description, and **Public** or **Private** visibility toggle.
 - **Git Data API Pipeline**: Uses the low-level GitHub Git Data API (Blobs, Trees, Commits, Refs) to commit all workspace files directly without requiring a local `git` binary or local disk cloning.
 
 ### 3. Deploy to Vercel (Edge Hosting)
+
 - Deploy frontend applications directly to Vercel edge infrastructure.
 - **Automatic Framework Detection**: Automatically inspects project dependencies (`package.json`) to detect frameworks including Next.js, Vite, Create React App, or static HTML.
 - **Smart SPA Routing**: Automatically injects Single Page Application rewrite rules into `vercel.json` (`"source": "/(.*)", "destination": "/index.html"`) so that client-side routers don't throw 404 errors on deep paths.
 - **REST Deployment Engine**: Deploys project files directly through Vercel's REST API (`POST /v13/deployments`) with live deployment status and URL reporting.
 
 ### 4. Zero-Trust Local Agent & Governance Chokepoint
+
 - Local Go agent connects via outbound-only WebSockets to the control plane.
 - Every modification is modeled as an immutable `ChangeSet` validated against Cerbos/OPA policies.
 - Four-Eyes human approval gate enforced whenever the calculated blast radius exceeds safe limits.

@@ -15,11 +15,11 @@
 
 The diagrams are [Mermaid](https://mermaid.js.org). Three ways to render them:
 
-| Method | How |
-| :--- | :--- |
-| **VS Code / Kiro** | Install "Markdown Preview Mermaid Support", then open Preview (`Ctrl+Shift+V`) |
-| **Browser (best for slides)** | Paste the code block into <https://mermaid.live> → Actions → PNG/SVG |
-| **GitHub** | Renders automatically if you commit the file |
+| Method                        | How                                                                            |
+| :---------------------------- | :----------------------------------------------------------------------------- |
+| **VS Code / Kiro**            | Install "Markdown Preview Mermaid Support", then open Preview (`Ctrl+Shift+V`) |
+| **Browser (best for slides)** | Paste the code block into <https://mermaid.live> → Actions → PNG/SVG           |
+| **GitHub**                    | Renders automatically if you commit the file                                   |
 
 For presentation slides, use mermaid.live and export **SVG** — it stays sharp when projected.
 
@@ -30,10 +30,10 @@ For presentation slides, use mermaid.live and export **SVG** — it stays sharp 
 **What this shows:** the three components, the services the launcher brings up, and the four
 independent layers that stop the AI exceeding its permissions.
 
-**What to say:** *"Three components. A Next.js frontend in the browser, a FastAPI backend
+**What to say:** _"Three components. A Next.js frontend in the browser, a FastAPI backend
 that orchestrates the AI, and a Go agent that runs on the developer's own machine. The agent
 matters because the AI never touches anything directly — it proposes, and the agent executes
-only whitelisted operations that a human approved and that the policy engine permitted."*
+only whitelisted operations that a human approved and that the policy engine permitted."_
 
 ```mermaid
 graph TB
@@ -120,12 +120,12 @@ graph TB
 
 **Legend**
 
-| Colour | Meaning |
-| :--- | :--- |
-| 🟩 Green | Application code — built and tested |
+| Colour        | Meaning                                                          |
+| :------------ | :--------------------------------------------------------------- |
+| 🟩 Green      | Application code — built and tested                              |
 | 🟨 **Yellow** | **The four security layers.** These are the point of the project |
-| 🟦 Blue | Infrastructure, all digest-pinned containers |
-| 🟥 Red | External services — the only thing outside your control |
+| 🟦 Blue       | Infrastructure, all digest-pinned containers                     |
+| 🟥 Red        | External services — the only thing outside your control          |
 
 ### The four security layers, in one line each
 
@@ -147,13 +147,13 @@ graph TB
 revertible", mapped onto the 13 formal verification steps — and exactly how far the
 automated end-to-end test currently gets.
 
-**What to say:** *"This is criterion 10, the one criterion still open. All thirteen steps are
+**What to say:** _"This is criterion 10, the one criterion still open. All thirteen steps are
 written and each asserts something real — an HTTP status, a database row, or bytes on disk,
 never just text on a screen. Six of them now pass against a live ten-service stack. Step seven
 is where it stops, and only on its final clause: the SSE event names. Running it found three
 genuine defects, including one where the application never requested the OAuth scope carrying
 the claim its own verifier required, so no token from a real identity provider could ever have
-been accepted."*
+been accepted."_
 
 ```mermaid
 flowchart TD
@@ -204,11 +204,11 @@ flowchart TD
 
 ### Reading the status
 
-| | Steps | State |
-| :--- | :--- | :--- |
-| 🟩 **Passing** | 1–6 | Verified against ten live services. `/health/ready` returns 200 on postgres, redis, cerbos and opa |
-| 🟨 **Stops here** | 7 | The run streams, but the event names fail its final clause — the six-name SSE vocabulary |
-| ⬜ **Written, unexecuted** | 8–13 | The journey is serial over one project, one device and one change set, so a stop at 7 blocks the rest |
+|                            | Steps | State                                                                                                 |
+| :------------------------- | :---- | :---------------------------------------------------------------------------------------------------- |
+| 🟩 **Passing**             | 1–6   | Verified against ten live services. `/health/ready` returns 200 on postgres, redis, cerbos and opa    |
+| 🟨 **Stops here**          | 7     | The run streams, but the event names fail its final clause — the six-name SSE vocabulary              |
+| ⬜ **Written, unexecuted** | 8–13  | The journey is serial over one project, one device and one change set, so a stop at 7 blocks the rest |
 
 **This went 0 → 4 → 6.** The zero was not laziness — it was the honest count when the steps
 depended on endpoints that did not exist. Building the approvals surface, the generation SSE
@@ -221,7 +221,7 @@ Worth having ready, because "what did the test actually catch?" is the natural f
 
 1. **The app never requested the `forgeops` scope** that carries the `forgeops_role` claim
    its own token verifier requires. So no token from a real identity provider could ever be
-   accepted, and every panel showed an authentication error to a user who *was* correctly
+   accepted, and every panel showed an authentication error to a user who _was_ correctly
    authenticated. Recorded as finding 87.
 2. **The OIDC issuer needed split-horizon addressing** — the backend reaches Authentik at
    `authentik-server:9000` inside the Docker network, while the browser must reach it on
@@ -235,15 +235,15 @@ system runs together — which is the argument for criterion 10 existing at all.
 
 ## Quick reference — what's actually in the repo
 
-*Counted 2026-10-08 from the working tree, not from the design documents.*
+_Counted 2026-10-08 from the working tree, not from the design documents._
 
-| Component | Technology | Scale | Coverage |
-| :--- | :--- | :--- | :--- |
-| Agent | Go 1.26 | 23 internal packages | 66.1% — **below its 70% gate** |
-| Backend | Python 3.13 / FastAPI | 27 domains, 135 route handlers | 86.02% |
-| Frontend | Next.js 16 / React | 17 routes, 22 feature modules | 90.99% / 87.36% / 77.28% |
-| Policy | Rego + Cerbos YAML | 15 policy files, self-tested | — |
-| Scripts | Bash / Python / PowerShell | ~60 verification gates | — |
+| Component | Technology                 | Scale                          | Coverage                       |
+| :-------- | :------------------------- | :----------------------------- | :----------------------------- |
+| Agent     | Go 1.26                    | 23 internal packages           | 66.1% — **below its 70% gate** |
+| Backend   | Python 3.13 / FastAPI      | 27 domains, 135 route handlers | 86.02%                         |
+| Frontend  | Next.js 16 / React         | 17 routes, 22 feature modules  | 90.99% / 87.36% / 77.28%       |
+| Policy    | Rego + Cerbos YAML         | 15 policy files, self-tested   | —                              |
+| Scripts   | Bash / Python / PowerShell | ~60 verification gates         | —                              |
 
 **The agent's coverage gate currently FAILS.** `scripts/check-coverage.sh 70` reports 66.1 %
 against a threshold of 70 %, because `internal/executor` grew substantially for the
@@ -256,19 +256,18 @@ of stale document this project has spent several passes correcting.
 OPA 1.4.2 · Cerbos 0.54.0 · Authentik server + worker · backend · ARQ worker · frontend ·
 agent. Plus Ollama for local embeddings.
 
-
 `docker-compose.yml` **declares 22 services** and the e2e overlay adds `agent`, for **23** in
 the union the launcher actually uses. Only **13** of them belong to the default profile and
 start with a bare `docker compose up`, which is why the launcher names its ten explicitly
 rather than relying on `up` to pick them:
 
-| Profile | Services |
-| :--- | :--- |
-| *(default)* | postgres · redis · opa · cerbos · authentik-server · authentik-worker · frontend · backend · backend-agent · worker · inngest · ollama · ollama-secondary |
-| `observability` | prometheus · grafana · mimir · loki · tempo · otel-agent · otel-gateway |
-| `vault` | infisical |
-| `tools` | agent-dev |
-| *(e2e overlay)* | agent |
+| Profile         | Services                                                                                                                                                  |
+| :-------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(default)_     | postgres · redis · opa · cerbos · authentik-server · authentik-worker · frontend · backend · backend-agent · worker · inngest · ollama · ollama-secondary |
+| `observability` | prometheus · grafana · mimir · loki · tempo · otel-agent · otel-gateway                                                                                   |
+| `vault`         | infisical                                                                                                                                                 |
+| `tools`         | agent-dev                                                                                                                                                 |
+| _(e2e overlay)_ | agent                                                                                                                                                     |
 
 That distinction is worth stating because it is easy to get wrong in both directions: a bare
 `docker compose up` starts thirteen services, and a `--profile observability` run starts twenty.
@@ -277,14 +276,14 @@ All images pinned by digest, not tag.
 **Six model tiers** in `backend/config/model-tiers.yaml`, each with a four-level fallback
 cascade (primary → secondary → cross-vendor → self-hosted):
 
-| Tier | Primary | Purpose |
-| :--- | :--- | :--- |
-| `high_coding` | gpt-5.6-sol | Code generation |
-| `high_analysis` | claude-fable-5 | Reasoning about a codebase |
-| `medium` | grok-4.5 | General work |
-| `medium_value` | claude-sonnet-5 | Cost-sensitive work |
-| `low_logs` | gemini-3-flash | Log summarisation |
-| `embedding` | voyage-code-3 | Vectors for the L2 cache |
+| Tier            | Primary         | Purpose                    |
+| :-------------- | :-------------- | :------------------------- |
+| `high_coding`   | gpt-5.6-sol     | Code generation            |
+| `high_analysis` | claude-fable-5  | Reasoning about a codebase |
+| `medium`        | grok-4.5        | General work               |
+| `medium_value`  | claude-sonnet-5 | Cost-sensitive work        |
+| `low_logs`      | gemini-3-flash  | Log summarisation          |
+| `embedding`     | voyage-code-3   | Vectors for the L2 cache   |
 
 **Verification:** 31 of 31 safety properties carry a negative control — a deliberately
 broken version of the production code, proven to make the test fail. **2,011** backend unit

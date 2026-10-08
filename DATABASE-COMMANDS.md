@@ -30,16 +30,16 @@ docker exec -it forgeops-postgres-1 psql -U forgeops -d forgeops
 
 You land at a `forgeops=#` prompt. Useful meta-commands once inside:
 
-| Command | What it does |
-| :--- | :--- |
-| `\dt` | list all tables |
-| `\dt+` | list tables with size and description |
-| `\d users` | describe the `users` table — columns, types, indexes |
-| `\d+ change_sets` | the same, with storage details |
-| `\l` | list all databases |
-| `\du` | list database roles |
-| `\x` | toggle expanded output (readable for wide rows) |
-| `\q` | quit |
+| Command           | What it does                                         |
+| :---------------- | :--------------------------------------------------- |
+| `\dt`             | list all tables                                      |
+| `\dt+`            | list tables with size and description                |
+| `\d users`        | describe the `users` table — columns, types, indexes |
+| `\d+ change_sets` | the same, with storage details                       |
+| `\l`              | list all databases                                   |
+| `\du`             | list database roles                                  |
+| `\x`              | toggle expanded output (readable for wide rows)      |
+| `\q`              | quit                                                 |
 
 ### Redis
 
@@ -49,16 +49,16 @@ docker exec -it forgeops-redis-1 redis-cli
 
 You land at `127.0.0.1:6379>`. Useful commands:
 
-| Command | What it does |
-| :--- | :--- |
-| `KEYS *` | every key — fine here, but see the warning below |
-| `SCAN 0 COUNT 100` | paginated key listing, safe on a large keyspace |
-| `DBSIZE` | number of keys |
-| `TYPE <key>` | the data type of a key |
-| `GET <key>` | read a string value |
-| `TTL <key>` | seconds until expiry, `-1` if none |
-| `INFO keyspace` | per-database key counts |
-| `QUIT` | leave |
+| Command            | What it does                                     |
+| :----------------- | :----------------------------------------------- |
+| `KEYS *`           | every key — fine here, but see the warning below |
+| `SCAN 0 COUNT 100` | paginated key listing, safe on a large keyspace  |
+| `DBSIZE`           | number of keys                                   |
+| `TYPE <key>`       | the data type of a key                           |
+| `GET <key>`        | read a string value                              |
+| `TTL <key>`        | seconds until expiry, `-1` if none               |
+| `INFO keyspace`    | per-database key counts                          |
+| `QUIT`             | leave                                            |
 
 ---
 
@@ -66,27 +66,27 @@ You land at `127.0.0.1:6379>`. Useful commands:
 
 The database holds **46 tables**. The ones worth showing:
 
-| Table | What it holds |
-| :--- | :--- |
-| `users` | accounts synced from the identity provider, with their role |
-| `sessions` | live login sessions — one row per authenticated browser |
-| `projects` | imported repositories |
-| `file_tree` | every indexed path in a project |
-| `file_contents` | the content of each indexed file (what the AI is grounded on) |
-| `embeddings` | vector embeddings per file chunk, for semantic search |
-| `analysis_reports` | readiness scores and their five-category breakdown |
-| `generation_runs` | each AI generation run — prompt, model tier, tokens, outcome |
-| `change_sets` | a proposed modification, awaiting or past approval |
-| `change_items` | the individual file operations inside a change set |
-| `approvals` | who approved or rejected which change set, and when |
-| `audit_events` | the hash-linked, tamper-evident audit chain |
-| `agent_devices` | paired agents, their status and last heartbeat |
-| `deployments` | deployment attempts and their outcome |
-| `environments` | deployment targets |
-| `incidents` | failures and their analyses |
-| `policies` / `policy_bundles` | OPA policies and their published bundles |
-| `secrets` | secret metadata (never plaintext values) |
-| `alembic_version` | the applied migration revision |
+| Table                         | What it holds                                                 |
+| :---------------------------- | :------------------------------------------------------------ |
+| `users`                       | accounts synced from the identity provider, with their role   |
+| `sessions`                    | live login sessions — one row per authenticated browser       |
+| `projects`                    | imported repositories                                         |
+| `file_tree`                   | every indexed path in a project                               |
+| `file_contents`               | the content of each indexed file (what the AI is grounded on) |
+| `embeddings`                  | vector embeddings per file chunk, for semantic search         |
+| `analysis_reports`            | readiness scores and their five-category breakdown            |
+| `generation_runs`             | each AI generation run — prompt, model tier, tokens, outcome  |
+| `change_sets`                 | a proposed modification, awaiting or past approval            |
+| `change_items`                | the individual file operations inside a change set            |
+| `approvals`                   | who approved or rejected which change set, and when           |
+| `audit_events`                | the hash-linked, tamper-evident audit chain                   |
+| `agent_devices`               | paired agents, their status and last heartbeat                |
+| `deployments`                 | deployment attempts and their outcome                         |
+| `environments`                | deployment targets                                            |
+| `incidents`                   | failures and their analyses                                   |
+| `policies` / `policy_bundles` | OPA policies and their published bundles                      |
+| `secrets`                     | secret metadata (never plaintext values)                      |
+| `alembic_version`             | the applied migration revision                                |
 
 ### List every table
 
@@ -214,11 +214,11 @@ The platform uses three, deliberately separated so the application cannot alter 
 docker exec forgeops-postgres-1 psql -U forgeops -d forgeops -c "\du"
 ```
 
-| Role | Used by |
-| :--- | :--- |
-| `forgeops` | the container's superuser (`POSTGRES_USER`) |
-| `forgeops_app` | the running backend — data access only |
-| `forgeops_migrator` | Alembic migrations — owns the schema |
+| Role                | Used by                                     |
+| :------------------ | :------------------------------------------ |
+| `forgeops`          | the container's superuser (`POSTGRES_USER`) |
+| `forgeops_app`      | the running backend — data access only      |
+| `forgeops_migrator` | Alembic migrations — owns the schema        |
 
 ---
 
@@ -228,15 +228,15 @@ Redis holds ephemeral state: caches, rate-limit buckets, and the in-flight envel
 bookkeeping. **Nothing here is the system of record** — losing it is survivable, which is why
 it is a cache and not a database.
 
-| Prefix | Holds |
-| :--- | :--- |
-| `ai:cache:l2:` | semantic cache entries — the L2 vector cache for model responses |
-| `forgeops:agentcmd:` | commands in flight, awaiting an agent's result |
-| `forgeops:cmdchangeset:` | the change set a delivered command belongs to |
-| `forgeops:agentsession:` | which agent session owns an in-flight operation |
-| `forgeops:nonce:` | envelope nonces, so a replayed command is refused |
-| `forgeops:envseq:` | per-device envelope sequence numbers, so `seq` cannot go backwards |
-| `forgeops:health-check` | the readiness probe's own liveness marker |
+| Prefix                   | Holds                                                              |
+| :----------------------- | :----------------------------------------------------------------- |
+| `ai:cache:l2:`           | semantic cache entries — the L2 vector cache for model responses   |
+| `forgeops:agentcmd:`     | commands in flight, awaiting an agent's result                     |
+| `forgeops:cmdchangeset:` | the change set a delivered command belongs to                      |
+| `forgeops:agentsession:` | which agent session owns an in-flight operation                    |
+| `forgeops:nonce:`        | envelope nonces, so a replayed command is refused                  |
+| `forgeops:envseq:`       | per-device envelope sequence numbers, so `seq` cannot go backwards |
+| `forgeops:health-check`  | the readiness probe's own liveness marker                          |
 
 > That list is measured, not assumed: `redis-cli --scan` on a running stack shows exactly these
 > six `forgeops:` groups plus `ai:cache`. If the code adds a namespace, this table is what goes
@@ -319,13 +319,13 @@ grep -E '^(POSTGRES_PORT|REDIS_PORT|BACKEND_PORT|FRONTEND_PORT|AUTHENTIK_PORT)='
 
 On this machine they are:
 
-| Service | Host port |
-| :--- | :--- |
-| PostgreSQL | 15432 |
-| Redis | 16379 |
-| Backend API | 18000 |
-| Frontend | 13000 |
-| Authentik | 19000 |
+| Service     | Host port |
+| :---------- | :-------- |
+| PostgreSQL  | 15432     |
+| Redis       | 16379     |
+| Backend API | 18000     |
+| Frontend    | 13000     |
+| Authentik   | 19000     |
 
 To connect from the host rather than `docker exec`, use the host port:
 
