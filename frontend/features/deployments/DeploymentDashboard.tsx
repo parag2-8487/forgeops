@@ -76,7 +76,7 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
     refetchInterval: (query) => {
       const list = query.state.data?.deployments ?? [];
       const hasActive = list.some(
-        (d) => d.status === "applying" || d.status === "pending_approval"
+        (d) => d.status === "applying" || d.status === "pending_approval",
       );
       return hasActive ? 2500 : 10000;
     },
@@ -84,7 +84,8 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
 
   const detected = useQuery<{ manifests: string[] }>({
     queryKey: queryKeys.deployments.detectedManifests(projectId),
-    queryFn: () => api.get<{ manifests: string[] }>(`/projects/${projectId}/deployments/detected-manifests`),
+    queryFn: () =>
+      api.get<{ manifests: string[] }>(`/projects/${projectId}/deployments/detected-manifests`),
     enabled: Boolean(projectId),
   });
 
@@ -163,9 +164,7 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
             }}
           >
             <div className="space-y-2">
-              <label className="block text-sm font-medium">
-                Manifests
-              </label>
+              <label className="block text-sm font-medium">Manifests</label>
               {detected.isPending ? (
                 <div className="rounded-md border border-border p-3 text-xs text-muted-foreground">
                   Checking project for Kubernetes manifests…
@@ -193,7 +192,8 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
                 </div>
               ) : (
                 <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
-                  No Kubernetes manifests detected in this project (e.g. in <code>k8s/</code>). Requesting deployment will proceed cleanly without errors.
+                  No Kubernetes manifests detected in this project (e.g. in <code>k8s/</code>).
+                  Requesting deployment will proceed cleanly without errors.
                 </div>
               )}
               <p className="text-xs text-muted-foreground">
@@ -218,10 +218,11 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
             >
               <p className="font-medium text-foreground">
                 {decision.outcome === "skipped"
-                  ? (decision.message ?? `No Kubernetes manifests found in the project. Deployment to ${decision.environment} skipped.`)
+                  ? (decision.message ??
+                    `No Kubernetes manifests found in the project. Deployment to ${decision.environment} skipped.`)
                   : decision.requires_approval
-                  ? `Waiting for human approval before deploying to ${decision.environment}. Change set ${decision.change_set_id}.`
-                  : `Sent to the agent for ${decision.environment}. Change set ${decision.change_set_id}.`}
+                    ? `Waiting for human approval before deploying to ${decision.environment}. Change set ${decision.change_set_id}.`
+                    : `Sent to the agent for ${decision.environment}. Change set ${decision.change_set_id}.`}
               </p>
               {decision.outcome !== "skipped" && (
                 <p className="mt-1 text-xs text-muted-foreground">

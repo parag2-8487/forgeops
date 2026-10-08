@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import re
-import uuid
 from pathlib import Path
 
 import pytest
@@ -247,7 +246,13 @@ class TestValidationFailuresNameTheField:
 
     def test_the_detail_names_the_offending_field(self) -> None:
         body = self._render(
-            [{"loc": ("body", "prompt"), "msg": "String should have at most 16000 characters", "type": "string_too_long"}],
+            [
+                {
+                    "loc": ("body", "prompt"),
+                    "msg": "String should have at most 16000 characters",
+                    "type": "string_too_long",
+                }
+            ],
             None,
         )
         assert body["status"] == 422, body
@@ -256,7 +261,13 @@ class TestValidationFailuresNameTheField:
 
     def test_the_specific_reason_is_preserved_in_errors(self) -> None:
         body = self._render(
-            [{"loc": ("body", "prompt"), "msg": "String should have at most 16000 characters", "type": "string_too_long"}],
+            [
+                {
+                    "loc": ("body", "prompt"),
+                    "msg": "String should have at most 16000 characters",
+                    "type": "string_too_long",
+                }
+            ],
             None,
         )
         assert body["errors"], "the errors array is the machine-readable half and must not be empty"
@@ -284,7 +295,11 @@ class TestValidationFailuresNameTheField:
     def test_several_failures_are_counted_rather_than_hidden(self) -> None:
         body = self._render(
             [
-                {"loc": ("body", "prompt"), "msg": "String should have at most 16000 characters", "type": "string_too_long"},
+                {
+                    "loc": ("body", "prompt"),
+                    "msg": "String should have at most 16000 characters",
+                    "type": "string_too_long",
+                },
                 {"loc": ("body", "project_id"), "msg": "Input should be a valid UUID", "type": "uuid_parsing"},
             ],
             None,

@@ -23,10 +23,11 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/parag8487/ForgeOps/agent/internal/envelope"
 	"github.com/parag8487/ForgeOps/agent/internal/iac"
 	"github.com/parag8487/ForgeOps/agent/internal/telemetry"
-	"go.uber.org/zap"
 )
 
 // ErrIacWorkdirOutsideRoot refuses a workdir outside the workspace root.

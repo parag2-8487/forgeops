@@ -203,9 +203,14 @@ def build_generation_prompt(
         "- The Dockerfile contains a line that is exactly `USER 1001`, placed after the RUN",
         "  instructions and before CMD, so the container does not run as root.",
         f"- The Dockerfile EXPOSEs port {facts.port}.",
-        "- All application source files are at the root of the repository. Do NOT invent subdirectories like `frontend/`, `frontent/`, `backend/`, or `server/` when copying files.",
-        "- In Dockerfile, copy files directly from the root context: `COPY package*.json ./` followed by `RUN npm install`, then `COPY . .`. Do NOT invent `COPY frontent/...` or `COPY backend/...`.",
-        f"- The docker-compose.yml defines a top-level name '{facts.app_name}' and a services mapping with at least one service mapping host port {facts.port} to container port {facts.port}, with build context set to `.`.",
+        "- All application source files are at the root of the repository. Do NOT invent "
+        "subdirectories like `frontend/`, `frontent/`, `backend/`, or `server/` when copying files.",
+        "- In Dockerfile, copy files directly from the root context: `COPY package*.json ./` "
+        "followed by `RUN npm install`, then `COPY . .`. Do NOT invent `COPY frontent/...` "
+        "or `COPY backend/...`.",
+        f"- The docker-compose.yml defines a top-level name '{facts.app_name}' and a services "
+        f"mapping with at least one service mapping host port {facts.port} to container port "
+        f"{facts.port}, with build context set to `.`.",
         "- Every Kubernetes manifest has top-level `apiVersion:`, `kind:`, `metadata:` and `spec:` keys.",
         f"- The Deployment labels its pods `app: {facts.app_name}` and the Service selects on that label.",
         f"- The Service is named `{facts.app_name}`, is type ClusterIP, publishes port 80 and targets",

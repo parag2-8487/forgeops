@@ -56,7 +56,8 @@ DEFAULT_TEMPLATES = {
             "USER 10001\n"
             "COPY --from=builder /app/dist ./\n"
             "EXPOSE {{PORT}}\n"
-            "HEALTHCHECK --interval=30s --timeout=10s --retries=3 CMD wget -q --spider http://localhost:{{PORT}}/ || exit 1\n"
+            "HEALTHCHECK --interval=30s --timeout=10s --retries=3 CMD wget -q --spider http://localhost:{{PORT}}/ || "
+            "exit 1\n"
             'CMD ["serve", "-s", ".", "-l", "{{PORT}}"]'
         ),
     },

@@ -286,7 +286,8 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
           </div>
           {!data.stats_sampled && (
             <p data-testid="docker-stats-absent" className="text-xs text-muted-foreground">
-              No resource sample was taken, so the figures below read “not measured” rather than zero.
+              No resource sample was taken, so the figures below read “not measured” rather than
+              zero.
             </p>
           )}
         </header>
@@ -312,22 +313,44 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
           <Badge variant="outline">{data.containers.length} total</Badge>
         </div>
         {data.containers.length === 0 ? (
-          <p data-testid="docker-containers-empty" className="text-sm text-muted-foreground py-4 text-center">
+          <p
+            data-testid="docker-containers-empty"
+            className="text-sm text-muted-foreground py-4 text-center"
+          >
             The agent reached the daemon and it is running no containers.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-md border border-border">
-            <table data-testid="docker-containers" className="w-full text-left border-collapse text-xs">
+            <table
+              data-testid="docker-containers"
+              className="w-full text-left border-collapse text-xs"
+            >
               <thead>
                 <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
-                  <th scope="col" className="p-2.5">Name</th>
-                  <th scope="col" className="p-2.5">State</th>
-                  <th scope="col" className="p-2.5">Image</th>
-                  <th scope="col" className="p-2.5">Ports</th>
-                  <th scope="col" className="p-2.5">CPU</th>
-                  <th scope="col" className="p-2.5">Memory</th>
-                  <th scope="col" className="p-2.5">Network in / out</th>
-                  <th scope="col" className="p-2.5 text-right">Actions</th>
+                  <th scope="col" className="p-2.5">
+                    Name
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    State
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Image
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Ports
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    CPU
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Memory
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Network in / out
+                  </th>
+                  <th scope="col" className="p-2.5 text-right">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -345,25 +368,39 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                     acc[group] = acc[group] ?? [];
                     acc[group].push(c);
                     return acc;
-                  }, {})
+                  }, {}),
                 ).map(([groupName, groupContainers]) => (
                   <Fragment key={groupName}>
                     <tr className="bg-muted/50 border-y border-border">
                       <td colSpan={8} className="p-2 font-semibold text-xs text-foreground">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold text-foreground">{groupName}</span>
+                          <span className="font-mono text-xs font-bold text-foreground">
+                            {groupName}
+                          </span>
                           <Badge variant="outline" className="text-[10px]">
-                            {groupContainers.length} container{groupContainers.length === 1 ? "" : "s"}
+                            {groupContainers.length} container
+                            {groupContainers.length === 1 ? "" : "s"}
                           </Badge>
                         </div>
                       </td>
                     </tr>
                     {groupContainers.map((container) => {
-                      const matches = container.ports ? (container.ports.match(/(?:0\.0\.0\.0|127\.0\.0\.1|\[::\])?:?(\d+)->/g) || []) : [];
-                      const hostPorts = Array.from(new Set(matches.map((m) => m.replace(/[^0-9]/g, "")).filter(Boolean)));
+                      const matches = container.ports
+                        ? container.ports.match(/(?:0\.0\.0\.0|127\.0\.0\.1|\[::\])?:?(\d+)->/g) ||
+                          []
+                        : [];
+                      const hostPorts = Array.from(
+                        new Set(matches.map((m) => m.replace(/[^0-9]/g, "")).filter(Boolean)),
+                      );
                       return (
-                        <tr key={container.id} data-testid={`docker-container-${container.name}`} className="hover:bg-muted/20 transition-colors">
-                          <td className="p-2.5 font-medium font-mono text-foreground">{container.name}</td>
+                        <tr
+                          key={container.id}
+                          data-testid={`docker-container-${container.name}`}
+                          className="hover:bg-muted/20 transition-colors"
+                        >
+                          <td className="p-2.5 font-medium font-mono text-foreground">
+                            {container.name}
+                          </td>
                           <td data-testid={`docker-state-${container.name}`} className="p-2.5">
                             <Badge
                               variant={container.state === "running" ? "success" : "outline"}
@@ -372,7 +409,10 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                               {container.state}
                             </Badge>
                           </td>
-                          <td className="p-2.5 font-mono text-muted-foreground truncate max-w-[180px]" title={container.image}>
+                          <td
+                            className="p-2.5 font-mono text-muted-foreground truncate max-w-[180px]"
+                            title={container.image}
+                          >
                             {container.image}
                           </td>
                           <td data-testid={`docker-ports-${container.name}`} className="p-2.5">
@@ -392,22 +432,34 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                                 ))}
                               </div>
                             ) : (
-                              <span className="font-mono text-muted-foreground truncate max-w-[120px] inline-block" title={container.ports || ""}>
+                              <span
+                                className="font-mono text-muted-foreground truncate max-w-[120px] inline-block"
+                                title={container.ports || ""}
+                              >
                                 {container.ports || "—"}
                               </span>
                             )}
                           </td>
-                          <td data-testid={`docker-cpu-${container.name}`} className="p-2.5 font-mono">
+                          <td
+                            data-testid={`docker-cpu-${container.name}`}
+                            className="p-2.5 font-mono"
+                          >
                             {measurement(container.cpu_percent, (value) => `${value.toFixed(2)}%`)}
                           </td>
-                          <td data-testid={`docker-memory-${container.name}`} className="p-2.5 font-mono text-muted-foreground">
+                          <td
+                            data-testid={`docker-memory-${container.name}`}
+                            className="p-2.5 font-mono text-muted-foreground"
+                          >
                             {measurement(container.memory_bytes, (value) =>
                               container.memory_limit_bytes === null
                                 ? bytes(value)
                                 : `${bytes(value)} of ${bytes(container.memory_limit_bytes)}`,
                             )}
                           </td>
-                          <td data-testid={`docker-network-${container.name}`} className="p-2.5 font-mono text-muted-foreground">
+                          <td
+                            data-testid={`docker-network-${container.name}`}
+                            className="p-2.5 font-mono text-muted-foreground"
+                          >
                             {measurement(container.network_rx_bytes, bytes)} /{" "}
                             {measurement(container.network_tx_bytes, bytes)}
                           </td>
@@ -419,7 +471,9 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                                   type="button"
                                   data-testid={`docker-${action}-${container.name}`}
                                   disabled={containerAction.isPending}
-                                  onClick={() => containerAction.mutate({ action, container: container.name })}
+                                  onClick={() =>
+                                    containerAction.mutate({ action, container: container.name })
+                                  }
                                   className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-border bg-background hover:bg-muted text-foreground transition-colors disabled:opacity-40"
                                 >
                                   {action}
@@ -429,7 +483,9 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                               <button
                                 type="button"
                                 data-testid={`docker-logs-${container.name}`}
-                                onClick={() => setShowLogs(showLogs === container.name ? null : container.name)}
+                                onClick={() =>
+                                  setShowLogs(showLogs === container.name ? null : container.name)
+                                }
                                 className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-border bg-background hover:bg-muted text-foreground transition-colors"
                               >
                                 {showLogs === container.name ? "hide logs" : "logs"}
@@ -441,14 +497,21 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                               )}
                               {pendingRemoval === container.name ? (
                                 <div className="flex items-center gap-1.5 p-1 rounded border border-destructive/30 bg-destructive/10 text-xs">
-                                  <span data-testid={`docker-remove-confirm-${container.name}`} className="text-destructive font-medium px-1">
-                                    Remove {container.name}? Anything it holds that is not in a volume is lost.
+                                  <span
+                                    data-testid={`docker-remove-confirm-${container.name}`}
+                                    className="text-destructive font-medium px-1"
+                                  >
+                                    Remove {container.name}? Anything it holds that is not in a
+                                    volume is lost.
                                   </span>
                                   <button
                                     type="button"
                                     data-testid={`docker-remove-yes-${container.name}`}
                                     onClick={() =>
-                                      containerAction.mutate({ action: "remove", container: container.name })
+                                      containerAction.mutate({
+                                        action: "remove",
+                                        container: container.name,
+                                      })
                                     }
                                     className="px-2 py-0.5 rounded bg-destructive text-destructive-foreground font-semibold hover:bg-destructive/90 transition-colors"
                                   >
@@ -491,7 +554,10 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
           <Badge variant="outline">{data.images.length} images</Badge>
         </div>
         {data.images.length === 0 ? (
-          <p data-testid="docker-images-empty" className="text-sm text-muted-foreground py-4 text-center">
+          <p
+            data-testid="docker-images-empty"
+            className="text-sm text-muted-foreground py-4 text-center"
+          >
             The daemon holds no images.
           </p>
         ) : (
@@ -499,18 +565,32 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
             <table data-testid="docker-images" className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
-                  <th scope="col" className="p-2.5">Repository</th>
-                  <th scope="col" className="p-2.5">Tag</th>
-                  <th scope="col" className="p-2.5">Size</th>
-                  <th scope="col" className="p-2.5 text-right">Actions</th>
+                  <th scope="col" className="p-2.5">
+                    Repository
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Tag
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Size
+                  </th>
+                  <th scope="col" className="p-2.5 text-right">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {data.images.map((image) => {
                   const reference = `${image.repository}:${image.tag}`;
                   return (
-                    <tr key={image.id} data-testid={`docker-image-${image.repository}`} className="hover:bg-muted/20 transition-colors">
-                      <td className="p-2.5 font-medium font-mono text-foreground">{image.repository}</td>
+                    <tr
+                      key={image.id}
+                      data-testid={`docker-image-${image.repository}`}
+                      className="hover:bg-muted/20 transition-colors"
+                    >
+                      <td className="p-2.5 font-medium font-mono text-foreground">
+                        {image.repository}
+                      </td>
                       <td className="p-2.5 font-mono text-muted-foreground">{image.tag}</td>
                       <td className="p-2.5 font-mono text-muted-foreground">{image.size}</td>
                       <td className="p-2.5 text-right">
@@ -534,7 +614,9 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
                           <button
                             type="button"
                             data-testid={`docker-rmi-${image.repository}`}
-                            onClick={() => imageAction.mutate({ action: "remove", image: reference })}
+                            onClick={() =>
+                              imageAction.mutate({ action: "remove", image: reference })
+                            }
                             className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
                           >
                             remove
@@ -575,7 +657,10 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
         >
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="space-y-1">
-              <label htmlFor="docker-build-tag" className="block text-xs font-medium text-foreground">
+              <label
+                htmlFor="docker-build-tag"
+                className="block text-xs font-medium text-foreground"
+              >
                 Tag <span className="text-destructive">*</span>
               </label>
               <input
@@ -588,7 +673,10 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
               />
             </div>
             <div className="space-y-1">
-              <label htmlFor="docker-build-context" className="block text-xs font-medium text-foreground">
+              <label
+                htmlFor="docker-build-context"
+                className="block text-xs font-medium text-foreground"
+              >
                 Context (optional, relative to root)
               </label>
               <input
@@ -600,7 +688,10 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
               />
             </div>
             <div className="space-y-1">
-              <label htmlFor="docker-build-dockerfile" className="block text-xs font-medium text-foreground">
+              <label
+                htmlFor="docker-build-dockerfile"
+                className="block text-xs font-medium text-foreground"
+              >
                 Dockerfile (optional, relative to context)
               </label>
               <input

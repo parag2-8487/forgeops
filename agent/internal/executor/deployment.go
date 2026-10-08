@@ -48,9 +48,10 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/parag8487/ForgeOps/agent/internal/envelope"
 	"github.com/parag8487/ForgeOps/agent/internal/validator"
-	"gopkg.in/yaml.v3"
 )
 
 // MaxDeploymentManifests bounds one deployment's manifest set.

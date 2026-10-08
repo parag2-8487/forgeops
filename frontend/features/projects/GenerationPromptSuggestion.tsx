@@ -42,8 +42,8 @@ export function GenerationPromptSuggestion({ checks }: { checks: ReadonlyArray<R
         <>
           <p className="mt-2 text-sm text-muted-foreground">
             Paste this into the generator. It asks for exactly the {suggestion.addresses.length}{" "}
-            failing check{suggestion.addresses.length === 1 ? "" : "s"} that containerization, compose,
-            and Kubernetes manifests can satisfy, so the run has something to change.
+            failing check{suggestion.addresses.length === 1 ? "" : "s"} that containerization,
+            compose, and Kubernetes manifests can satisfy, so the run has something to change.
           </p>
           <div className="mt-3">
             <CommandBlock

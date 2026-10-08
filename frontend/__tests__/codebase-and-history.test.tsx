@@ -100,10 +100,14 @@ describe("the index panel says whether a project has ever been scanned", () => {
   });
 
   it("reports awaiting_clone when project is waiting for agent clone", async () => {
-    mockGet.mockResolvedValue(status({ indexed_files: 0, total_chunks: 0, status: "awaiting_clone" }));
+    mockGet.mockResolvedValue(
+      status({ indexed_files: 0, total_chunks: 0, status: "awaiting_clone" }),
+    );
     renderIt(<CodebaseIndexPanel projectId="p-1" projectPath="/srv/x" />);
 
-    expect(await screen.findByTestId("index-headline")).toHaveTextContent("Awaiting repository clone");
+    expect(await screen.findByTestId("index-headline")).toHaveTextContent(
+      "Awaiting repository clone",
+    );
     expect(screen.getByTestId("trigger-clone-btn")).toBeInTheDocument();
   });
 

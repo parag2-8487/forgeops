@@ -104,11 +104,10 @@ export function CodebaseIndexPanel({
     },
   });
 
-  const statusMeaning =
-    STATUS_MEANING[status.data?.status ?? ""] ?? {
-      headline: status.data?.status ?? "Never scanned",
-      detail: "Codebase status reported by analysis engine.",
-    };
+  const statusMeaning = STATUS_MEANING[status.data?.status ?? ""] ?? {
+    headline: status.data?.status ?? "Never scanned",
+    detail: "Codebase status reported by analysis engine.",
+  };
 
   return (
     <div className="space-y-4">
@@ -118,9 +117,7 @@ export function CodebaseIndexPanel({
             <p className="font-semibold" data-testid="index-headline">
               {statusMeaning.headline}
             </p>
-            <p className="mt-1 text-muted-foreground">
-              {statusMeaning.detail}
-            </p>
+            <p className="mt-1 text-muted-foreground">{statusMeaning.detail}</p>
 
             {status.data.status === "awaiting_clone" ||
             status.data.status === "cloning" ||

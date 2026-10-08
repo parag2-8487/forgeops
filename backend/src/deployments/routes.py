@@ -109,20 +109,21 @@ async def _detect_k8s_manifests(session: AsyncSession, *, project_id: uuid.UUID)
         return dockerfile_manifests
 
     def order_key(path: str) -> tuple[int, str]:
-        l = path.lower()
-        if "namespace" in l:
+        # `lowered` rather than `l`: a single lowercase L reads as a 1 in most fonts (ruff E741).
+        lowered = path.lower()
+        if "namespace" in lowered:
             return (0, path)
-        if "config" in l:
+        if "config" in lowered:
             return (1, path)
-        if "secret" in l:
+        if "secret" in lowered:
             return (2, path)
-        if "pvc" in l or "volume" in l:
+        if "pvc" in lowered or "volume" in lowered:
             return (3, path)
-        if "deployment" in l or "statefulset" in l or "daemonset" in l:
+        if "deployment" in lowered or "statefulset" in lowered or "daemonset" in lowered:
             return (4, path)
-        if "service" in l:
+        if "service" in lowered:
             return (5, path)
-        if "ingress" in l:
+        if "ingress" in lowered:
             return (6, path)
         return (7, path)
 

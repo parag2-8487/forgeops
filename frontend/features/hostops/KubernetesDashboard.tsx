@@ -198,7 +198,9 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
             <div>
               <h2 className="text-xl font-semibold tracking-tight">Cluster</h2>
               <p className="flex items-center gap-2 pt-1 font-mono text-xs text-muted-foreground">
-                <span data-testid="k8s-context" className="font-semibold text-foreground">{data.cluster_context}</span>
+                <span data-testid="k8s-context" className="font-semibold text-foreground">
+                  {data.cluster_context}
+                </span>
                 <span>•</span>
                 <span data-testid="k8s-server-version">Kubernetes {data.server_version}</span>
                 <span>•</span>
@@ -213,7 +215,10 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <label htmlFor="k8s-namespace" className="text-xs font-medium text-muted-foreground">
+                <label
+                  htmlFor="k8s-namespace"
+                  className="text-xs font-medium text-muted-foreground"
+                >
                   Namespace
                 </label>
                 <select
@@ -241,10 +246,14 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
 
           {/* UNREADABLE IS NOT EMPTY, and this is where that promise is kept. */}
           {data.partial_reasons.length > 0 && (
-            <div data-testid="k8s-partial" role="alert" className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+            <div
+              data-testid="k8s-partial"
+              role="alert"
+              className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300"
+            >
               <p className="font-semibold">
-                Some of this cluster could not be read, so the panels below are incomplete rather than
-                empty:
+                Some of this cluster could not be read, so the panels below are incomplete rather
+                than empty:
               </p>
               <ul className="list-disc list-inside mt-1 space-y-0.5">
                 {data.partial_reasons.map((reason) => (
@@ -276,7 +285,10 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
           <Badge variant="outline">{data.nodes.length} nodes</Badge>
         </div>
         {data.nodes.length === 0 ? (
-          <p data-testid="k8s-nodes-empty" className="text-sm text-muted-foreground py-4 text-center">
+          <p
+            data-testid="k8s-nodes-empty"
+            className="text-sm text-muted-foreground py-4 text-center"
+          >
             No nodes were reported. A cluster that answered has at least one, so check the warning
             above.
           </p>
@@ -285,25 +297,45 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
             <table data-testid="k8s-nodes" className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
-                  <th scope="col" className="p-2.5">Node</th>
-                  <th scope="col" className="p-2.5">Ready</th>
-                  <th scope="col" className="p-2.5">Kubelet</th>
-                  <th scope="col" className="p-2.5">Allocatable CPU / memory</th>
+                  <th scope="col" className="p-2.5">
+                    Node
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Ready
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Kubelet
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Allocatable CPU / memory
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {data.nodes.map((node) => (
-                  <tr key={node.name} data-testid={`k8s-node-${node.name}`} className="hover:bg-muted/20 transition-colors">
+                  <tr
+                    key={node.name}
+                    data-testid={`k8s-node-${node.name}`}
+                    className="hover:bg-muted/20 transition-colors"
+                  >
                     <td className="p-2.5 font-medium font-mono text-foreground">{node.name}</td>
                     <td data-testid={`k8s-node-ready-${node.name}`} className="p-2.5">
                       <Badge
-                        variant={node.ready === null ? "outline" : node.ready ? "success" : "destructive"}
+                        variant={
+                          node.ready === null ? "outline" : node.ready ? "success" : "destructive"
+                        }
                         className="text-[10px] uppercase font-mono tracking-wider"
                       >
-                        {node.ready === null ? "has not reported" : node.ready ? "Ready" : "NotReady"}
+                        {node.ready === null
+                          ? "has not reported"
+                          : node.ready
+                            ? "Ready"
+                            : "NotReady"}
                       </Badge>
                     </td>
-                    <td className="p-2.5 font-mono text-muted-foreground">{node.kubelet_version}</td>
+                    <td className="p-2.5 font-mono text-muted-foreground">
+                      {node.kubelet_version}
+                    </td>
                     <td className="p-2.5 font-mono text-muted-foreground">
                       {node.allocatable.cpu || "not reported"} /{" "}
                       {node.allocatable.memory || "not reported"}
@@ -322,7 +354,10 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
           <Badge variant="outline">{data.workloads.length} workloads</Badge>
         </div>
         {data.workloads.length === 0 ? (
-          <p data-testid="k8s-workloads-empty" className="text-sm text-muted-foreground py-4 text-center">
+          <p
+            data-testid="k8s-workloads-empty"
+            className="text-sm text-muted-foreground py-4 text-center"
+          >
             {namespace
               ? `No deployments, stateful sets or daemon sets in ${namespace}.`
               : "No deployments, stateful sets or daemon sets in any namespace."}
@@ -332,26 +367,48 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
             <table data-testid="k8s-workloads" className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
-                  <th scope="col" className="p-2.5">Workload</th>
-                  <th scope="col" className="p-2.5">Namespace</th>
-                  <th scope="col" className="p-2.5">Ready / desired</th>
-                  <th scope="col" className="p-2.5">Image</th>
-                  <th scope="col" className="p-2.5 text-right">Actions</th>
+                  <th scope="col" className="p-2.5">
+                    Workload
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Namespace
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Ready / desired
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Image
+                  </th>
+                  <th scope="col" className="p-2.5 text-right">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {data.workloads.map((workload) => {
                   const key = `${workload.namespace}/${workload.kind}/${workload.name}`;
                   return (
-                    <tr key={key} data-testid={`k8s-workload-${workload.name}`} className="hover:bg-muted/20 transition-colors">
+                    <tr
+                      key={key}
+                      data-testid={`k8s-workload-${workload.name}`}
+                      className="hover:bg-muted/20 transition-colors"
+                    >
                       <td className="p-2.5 font-medium font-mono text-foreground">
                         {workload.kind}/{workload.name}
                       </td>
-                      <td className="p-2.5 font-mono text-muted-foreground">{workload.namespace}</td>
-                      <td data-testid={`k8s-replicas-${workload.name}`} className="p-2.5 font-mono font-medium">
+                      <td className="p-2.5 font-mono text-muted-foreground">
+                        {workload.namespace}
+                      </td>
+                      <td
+                        data-testid={`k8s-replicas-${workload.name}`}
+                        className="p-2.5 font-mono font-medium"
+                      >
                         {count(workload.ready_replicas)} / {count(workload.desired_replicas)}
                       </td>
-                      <td className="p-2.5 font-mono text-muted-foreground truncate max-w-[200px]" title={workload.images.join(", ")}>
+                      <td
+                        className="p-2.5 font-mono text-muted-foreground truncate max-w-[200px]"
+                        title={workload.images.join(", ")}
+                      >
                         {workload.images.join(", ") || "not reported"}
                       </td>
                       <td className="p-2.5 text-right">
@@ -437,7 +494,10 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
           <Badge variant="outline">{data.pods.length} pods</Badge>
         </div>
         {data.pods.length === 0 ? (
-          <p data-testid="k8s-pods-empty" className="text-sm text-muted-foreground py-4 text-center">
+          <p
+            data-testid="k8s-pods-empty"
+            className="text-sm text-muted-foreground py-4 text-center"
+          >
             No pods in this scope.
           </p>
         ) : (
@@ -445,18 +505,36 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
             <table data-testid="k8s-pods" className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
-                  <th scope="col" className="p-2.5">Pod</th>
-                  <th scope="col" className="p-2.5">Phase</th>
-                  <th scope="col" className="p-2.5">Containers ready</th>
-                  <th scope="col" className="p-2.5">Restarts</th>
-                  <th scope="col" className="p-2.5">Node</th>
-                  <th scope="col" className="p-2.5">Waiting because</th>
-                  <th scope="col" className="p-2.5 text-right">Output</th>
+                  <th scope="col" className="p-2.5">
+                    Pod
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Phase
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Containers ready
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Restarts
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Node
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Waiting because
+                  </th>
+                  <th scope="col" className="p-2.5 text-right">
+                    Output
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {data.pods.map((pod) => (
-                  <tr key={`${pod.namespace}/${pod.name}`} data-testid={`k8s-pod-${pod.name}`} className="hover:bg-muted/20 transition-colors">
+                  <tr
+                    key={`${pod.namespace}/${pod.name}`}
+                    data-testid={`k8s-pod-${pod.name}`}
+                    className="hover:bg-muted/20 transition-colors"
+                  >
                     <td className="p-2.5 font-medium font-mono text-foreground">{pod.name}</td>
                     <td className="p-2.5">
                       <Badge
@@ -469,11 +547,19 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
                     <td data-testid={`k8s-pod-ready-${pod.name}`} className="p-2.5 font-mono">
                       {pod.ready_containers}/{pod.total_containers}
                     </td>
-                    <td data-testid={`k8s-pod-restarts-${pod.name}`} className="p-2.5 font-mono text-muted-foreground">
+                    <td
+                      data-testid={`k8s-pod-restarts-${pod.name}`}
+                      className="p-2.5 font-mono text-muted-foreground"
+                    >
                       {pod.restarts}
                     </td>
-                    <td className="p-2.5 font-mono text-muted-foreground">{pod.node || "not scheduled"}</td>
-                    <td data-testid={`k8s-pod-reason-${pod.name}`} className="p-2.5 font-mono text-muted-foreground">
+                    <td className="p-2.5 font-mono text-muted-foreground">
+                      {pod.node || "not scheduled"}
+                    </td>
+                    <td
+                      data-testid={`k8s-pod-reason-${pod.name}`}
+                      className="p-2.5 font-mono text-muted-foreground"
+                    >
                       {pod.reason || "—"}
                     </td>
                     <td className="p-2.5 text-right">
@@ -487,7 +573,11 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
                       </button>
                       {openPod === pod.name && (
                         <div className="w-full mt-2 text-left">
-                          <PodDetail projectId={projectId} namespace={pod.namespace} pod={pod.name} />
+                          <PodDetail
+                            projectId={projectId}
+                            namespace={pod.namespace}
+                            pod={pod.name}
+                          />
                         </div>
                       )}
                     </td>
@@ -507,30 +597,50 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
           </div>
           <div className="space-y-3">
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider font-mono">Services</p>
-              <ul data-testid="k8s-services" className="space-y-1 font-mono text-xs max-h-40 overflow-y-auto rounded border border-border bg-muted/10 p-2">
+              <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider font-mono">
+                Services
+              </p>
+              <ul
+                data-testid="k8s-services"
+                className="space-y-1 font-mono text-xs max-h-40 overflow-y-auto rounded border border-border bg-muted/10 p-2"
+              >
                 {data.services.length === 0 ? (
                   <li className="text-muted-foreground">No services in this scope.</li>
                 ) : (
                   data.services.map((service) => (
-                    <li key={`${service.namespace}/${service.name}`} className="p-1 rounded bg-card border border-border/40 text-[11px] flex justify-between">
+                    <li
+                      key={`${service.namespace}/${service.name}`}
+                      className="p-1 rounded bg-card border border-border/40 text-[11px] flex justify-between"
+                    >
                       <span className="font-medium text-foreground">{service.name}</span>
-                      <span className="text-muted-foreground">{service.type}, {service.cluster_ip}, {service.ports || "no ports"}</span>
+                      <span className="text-muted-foreground">
+                        {service.type}, {service.cluster_ip}, {service.ports || "no ports"}
+                      </span>
                     </li>
                   ))
                 )}
               </ul>
             </div>
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider font-mono">Ingresses</p>
-              <ul data-testid="k8s-ingresses" className="space-y-1 font-mono text-xs max-h-40 overflow-y-auto rounded border border-border bg-muted/10 p-2">
+              <p className="text-xs font-medium text-muted-foreground mb-1 uppercase tracking-wider font-mono">
+                Ingresses
+              </p>
+              <ul
+                data-testid="k8s-ingresses"
+                className="space-y-1 font-mono text-xs max-h-40 overflow-y-auto rounded border border-border bg-muted/10 p-2"
+              >
                 {data.ingresses.length === 0 ? (
                   <li className="text-muted-foreground">No ingresses in this scope.</li>
                 ) : (
                   data.ingresses.map((ingress) => (
-                    <li key={`${ingress.namespace}/${ingress.name}`} className="p-1 rounded bg-card border border-border/40 text-[11px] flex justify-between">
+                    <li
+                      key={`${ingress.namespace}/${ingress.name}`}
+                      className="p-1 rounded bg-card border border-border/40 text-[11px] flex justify-between"
+                    >
                       <span className="font-medium text-foreground">{ingress.name}</span>
-                      <span className="text-muted-foreground">{ingress.hosts.join(", ") || "no hosts"}</span>
+                      <span className="text-muted-foreground">
+                        {ingress.hosts.join(", ") || "no hosts"}
+                      </span>
                     </li>
                   ))
                 )}
@@ -550,9 +660,14 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
                 <li className="text-muted-foreground p-1">No config maps in this scope.</li>
               ) : (
                 data.config_maps.map((configMap) => (
-                  <li key={`${configMap.namespace}/${configMap.name}`} className="p-1.5 rounded bg-card border border-border/40 text-[11px]">
+                  <li
+                    key={`${configMap.namespace}/${configMap.name}`}
+                    className="p-1.5 rounded bg-card border border-border/40 text-[11px]"
+                  >
                     <span className="font-medium text-foreground">{configMap.name}</span>
-                    <span className="text-muted-foreground ml-2">— keys: {configMap.keys.join(", ") || "none"} (values are not read)</span>
+                    <span className="text-muted-foreground ml-2">
+                      — keys: {configMap.keys.join(", ") || "none"} (values are not read)
+                    </span>
                   </li>
                 ))
               )}
@@ -575,21 +690,36 @@ export function KubernetesDashboard({ projectId }: { projectId: string }) {
             <table data-testid="k8s-hpa" className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
-                  <th scope="col" className="p-2.5">Autoscaler</th>
-                  <th scope="col" className="p-2.5">Target</th>
-                  <th scope="col" className="p-2.5">Min / max</th>
-                  <th scope="col" className="p-2.5 text-right">Current</th>
+                  <th scope="col" className="p-2.5">
+                    Autoscaler
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Target
+                  </th>
+                  <th scope="col" className="p-2.5">
+                    Min / max
+                  </th>
+                  <th scope="col" className="p-2.5 text-right">
+                    Current
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
                 {data.horizontal_pod_autoscalers.map((hpa) => (
-                  <tr key={`${hpa.namespace}/${hpa.name}`} data-testid={`k8s-hpa-${hpa.name}`} className="hover:bg-muted/20 transition-colors">
+                  <tr
+                    key={`${hpa.namespace}/${hpa.name}`}
+                    data-testid={`k8s-hpa-${hpa.name}`}
+                    className="hover:bg-muted/20 transition-colors"
+                  >
                     <td className="p-2.5 font-medium font-mono text-foreground">{hpa.name}</td>
                     <td className="p-2.5 font-mono text-muted-foreground">{hpa.target}</td>
                     <td className="p-2.5 font-mono text-muted-foreground">
                       {count(hpa.min_replicas)} / {count(hpa.max_replicas)}
                     </td>
-                    <td data-testid={`k8s-hpa-current-${hpa.name}`} className="p-2.5 font-mono font-medium text-right">
+                    <td
+                      data-testid={`k8s-hpa-current-${hpa.name}`}
+                      className="p-2.5 font-mono font-medium text-right"
+                    >
                       {count(hpa.current_replicas)}
                     </td>
                   </tr>

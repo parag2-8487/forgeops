@@ -478,12 +478,16 @@ export function ApprovalCenter() {
       action: "approve" | "reject";
       version: number;
     }) =>
-      api.post<unknown>(`/approvals/${id}/${action}`, {
-        comment: comment.trim() === "" ? null : comment.trim(),
-        // The version THIS screen displayed. A stale tab therefore gets a 409 rather than deciding
-        // on state it never showed the reviewer.
-        expected_version: version,
-      }, { timeoutMs: 180_000 }),
+      api.post<unknown>(
+        `/approvals/${id}/${action}`,
+        {
+          comment: comment.trim() === "" ? null : comment.trim(),
+          // The version THIS screen displayed. A stale tab therefore gets a 409 rather than deciding
+          // on state it never showed the reviewer.
+          expected_version: version,
+        },
+        { timeoutMs: 180_000 },
+      ),
     onSuccess: async () => {
       setComment("");
       setDecisionError(null);
@@ -495,7 +499,10 @@ export function ApprovalCenter() {
       const problem = error instanceof ApiProblemError ? error.problem : null;
       const detailStr = String(problem?.detail ?? "");
       const titleStr = String(problem?.title ?? "");
-      const msg = typeof error === "object" && error !== null && "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+      const msg =
+        typeof error === "object" && error !== null && "message" in error
+          ? String((error as { message?: unknown }).message ?? "")
+          : "";
       if (
         detailStr.includes("aborted") ||
         detailStr.includes("signal is aborted") ||
@@ -675,7 +682,9 @@ export function ApprovalCenter() {
                       setDecisionError(null);
                     }}
                     className={`w-full rounded-md border p-3 text-left text-sm transition-colors ${
-                      selected === cs.id ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+                      selected === cs.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted/30"
                     }`}
                   >
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -687,12 +696,17 @@ export function ApprovalCenter() {
                       </div>
                       <span className="text-xs text-muted-foreground">
                         {cs.origin} · blast radius {cs.blast_radius_score}
-                        {cs.blast_radius_verdict ? ` (${cs.blast_radius_verdict})` : ""} · v{cs.version}
+                        {cs.blast_radius_verdict ? ` (${cs.blast_radius_verdict})` : ""} · v
+                        {cs.version}
                       </span>
                     </div>
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <span>Change Set: <code className="text-xs">{cs.id}</code></span>
-                      <span>Project ID: <code className="text-xs">{cs.project_id}</code></span>
+                      <span>
+                        Change Set: <code className="text-xs">{cs.id}</code>
+                      </span>
+                      <span>
+                        Project ID: <code className="text-xs">{cs.project_id}</code>
+                      </span>
                       <span className="capitalize">{cs.status.replace("_", " ")}</span>
                     </div>
                   </button>
@@ -717,7 +731,12 @@ export function ApprovalCenter() {
                     {formatOperation(current.operation, current.origin)}
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    Project: <span className="font-medium text-foreground">{projectNameMap.get(current.project_id) ?? current.project_id}</span> (<code className="text-xs">{current.project_id}</code>) · Change Set: <code className="text-xs">{current.id}</code>
+                    Project:{" "}
+                    <span className="font-medium text-foreground">
+                      {projectNameMap.get(current.project_id) ?? current.project_id}
+                    </span>{" "}
+                    (<code className="text-xs">{current.project_id}</code>) · Change Set:{" "}
+                    <code className="text-xs">{current.id}</code>
                   </p>
                 </div>
                 <div role="group" aria-label="Diff view mode" className="flex gap-1">

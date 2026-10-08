@@ -173,11 +173,7 @@ export default function ProjectDetailPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setCloudDeployOpen(true)}
-                  >
+                  <Button size="sm" variant="outline" onClick={() => setCloudDeployOpen(true)}>
                     Export to GitHub / Vercel
                   </Button>
                   <Badge variant="outline">§2.2</Badge>

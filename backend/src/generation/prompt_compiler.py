@@ -66,7 +66,9 @@ CHARS_PER_TOKEN_ESTIMATE: Final = 4
 #: that fails one is discarded, so the model is told the rule rather than only the consequence.
 GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
     "dockerfile": (
-        "The very first line of the Dockerfile MUST be `FROM` (for example: `FROM <image>:<exact-version> AS builder`). Do NOT write `ARG` anywhere in the Dockerfile; never define an `ARG` before `FROM` or anywhere else.",
+        "The very first line of the Dockerfile MUST be `FROM` (for example: "
+        "`FROM <image>:<exact-version> AS builder`). Do NOT write `ARG` anywhere in the "
+        "Dockerfile; never define an `ARG` before `FROM` or anywhere else.",
         # AN EXACT, COPYABLE LINE, not a description of one. This requirement previously read "there is a
         # `USER` instruction that switches to a non-root account, placed after the RUN instructions" — a
         # correct description that the model failed on all three attempts, every time for this same fault,
@@ -85,8 +87,11 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "NO `FROM` line ends in `:latest`, and none omits a tag. Every `FROM` is either "
         "`image:<exact-version>` (never a floating tag such as `latest`, and never a bare image name "
         "with no tag at all) or `image@sha256:<digest>`. Do NOT write `FROM $SOMETHING` or define an `ARG` for any "
-        "image: write literal image names and exact version tags directly (for example: `FROM <image>:<exact-version> AS builder` and `FROM <image>:<exact-version>`). Build arguments and `$` variables are strictly forbidden by `dockerfile_base_pinned`. "
-        "This applies to EVERY stage of a multi-stage build, including the builder: a build whose builder floats is not reproducible even when its final stage is pinned.",
+        "image: write literal image names and exact version tags directly (for example: "
+        "`FROM <image>:<exact-version> AS builder` and `FROM <image>:<exact-version>`). "
+        "Build arguments and `$` variables are strictly forbidden by `dockerfile_base_pinned`. "
+        "This applies to EVERY stage of a multi-stage build, including the builder: a build "
+        "whose builder floats is not reproducible even when its final stage is pinned.",
         # The language is stated as a REQUIREMENT rather than left to the facts section. 7b read a Python
         # project's index and wrote a Go build -- `FROM golang:1.17` with `go mod download` -- so the
         # facts alone did not carry it. An artifact for the wrong language fails every content check at
@@ -99,9 +104,11 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "` AS builder`; the second is the final runtime image and copies from it with "
         "`COPY --from=builder`. A single-stage Dockerfile ships the build tooling in the runtime image "
         "and does not satisfy this.",
-        "When copying files with `COPY --from=builder`, ALWAYS use the absolute path from builder's WORKDIR "
-        "(for example: `COPY --from=builder /app/dist ./` or `COPY --from=builder /app/build ./`). Never use "
-        "relative paths like `./dist` or `dist`, which resolve to `/` (container root) and cause build failures.",
+        "When copying files with `COPY --from=builder`, ALWAYS use the absolute path from "
+        "builder's WORKDIR "
+        "(for example: `COPY --from=builder /app/dist ./` or `COPY --from=builder /app/build "
+        "./`). Never use relative paths like `./dist` or `dist`, which resolve to `/` "
+        "(container root) and cause build failures.",
         "For frontend client applications (Vite, React, Vue, Svelte, static web apps) without a backend server, "
         "do not assume a Node entry file exists. Serve the built static directory with a static file server "
         "instead of starting a process that is not there.",
@@ -113,10 +120,18 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "health endpoint. A comment mentioning health does not count; the instruction must be present.",
         "The base image and the build steps match the language of THIS repository, as stated in the "
         "facts section above. Do not write a build for a different language.",
-        "All repository source files are located at the root of the repository unless subdirectories are explicitly listed in section 1. "
+        "All repository source files are located at the root of the repository unless "
+        "subdirectories are explicitly listed in section 1. "
         "Do NOT invent monorepo subdirectories that are not listed in section 1. "
-        "CRITICAL FOR CASE SENSITIVITY: Linux Docker builds are strictly case-sensitive. Every directory name in `COPY`, `WORKDIR`, and compose build contexts MUST match the exact letter casing shown in section 1 manifests (for example: if section 1 lists `Backend/package.json` and `Frontent/package.json`, you MUST write `COPY Backend/package.json ./Backend/package.json` and `COPY Frontent/package.json ./Frontent/package.json` with capital `B` and capital `F`). "
-        "Copy each manifest from the directory section 1 shows it in, install its dependencies with the package manager that directory's lockfile names, then copy the remaining source and run that directory's own build command.",
+        "CRITICAL FOR CASE SENSITIVITY: Linux Docker builds are strictly case-sensitive. "
+        "Every directory name in `COPY`, `WORKDIR`, and compose build contexts MUST match the "
+        "exact letter casing shown in section 1 manifests (for example: if section 1 lists "
+        "`Backend/package.json` and `Frontent/package.json`, you MUST write "
+        "`COPY Backend/package.json ./Backend/package.json` and "
+        "`COPY Frontent/package.json ./Frontent/package.json` with capital `B` and capital `F`). "
+        "Copy each manifest from the directory section 1 shows it in, install its dependencies with the package "
+        "manager that directory's lockfile names, then copy the remaining source and run that directory's own build "
+        "command.",
         "The file contains at least one real instruction, not only comments.",
     ),
     "k8s": (
@@ -126,9 +141,12 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
     "compose": (
         "There is a top-level `name` equal to the project name and a `services` mapping with at least one service.",
         "No service uses the `latest` tag or omits its tag.",
-        "Services define explicit `container_name` using the project name prefix to keep project containers grouped cleanly on the Docker host.",
-        "Services define port mappings (for example: `\"<port>:<port>\"`) to expose the application to localhost so the service is directly testable and accessible.",
-        "Set service build context to `.` when project files and Dockerfile are at repository root. Do NOT invent subdirectories like `build: ./frontent` or `build: ./backend`.",
+        "Services define explicit `container_name` using the project name prefix to keep project containers grouped "
+        "cleanly on the Docker host.",
+        "Services define port mappings (for example: `\"<port>:<port>\"`) to expose the application to localhost so "
+        "the service is directly testable and accessible.",
+        "Set service build context to `.` when project files and Dockerfile are at repository root. Do NOT invent "
+        "subdirectories like `build: ./frontent` or `build: ./backend`.",
     ),
     "helm": ("`Chart.yaml` declares `apiVersion`, `name` and `version`.",),
     "github_workflow": (

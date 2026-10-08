@@ -1160,7 +1160,9 @@ class GenerationService:
         app_name = _kubernetes_name(project_name) or "forgeops-app"
 
         inventory = (project.get("inventory") if project is not None else None) or {}
-        inv_languages = [str(l).lower() for l in (inventory.get("languages") or [])]
+        # `lang` rather than `l`: a single lowercase L is indistinguishable from a 1 in most
+        # fonts, which is why ruff's E741 flags it.
+        inv_languages = [str(lang).lower() for lang in (inventory.get("languages") or [])]
         inv_frameworks = [
             str(f.get("name") if isinstance(f, dict) else f).lower()
             for f in (inventory.get("frameworks") or [])
@@ -1284,12 +1286,13 @@ class GenerationService:
                 "COPY go.mod go.sum* ./",
                 "RUN go mod download || true",
                 "COPY . .",
-                "RUN CGO_ENABLED=0 go build -o /app/server . || CGO_ENABLED=0 go build -o /app/server ./cmd/... || true",
+                "RUN CGO_ENABLED=0 go build -o /app/server . "
+                "|| CGO_ENABLED=0 go build -o /app/server ./cmd/... || true",
             ]
             copy_forward = ["COPY --from=builder /app/server /app/server"]
             health = (
                 "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n"
-                f'  CMD ["/app/server", "--health"] || exit 0'
+                '  CMD ["/app/server", "--health"] || exit 0'
             )
         else:
             builder = [
@@ -1300,7 +1303,8 @@ class GenerationService:
             ]
             copy_forward = [
                 "COPY --from=builder /wheels /wheels",
-                "RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* 2>/dev/null || pip install -r requirements.txt || true",
+                "RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* "
+                "2>/dev/null || pip install -r requirements.txt || true",
                 "COPY . .",
             ]
             health = (

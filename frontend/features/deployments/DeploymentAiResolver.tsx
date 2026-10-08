@@ -7,7 +7,16 @@ import { isSseEvent, isTerminalSseEvent, type SseEvent } from "@/lib/api/sse-eve
 import { readSSEResponse } from "@/lib/sse-reader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, Loader2, Wrench, Terminal } from "lucide-react";
+import {
+  Sparkles,
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle,
+  ExternalLink,
+  Loader2,
+  Wrench,
+  Terminal,
+} from "lucide-react";
 import Link from "next/link";
 
 interface DeploymentAiResolverProps {
@@ -63,50 +72,124 @@ export function DeploymentAiResolver({
     const errorCategories: string[] = [];
 
     // --- build stage never ran the compiler ------------------------------------------------
-    if (errorLower.includes("exit code: 127") || errorLower.includes("exit code 127") || errorLower.includes("command not found")) {
-      errorCategories.push("BUILD_TOOL_MISSING: A command was not found inside the builder stage. For Node this is almost always `npm install --production` / `--omit=dev` stripping devDependencies, where the build CLIs (tsc, vite, webpack, esbuild, next) live. Fix: install WITHOUT --production in the builder stage. For a missing interpreter (node, python, go, mvn, cargo), fix the base image of the builder stage instead.");
+    if (
+      errorLower.includes("exit code: 127") ||
+      errorLower.includes("exit code 127") ||
+      errorLower.includes("command not found")
+    ) {
+      errorCategories.push(
+        "BUILD_TOOL_MISSING: A command was not found inside the builder stage. For Node this is almost always `npm install --production` / `--omit=dev` stripping devDependencies, where the build CLIs (tsc, vite, webpack, esbuild, next) live. Fix: install WITHOUT --production in the builder stage. For a missing interpreter (node, python, go, mvn, cargo), fix the base image of the builder stage instead.",
+      );
     }
 
     // --- language-level compile failures ---------------------------------------------------
-    if (/error ts\d+/.test(errorLower) || errorLower.includes("cannot find type definition file") || errorLower.includes("implicitly has an 'any' type")) {
-      errorCategories.push("TYPESCRIPT_COMPILE_ERROR: `tsc` rejected the sources. Distinguish two causes. (a) The application's own code or tsconfig is wrong -- report that, do NOT invent files to silence it. (b) The Dockerfile installed production-only dependencies, so @types/* packages are absent and every import resolves to `any`. For (b), install devDependencies in the builder stage.");
+    if (
+      /error ts\d+/.test(errorLower) ||
+      errorLower.includes("cannot find type definition file") ||
+      errorLower.includes("implicitly has an 'any' type")
+    ) {
+      errorCategories.push(
+        "TYPESCRIPT_COMPILE_ERROR: `tsc` rejected the sources. Distinguish two causes. (a) The application's own code or tsconfig is wrong -- report that, do NOT invent files to silence it. (b) The Dockerfile installed production-only dependencies, so @types/* packages are absent and every import resolves to `any`. For (b), install devDependencies in the builder stage.",
+      );
     }
-    if (errorLower.includes("module not found") || errorLower.includes("cannot find module") || errorLower.includes("could not resolve")) {
-      errorCategories.push("MISSING_DEPENDENCY: A module could not be resolved at build or start time. Check that the dependency is declared in the manifest AND that the Dockerfile installs it (a production-only install omits devDependencies). If the module is genuinely undeclared in the application, report that instead of adding it.");
+    if (
+      errorLower.includes("module not found") ||
+      errorLower.includes("cannot find module") ||
+      errorLower.includes("could not resolve")
+    ) {
+      errorCategories.push(
+        "MISSING_DEPENDENCY: A module could not be resolved at build or start time. Check that the dependency is declared in the manifest AND that the Dockerfile installs it (a production-only install omits devDependencies). If the module is genuinely undeclared in the application, report that instead of adding it.",
+      );
     }
-    if (errorLower.includes("err_pnpm") || errorLower.includes("err!") || errorLower.includes("npm err")) {
-      errorCategories.push("PACKAGE_MANAGER_ERROR: The package manager itself failed. Match the install command to the lockfile actually present (package-lock.json -> npm ci/npm install, yarn.lock -> yarn, pnpm-lock.yaml -> pnpm, bun.lock -> bun). Never run an install command whose lockfile is absent.");
+    if (
+      errorLower.includes("err_pnpm") ||
+      errorLower.includes("err!") ||
+      errorLower.includes("npm err")
+    ) {
+      errorCategories.push(
+        "PACKAGE_MANAGER_ERROR: The package manager itself failed. Match the install command to the lockfile actually present (package-lock.json -> npm ci/npm install, yarn.lock -> yarn, pnpm-lock.yaml -> pnpm, bun.lock -> bun). Never run an install command whose lockfile is absent.",
+      );
     }
-    if (errorLower.includes("no such file or directory") || errorLower.includes("not found") || errorLower.includes("failed to compute cache key") || errorLower.includes("checksum")) {
-      errorCategories.push("DOCKER_COPY_PATH_MISSING: A COPY instruction references a path that does not exist in the build context. Linux builds are case-sensitive, so every COPY, WORKDIR and build context must match the exact casing and nesting of files on disk. Copy from the directory that actually contains the file; do not add placeholder files to satisfy a COPY.");
+    if (
+      errorLower.includes("no such file or directory") ||
+      errorLower.includes("not found") ||
+      errorLower.includes("failed to compute cache key") ||
+      errorLower.includes("checksum")
+    ) {
+      errorCategories.push(
+        "DOCKER_COPY_PATH_MISSING: A COPY instruction references a path that does not exist in the build context. Linux builds are case-sensitive, so every COPY, WORKDIR and build context must match the exact casing and nesting of files on disk. Copy from the directory that actually contains the file; do not add placeholder files to satisfy a COPY.",
+      );
     }
-    if (errorLower.includes("failed to solve") || errorLower.includes("dockerfile parse error") || errorLower.includes("unknown type")) {
-      errorCategories.push("DOCKERFILE_SYNTAX_ERROR: The Dockerfile has a syntax error (malformed HEALTHCHECK, stray backslash, invalid instruction, wrong stage name in COPY --from).");
+    if (
+      errorLower.includes("failed to solve") ||
+      errorLower.includes("dockerfile parse error") ||
+      errorLower.includes("unknown type")
+    ) {
+      errorCategories.push(
+        "DOCKERFILE_SYNTAX_ERROR: The Dockerfile has a syntax error (malformed HEALTHCHECK, stray backslash, invalid instruction, wrong stage name in COPY --from).",
+      );
     }
-    if (errorLower.includes("server.js") && (errorLower.includes("not found") || errorLower.includes("cannot find module"))) {
-      errorCategories.push("WRONG_ENTRYPOINT: CMD references a file that does not exist. A static frontend (Vite, React, Vue, Angular, Svelte) has no server.js: serve the built directory with nginx or `serve -s` instead of `node server.js`.");
+    if (
+      errorLower.includes("server.js") &&
+      (errorLower.includes("not found") || errorLower.includes("cannot find module"))
+    ) {
+      errorCategories.push(
+        "WRONG_ENTRYPOINT: CMD references a file that does not exist. A static frontend (Vite, React, Vue, Angular, Svelte) has no server.js: serve the built directory with nginx or `serve -s` instead of `node server.js`.",
+      );
     }
-    if (errorLower.includes("version") && (errorLower.includes("unsupported") || errorLower.includes("requires node") || errorLower.includes("engine"))) {
-      errorCategories.push("RUNTIME_VERSION_MISMATCH: The declared or lockfile-pinned runtime version is incompatible with the base image. Align the base image tag with what the project actually requires (engines field, .nvmrc, go.mod, pom.xml) instead of loosening the project's requirement.");
+    if (
+      errorLower.includes("version") &&
+      (errorLower.includes("unsupported") ||
+        errorLower.includes("requires node") ||
+        errorLower.includes("engine"))
+    ) {
+      errorCategories.push(
+        "RUNTIME_VERSION_MISMATCH: The declared or lockfile-pinned runtime version is incompatible with the base image. Align the base image tag with what the project actually requires (engines field, .nvmrc, go.mod, pom.xml) instead of loosening the project's requirement.",
+      );
     }
 
     // --- infrastructure rather than project -------------------------------------------------
-    if (errorLower.includes("timeout") || errorLower.includes("tls handshake") || errorLower.includes("failed to resolve reference") || errorLower.includes("failed to do request")) {
-      errorCategories.push("NETWORK_TIMEOUT: An image pull or registry request timed out. This is transient and environmental -- it is NOT a defect in the Dockerfile. Report it as such and retry rather than rewriting the build.");
+    if (
+      errorLower.includes("timeout") ||
+      errorLower.includes("tls handshake") ||
+      errorLower.includes("failed to resolve reference") ||
+      errorLower.includes("failed to do request")
+    ) {
+      errorCategories.push(
+        "NETWORK_TIMEOUT: An image pull or registry request timed out. This is transient and environmental -- it is NOT a defect in the Dockerfile. Report it as such and retry rather than rewriting the build.",
+      );
     }
-    if (errorLower.includes("permission denied") || errorLower.includes("operation not permitted")) {
-      errorCategories.push("PERMISSION_ERROR: A file operation was denied. Usually a COPY --from whose source path is wrong, or a USER that cannot read the copied files. Prefer fixing the path or the ownership over removing the USER directive, which exists for a reason.");
+    if (
+      errorLower.includes("permission denied") ||
+      errorLower.includes("operation not permitted")
+    ) {
+      errorCategories.push(
+        "PERMISSION_ERROR: A file operation was denied. Usually a COPY --from whose source path is wrong, or a USER that cannot read the copied files. Prefer fixing the path or the ownership over removing the USER directive, which exists for a reason.",
+      );
     }
-    if (errorLower.includes("port is already allocated") || errorLower.includes("address already in use") || errorLower.includes("conflict")) {
-      errorCategories.push("PORT_CONFLICT: A host port is already taken. Change the published host port; keep the container port aligned with what the application listens on.");
+    if (
+      errorLower.includes("port is already allocated") ||
+      errorLower.includes("address already in use") ||
+      errorLower.includes("conflict")
+    ) {
+      errorCategories.push(
+        "PORT_CONFLICT: A host port is already taken. Change the published host port; keep the container port aligned with what the application listens on.",
+      );
     }
-    if (errorLower.includes("no space left") || errorLower.includes("out of memory") || errorLower.includes("killed")) {
-      errorCategories.push("RESOURCE_EXHAUSTION: The host ran out of disk or memory during the build. Report it as environmental; do not rewrite the application to work around it.");
+    if (
+      errorLower.includes("no space left") ||
+      errorLower.includes("out of memory") ||
+      errorLower.includes("killed")
+    ) {
+      errorCategories.push(
+        "RESOURCE_EXHAUSTION: The host ran out of disk or memory during the build. Report it as environmental; do not rewrite the application to work around it.",
+      );
     }
 
-    const diagnosisBlock = errorCategories.length > 0
-      ? `\n\nDIAGNOSIS (auto-classified from the error):\n${errorCategories.map((c, i: number) => `  ${i + 1}. ${c}`).join("\n")}`
-      : "";
+    const diagnosisBlock =
+      errorCategories.length > 0
+        ? `\n\nDIAGNOSIS (auto-classified from the error):\n${errorCategories.map((c, i: number) => `  ${i + 1}. ${c}`).join("\n")}`
+        : "";
 
     // BOUND THE ERROR EXCERPT BEFORE THE REQUEST.
     //
@@ -247,7 +330,9 @@ Produce the corrected Dockerfile, docker-compose.yml, and Kubernetes manifests f
       await onRetryDeploy();
     } catch (err: unknown) {
       const problem = err instanceof ApiProblemError ? err.problem : null;
-      setRedeployError(problem?.detail ?? (err instanceof Error ? err.message : "Redeploy failed."));
+      setRedeployError(
+        problem?.detail ?? (err instanceof Error ? err.message : "Redeploy failed."),
+      );
     } finally {
       setIsRedeploying(false);
     }
@@ -304,13 +389,14 @@ Produce the corrected Dockerfile, docker-compose.yml, and Kubernetes manifests f
           <div className="flex items-center justify-between border-b border-border/70 pb-2.5">
             <div className="flex items-center gap-2">
               <Wrench className="size-4 text-primary" />
-              <h4 className="text-xs font-semibold text-foreground">
-                AI Automated Remediation
-              </h4>
+              <h4 className="text-xs font-semibold text-foreground">AI Automated Remediation</h4>
             </div>
             <div className="flex items-center gap-2">
               {state === "streaming" && (
-                <Badge variant="outline" className="gap-1 text-[11px] border-primary/50 text-primary animate-pulse">
+                <Badge
+                  variant="outline"
+                  className="gap-1 text-[11px] border-primary/50 text-primary animate-pulse"
+                >
                   <Loader2 className="size-3 animate-spin" />
                   Model Generating Fixes…
                 </Badge>
@@ -333,7 +419,8 @@ Produce the corrected Dockerfile, docker-compose.yml, and Kubernetes manifests f
           {/* Stepper info */}
           <div className="text-xs text-muted-foreground space-y-1">
             <p>
-              <span className="font-semibold text-foreground">Diagnosis:</span> The model is analyzing host build logs and adapting configuration to this project&apos;s runtime.
+              <span className="font-semibold text-foreground">Diagnosis:</span> The model is
+              analyzing host build logs and adapting configuration to this project&apos;s runtime.
             </p>
           </div>
 
@@ -361,7 +448,8 @@ Produce the corrected Dockerfile, docker-compose.yml, and Kubernetes manifests f
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                The AI corrected the Dockerfile and deployment manifests. You can apply the change set directly and re-run deployment.
+                The AI corrected the Dockerfile and deployment manifests. You can apply the change
+                set directly and re-run deployment.
               </p>
 
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -418,9 +506,7 @@ Produce the corrected Dockerfile, docker-compose.yml, and Kubernetes manifests f
               </div>
 
               {redeployError && (
-                <p className="text-xs text-destructive font-medium pt-1">
-                  {redeployError}
-                </p>
+                <p className="text-xs text-destructive font-medium pt-1">{redeployError}</p>
               )}
             </div>
           )}

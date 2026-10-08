@@ -472,7 +472,7 @@ else
     "    sudo apt-get install -y ${BASE_PY}-venv || sudo apt-get install -y python3-venv"
   info_ 'installing launcher dependencies'
   "$VENV_PY" -m pip install --quiet --upgrade pip || warn_ 'could not upgrade pip; continuing'
-  
+
   lock_installed=0
   if "$BASE_PY" -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
     if "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock" 2>/dev/null; then

@@ -111,7 +111,8 @@ def validate_dockerfile(content: str) -> list[str]:
             )
         if "frontent" in stripped.lower():
             findings.append(
-                "Dockerfile references hallucinated/typoed directory 'frontent'. Copy files directly from root: `COPY package*.json ./`."
+                "Dockerfile references hallucinated/typoed directory 'frontent'. Copy files directly from root: "
+                "`COPY package*.json ./`."
             )
     return findings
 

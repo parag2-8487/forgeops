@@ -31,11 +31,9 @@ export default function ReadinessPage() {
 
   const scan = useMutation({
     mutationFn: () =>
-      api.post<{ status: string; result?: unknown }>(
-        `/projects/${projectId}/scan`,
-        undefined,
-        { timeoutMs: 900_000 },
-      ),
+      api.post<{ status: string; result?: unknown }>(`/projects/${projectId}/scan`, undefined, {
+        timeoutMs: 900_000,
+      }),
     onSuccess: async () => {
       setScanError(null);
       setScanMessage("Codebase scanned and indexed successfully!");
@@ -51,7 +49,9 @@ export default function ReadinessPage() {
         return;
       }
       setScanError(
-        problem?.detail ?? problem?.title ?? "Scan request failed. Make sure your agent is running.",
+        problem?.detail ??
+          problem?.title ??
+          "Scan request failed. Make sure your agent is running.",
       );
     },
   });
@@ -62,8 +62,8 @@ export default function ReadinessPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Deployment readiness</h1>
           <p className="mt-1 text-muted-foreground">
-            Scored by the backend&apos;s <code>ReadinessEngine</code> from the project&apos;s codebase
-            index, read from <code>GET /api/v1/projects/{"{id}"}/readiness</code>.
+            Scored by the backend&apos;s <code>ReadinessEngine</code> from the project&apos;s
+            codebase index, read from <code>GET /api/v1/projects/{"{id}"}/readiness</code>.
           </p>
         </div>
         {projectId ? (
@@ -77,11 +77,15 @@ export default function ReadinessPage() {
         ) : null}
       </div>
 
-      <ProjectPicker value={projectId} onChange={(id) => {
-        setProjectId(id);
-        setScanMessage(null);
-        setScanError(null);
-      }} id="readiness-project" />
+      <ProjectPicker
+        value={projectId}
+        onChange={(id) => {
+          setProjectId(id);
+          setScanMessage(null);
+          setScanError(null);
+        }}
+        id="readiness-project"
+      />
 
       {scanMessage ? (
         <div
