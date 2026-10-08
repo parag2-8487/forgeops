@@ -178,3 +178,164 @@ func TestProjectDetector_Go(t *testing.T) {
 		t.Fatalf("expected AppTypeGoBinary, got %v", profile.AppType)
 	}
 }
+
+func TestProjectDetector_NpmWorkspace_NextJS(t *testing.T) {
+	tempDir := t.TempDir()
+
+	rootPkg := `{
+		"name": "code-review-suite",
+		"version": "1.0.0",
+		"private": true,
+		"workspaces": ["code-review"],
+		"scripts": {
+			"build": "npm run build --workspace=code-review",
+			"start": "npm run start --workspace=code-review"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tempDir, "package.json"), []byte(rootPkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "package-lock.json"), []byte(`{"name":"code-review-suite","lockfileVersion":3}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wsDir := filepath.Join(tempDir, "code-review")
+	if err := os.MkdirAll(wsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	subPkg := `{
+		"name": "code-review",
+		"version": "0.1.0",
+		"scripts": {
+			"build": "next build",
+			"start": "next start"
+		},
+		"dependencies": {
+			"next": "^14.2.0",
+			"react": "^18.2.0"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(wsDir, "package.json"), []byte(subPkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := DetectProject(tempDir)
+	if !profile.IsWorkspace {
+		t.Fatalf("expected IsWorkspace=true, got %v", profile.IsWorkspace)
+	}
+	if len(profile.WorkspacePackages) != 1 || profile.WorkspacePackages[0] != "code-review" {
+		t.Fatalf("expected [code-review] workspace package, got %v", profile.WorkspacePackages)
+	}
+	if profile.Framework != "Next.js" {
+		t.Fatalf("expected Framework Next.js, got %v", profile.Framework)
+	}
+	if profile.AppType != AppTypeFullstackSSR {
+		t.Fatalf("expected AppTypeFullstackSSR, got %v", profile.AppType)
+	}
+
+	// Verify Dockerfile generation includes workspace manifests and reproducible install
+	dockerfile := GenerateDockerfile(profile)
+	if !strings.Contains(dockerfile, "COPY code-review/package*.json ./code-review/") {
+		t.Fatalf("generated Dockerfile missing workspace manifest copy:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "npm ci || npm install") {
+		t.Fatalf("generated Dockerfile missing reproducible install command:\n%s", dockerfile)
+	}
+
+	// Verify UniversalDockerfileHealer injects workspace manifests into broken Dockerfile
+	brokenDockerfile := `FROM node:22-slim
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+CMD ["npm", "start"]`
+
+	healed := UniversalDockerfileHealer(brokenDockerfile, profile, tempDir)
+	if !strings.Contains(healed, "COPY code-review/package*.json ./code-review/") {
+		t.Fatalf("healed Dockerfile did not inject workspace manifest:\n%s", healed)
+	}
+}
+
+func TestProjectDetector_PnpmWorkspace(t *testing.T) {
+	tempDir := t.TempDir()
+
+	pnpmWs := "packages:\n  - 'packages/*'\n"
+	if err := os.WriteFile(filepath.Join(tempDir, "pnpm-workspace.yaml"), []byte(pnpmWs), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pkgDir := filepath.Join(tempDir, "packages", "web")
+	if err := os.MkdirAll(pkgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	subPkg := `{"name": "@my/web", "version": "1.0.0", "scripts": {"build": "vite build"}}`
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(subPkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := DetectProject(tempDir)
+	if !profile.IsWorkspace {
+		t.Fatalf("expected IsWorkspace=true, got %v", profile.IsWorkspace)
+	}
+	if profile.PackageManager != "pnpm" {
+		t.Fatalf("expected PackageManager=pnpm, got %v", profile.PackageManager)
+	}
+	foundWeb := false
+	for _, ws := range profile.WorkspacePackages {
+		if ws == "packages/web" || ws == "packages\\web" {
+			foundWeb = true
+		}
+	}
+	if !foundWeb {
+		t.Fatalf("expected packages/web in WorkspacePackages, got %v", profile.WorkspacePackages)
+	}
+
+	copies := nodeManifestCopyLines(profile)
+	if !strings.Contains(copies, "pnpm-workspace.yaml*") {
+		t.Fatalf("expected pnpm-workspace.yaml in copies, got:\n%s", copies)
+	}
+	if !strings.Contains(copies, "packages/web/package*.json") {
+		t.Fatalf("expected packages/web manifest in copies, got:\n%s", copies)
+	}
+}
+
+func TestUniversalDockerfileHealer_SSRCopiesHealed(t *testing.T) {
+	tempDir := t.TempDir()
+	profile := &ProjectProfile{
+		BaseDir:             tempDir,
+		PrimaryLanguage:     LangNode,
+		Framework:           "Next.js",
+		AppType:             AppTypeFullstackSSR,
+		HasRootPackageJson:  true,
+		HasBuildScript:      true,
+		DefaultPort:         3000,
+		BuildOutputDir:      ".next",
+		Subprojects:         make(map[string]*ProjectProfile),
+	}
+
+	dockerfileWithDist := `FROM node:22-slim AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM node:22-slim AS runner
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+EXPOSE 3000
+CMD ["npm", "start"]`
+
+	healed := UniversalDockerfileHealer(dockerfileWithDist, profile, tempDir)
+	if strings.Contains(healed, "COPY --from=builder /app/dist") {
+		t.Fatalf("healed Dockerfile should not have /app/dist for SSR app:\n%s", healed)
+	}
+	if !strings.Contains(healed, "COPY --from=builder /app ./") {
+		t.Fatalf("healed Dockerfile should copy /app from builder for conventional SSR:\n%s", healed)
+	}
+}
+

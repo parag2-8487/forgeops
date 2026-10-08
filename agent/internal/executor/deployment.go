@@ -1190,6 +1190,80 @@ func ensureBuildableArtifacts(baseDir string, sink ProgressSink) (*ProjectProfil
 	return profile, true
 }
 
+// healDockerignore ensures .dockerignore excludes heavy or system-dependent dirs (e.g. host node_modules),
+// while guaranteeing required package manifests and workspace lockfiles are never excluded from build context.
+func healDockerignore(baseDir string, profile *ProjectProfile) {
+	dockerignorePath := filepath.Join(baseDir, ".dockerignore")
+	raw, err := os.ReadFile(dockerignorePath)
+	if os.IsNotExist(err) {
+		_ = os.WriteFile(dockerignorePath, []byte(".git\nnode_modules\n.venv\n__pycache__\n"), 0644)
+		return
+	}
+	if err != nil {
+		return
+	}
+
+	content := string(raw)
+	lines := strings.Split(content, "\n")
+	hasNodeModules := false
+	hasGit := false
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "node_modules" || trimmed == "**/node_modules" {
+			hasNodeModules = true
+		}
+		if trimmed == ".git" || trimmed == "**/.git" {
+			hasGit = true
+		}
+	}
+
+	var additions []string
+	if !hasGit {
+		additions = append(additions, ".git")
+	}
+	if !hasNodeModules {
+		additions = append(additions, "node_modules")
+	}
+
+	// Ensure required manifests and workspace descriptors are un-ignored if excluded
+	if profile != nil && profile.PrimaryLanguage == LangNode {
+		if !strings.Contains(content, "!package*.json") {
+			additions = append(additions, "!package*.json")
+		}
+		if profile.PackageManager == "pnpm" {
+			if !strings.Contains(content, "!pnpm-lock.yaml") {
+				additions = append(additions, "!pnpm-lock.yaml*", "!pnpm-workspace.yaml*")
+			}
+		} else if profile.PackageManager == "yarn" {
+			if !strings.Contains(content, "!yarn.lock") {
+				additions = append(additions, "!yarn.lock*", "!.yarnrc*")
+			}
+		} else if profile.PackageManager == "bun" {
+			if !strings.Contains(content, "!bun.lock") {
+				additions = append(additions, "!bun.lock*")
+			}
+		} else {
+			if !strings.Contains(content, "!package-lock.json") {
+				additions = append(additions, "!package-lock.json*")
+			}
+		}
+		for _, pkg := range profile.WorkspacePackages {
+			cleanPkg := filepath.ToSlash(filepath.Clean(pkg))
+			if cleanPkg != "." && cleanPkg != "" {
+				negPattern := fmt.Sprintf("!%s/package*.json", cleanPkg)
+				if !strings.Contains(content, negPattern) {
+					additions = append(additions, negPattern)
+				}
+			}
+		}
+	}
+
+	if len(additions) > 0 {
+		newContent := strings.TrimRight(content, "\r\n") + "\n# [auto-healed: ensure critical manifests are included in build context]\n" + strings.Join(additions, "\n") + "\n"
+		_ = os.WriteFile(dockerignorePath, []byte(newContent), 0644)
+	}
+}
+
 func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 	dockerfilePath := filepath.Join(baseDir, "Dockerfile")
 	raw, err := os.ReadFile(dockerfilePath)
@@ -1199,14 +1273,9 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 	content := string(raw)
 	original := content
 
-	// Ensure .dockerignore exists to avoid giant contexts or architecture conflicts
-	dockerignorePath := filepath.Join(baseDir, ".dockerignore")
-	if _, err := os.Stat(dockerignorePath); os.IsNotExist(err) {
-		_ = os.WriteFile(dockerignorePath, []byte(".git\nnode_modules\n.venv\n__pycache__\n"), 0644)
-	}
-
 	// Universal project inspection and healing for arbitrary languages, frameworks, and build systems
 	profile := DetectProject(baseDir)
+	healDockerignore(baseDir, profile)
 	content = UniversalDockerfileHealer(content, profile, baseDir)
 
 	// 1. Fix relative multi-stage copy paths:

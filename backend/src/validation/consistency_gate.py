@@ -91,6 +91,57 @@ def verify_consistency_gate(
                         errors.append(
                             f"Line {idx}: Referenced path '{src}' does not exist in build context '{build_context}'"
                         )
+
+        # Check workspace manifest copying before RUN install
+        root_pkg = root / "package.json"
+        is_workspace = False
+        workspace_dirs: list[str] = []
+        if root_pkg.exists():
+            try:
+                import json
+                pkg_data = json.loads(root_pkg.read_text(encoding="utf-8"))
+                ws_entry = pkg_data.get("workspaces")
+                if isinstance(ws_entry, list):
+                    workspace_dirs.extend([w for w in ws_entry if isinstance(w, str) and "*" not in w])
+                    is_workspace = len(ws_entry) > 0
+                elif isinstance(ws_entry, dict) and "packages" in ws_entry:
+                    workspace_dirs.extend([w for w in ws_entry["packages"] if isinstance(w, str) and "*" not in w])
+                    is_workspace = len(ws_entry["packages"]) > 0
+            except Exception:
+                pass
+
+        pnpm_ws = root / "pnpm-workspace.yaml"
+        if pnpm_ws.exists():
+            is_workspace = True
+
+        if is_workspace and workspace_dirs:
+            install_seen = False
+            copied_workspaces = False
+            for line in lines:
+                s = line.strip()
+                if s.startswith("RUN ") and any(cmd in s for cmd in ["npm install", "npm ci", "pnpm install", "yarn install"]):
+                    install_seen = True
+                    break
+                if s.startswith("COPY "):
+                    if any(ws in s for ws in workspace_dirs) or s.startswith("COPY . .") or s.startswith("COPY . /"):
+                        copied_workspaces = True
+
+            if install_seen and not copied_workspaces:
+                errors.append(
+                    "Workspace repository runs dependency installation before copying workspace package manifests. "
+                    "Workspace manifests must be copied before RUN install to prevent missing executables (exit code 127)."
+                )
+
+        # Multi-stage SSR check: if Next.js/SSR and not standalone, check for invalid /app/dist copies
+        framework_lower = getattr(blueprint.runtime, "framework", "").lower() if hasattr(blueprint, "runtime") and blueprint.runtime and blueprint.runtime.framework else ""
+        if "next" in framework_lower or "nuxt" in framework_lower:
+            for idx, line in enumerate(lines, 1):
+                s = line.strip()
+                if s.startswith("COPY ") and "--from=" in s and ("/app/dist" in s or "/dist" in s):
+                    errors.append(
+                        f"Line {idx}: Framework '{framework_lower}' does not output to dist. "
+                        "Multi-stage Dockerfile must copy full application tree or use standalone output."
+                    )
     except Exception as e:
         errors.append(f"Failed to inspect Dockerfile instructions: {e}")
 

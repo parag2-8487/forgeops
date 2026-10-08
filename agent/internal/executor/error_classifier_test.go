@@ -40,6 +40,58 @@ func TestClassifyErrorApplicationCode(t *testing.T) {
 	}
 }
 
+func TestClassifyErrorMissingExecutable(t *testing.T) {
+	testCases := []struct {
+		name     string
+		exitCode int
+		log      string
+	}{
+		{
+			name:     "sh not found with exit 127",
+			exitCode: 127,
+			log:      "0.349 sh: 1: next: not found\nnpm error code 127\nERROR: process \"/bin/sh -c npm run build\" did not complete successfully: exit code: 127",
+		},
+		{
+			name:     "bin sh not found",
+			exitCode: 1,
+			log:      "/bin/sh: 1: vite: not found",
+		},
+		{
+			name:     "bash command not found",
+			exitCode: 127,
+			log:      "bash: cargo: command not found",
+		},
+		{
+			name:     "executable file not found in path",
+			exitCode: 1,
+			log:      "exec: \"gradle\": executable file not found in $PATH",
+		},
+		{
+			name:     "cache key not found",
+			exitCode: 1,
+			log:      "failed to compute cache key: \"/app/dist\" not found: not found",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ClassifyError("build", tc.exitCode, "", tc.log)
+			if err.Class != ErrorClassDeterministic {
+				t.Fatalf("expected ErrorClassDeterministic for %s, got %s", tc.name, err.Class)
+			}
+		})
+	}
+}
+
+func TestClassifyErrorTransientWithNotFoundText(t *testing.T) {
+	// A network error containing "not found" (e.g. host not found / DNS failure) must still classify as transient
+	transientDNS := "dial tcp: lookup registry-1.docker.io: temporary failure in name resolution: host not found"
+	err := ClassifyError("build", 1, "", transientDNS)
+	if err.Class != ErrorClassTransient {
+		t.Fatalf("expected ErrorClassTransient, got %s", err.Class)
+	}
+}
+
 func TestVerifyConsistencyGate(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "g3-test-*")
 	if err != nil {

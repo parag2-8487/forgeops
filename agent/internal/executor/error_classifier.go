@@ -49,6 +49,11 @@ var (
 		regexp.MustCompile(`(?i)unknown instruction:`),
 		regexp.MustCompile(`(?i)bind: address already in use`),
 		regexp.MustCompile(`(?i)failed to solve with frontend dockerfile\.v0`),
+		regexp.MustCompile(`(?i)(?:sh|bash|zsh|ash):\s*(?:[0-9]+:\s*)?[a-zA-Z0-9_.-]+:\s*not found\b`),
+		regexp.MustCompile(`(?i)(?:command|executable file)\s+not found\b`),
+		regexp.MustCompile(`(?i)\b(?:exit code|npm error(?: code)?):\s*127\b`),
+		regexp.MustCompile(`(?i)failed to solve: process .* did not complete successfully: exit code: 127\b`),
+		regexp.MustCompile(`(?i)failed to compute cache key: ".*" not found`),
 	}
 
 	// Transient signatures: temporary infrastructure/network glitches
@@ -102,6 +107,18 @@ func ClassifyError(stage string, exitCode int, stdout string, stderr string) Exe
 				RawOutput:  combined,
 				Suggestion: "Application source error. Review source code and runtime dependencies. ForgeOps will not modify source code.",
 			}
+		}
+	}
+
+	// Explicit exit code 127: standard POSIX code for command/executable not found
+	if exitCode == 127 {
+		return ExecutionError{
+			Class:      ErrorClassDeterministic,
+			Stage:      stage,
+			ExitCode:   exitCode,
+			Message:    "Missing executable or command not found in environment (exit code 127).",
+			RawOutput:  combined,
+			Suggestion: "Fast-fail immediately on attempt 1. Ensure required executable is installed and available in PATH.",
 		}
 	}
 

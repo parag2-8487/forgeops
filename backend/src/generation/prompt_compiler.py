@@ -139,6 +139,15 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "Copy each manifest from the directory section 1 shows it in, install its dependencies with the package "
         "manager that directory's lockfile names, then copy the remaining source and run that directory's own build "
         "command.",
+        "WORKSPACES AND MONOREPOS: When the root manifest declares `workspaces` (npm, pnpm, yarn, bun) or "
+        "`pnpm-workspace.yaml` exists, you MUST copy the root manifest, lockfile, workspace configuration, AND "
+        "all workspace package manifests (e.g. `COPY <workspace>/package*.json ./<workspace>/`) BEFORE executing "
+        "the dependency install command (`npm install`, `pnpm install`, etc.). Installing without workspace manifests "
+        "causes missing CLI executables and exit code 127 during the build stage.",
+        "SSR RUNTIME STAGE: For Fullstack SSR frameworks (Next.js, Nuxt, Remix) without standalone output, "
+        "conventional deployments run via Node and require the built application tree and runtime dependencies. "
+        "Never copy `/app/dist` for Next.js or SSR frameworks that do not output to `dist`; copy the built application "
+        "(`COPY --from=builder /app ./`) or use a single-stage build.",
         "The file contains at least one real instruction, not only comments.",
     ),
     "k8s": (

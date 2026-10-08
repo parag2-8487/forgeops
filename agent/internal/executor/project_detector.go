@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -56,6 +58,9 @@ type ProjectProfile struct {
 	StartCommand          []string
 	StaticServeRequired   bool
 	HasRootPackageJson    bool
+	IsWorkspace           bool
+	WorkspacePackages     []string
+	WorkspaceConfigFiles  []string
 	Subprojects           map[string]*ProjectProfile
 	ManifestsFound        []string
 }
@@ -81,14 +86,22 @@ func DetectProject(baseDir string) *ProjectProfile {
 		Subprojects:     make(map[string]*ProjectProfile),
 	}
 
+	var rootPkg *packageJsonStructure
 	// 1. Check for Node / JavaScript / TypeScript
 	pkgJsonPath := filepath.Join(baseDir, "package.json")
 	if pkgBytes, err := os.ReadFile(pkgJsonPath); err == nil {
 		profile.HasRootPackageJson = true
 		profile.PrimaryLanguage = LangNode
 		profile.ManifestsFound = append(profile.ManifestsFound, "package.json")
+		var pkg packageJsonStructure
+		if err := json.Unmarshal(pkgBytes, &pkg); err == nil {
+			rootPkg = &pkg
+		}
 		analyzeNodeProject(profile, pkgBytes, baseDir)
 	}
+
+	// Detect workspaces (npm, pnpm, yarn, bun)
+	detectWorkspaces(profile, baseDir, rootPkg)
 
 	// Check package managers via lockfiles
 	detectNodePackageManager(profile, baseDir)
@@ -141,21 +154,26 @@ func DetectProject(baseDir string) *ProjectProfile {
 	}
 
 	// Inspect subprojects (e.g. monorepo / multi-tier layouts like frontend/ and backend/)
-	entries, err := os.ReadDir(baseDir)
-	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && e.Name() != "node_modules" && e.Name() != "vendor" {
-				subDir := filepath.Join(baseDir, e.Name())
-				if subPkgBytes, err := os.ReadFile(filepath.Join(subDir, "package.json")); err == nil {
-					subProf := &ProjectProfile{
-						BaseDir:         subDir,
-						PrimaryLanguage: LangNode,
-						AppType:         AppTypeGeneric,
-						DefaultPort:     3000,
-						ManifestsFound:  []string{filepath.Join(e.Name(), "package.json")},
+	// When workspaces are declared, profile.Subprojects already contains them.
+	// For repositories without workspace manifests, scan direct child directories.
+	if !profile.IsWorkspace {
+		entries, err := os.ReadDir(baseDir)
+		if err == nil {
+			for _, e := range entries {
+				if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && e.Name() != "node_modules" && e.Name() != "vendor" {
+					subDir := filepath.Join(baseDir, e.Name())
+					if subPkgBytes, err := os.ReadFile(filepath.Join(subDir, "package.json")); err == nil {
+						subProf := &ProjectProfile{
+							BaseDir:         subDir,
+							PrimaryLanguage: LangNode,
+							AppType:         AppTypeGeneric,
+							DefaultPort:     3000,
+							ManifestsFound:  []string{filepath.Join(e.Name(), "package.json")},
+							Subprojects:     make(map[string]*ProjectProfile),
+						}
+						analyzeNodeProject(subProf, subPkgBytes, subDir)
+						profile.Subprojects[e.Name()] = subProf
 					}
-					analyzeNodeProject(subProf, subPkgBytes, subDir)
-					profile.Subprojects[e.Name()] = subProf
 				}
 			}
 		}
@@ -278,9 +296,11 @@ func analyzeNodeProject(profile *ProjectProfile, pkgBytes []byte, dir string) {
 }
 
 func detectNodePackageManager(profile *ProjectProfile, dir string) {
-	if fileExists(dir, "pnpm-lock.yaml") {
+	if fileExists(dir, "pnpm-lock.yaml") || fileExists(dir, "pnpm-workspace.yaml") {
 		profile.PackageManager = "pnpm"
-		profile.ManifestsFound = append(profile.ManifestsFound, "pnpm-lock.yaml")
+		if fileExists(dir, "pnpm-lock.yaml") {
+			profile.ManifestsFound = append(profile.ManifestsFound, "pnpm-lock.yaml")
+		}
 	} else if fileExists(dir, "yarn.lock") {
 		profile.PackageManager = "yarn"
 		profile.ManifestsFound = append(profile.ManifestsFound, "yarn.lock")
@@ -290,9 +310,267 @@ func detectNodePackageManager(profile *ProjectProfile, dir string) {
 	} else if fileExists(dir, "package-lock.json") {
 		profile.PackageManager = "npm"
 		profile.ManifestsFound = append(profile.ManifestsFound, "package-lock.json")
-	} else if profile.PrimaryLanguage == LangNode {
+	} else if profile.PrimaryLanguage == LangNode && profile.PackageManager == "" {
 		profile.PackageManager = "npm"
 	}
+}
+
+func detectWorkspaces(profile *ProjectProfile, baseDir string, rootPkg *packageJsonStructure) {
+	var patterns []string
+	if rootPkg != nil && rootPkg.Workspaces != nil {
+		patterns = append(patterns, extractWorkspacePatterns(rootPkg.Workspaces)...)
+	}
+
+	// Check pnpm-workspace.yaml
+	pnpmWsPath := filepath.Join(baseDir, "pnpm-workspace.yaml")
+	if pnpmBytes, err := os.ReadFile(pnpmWsPath); err == nil {
+		profile.WorkspaceConfigFiles = append(profile.WorkspaceConfigFiles, "pnpm-workspace.yaml")
+		profile.ManifestsFound = append(profile.ManifestsFound, "pnpm-workspace.yaml")
+		patterns = append(patterns, parsePnpmWorkspacePatterns(string(pnpmBytes))...)
+		profile.PackageManager = "pnpm"
+	}
+
+	// Check additional workspace config files
+	for _, cfg := range []string{".npmrc", ".yarnrc", ".yarnrc.yml", "bunfig.toml", "lerna.json"} {
+		if fileExists(baseDir, cfg) {
+			profile.WorkspaceConfigFiles = append(profile.WorkspaceConfigFiles, cfg)
+		}
+	}
+
+	if len(patterns) > 0 {
+		profile.WorkspacePackages = resolveWorkspacePackages(baseDir, patterns)
+		if len(profile.WorkspacePackages) > 0 {
+			profile.IsWorkspace = true
+			if profile.PrimaryLanguage == LangUnknown {
+				profile.PrimaryLanguage = LangNode
+			}
+		}
+	}
+
+	// Inspect each resolved workspace package and register in Subprojects
+	for _, ws := range profile.WorkspacePackages {
+		wsDir := filepath.Join(baseDir, filepath.FromSlash(ws))
+		subPkgPath := filepath.Join(wsDir, "package.json")
+		if subPkgBytes, err := os.ReadFile(subPkgPath); err == nil {
+			subProf := &ProjectProfile{
+				BaseDir:         wsDir,
+				PrimaryLanguage: LangNode,
+				AppType:         AppTypeGeneric,
+				DefaultPort:     3000,
+				ManifestsFound:  []string{filepath.Join(ws, "package.json")},
+				Subprojects:     make(map[string]*ProjectProfile),
+			}
+			analyzeNodeProject(subProf, subPkgBytes, wsDir)
+			profile.Subprojects[ws] = subProf
+		}
+	}
+
+	// Align root profile framework and appType if root delegates to a workspace
+	if profile.IsWorkspace {
+		alignRootWithWorkspace(profile, baseDir, rootPkg)
+	}
+}
+
+func alignRootWithWorkspace(profile *ProjectProfile, baseDir string, rootPkg *packageJsonStructure) {
+	var targetSub *ProjectProfile
+
+	if rootPkg != nil {
+		for _, scriptVal := range rootPkg.Scripts {
+			for wsName, sub := range profile.Subprojects {
+				if strings.Contains(scriptVal, "--workspace="+wsName) ||
+					strings.Contains(scriptVal, "-w "+wsName) ||
+					strings.Contains(scriptVal, "cd "+wsName) ||
+					strings.Contains(scriptVal, "--filter="+wsName) {
+					targetSub = sub
+					break
+				}
+			}
+			if targetSub != nil {
+				break
+			}
+		}
+	}
+
+	// If no explicit script delegation, check if exactly one subproject has a build script or SSR/SPA
+	if targetSub == nil && len(profile.Subprojects) == 1 {
+		for _, sub := range profile.Subprojects {
+			targetSub = sub
+		}
+	} else if targetSub == nil {
+		for _, sub := range profile.Subprojects {
+			if sub.AppType == AppTypeFullstackSSR || sub.AppType == AppTypeStaticSPA {
+				targetSub = sub
+				break
+			}
+		}
+	}
+
+	if targetSub != nil {
+		if profile.Framework == "" || profile.Framework == "generic" {
+			profile.Framework = targetSub.Framework
+		}
+		if profile.AppType == AppTypeGeneric || profile.AppType == AppTypeNodeServer {
+			profile.AppType = targetSub.AppType
+			profile.StaticServeRequired = targetSub.StaticServeRequired
+			profile.BuildOutputDir = targetSub.BuildOutputDir
+			if targetSub.DefaultPort > 0 {
+				profile.DefaultPort = targetSub.DefaultPort
+			}
+		}
+	}
+}
+
+func extractWorkspacePatterns(workspacesField interface{}) []string {
+	var patterns []string
+	if workspacesField == nil {
+		return patterns
+	}
+	switch v := workspacesField.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				patterns = append(patterns, strings.TrimSpace(s))
+			}
+		}
+	case []string:
+		for _, s := range v {
+			if strings.TrimSpace(s) != "" {
+				patterns = append(patterns, strings.TrimSpace(s))
+			}
+		}
+	case map[string]interface{}:
+		if pkgs, ok := v["packages"].([]interface{}); ok {
+			for _, item := range pkgs {
+				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+					patterns = append(patterns, strings.TrimSpace(s))
+				}
+			}
+		}
+	}
+	return patterns
+}
+
+func parsePnpmWorkspacePatterns(content string) []string {
+	var patterns []string
+	lines := strings.Split(content, "\n")
+	inPackages := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "packages:") {
+			inPackages = true
+			continue
+		}
+		if inPackages {
+			if strings.HasPrefix(trimmed, "-") {
+				pat := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+				pat = strings.Trim(pat, "'\"")
+				if pat != "" {
+					patterns = append(patterns, pat)
+				}
+			} else if strings.HasSuffix(trimmed, ":") && trimmed != "packages:" {
+				inPackages = false
+			}
+		}
+	}
+	return patterns
+}
+
+func matchWorkspaceGlob(pattern, relPath string) bool {
+	pattern = filepath.ToSlash(filepath.Clean(pattern))
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+
+	if pattern == relPath {
+		return true
+	}
+
+	// Handle recursive wildcard ** (e.g. apps/** or packages/**)
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := strings.TrimSuffix(pattern, "/**")
+		return strings.HasPrefix(relPath, prefix+"/") || relPath == prefix
+	}
+	if strings.Contains(pattern, "/**/") {
+		parts := strings.SplitN(pattern, "/**/", 2)
+		prefix, suffix := parts[0], parts[1]
+		if strings.HasPrefix(relPath, prefix+"/") {
+			rest := strings.TrimPrefix(relPath, prefix+"/")
+			return strings.HasSuffix(rest, "/"+suffix) || rest == suffix
+		}
+		return false
+	}
+
+	// Single * match with path.Match
+	matched, err := path.Match(pattern, relPath)
+	return err == nil && matched
+}
+
+func resolveWorkspacePackages(baseDir string, patterns []string) []string {
+	var resolved []string
+	seen := make(map[string]bool)
+
+	// First pass: exact paths with no wildcards
+	for _, pat := range patterns {
+		pat = filepath.ToSlash(filepath.Clean(pat))
+		if !strings.Contains(pat, "*") && !strings.Contains(pat, "?") {
+			candidate := filepath.Join(baseDir, filepath.FromSlash(pat))
+			if _, err := os.Stat(filepath.Join(candidate, "package.json")); err == nil {
+				if !seen[pat] {
+					seen[pat] = true
+					resolved = append(resolved, pat)
+				}
+			}
+		}
+	}
+
+	// Second pass: for wildcard patterns, scan directory tree up to max depth 4
+	hasWildcard := false
+	for _, pat := range patterns {
+		if strings.Contains(pat, "*") || strings.Contains(pat, "?") {
+			hasWildcard = true
+			break
+		}
+	}
+
+	if hasWildcard {
+		_ = filepath.WalkDir(baseDir, func(p string, d os.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(baseDir, p)
+			if err != nil || rel == "." {
+				return nil
+			}
+			relSlash := filepath.ToSlash(rel)
+			baseName := d.Name()
+
+			// Skip hidden dirs, dependencies, caches, and build outputs
+			if strings.HasPrefix(baseName, ".") || baseName == "node_modules" || baseName == "vendor" ||
+				baseName == "dist" || baseName == "build" || baseName == "out" {
+				return filepath.SkipDir
+			}
+
+			// Bound scan depth to 4 levels
+			if strings.Count(relSlash, "/") > 3 {
+				return filepath.SkipDir
+			}
+
+			// Check if this directory contains a package.json
+			if _, err := os.Stat(filepath.Join(p, "package.json")); err == nil {
+				for _, pat := range patterns {
+					if matchWorkspaceGlob(pat, relSlash) {
+						if !seen[relSlash] {
+							seen[relSlash] = true
+							resolved = append(resolved, relSlash)
+						}
+						break
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	sort.Strings(resolved)
+	return resolved
 }
 
 func detectPythonProject(profile *ProjectProfile, dir string) {
@@ -459,19 +737,100 @@ func detectDotNetProject(profile *ProjectProfile, dir string) {
 	}
 }
 
+// nodeManifestCopyLines returns Dockerfile COPY commands for root and workspace manifests,
+// ensuring package managers can resolve workspace dependency graphs before RUN install.
+func nodeManifestCopyLines(profile *ProjectProfile) string {
+	if profile == nil {
+		return "COPY package*.json ./"
+	}
+
+	var lines []string
+	switch profile.PackageManager {
+	case "pnpm":
+		lines = append(lines, "COPY package*.json pnpm-lock.yaml* pnpm-workspace.yaml* ./")
+	case "yarn":
+		lines = append(lines, "COPY package*.json yarn.lock* .yarnrc* ./")
+	case "bun":
+		lines = append(lines, "COPY package*.json bun.lockb* bun.lock* ./")
+	default:
+		lines = append(lines, "COPY package*.json ./")
+	}
+
+	if len(profile.WorkspaceConfigFiles) > 0 {
+		for _, cfg := range profile.WorkspaceConfigFiles {
+			if cfg != "pnpm-workspace.yaml" {
+				lines = append(lines, fmt.Sprintf("COPY %s* ./", filepath.ToSlash(cfg)))
+			}
+		}
+	}
+
+	for _, pkg := range profile.WorkspacePackages {
+		cleanPkg := filepath.ToSlash(filepath.Clean(pkg))
+		if cleanPkg == "." || cleanPkg == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("COPY %s/package*.json ./%s/", cleanPkg, cleanPkg))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 // nodeInstallCmd is the dependency install for a package manager. It is the builder-stage form:
 // devDependencies stay installed because the build CLI (tsc, vite, webpack, next) lives there.
-func nodeInstallCmd(pm string) string {
+// Preserves lockfile-based reproducible installation when lockfiles exist.
+func nodeInstallCmd(profile *ProjectProfile) string {
+	pm := "npm"
+	if profile != nil && profile.PackageManager != "" {
+		pm = profile.PackageManager
+	}
 	switch pm {
 	case "pnpm":
-		return "corepack enable && pnpm install"
+		return "corepack enable && (pnpm install --frozen-lockfile || pnpm install)"
 	case "yarn":
-		return "corepack enable && yarn install"
+		return "corepack enable && (yarn install --frozen-lockfile || yarn install)"
 	case "bun":
-		return "npm install -g bun && bun install"
+		return "npm install -g bun && (bun install --frozen-lockfile || bun install)"
 	default:
+		hasLock := false
+		if profile != nil {
+			for _, m := range profile.ManifestsFound {
+				if m == "package-lock.json" {
+					hasLock = true
+					break
+				}
+			}
+			if !hasLock && profile.BaseDir != "" && fileExists(profile.BaseDir, "package-lock.json") {
+				hasLock = true
+			}
+		}
+		if hasLock {
+			return "npm ci || npm install"
+		}
 		return "npm install"
 	}
+}
+
+// hasStandaloneOutput checks whether an SSR application declares standalone build output
+// (e.g. Next.js output: 'standalone').
+func hasStandaloneOutput(baseDir string, profile *ProjectProfile) bool {
+	dirsToCheck := []string{baseDir}
+	if profile != nil {
+		for _, ws := range profile.WorkspacePackages {
+			dirsToCheck = append(dirsToCheck, filepath.Join(baseDir, filepath.FromSlash(ws)))
+		}
+	}
+	for _, dir := range dirsToCheck {
+		for _, cfg := range []string{"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"} {
+			cfgPath := filepath.Join(dir, cfg)
+			if content, err := os.ReadFile(cfgPath); err == nil {
+				s := string(content)
+				if strings.Contains(s, "standalone") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // nodeBuildCmd is the build for a package manager, or "" when the project declares no build step.
@@ -516,7 +875,8 @@ func GenerateDockerfile(profile *ProjectProfile) string {
 		if profile.HasBuildScript {
 			build = "\nRUN " + nodeBuildCmd(pm)
 		}
-		install := nodeInstallCmd(pm)
+		install := nodeInstallCmd(profile)
+		manifestCopies := nodeManifestCopyLines(profile)
 
 		switch profile.AppType {
 		case AppTypeStaticSPA:
@@ -526,7 +886,7 @@ func GenerateDockerfile(profile *ProjectProfile) string {
 			}
 			return fmt.Sprintf(`FROM node:22-slim AS builder
 WORKDIR /app
-COPY package*.json ./
+%s
 RUN %s
 COPY . .
 RUN %s
@@ -534,18 +894,39 @@ RUN %s
 FROM nginx:alpine
 COPY --from=builder /app/%s /usr/share/nginx/html
 EXPOSE %d
-`, install, nodeBuildCmd(pm), out, port)
+`, manifestCopies, install, nodeBuildCmd(pm), out, port)
 
 		case AppTypeFullstackSSR:
+			if hasStandaloneOutput(profile.BaseDir, profile) {
+				pubCopy := ""
+				if fileExists(profile.BaseDir, "public") {
+					pubCopy = "\nCOPY --from=builder /app/public ./public"
+				}
+				return fmt.Sprintf(`FROM node:22-slim AS builder
+WORKDIR /app
+%s
+RUN %s
+COPY . .
+RUN %s
+
+FROM node:22-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static%s
+EXPOSE %d
+CMD ["node", "server.js"]
+`, manifestCopies, install, nodeBuildCmd(pm), pubCopy, port)
+			}
 			return fmt.Sprintf(`FROM node:22-slim
 WORKDIR /app
-COPY package*.json ./
+%s
 RUN %s
 COPY . .
 RUN %s
 EXPOSE %d
 CMD %s
-`, install, nodeBuildCmd(pm), port, jsonCmd(profile.StartCommand))
+`, manifestCopies, install, nodeBuildCmd(pm), port, jsonCmd(profile.StartCommand))
 
 		default: // AppTypeNodeServer and anything else Node that runs a process
 			start := profile.StartCommand
@@ -558,12 +939,12 @@ CMD %s
 			}
 			return fmt.Sprintf(`FROM node:22-slim
 WORKDIR /app
-COPY package*.json ./
+%s
 RUN %s
 COPY . .%s
 EXPOSE %d
 CMD %s
-`, install, build, port, jsonCmd(start))
+`, manifestCopies, install, build, port, jsonCmd(start))
 		}
 
 	case LangPython:
@@ -757,6 +1138,15 @@ func UniversalDockerfileHealer(content string, profile *ProjectProfile, baseDir 
 		distTarget = "dist"
 	}
 
+	alreadyCopiesWorkspaces := false
+	for _, ws := range profile.WorkspacePackages {
+		cleanWs := filepath.ToSlash(filepath.Clean(ws))
+		if cleanWs != "" && cleanWs != "." && strings.Contains(content, cleanWs) {
+			alreadyCopiesWorkspaces = true
+			break
+		}
+	}
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		upper := strings.ToUpper(trimmed)
@@ -770,6 +1160,20 @@ func UniversalDockerfileHealer(content string, profile *ProjectProfile, baseDir 
 			}
 		}
 
+		// Inject workspace manifests before dependency installation
+		if !alreadyCopiesWorkspaces && len(profile.WorkspacePackages) > 0 {
+			if strings.HasPrefix(upper, "COPY ") && (strings.Contains(trimmed, "package*.json") || strings.Contains(trimmed, "package.json")) {
+				line = nodeManifestCopyLines(profile)
+				alreadyCopiesWorkspaces = true
+				resultLines = append(resultLines, line)
+				continue
+			} else if (strings.Contains(line, "npm install") || strings.Contains(line, "npm ci") || strings.Contains(line, "pnpm install") || strings.Contains(line, "yarn install") || strings.Contains(line, "bun install")) && !strings.Contains(line, "npm install -g") {
+				manifests := nodeManifestCopyLines(profile)
+				resultLines = append(resultLines, manifests)
+				alreadyCopiesWorkspaces = true
+			}
+		}
+
 		// 2. BUILDER DEPENDENCY RULE:
 		// If in builder stage (or before npm run build), NEVER strip devDependencies with --production or --omit=dev!
 		// Build CLI tools (vite, tsc, esbuild, next, webpack) are in devDependencies. Stripping them causes exit code 127!
@@ -779,8 +1183,19 @@ func UniversalDockerfileHealer(content string, profile *ProjectProfile, baseDir 
 			line = strings.ReplaceAll(line, "--production", "")
 			line = strings.ReplaceAll(line, " --omit=dev", "")
 			line = strings.ReplaceAll(line, "--omit=dev", "")
-			line = strings.ReplaceAll(line, " --frozen-lockfile", "")
-			line = strings.ReplaceAll(line, "--frozen-lockfile", "")
+
+			// Preserve lockfile-based reproducible installation if lockfile exists
+			hasLock := false
+			for _, m := range profile.ManifestsFound {
+				if strings.Contains(m, "lock") {
+					hasLock = true
+					break
+				}
+			}
+			if !hasLock {
+				line = strings.ReplaceAll(line, " --frozen-lockfile", "")
+				line = strings.ReplaceAll(line, "--frozen-lockfile", "")
+			}
 		}
 
 		// 3. BUILD COMMAND SANITY RULE:
@@ -798,10 +1213,10 @@ func UniversalDockerfileHealer(content string, profile *ProjectProfile, baseDir 
 			}
 		}
 
-		// 4. MULTI-STAGE COPY SANITY:
+		// 4. MULTI-STAGE COPY SANITY & SSR OUTPUT VALIDATION:
 		// Fix relative paths: COPY --from=builder ./dist ./ -> COPY --from=builder /app/dist ./
 		if strings.HasPrefix(upper, "COPY ") && strings.Contains(upper, "--FROM=") {
-			reCopy := regexp.MustCompile(`(?i)COPY\s+--from=([a-zA-Z0-9_-]+)\s+(\.\/\S+|\bdist\b|\bbuild\b|\bpublic\b|\bout\b)\s+(\S+)`)
+			reCopy := regexp.MustCompile(`(?i)COPY\s+--from=([a-zA-Z0-9_-]+)\s+(\.\/\S+|\bdist\b|\bbuild\b|\bpublic\b|\bout\b|\.next\b|\.output\b)\s+(\S+)`)
 			line = reCopy.ReplaceAllStringFunc(line, func(m string) string {
 				parts := reCopy.FindStringSubmatch(m)
 				if len(parts) >= 4 {
@@ -817,6 +1232,21 @@ func UniversalDockerfileHealer(content string, profile *ProjectProfile, baseDir 
 			})
 			line = strings.ReplaceAll(line, "COPY --from=builder ./ ", "COPY --from=builder /app/ ")
 			line = strings.ReplaceAll(line, "COPY --from=builder . ", "COPY --from=builder /app/ ")
+
+			// Validate and heal runtime artifact sources based on detected project type
+			if profile.AppType == AppTypeFullstackSSR && !hasStandaloneOutput(baseDir, profile) {
+				// Conventional SSR applications do NOT output to /app/dist.
+				// Copying /app/dist fails with BuildKit cache key error.
+				// For conventional SSR, the runtime container needs the built app tree (/app) from builder.
+				if strings.Contains(line, "/app/dist") || strings.Contains(line, "/dist") {
+					line = "COPY --from=builder /app ./"
+				}
+			} else if profile.AppType == AppTypeStaticSPA && profile.BuildOutputDir != "" && profile.BuildOutputDir != "dist" {
+				// If static SPA builds to "build" or "out" instead of "dist", fix /app/dist
+				if strings.Contains(line, "/app/dist") {
+					line = strings.ReplaceAll(line, "/app/dist", "/app/"+profile.BuildOutputDir)
+				}
+			}
 		}
 
 		// 5. RUNTIME STAGE ENTRYPOINT SANITY:
