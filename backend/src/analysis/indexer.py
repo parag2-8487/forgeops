@@ -788,7 +788,7 @@ async def _persist_embeddings(
                 embedder.embed([chunk.text for _, chunk in pending]),
                 timeout=10.0,
             )
-        except (EmbeddingProviderError, httpx.HTTPError, asyncio.TimeoutError, TimeoutError, Exception) as exc:
+        except (EmbeddingProviderError, httpx.HTTPError, TimeoutError, Exception) as exc:
             # The scan still counts: tree, contents and edges are already written. The
             # alternative — failing the whole ingest — would leave the index empty because
             # a third party was slow or unreachable.

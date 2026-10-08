@@ -40,7 +40,11 @@ dependencies = [
     # the default metric set includes per-CPU and per-interface series, which is how a monitoring system
     # takes down what it monitors.
     "opentelemetry-instrumentation-system-metrics==0.51b0",
-    "pyjwt[crypto]==2.13.0",
+    # 2.15.0 rather than 2.13.0: PYSEC-2026-4183 affects 2.13.0 and below, and the
+    # `audit` CI job fails the build on an unignored advisory. Raising the floor is the fix
+    # the gate asks for — the alternative is adding the advisory to the ignore list, which
+    # records a known-vulnerable dependency as acceptable rather than removing it.
+    "pyjwt[crypto]==2.15.0",
     # design.md §4.6 / D-32: the Phase 1 task engine, behind the unchanged
     # TaskDispatcher seam. Redis-backed, so it needs no new infrastructure. Importable
     # only from src/core/tasks.py and src/worker.py — enforced by the Ruff banned-api
@@ -61,7 +65,7 @@ dependencies = [
     #
     # Pinned at the version the committed lock already resolves, not at §16.2's stated
     # `44.0.0`. §15.9's resolution is explicit that the committed lockfiles win and that
-    # Phase 1 must not downgrade any of them; `pyjwt[crypto]==2.13.0` already pulls
+    # Phase 1 must not downgrade any of them; `pyjwt[crypto]` already pulls
     # 49.0.0, so pinning 44.0.0 here would either be unsatisfiable or a downgrade.
     "cryptography==49.0.0",
 ]

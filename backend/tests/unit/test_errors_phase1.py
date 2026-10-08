@@ -283,9 +283,7 @@ class TestValidationFailuresNameTheField:
         from src.generation.routes import GenerationRequest
 
         metadata = GenerationRequest.model_fields["prompt"].metadata
-        ceiling = next(
-            (m.max_length for m in metadata if getattr(m, "max_length", None) is not None), None
-        )
+        ceiling = next((m.max_length for m in metadata if getattr(m, "max_length", None) is not None), None)
         assert ceiling is not None, "the prompt ceiling was removed; this test no longer measures it"
         assert ceiling >= 4977, (
             f"the prompt ceiling is {ceiling}, which is below the 4977-character prompt the "

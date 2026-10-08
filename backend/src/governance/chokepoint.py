@@ -1318,10 +1318,14 @@ class GovernanceChokepoint:
                 ),
             )
 
-        needs_human = False if auto_approve else (
-            environment_requires_approval
-            or gate == ApprovalDecision.REQUIRES_APPROVAL
-            or decision.result == "require_approval"
+        needs_human = (
+            False
+            if auto_approve
+            else (
+                environment_requires_approval
+                or gate == ApprovalDecision.REQUIRES_APPROVAL
+                or decision.result == "require_approval"
+            )
         )
         if needs_human:
             await self._set_status(session, change_set_id, "pending_approval")
