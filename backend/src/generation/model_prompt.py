@@ -50,17 +50,14 @@ from typing import Any
 #: model chose not to write a compose stack — strictly worse than the partial result it replaced.
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "Dockerfile",
+    "docker-compose.yml",
     "k8s/deployment.yaml",
     "k8s/service.yaml",
     "k8s/ingress.yaml",
 )
 
 #: Artifacts the run asks for and accepts, without treating their absence as a failed attempt.
-#:
-#: The distinction is the same one `parse_artifacts` draws between `required` and `requested`: a
-#: shortfall is a shortfall. A compose file is useful for local runs and is still worth requesting, but
-#: a model that wrote four valid manifests and skipped it has not failed.
-OPTIONAL_ARTIFACTS: tuple[str, ...] = ("docker-compose.yml",)
+OPTIONAL_ARTIFACTS: tuple[str, ...] = ()
 
 #: `### FILE: <path>`, tolerating any number of leading hashes and surrounding whitespace.
 #:
@@ -232,7 +229,7 @@ def build_generation_prompt(
         lines += [
             "",
             f"ATTEMPT {attempt}. YOUR PREVIOUS ATTEMPT WAS REJECTED. Fix exactly these findings and",
-            "re-emit all four files:",
+            "re-emit all files:",
         ]
         lines += [f"- {finding}" for finding in previous_findings]
 

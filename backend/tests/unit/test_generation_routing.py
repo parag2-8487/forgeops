@@ -147,6 +147,16 @@ spec:
                 port:
                   number: 80
 ```
+
+### FILE: docker-compose.yml
+```yaml
+name: checkout-api
+services:
+  checkout-api:
+    image: checkout-api:1.4.2
+    ports:
+      - "8000:8000"
+```
 """
 
 #: The same four files, but the Dockerfile never drops root — the gate refuses it.

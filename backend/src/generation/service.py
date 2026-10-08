@@ -36,7 +36,12 @@ from ..core.model_port import ArtifactModelPort
 from ..core.sse import SSEEventType, format_event
 from ..core.target_checks import score_lowering_findings, unsatisfied_targets
 from ..secrets.redaction import RedactedPrompt, create_redacted_prompt
-from .artifact_checks import validate_artifacts
+from .artifact_checks import (
+    _extract_dockerfile_container_ports,
+    _extract_k8s_service_ports,
+    _extract_k8s_workload_ports,
+    validate_artifacts,
+)
 from .iac_renderers import (
     GENERATED_IMAGE_TAG,
     GENERATED_RUN_AS_USER,
@@ -542,7 +547,7 @@ class GenerationService:
                         + "\n## 7. WHAT THE VALIDATORS SAID ABOUT YOUR PREVIOUS ATTEMPT\n\n"
                         + "Your last output was rejected. Fix exactly these and change nothing else:\n\n"
                         + "\n".join(f"  - {finding}" for finding in findings)
-                        + "\n"
+                        + f"\n\nCRITICAL CONSISTENCY REQUIREMENT: The application port is locked to {facts.port} and service name is '{facts.app_name}'. Every port declaration (EXPOSE, containerPort, targetPort, compose port mapping) and service reference across all files must match this exact port and name.\n"
                     )
             else:
                 model_prompt = build_generation_prompt(
@@ -759,10 +764,18 @@ class GenerationService:
                     # to change them and, measured, stops it from fixing the one that is wrong. So they are
                     # carried forward and the next call is narrowed to a single rejected artifact with only
                     # that artifact's requirements.
+                    def _is_rejected(path: str) -> bool:
+                        for finding in gate_findings:
+                            if finding.startswith(f"{path}: "):
+                                return True
+                            if finding.startswith("cross-artifact: ") and path in finding:
+                                return True
+                        return False
+
                     rejected_paths = [
                         artifact.path
                         for artifact in files
-                        if any(finding.startswith(f"{artifact.path}: ") for finding in gate_findings)
+                        if _is_rejected(artifact.path)
                     ]
                     # An artifact the model was asked for and did not produce at all is also a repair
                     # target: it is missing rather than wrong, and a narrow ask is the better second try.
@@ -774,8 +787,10 @@ class GenerationService:
                     ever_rejected.update(rejected_paths)
                     ever_rejected.update(missing)
                     for artifact in files:
-                        if artifact.path not in rejected_paths:
+                        if not _is_rejected(artifact.path):
                             carried[artifact.path] = artifact
+                        elif artifact.path in carried:
+                            del carried[artifact.path]
                     # HIGHEST STAKES FIRST when several failed, because the attempt budget is finite and a
                     # Dockerfile carries more of the score than a `.gitleaks.toml`. `repair_prompts` is
                     # keyed by write target, so a path with no repair prompt is one no artifact instruction
@@ -789,7 +804,12 @@ class GenerationService:
                     if repair_for is not None:
                         # ONLY THIS ARTIFACT'S FINDINGS. Handing over five other files' complaints is the
                         # wide ask again, in the one place it does the most harm.
-                        narrowed = tuple(finding for finding in gate_findings if finding.startswith(f"{repair_for}: "))
+                        narrowed = tuple(
+                            finding
+                            for finding in gate_findings
+                            if finding.startswith(f"{repair_for}: ")
+                            or (finding.startswith("cross-artifact: ") and repair_for in finding)
+                        )
                         findings = narrowed or gate_findings
                     else:
                         findings = gate_findings
@@ -810,7 +830,7 @@ class GenerationService:
                 accepted = tuple(
                     artifact
                     for artifact in candidate_files
-                    if not any(finding.startswith(f"{artifact.path}: ") for finding in gate_findings)
+                    if not _is_rejected(artifact.path)
                 )
                 # THE FLOOR IS PER ARTIFACT, NOT PER RUN — AND THAT IS THE DEFECT THE JOURNEY CAUGHT.
                 #
@@ -956,9 +976,30 @@ class GenerationService:
             # The model's own compose file still wins when it produced a usable one — this is a floor,
             # not a requirement, and requiring it would discard a whole attempt over one optional file.
             if not any(f.path == "docker-compose.yml" for f in files):
+                resolved_port = None
+                for f in files:
+                    if f.path == "Dockerfile":
+                        p_set = _extract_dockerfile_container_ports(f.content)
+                        if p_set:
+                            resolved_port = sorted(p_set)[0]
+                            break
+                    elif f.path.startswith("k8s/") and ("deployment" in f.path or "service" in f.path):
+                        kp_set = _extract_k8s_workload_ports(f.content) or _extract_k8s_service_ports(f.content)
+                        if kp_set:
+                            resolved_port = sorted(kp_set)[0]
+                            break
+
                 for rendered in self._render(prompt, project):
                     if rendered.path == "docker-compose.yml":
-                        files = (*files, rendered)
+                        compose_content = rendered.content
+                        if resolved_port is not None:
+                            import re as _re
+                            compose_content = _re.sub(
+                                r'"\d{1,5}:\d{1,5}"',
+                                f'"{resolved_port}:{resolved_port}"',
+                                compose_content,
+                            )
+                        files = (*files, GeneratedFile(path=rendered.path, content=compose_content))
                         break
 
             if outcome is not None:

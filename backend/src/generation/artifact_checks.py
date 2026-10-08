@@ -374,6 +374,267 @@ def checker_for(path: str) -> Any | None:
     return None
 
 
+def _extract_dockerfile_container_ports(content: str) -> set[int]:
+    """Extract all exposed or listening container ports from a Dockerfile."""
+    exposed: set[int] = set()
+    cmd_ports: set[int] = set()
+    env_ports: set[int] = set()
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        found = _EXPOSE.match(stripped)
+        if found:
+            for token in found.group(1).split():
+                number = token.split("/", 1)[0]
+                if number.isdigit() and 1 <= int(number) <= 65535:
+                    exposed.add(int(number))
+            continue
+
+        upper = stripped.upper()
+        if upper.startswith("CMD ") or upper.startswith("ENTRYPOINT "):
+            for pattern in _CMD_PORT_PATTERNS:
+                match = pattern.search(stripped)
+                if match and 1 <= int(match.group(1)) <= 65535:
+                    cmd_ports.add(int(match.group(1)))
+                    break
+        elif upper.startswith("ENV "):
+            for match in _ENV_PORT.finditer(stripped):
+                if 1 <= int(match.group(1)) <= 65535:
+                    env_ports.add(int(match.group(1)))
+
+    return cmd_ports or env_ports or exposed
+
+
+def _extract_compose_container_ports(content: str) -> set[int]:
+    """Extract container target ports mapped or exposed in a Docker Compose file."""
+    ports: set[int] = set()
+    documents, reason = _load_documents(content)
+    if not documents or reason is not None or not isinstance(documents[0], Mapping):
+        return ports
+    services = documents[0].get("services")
+    if not isinstance(services, Mapping):
+        return ports
+    for service in services.values():
+        if not isinstance(service, Mapping):
+            continue
+        svc_ports = service.get("ports")
+        if isinstance(svc_ports, Sequence) and not isinstance(svc_ports, str):
+            for p in svc_ports:
+                if isinstance(p, int) and 1 <= p <= 65535:
+                    ports.add(p)
+                elif isinstance(p, str):
+                    token = p.strip().strip("'\"").split("/", 1)[0]
+                    parts = token.split(":")
+                    target = parts[-1]
+                    if target.isdigit() and 1 <= int(target) <= 65535:
+                        ports.add(int(target))
+        expose = service.get("expose")
+        if isinstance(expose, Sequence) and not isinstance(expose, str):
+            for e in expose:
+                s = str(e).strip().split("/", 1)[0]
+                if s.isdigit() and 1 <= int(s) <= 65535:
+                    ports.add(int(s))
+    return ports
+
+
+def _extract_k8s_workload_ports(content: str) -> set[int]:
+    """Extract containerPort entries declared on Kubernetes pods/workloads."""
+    ports: set[int] = set()
+    documents, reason = _load_documents(content)
+    if not documents or reason is not None:
+        return ports
+    for doc in documents:
+        if not isinstance(doc, Mapping):
+            continue
+        kind = str(doc.get("kind", ""))
+        spec = doc.get("spec")
+        if not isinstance(spec, Mapping):
+            continue
+        pod_spec = spec
+        if kind in ("Deployment", "StatefulSet", "DaemonSet", "Job"):
+            template = spec.get("template")
+            if isinstance(template, Mapping):
+                pod_spec = template.get("spec")
+        if not isinstance(pod_spec, Mapping):
+            continue
+        containers = pod_spec.get("containers")
+        if isinstance(containers, Sequence) and not isinstance(containers, str):
+            for c in containers:
+                if not isinstance(c, Mapping):
+                    continue
+                c_ports = c.get("ports")
+                if isinstance(c_ports, Sequence) and not isinstance(c_ports, str):
+                    for cp in c_ports:
+                        if isinstance(cp, Mapping):
+                            c_port = cp.get("containerPort")
+                            if isinstance(c_port, int) and 1 <= c_port <= 65535:
+                                ports.add(c_port)
+                            elif isinstance(c_port, str) and c_port.isdigit() and 1 <= int(c_port) <= 65535:
+                                ports.add(int(c_port))
+    return ports
+
+
+def _extract_k8s_service_ports(content: str) -> set[int]:
+    """Extract targetPort (or port) entries declared on Kubernetes Services."""
+    ports: set[int] = set()
+    documents, reason = _load_documents(content)
+    if not documents or reason is not None:
+        return ports
+    for doc in documents:
+        if not isinstance(doc, Mapping):
+            continue
+        if str(doc.get("kind", "")) != "Service":
+            continue
+        spec = doc.get("spec")
+        if not isinstance(spec, Mapping):
+            continue
+        svc_ports = spec.get("ports")
+        if isinstance(svc_ports, Sequence) and not isinstance(svc_ports, str):
+            for sp in svc_ports:
+                if isinstance(sp, Mapping):
+                    tp = sp.get("targetPort")
+                    if isinstance(tp, int) and 1 <= tp <= 65535:
+                        ports.add(tp)
+                    elif isinstance(tp, str) and tp.isdigit() and 1 <= int(tp) <= 65535:
+                        ports.add(int(tp))
+                    elif tp is None:
+                        p = sp.get("port")
+                        if isinstance(p, int) and 1 <= p <= 65535:
+                            ports.add(p)
+                        elif isinstance(p, str) and p.isdigit() and 1 <= int(p) <= 65535:
+                            ports.add(int(p))
+    return ports
+
+
+def _check_k8s_service_and_workload_consistency(files: Sequence[Any]) -> list[str]:
+    """Verify Service selectors match workload labels and Ingress references exist."""
+    findings: list[str] = []
+    deployments: list[tuple[str, dict[str, str], str]] = []
+    services: list[tuple[str, dict[str, str], str]] = []
+    ingresses: list[tuple[str, list[str]]] = []
+
+    for artifact in files:
+        path = getattr(artifact, "path", "")
+        content = getattr(artifact, "content", "")
+        norm = path.replace("\\", "/")
+        if not (norm.startswith("k8s/") or "/k8s/" in norm or norm.endswith((".yaml", ".yml"))):
+            continue
+        docs, reason = _load_documents(content)
+        if not docs or reason is not None:
+            continue
+        for doc in docs:
+            if not isinstance(doc, Mapping):
+                continue
+            kind = str(doc.get("kind", ""))
+            metadata = doc.get("metadata") or {}
+            name = str(metadata.get("name", "")) if isinstance(metadata, Mapping) else ""
+            spec = doc.get("spec") or {}
+            if not isinstance(spec, Mapping):
+                continue
+            if kind in ("Deployment", "StatefulSet", "DaemonSet"):
+                template = spec.get("template") or {}
+                t_meta = template.get("metadata") or {} if isinstance(template, Mapping) else {}
+                labels = t_meta.get("labels") or {} if isinstance(t_meta, Mapping) else {}
+                if isinstance(labels, Mapping):
+                    deployments.append((path, {str(k): str(v) for k, v in labels.items()}, name))
+            elif kind == "Service":
+                selector = spec.get("selector") or {}
+                if isinstance(selector, Mapping):
+                    services.append((path, {str(k): str(v) for k, v in selector.items()}, name))
+            elif kind == "Ingress":
+                backend_names: list[str] = []
+                rules = spec.get("rules") or []
+                if isinstance(rules, Sequence) and not isinstance(rules, str):
+                    for r in rules:
+                        if isinstance(r, Mapping):
+                            http = r.get("http") or {}
+                            if isinstance(http, Mapping):
+                                paths = http.get("paths") or []
+                                if isinstance(paths, Sequence) and not isinstance(paths, str):
+                                    for p in paths:
+                                        if isinstance(p, Mapping):
+                                            backend = p.get("backend") or {}
+                                            if isinstance(backend, Mapping):
+                                                svc = backend.get("service") or {}
+                                                if isinstance(svc, Mapping) and svc.get("name"):
+                                                    backend_names.append(str(svc["name"]))
+                ingresses.append((path, backend_names))
+
+    for s_path, selector, s_name in services:
+        if not selector:
+            continue
+        for d_path, labels, d_name in deployments:
+            if not labels:
+                continue
+            mismatch = False
+            for k, v in selector.items():
+                if labels.get(k) != v:
+                    mismatch = True
+                    break
+            if mismatch:
+                findings.append(
+                    f"cross-artifact: {s_path} selector {selector} does not match {d_path} pod labels {labels}. "
+                    "Service will route traffic to zero pods."
+                )
+
+    service_names = {s_name for _, _, s_name in services if s_name}
+    if service_names:
+        for i_path, backend_names in ingresses:
+            for b_name in backend_names:
+                if b_name not in service_names:
+                    findings.append(
+                        f"cross-artifact: {i_path} references backend service '{b_name}' "
+                        f"which does not match any Service metadata.name ({sorted(service_names)})."
+                    )
+
+    return findings
+
+
+def validate_cross_artifact_consistency(files: Sequence[Any]) -> list[str]:
+    """Verify that ports and service names agree across Dockerfile, Compose, and Kubernetes."""
+    findings: list[str] = []
+    ports_by_file: dict[str, set[int]] = {}
+
+    for artifact in files:
+        path = getattr(artifact, "path", "")
+        content = getattr(artifact, "content", "")
+        norm = path.replace("\\", "/")
+
+        if norm == "Dockerfile" or norm.endswith("/Dockerfile"):
+            df_ports = _extract_dockerfile_container_ports(content)
+            if df_ports:
+                ports_by_file[path] = df_ports
+        elif norm in ("docker-compose.yml", "docker-compose.yaml") or norm.endswith(("/docker-compose.yml", "/docker-compose.yaml")):
+            cp_ports = _extract_compose_container_ports(content)
+            if cp_ports:
+                ports_by_file[path] = cp_ports
+        elif norm.startswith("k8s/") or "/k8s/" in norm or norm.endswith((".yaml", ".yml")):
+            kp_ports = _extract_k8s_workload_ports(content)
+            if kp_ports:
+                ports_by_file[f"{path} (containerPort)"] = kp_ports
+            sp_ports = _extract_k8s_service_ports(content)
+            if sp_ports:
+                ports_by_file[f"{path} (targetPort)"] = sp_ports
+
+    if len(ports_by_file) >= 2:
+        file_list = list(ports_by_file.items())
+        for i in range(len(file_list)):
+            for j in range(i + 1, len(file_list)):
+                name_a, set_a = file_list[i]
+                name_b, set_b = file_list[j]
+                if not (set_a & set_b):
+                    findings.append(
+                        f"cross-artifact: port mismatch between {name_a} {sorted(set_a)} and {name_b} {sorted(set_b)}. "
+                        "All artifacts must target the same container port."
+                    )
+
+    findings.extend(_check_k8s_service_and_workload_consistency(files))
+    return findings
+
+
 def validate_artifacts(files: Sequence[Any]) -> list[str]:
     """Check every generated artifact that has a checker, and report every finding.
 
@@ -387,4 +648,5 @@ def validate_artifacts(files: Sequence[Any]) -> list[str]:
             continue
         for finding in checker(artifact.content):
             findings.append(f"{artifact.path}: {finding}")
+    findings.extend(validate_cross_artifact_consistency(files))
     return findings
