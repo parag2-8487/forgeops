@@ -5,6 +5,7 @@
 **Architecture Spec:** [`2026-10-08-generic-deployment-engine-design.md`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/docs/superpowers/specs/2026-10-08-generic-deployment-engine-design.md)  
 **Status:** Pending Operator Approval (Step 9 of Brainstorming / Pre-Implementation)  
 **Target Systems:**
+
 - Backend: [`prompt_compiler.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/prompt_compiler.py), [`service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py), [`routes.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/routes.py)
 - Agent: [`deployment.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/deployment.go), [`dispatcher.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/dispatcher.go)
 
@@ -15,9 +16,11 @@
 This implementation plan translates the approved **Unified Two-Tier Inspection & Dynamic Blueprint Engine** into concrete, ordered engineering phases.
 
 ### 1.1 Acceptance Criteria
+
 ForgeOps must eliminate avoidable ForgeOps-induced deployment errors for valid supported applications. Genuine application-source, infrastructure, or external-service failures must be correctly classified, diagnosed, and surfaced rather than hidden or incorrectly blamed on ForgeOps. The nested Next.js application (`code-review/`) is strictly a regression test case; no repository-specific logic shall be introduced.
 
 ### 1.2 Canonical 7-Gate Lifecycle
+
 ```text
 G1: Blueprint Gate
         ↓
@@ -37,6 +40,7 @@ G7: Final Deployment Gate
 ```
 
 ### 1.3 Universal Failure Handling & Recovery Flow
+
 ```text
 Any Gate Failure (G1 - G7)
        ↓
@@ -60,6 +64,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ## 2. Inventory of Affected Files, New Modules & Schemas
 
 ### 2.1 Existing Files to Modify
+
 - [`backend/src/generation/prompt_compiler.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/prompt_compiler.py): Bind prompt synthesis exclusively to `ProjectBlueprint`; purge hardcoded paths and monorepo heuristics.
 - [`backend/src/generation/service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py): Incorporate blueprint ingestion and multi-level artifact validation before calling generation models.
 - [`backend/src/deployments/routes.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/routes.py): Remove ad-hoc directory replacement hacks; integrate G1-G7 pipeline triggers and operator ambiguity response endpoints.
@@ -67,6 +72,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 - [`agent/internal/executor/dispatcher.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/dispatcher.go): Integrate structured `DiagnosticBundle` telemetry and G1-G7 gate event publishing.
 
 ### 2.2 New Files, Classes & Schemas to Create
+
 - `backend/src/blueprint/models.py`: Authoritative `ProjectBlueprint`, `WorkloadType`, `RuntimeContract`, `BuildConfig`, `NetworkContract`, `AmbiguityResolution` Pydantic models.
 - `backend/src/inspection/scanner.py`: Recursive tree scanner discovering ecosystem manifests and lockfiles without path assumptions.
 - `backend/src/inspection/workspace_resolver.py`: Monorepo DAG analyzer for pnpm, npm, yarn, cargo, gradle to resolve ambiguity deterministically.
@@ -97,6 +103,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 1: Canonical Blueprint Foundation & Dynamic Project Detection (G1 Gate)
 
 #### Step 1.1: Canonical `ProjectBlueprint` Schema Definition
+
 - **Objective:** Establish the strongly typed contract across backend and agent as the single source of truth.
 - **Files Affected:**
   - Create `backend/src/blueprint/models.py`
@@ -118,6 +125,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 1.2: Dynamic Tree Scanner Without Path Assumptions
+
 - **Objective:** Recursively inspect repository trees for manifests, configuration files, and lockfiles across ecosystems without hardcoded directory names.
 - **Files Affected:**
   - Create `backend/src/inspection/scanner.py`
@@ -135,6 +143,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 1.3: Monorepo Workspace Graph & Deterministic Ambiguity Resolution
+
 - **Objective:** Deterministically resolve deployable application targets in monorepos before prompting the operator.
 - **Files Affected:**
   - Create `backend/src/inspection/workspace_resolver.py`
@@ -156,6 +165,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 1.4: G1 Blueprint Gate Implementation
+
 - **Objective:** Validate that the synthesized `ProjectBlueprint` satisfies all structural, runtime, and execution preconditions.
 - **Files Affected:**
   - Create `backend/src/inspection/blueprint_gate.py`
@@ -176,6 +186,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 2: Multi-Level Existing Artifact Validation & Reusability (G2 Gate)
 
 #### Step 2.1: Level 1 Syntax & Schema Validation
+
 - **Objective:** Validate pre-existing `Dockerfile`, `docker-compose.yml`, or Kubernetes manifests for syntactic and schema correctness.
 - **Files Affected:**
   - Create `backend/src/validation/syntax_validator.py`
@@ -193,6 +204,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 2.2: Level 2 Semantic Blueprint Compatibility Validation
+
 - **Objective:** Verify that a syntactically valid artifact matches the actual `ProjectBlueprint`.
 - **Files Affected:**
   - Create `backend/src/validation/blueprint_compatibility.py`
@@ -214,6 +226,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 2.3: G2 Existing Artifact Gate & Reuse Engine
+
 - **Objective:** Coordinate Level 1 and Level 2 validation to decide whether to reuse existing artifacts or proceed to blueprint-grounded generation.
 - **Files Affected:**
   - Create `backend/src/validation/artifact_gate.py`
@@ -233,6 +246,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 3: Blueprint-Grounded Synthesis & Pre-Execution Consistency (G3 Gate)
 
 #### Step 3.1: Blueprint-Grounded Prompt Compilation & Generation
+
 - **Objective:** Derive all Dockerfile and Compose generation instructions directly from the authoritative `ProjectBlueprint`, removing all path heuristics.
 - **Files Affected:**
   - Modify [`backend/src/generation/prompt_compiler.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/prompt_compiler.py)
@@ -256,6 +270,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 3.2: Removal of Ad-Hoc Directory Munging in Backend Routes
+
 - **Objective:** Eliminate legacy regex replacements and ad-hoc directory manipulations in the backend API routes.
 - **Files Affected:**
   - Modify [`backend/src/deployments/routes.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/routes.py)
@@ -272,6 +287,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 3.3: G3 Pre-Execution Consistency Gate Implementation
+
 - **Objective:** Assert static consistency between generated/reused deployment manifests and the physical filesystem before executing container runtimes.
 - **Files Affected:**
   - Create `backend/src/validation/consistency_gate.py`
@@ -295,6 +311,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 4: Agent Execution Engine Overhaul & Error Classification (G4 & G5 Gates)
 
 #### Step 4.1: Purge of Blind 10-Attempt Loop & Ad-Hoc Heuristics in `deployment.go`
+
 - **Objective:** Remove the blind `maxAttempts := 10` retry loop and all hardcoded directory slice iterations (`frontend`, `Frontent`, `client`, `ui`, `code-review`).
 - **Files Affected:**
   - Modify [`agent/internal/executor/deployment.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/deployment.go)
@@ -312,6 +329,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 4.2: Contextual Error Classification Engine
+
 - **Objective:** Implement an error classifier that categorizes failures into Deterministic, Transient, Application-Source, and Engine-Internal based on stage, exit code, and log signatures.
 - **Files Affected:**
   - Create `agent/internal/executor/error_classifier.go`
@@ -333,6 +351,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 4.3: G4 Build / Compile Gate Implementation
+
 - **Objective:** Execute container/image build and enforce G4 validation before advancing to container startup.
 - **Files Affected:**
   - Create `agent/internal/executor/build_gate.go`
@@ -353,6 +372,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 4.4: G5 Apply / Startup Gate Implementation (Compose & Kubernetes)
+
 - **Objective:** Deploy built images and verify that containers transition out of `Pending`/`Creating` without crashing immediately.
 - **Files Affected:**
   - Create `agent/internal/executor/apply_gate.go`
@@ -375,6 +395,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 5: Workload-Aware Verification & Final Deployment Gate (G6 & G7 Gates)
 
 #### Step 5.1: Target-Aware Workload Verification Engine
+
 - **Objective:** Implement health verification tailored to the workload type (`web_service`, `tcp_service`, `background_worker`, `batch_job`, `static_spa`).
 - **Files Affected:**
   - Create `agent/internal/executor/workload_verifier.go`
@@ -396,6 +417,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 5.2: G6 Workload Verification / Health Gate Implementation
+
 - **Objective:** Integrate workload verification into the execution pipeline as Gate G6.
 - **Files Affected:**
   - Create `agent/internal/executor/workload_gate.go`
@@ -413,6 +435,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 5.3: G7 Final Deployment Gate & Traffic Readiness Sign-Off
+
 - **Objective:** Provide the final operational sign-off confirming stability, port bindings, ingress routing, and transitioning the deployment to `SUCCESS`.
 - **Files Affected:**
   - Create `agent/internal/executor/final_gate.go`
@@ -433,6 +456,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 6: Bounded AI Recovery, Diagnostic Bundling & User Source Protection
 
 #### Step 6.1: Diagnostic Bundle Aggregation Engine
+
 - **Objective:** Construct a structured diagnostic bundle whenever any gate G1–G7 fails.
 - **Files Affected:**
   - Create `agent/internal/executor/diagnostics.go`
@@ -457,16 +481,17 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 6.2: Root Cause Classification & Bounded AI Recovery Router
+
 - **Objective:** Coordinate AI resolution across classified failure categories, strictly bounded to 1–3 iterations, with an absolute restriction against modifying user application source code.
 - **Files Affected:**
   - Create `backend/src/recovery/ai_resolver.py`
 - **Current Behavior:** Blind retry or generic prompt asking LLM to fix errors without guardrails.
 - **Required Behavior:**
   - Classify root cause into:
-    1. *Blueprint Mismatch:* Update blueprint field and re-synthesize.
-    2. *Artifact Configuration Defect:* Modify Dockerfile/Compose instructions.
-    3. *Application Source Defect:* **STRICT GUARD:** Halt immediately, present actionable diagnostic report to operator. Do NOT attempt to modify application code.
-    4. *Infrastructure Defect:* Halt and report daemon/port conflict.
+    1. _Blueprint Mismatch:_ Update blueprint field and re-synthesize.
+    2. _Artifact Configuration Defect:_ Modify Dockerfile/Compose instructions.
+    3. _Application Source Defect:_ **STRICT GUARD:** Halt immediately, present actionable diagnostic report to operator. Do NOT attempt to modify application code.
+    4. _Infrastructure Defect:_ Halt and report daemon/port conflict.
   - Enforce iteration limit: max 1 to 3 attempts. If limit exceeded, halt with diagnostic report.
 - **Implementation Details:**
   - Implement `resolve_failure_with_ai(bundle: DiagnosticBundle, iteration: int) -> RecoveryPlan`.
@@ -479,6 +504,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 6.3: Proposed Fix Validation & Re-Execution
+
 - **Objective:** Subject AI-proposed fixes to Level 1 syntax and Level 2 blueprint validation before re-executing the failed gate.
 - **Files Affected:**
   - Create `backend/src/recovery/fix_validator.py`
@@ -498,6 +524,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 7: Heterogeneous Archetype Validation, Failure Injection & Anti-Pattern Linter
 
 #### Step 7.1: Anti-Pattern Regression Linter
+
 - **Objective:** Prevent regression by establishing a static test that bans hardcoded application/directory names and ad-hoc string replacements across ForgeOps code.
 - **Files Affected:**
   - Create `tests/lint/test_anti_patterns.py`
@@ -517,6 +544,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 7.2: Heterogeneous Test Matrix for 12 Archetypes
+
 - **Objective:** Validate end-to-end deployment across 12 diverse application archetypes without repository-specific logic.
 - **Files Affected:**
   - Create `tests/e2e/test_heterogeneous_archetypes.py`
@@ -546,15 +574,16 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 7.3: Failure-Injection Test Suite
+
 - **Objective:** Verify error classification, fast-fail behavior, transient retry backoff, and source protection under injected failure conditions.
 - **Files Affected:**
   - Create `tests/e2e/test_failure_injection.py`
 - **Current Behavior:** Failures trigger 10 blind retries and indefinite delays.
 - **Required Behavior:**
-  1. *Deterministic Compile Failure:* Injected TypeScript syntax error -> Verified fast-fail on Attempt 1; total time < 15s.
-  2. *Transient Network Timeout:* Injected simulated network blip -> Verified retry with 3s and 6s backoff, succeeding on recovery.
-  3. *Application Source Defect:* Injected unhandled runtime crash in user code -> Verified G6 catches crash, captures logs, halts without mutating source code.
-  4. *Port Conflict:* Injected port collision -> Verified fast-fail and diagnostic report.
+  1. _Deterministic Compile Failure:_ Injected TypeScript syntax error -> Verified fast-fail on Attempt 1; total time < 15s.
+  2. _Transient Network Timeout:_ Injected simulated network blip -> Verified retry with 3s and 6s backoff, succeeding on recovery.
+  3. _Application Source Defect:_ Injected unhandled runtime crash in user code -> Verified G6 catches crash, captures logs, halts without mutating source code.
+  4. _Port Conflict:_ Injected port collision -> Verified fast-fail and diagnostic report.
 - **Implementation Details:**
   - Run failure scenarios using mock and real execution harnesses.
   - Assert exact attempt counts, timing, and diagnostic outputs.
@@ -566,6 +595,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 7.4: Explicit Nested Next.js Subdirectory Regression Test
+
 - **Objective:** Prove that the original motivating failure case (`code-review/` Next.js subfolder) deploys cleanly without any application-specific logic.
 - **Files Affected:**
   - Create `tests/regression/test_nested_nextjs_regression.py`
@@ -591,6 +621,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ### Phase 8: Logging, Observability, Migration & Rollout
 
 #### Step 8.1: Logging, Diagnostics & Real-Time Observability
+
 - **Objective:** Provide granular real-time visibility into each gate transition and error classification.
 - **Files Affected:**
   - Modify [`backend/src/deployments/routes.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/routes.py)
@@ -611,6 +642,7 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 ---
 
 #### Step 8.2: Dual-Mode Feature Flag & Migration Strategy
+
 - **Objective:** Enable safe phased migration from legacy heuristics to the generic blueprint engine.
 - **Files Affected:**
   - Modify [`backend/src/generation/service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py)
@@ -631,22 +663,23 @@ Fast-Fail       ≤2 Retries      Bounded AI Resolution      Surface Actionable
 
 ## 4. Phase-by-Phase Acceptance Criteria & Review Checkpoints
 
-| Phase | Description | Acceptance Gate Criteria | Review Checkpoint |
-| :--- | :--- | :--- | :--- |
-| **Phase 1** | Blueprint & Detection | Manifest discovery works recursively without directory assumptions. Blueprint Pydantic and Go structs serialize identically. Monorepo DAG resolves runnable targets. G1 halts on ambiguity. | Inspect blueprint detection tests and schema roundtrip. |
-| **Phase 2** | Artifact Validation | Dockerfiles, Compose, and K8s validate for syntax (Level 1) and blueprint compatibility (Level 2). Incompatible artifacts rejected with diagnostic reason. | Inspect artifact validation test results on valid and broken Dockerfiles. |
-| **Phase 3** | Synthesis & Consistency | Generated prompts strictly parameterized by blueprint. Ad-hoc directory replacements removed from backend. G3 catches missing files/ports before execution. | Inspect generated Dockerfiles for nested apps and prompt compiler unit tests. |
-| **Phase 4** | Execution & Classification | Blind 10-attempt loop removed from `deployment.go`. Deterministic errors fast-fail on Attempt 1. Transient errors retry <= 2 times with 3s/6s backoff. G4 and G5 gates separated. | Run failure-injection tests verifying Attempt 1 fast-fail for compile errors. |
-| **Phase 5** | Workload Verification | G6 health checks tailored to workload type (HTTP, TCP, worker, batch). Background workers verify without HTTP probes. G7 gives final sign-off before `SUCCESS`. | Run worker fixture test and web service health verification. |
-| **Phase 6** | Diagnostic Recovery | Comprehensive diagnostic bundle emitted on failure. AI recovery strictly bounded to 1–3 iterations. Zero modifications to user application source code. | Verify source code protection and bounded recovery test cases. |
-| **Phase 7** | Validation & Anti-Patterns | Anti-pattern linter passes with zero hardcoded directory names. All 12 heterogeneous archetypes deploy cleanly. Original nested Next.js regression test passes on Attempt 1. | Review complete 12-archetype test matrix report and linter output. |
-| **Phase 8** | Migration & Observability | Structured SSE events emitted for G1–G7 transitions. Feature flag operational. System ready for production deployment. | End-to-end deployment verification on live test containers. |
+| Phase       | Description                | Acceptance Gate Criteria                                                                                                                                                                    | Review Checkpoint                                                             |
+| :---------- | :------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------- |
+| **Phase 1** | Blueprint & Detection      | Manifest discovery works recursively without directory assumptions. Blueprint Pydantic and Go structs serialize identically. Monorepo DAG resolves runnable targets. G1 halts on ambiguity. | Inspect blueprint detection tests and schema roundtrip.                       |
+| **Phase 2** | Artifact Validation        | Dockerfiles, Compose, and K8s validate for syntax (Level 1) and blueprint compatibility (Level 2). Incompatible artifacts rejected with diagnostic reason.                                  | Inspect artifact validation test results on valid and broken Dockerfiles.     |
+| **Phase 3** | Synthesis & Consistency    | Generated prompts strictly parameterized by blueprint. Ad-hoc directory replacements removed from backend. G3 catches missing files/ports before execution.                                 | Inspect generated Dockerfiles for nested apps and prompt compiler unit tests. |
+| **Phase 4** | Execution & Classification | Blind 10-attempt loop removed from `deployment.go`. Deterministic errors fast-fail on Attempt 1. Transient errors retry <= 2 times with 3s/6s backoff. G4 and G5 gates separated.           | Run failure-injection tests verifying Attempt 1 fast-fail for compile errors. |
+| **Phase 5** | Workload Verification      | G6 health checks tailored to workload type (HTTP, TCP, worker, batch). Background workers verify without HTTP probes. G7 gives final sign-off before `SUCCESS`.                             | Run worker fixture test and web service health verification.                  |
+| **Phase 6** | Diagnostic Recovery        | Comprehensive diagnostic bundle emitted on failure. AI recovery strictly bounded to 1–3 iterations. Zero modifications to user application source code.                                     | Verify source code protection and bounded recovery test cases.                |
+| **Phase 7** | Validation & Anti-Patterns | Anti-pattern linter passes with zero hardcoded directory names. All 12 heterogeneous archetypes deploy cleanly. Original nested Next.js regression test passes on Attempt 1.                | Review complete 12-archetype test matrix report and linter output.            |
+| **Phase 8** | Migration & Observability  | Structured SSE events emitted for G1–G7 transitions. Feature flag operational. System ready for production deployment.                                                                      | End-to-end deployment verification on live test containers.                   |
 
 ---
 
 ## 5. Summary of Prohibitions & Invariants
 
 Throughout all implementation steps, the following strict invariants must be maintained:
+
 1. **Zero Hardcoded Directory Assumptions:** Never write `if name in ["frontend", "backend", "client", "code-review"]`.
 2. **Zero Hardcoded Framework Commands:** Never inject `--prefix <subfolder>` or arbitrary build flags not derived from the blueprint.
 3. **Zero Blind Retries:** Never retry an execution without checking if the error is classified as transient.

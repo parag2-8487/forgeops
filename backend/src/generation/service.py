@@ -40,6 +40,7 @@ from .artifact_checks import (
     _extract_dockerfile_container_ports,
     _extract_k8s_service_ports,
     _extract_k8s_workload_ports,
+    _load_documents,
     validate_artifacts,
 )
 from .iac_renderers import (
@@ -1517,7 +1518,57 @@ class GenerationService:
         if not rejected:
             return tuple(accepted), ()
 
-        floor = {item.path: item.content for item in self._render(prompt, project)}
+        aligned_project = dict(project or {})
+        aligned_settings = dict(aligned_project.get("settings") or {})
+        aligned_name = aligned_project.get("name")
+        detected_port: int | None = None
+
+        for item in accepted:
+            norm = item.path.replace("\\", "/")
+            if norm.endswith((".yaml", ".yml")):
+                docs, _ = _load_documents(item.content)
+                if docs:
+                    for doc in docs:
+                        if not isinstance(doc, Mapping):
+                            continue
+                        kind = str(doc.get("kind", ""))
+                        spec = doc.get("spec") or {}
+                        meta = doc.get("metadata") or {}
+                        if kind == "Service":
+                            svc_ports = _extract_k8s_service_ports(item.content)
+                            if svc_ports and detected_port is None:
+                                detected_port = next(iter(sorted(svc_ports)))
+                            selector = spec.get("selector") if isinstance(spec, Mapping) else None
+                            if isinstance(selector, Mapping) and selector.get("app"):
+                                aligned_name = str(selector["app"])
+                            elif isinstance(meta, Mapping) and meta.get("name"):
+                                aligned_name = str(meta["name"])
+                        elif kind in ("Deployment", "StatefulSet", "DaemonSet"):
+                            wl_ports = _extract_k8s_workload_ports(item.content)
+                            if wl_ports and detected_port is None:
+                                detected_port = next(iter(sorted(wl_ports)))
+                            template = spec.get("template") if isinstance(spec, Mapping) else None
+                            t_meta = template.get("metadata") if isinstance(template, Mapping) else None
+                            t_labels = t_meta.get("labels") if isinstance(t_meta, Mapping) else None
+                            if isinstance(t_labels, Mapping) and t_labels.get("app"):
+                                aligned_name = str(t_labels["app"])
+                            elif isinstance(meta, Mapping) and meta.get("name"):
+                                aligned_name = str(meta["name"])
+                        elif kind == "Ingress":
+                            if not aligned_name and isinstance(meta, Mapping) and meta.get("name"):
+                                aligned_name = str(meta["name"])
+            elif norm == "Dockerfile" or norm.endswith("/Dockerfile"):
+                df_ports = _extract_dockerfile_container_ports(item.content)
+                if df_ports and detected_port is None:
+                    detected_port = next(iter(sorted(df_ports)))
+
+        if detected_port is not None:
+            aligned_settings["port"] = detected_port
+        if aligned_name:
+            aligned_project["name"] = aligned_name
+        aligned_project["settings"] = aligned_settings
+
+        floor = {item.path: item.content for item in self._render(prompt, aligned_project)}
         candidates: dict[str, str] = {}
         for path in rejected:
             body = floor.get(path)

@@ -165,3 +165,40 @@ func (failingProvider) RenewBefore() time.Duration { return time.Hour }
 var errNoCertificate = net.UnknownNetworkError("no device certificate is available")
 
 var _ scanner.TokenSource = scanner.TokenFunc(nil)
+
+func TestScanSubmit_IndexIncrementalAndFilesAndConfiguredURL(t *testing.T) {
+	store := storeWithToken(t, tokenBytes)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"project_id":"22222222-2222-2222-2222-222222222222",` +
+			`"files_indexed":1,"chunks_indexed":0,"files_removed":0,"dependencies_indexed":0,` +
+			`"vectors_written":0,"vectors_absent_reason":"","inventory_hash":"abc"}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "sample.txt")
+	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	indexer, err := newCodebaseIndexer(
+		dir, server.URL, "", 1024, plaintextProvider{},
+		deviceTokenSource(store), 10*time.Second, store,
+	)
+	if err != nil {
+		t.Fatalf("newCodebaseIndexer: %v", err)
+	}
+	indexer.configuredURL = server.URL
+
+	// Exercise IndexChanged
+	if _, err := indexer.IndexChanged(context.Background(), "22222222-2222-2222-2222-222222222222", []string{"sample.txt"}); err != nil {
+		t.Fatalf("IndexChanged: %v", err)
+	}
+
+	// Exercise IndexFull
+	if _, err := indexer.IndexFull(context.Background(), "22222222-2222-2222-2222-222222222222"); err != nil {
+		t.Fatalf("IndexFull: %v", err)
+	}
+}

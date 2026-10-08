@@ -116,9 +116,12 @@ def validate_dockerfile(content: str) -> list[str]:
     stages = re.split(r"(?i)^\s*FROM\s+", content, flags=re.MULTILINE)
     if len(stages) > 1:
         final_stage = stages[-1]
-        if re.search(r'(?i)(CMD|ENTRYPOINT)\s+.*["\']npm["\']', final_stage) and not re.search(
-            r"(?i)COPY\s+.*package.*\.json", final_stage
-        ):
+        has_pkg_copy = (
+            bool(re.search(r"(?i)COPY\s+.*package.*\.json", final_stage))
+            or bool(re.search(r"(?i)COPY\s+(\S+\s+)?\.\s+", final_stage))
+            or bool(re.search(r"(?i)COPY\s+--from=\S+\s+/app(\s+|/)", final_stage))
+        )
+        if re.search(r'(?i)(CMD|ENTRYPOINT)\s+.*["\']npm["\']', final_stage) and not has_pkg_copy:
             findings.append(
                 "Dockerfile final stage executes 'npm' but does not copy 'package*.json' "
                 "(e.g. `COPY package*.json ./`). This will fail with ENOENT: Could not read package.json at runtime."

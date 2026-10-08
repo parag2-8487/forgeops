@@ -3,7 +3,8 @@
 **Document Version:** 1.1.0  
 **Date:** 2026-10-08  
 **Status:** Approved by Operator  
-**Target Systems:** 
+**Target Systems:**
+
 - Backend: [`prompt_compiler.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/prompt_compiler.py), [`service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py), [`routes.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/routes.py)
 - Agent: [`deployment.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/deployment.go), [`dispatcher.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/dispatcher.go)
 - Shared Contracts: `ProjectBlueprint`, `DiagnosticBundle`, `ExecutionGateResult`
@@ -13,17 +14,21 @@
 ## 1. Executive Summary & Problem Statement
 
 ### 1.1 The Core Problem
+
 ForgeOps previously relied on ad-hoc heuristics, hardcoded string matches (e.g. matching directory names such as `frontend`, `Frontent`, `backend`, `client`, `ui`), and rigid prompt assumptions (e.g., assuming monorepo applications build with `--prefix <subfolder>` while flattening files into `/app`). Furthermore, the deployment execution loop blindly retried build failures up to 10 times, locking deployments in a 10-to-15-minute retry cycle for deterministic compilation and configuration errors.
 
 The nested Next.js build failure (`code-review/`) and subsequent infinite retry loop exposed these foundational architectural limitations. The nested Next.js application is treated strictly as **one regression test case**, rather than an architecture target.
 
 ### 1.2 Architectural Target & Acceptance Criteria
+
 Transform ForgeOps into a **robust, generic, language-and-framework-agnostic deployment engine** based on **Approach 1: Unified Two-Tier Inspection & Dynamic Blueprint Engine**.
 
 **Core Acceptance Criterion:**
+
 > ForgeOps must eliminate avoidable ForgeOps-induced deployment errors for valid supported applications. Genuine application-source, infrastructure, or external-service failures must be correctly classified, diagnosed, and surfaced rather than hidden or incorrectly blamed on ForgeOps.
 
 The engine dynamically determines:
+
 1. What application(s) exist within an arbitrary repository tree.
 2. What the actual application root and build context are.
 3. Monorepo topology and dependency relationships.
@@ -81,7 +86,7 @@ flowchart TD
         Classify -- Transient Failure --> TransientRetry[<= 2 Retries 3s / 6s Backoff]
         Classify -- Artifact / Config Failure --> BoundedAI[Bounded AI Resolution 1-3 Loops]
         Classify -- Application Source Defect --> SourceReport[Surface Actionable Diagnosis - NO Source Mutation]
-        
+
         BoundedAI --> ValidateFix[Validate Proposed Fix]
         ValidateFix --> ReExec[Re-Execute from Target Stage]
     end
@@ -89,21 +94,22 @@ flowchart TD
 
 ### Complete Canonical Verification Gate Matrix
 
-| Gate | Stage | Verification Criteria | Failure Action |
-| :--- | :--- | :--- | :--- |
-| **G1: Blueprint Gate** | Detection | Manifest consistency, valid runtime, real entrypoints, valid project roots, complete build/start contracts, no hardcoded path assumptions. | Deterministic resolution graph; operator clarification only if unresolvable. |
-| **G2: Existing Artifact Gate** | Selection | Level 1 syntax validity and Level 2 semantic blueprint compatibility (path alignment, runtime compatibility, port alignment, context consistency). | Reject artifact; fall back to blueprint-grounded generation. |
-| **G3: Pre-Execution Consistency Gate** | Pre-Execution | Generated/selected manifests align exactly with blueprint contracts (build context exists on disk, referenced files exist, ports match). | Halt before invoking container runtime; route to recovery router. |
-| **G4: Build / Compile Gate** | Build | Build process exits 0, produces designated build artifacts/images, zero compilation or syntax errors. | Fast-fail deterministic errors on Attempt 1; max 2 retries for transient errors. |
-| **G5: Apply / Startup Gate** | Startup | Manifests applied successfully, containers transition out of `Pending`/`Creating`, zero immediate crash loops (`CrashLoopBackOff`). | Inspect container lifecycle and daemon status; route to recovery router. |
-| **G6: Workload Verification / Health Gate** | Health Verification | Target-aware verification: HTTP 200-399 for web, socket connect for TCP, sustained running state for workers, exit 0 for batch jobs. | Capture container logs and system diagnostics; route to recovery router. |
-| **G7: Final Deployment Gate** | Final Sign-Off | Comprehensive check that all artifacts, endpoints, ingress/port bindings, and container statuses are verified, stable, and ready for traffic. | Transition deployment state to `SUCCESS`. If final state unstable, capture diagnostics and halt. |
+| Gate                                        | Stage               | Verification Criteria                                                                                                                              | Failure Action                                                                                   |
+| :------------------------------------------ | :------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------- |
+| **G1: Blueprint Gate**                      | Detection           | Manifest consistency, valid runtime, real entrypoints, valid project roots, complete build/start contracts, no hardcoded path assumptions.         | Deterministic resolution graph; operator clarification only if unresolvable.                     |
+| **G2: Existing Artifact Gate**              | Selection           | Level 1 syntax validity and Level 2 semantic blueprint compatibility (path alignment, runtime compatibility, port alignment, context consistency). | Reject artifact; fall back to blueprint-grounded generation.                                     |
+| **G3: Pre-Execution Consistency Gate**      | Pre-Execution       | Generated/selected manifests align exactly with blueprint contracts (build context exists on disk, referenced files exist, ports match).           | Halt before invoking container runtime; route to recovery router.                                |
+| **G4: Build / Compile Gate**                | Build               | Build process exits 0, produces designated build artifacts/images, zero compilation or syntax errors.                                              | Fast-fail deterministic errors on Attempt 1; max 2 retries for transient errors.                 |
+| **G5: Apply / Startup Gate**                | Startup             | Manifests applied successfully, containers transition out of `Pending`/`Creating`, zero immediate crash loops (`CrashLoopBackOff`).                | Inspect container lifecycle and daemon status; route to recovery router.                         |
+| **G6: Workload Verification / Health Gate** | Health Verification | Target-aware verification: HTTP 200-399 for web, socket connect for TCP, sustained running state for workers, exit 0 for batch jobs.               | Capture container logs and system diagnostics; route to recovery router.                         |
+| **G7: Final Deployment Gate**               | Final Sign-Off      | Comprehensive check that all artifacts, endpoints, ingress/port bindings, and container statuses are verified, stable, and ready for traffic.      | Transition deployment state to `SUCCESS`. If final state unstable, capture diagnostics and halt. |
 
 ---
 
 ## 3. Dynamic Project Detection & Deterministic Ambiguity Resolution
 
 ### 3.1 Manifest Discovery Without Path Assumptions
+
 The repository scanner recursively discovers known ecosystem manifests and configuration files across arbitrary directory structures without assuming names like `frontend`, `backend`, or `app`:
 
 - **Node.js / JavaScript / TypeScript:** `package.json`, `pnpm-workspace.yaml`, `lerna.json`, `rush.json`
@@ -120,6 +126,7 @@ The scanner also discovers lockfiles and runtime version files:
 `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `package-lock.json`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Cargo.lock`, `go.sum`, `.nvmrc`, `.node-version`, `.python-version`, `runtime.txt`.
 
 ### 3.2 Strongly Typed `ProjectBlueprint` Contract
+
 The `ProjectBlueprint` serves as the authoritative single source of truth across analysis, generation, validation, execution, and diagnostics.
 
 ```python
@@ -184,7 +191,9 @@ class ProjectBlueprint:
 ```
 
 ### 3.3 Workspace Graph Analysis & Deterministic Resolution
+
 When multiple manifests are discovered, ForgeOps executes deterministic resolution before prompting an operator:
+
 1. **Workspace Root Detection:** Parse `pnpm-workspace.yaml`, `workspaces` field in `package.json`, `settings.gradle`, or `[workspace]` in `Cargo.toml`.
 2. **Dependency & Topology Analysis:** Construct a Directed Acyclic Graph (DAG) of project members. Separate shared libraries (referenced as internal dependencies) from leaf nodes.
 3. **Runnable Entrypoint Verification:** Inspect leaf packages for runnable production scripts (`start`, `serve`, `prod`), main executables, or HTTP framework entrypoints.
@@ -198,15 +207,19 @@ When multiple manifests are discovered, ForgeOps executes deterministic resoluti
 ## 4. Multi-Level Existing Artifact Validation & Blueprint-Grounded Synthesis
 
 ### 4.1 Multi-Level Existing Artifact Validation
+
 When pre-existing Dockerfiles, Compose files, or Kubernetes manifests exist in the repository, ForgeOps validates them before deciding whether to reuse them or generate fresh artifacts.
 
 #### Level 1: Syntax & Schema Validation
+
 - **Dockerfile:** Validate AST syntax, instruction sequencing, and valid base image syntax.
 - **Docker Compose:** Validate against Compose Specification schema (v2/v3), verifying services, image/build stanzas, and network definitions.
 - **Kubernetes:** Validate resource schemas (`apps/v1`, `core/v1`), pod specs, and selector definitions.
 
 #### Level 2: Semantic Blueprint Compatibility Validation
+
 An artifact that passes Level 1 syntax validation is rejected if it fails semantic blueprint compatibility:
+
 1. **Path & Context Alignment:** Verify that `COPY`, `ADD`, and `WORKDIR` instructions correspond to actual paths on disk and match `build_config.source_dir`.
 2. **Runtime & Version Consistency:** Verify that base images match `runtime.language` and `runtime.runtime_version` (e.g. rejecting a `node:16` image if the blueprint detected Next.js 14 requiring Node >= 18.17).
 3. **Network Contract Alignment:** Verify that `EXPOSE` or Compose `ports` match `network.listen_port`.
@@ -216,16 +229,20 @@ An artifact that passes Level 1 syntax validation is rejected if it fails semant
 If Level 1 or Level 2 validation fails, ForgeOps logs a clear diagnostic reason and transitions to Stage 3 (Blueprint-Grounded Synthesis).
 
 ### 4.2 Blueprint-Grounded Artifact Synthesis
+
 In [`prompt_compiler.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/prompt_compiler.py) and [`service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py), generation rules are strictly bound to the `ProjectBlueprint`:
+
 - **Explicit Working Directory:** Set `WORKDIR` according to `build_config.source_dir`.
 - **Package Manager Adherence:** Use the exact package manager discovered (`pnpm`, `npm`, `yarn`, `poetry`, `cargo`).
 - **Multi-Stage Structure:**
-  - *Stage 1 (Builder):* Copy manifest/lockfile first, execute `install_command`, copy application source according to `source_dir`, execute `build_command`, and verify `artifact_output_dir`.
-  - *Stage 2 (Runner):* Use a clean runtime base image, copy solely runtime artifacts and dependencies from the builder stage, set non-root user, expose `network.listen_port`, and set `ENTRYPOINT`/`CMD` to `runtime.start_command`.
+  - _Stage 1 (Builder):_ Copy manifest/lockfile first, execute `install_command`, copy application source according to `source_dir`, execute `build_command`, and verify `artifact_output_dir`.
+  - _Stage 2 (Runner):_ Use a clean runtime base image, copy solely runtime artifacts and dependencies from the builder stage, set non-root user, expose `network.listen_port`, and set `ENTRYPOINT`/`CMD` to `runtime.start_command`.
 - **Zero Path Guessing:** Delete all legacy substring patterns (`frontend`, `Frontent`, `client`, `ui`, `code-review/`).
 
 ### 4.3 Pre-Execution Consistency Gate (G3)
+
 Before invoking any Docker, Compose, or Kubernetes commands:
+
 - Statically assert that the build context exists.
 - Statically assert that all files referenced in `COPY` exist within the build context.
 - Assert that exposed ports align across the Dockerfile, Compose file, and blueprint.
@@ -236,6 +253,7 @@ Before invoking any Docker, Compose, or Kubernetes commands:
 ## 5. Execution Engine — Intelligent Retry, Fast-Fail & Diagnostics
 
 ### 5.1 Replacement of Blind 10-Attempt Retry Loop
+
 The legacy loop in [`deployment.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/deployment.go) retried `docker compose up --build` up to 10 times unconditionally. This is replaced with **Contextual Error Classification**:
 
 ```go
@@ -259,6 +277,7 @@ type ExecutionError struct {
 ```
 
 #### Classification Rules:
+
 1. **Deterministic Build/Syntax Failures (Fast-Fail on Attempt 1):**
    - Compilation errors (TypeScript `TS2307`, Go compilation errors, Rust `rustc` errors, Babel/Webpack/Vite build errors).
    - Missing file/module errors (`Module not found`, `No such file or directory`, `cannot find package`).
@@ -272,14 +291,18 @@ type ExecutionError struct {
    - Action: Retry maximum 2 times with exponential backoff (Attempt 1: 3 seconds backoff; Attempt 2: 6 seconds backoff).
 
 ### 5.2 Target-Aware Workload Verification (Gate G6)
+
 ForgeOps verifies deployment health based on the `workload_type`:
+
 - **Web Service (`web_service` / `static_spa`):** Poll `http://<host>:<port><health_check_path>` with a 30-second window. Expect HTTP status code in range 200–399.
 - **TCP Service (`tcp_service`):** Verify TCP socket connection on `<host>:<port>` completes a handshake.
 - **Background Worker (`background_worker`):** Monitor container status for 15 seconds. Ensure container remains in `running` state without restarting (`restartCount == 0`, exit status 0).
 - **Batch Job (`batch_job`):** Wait for process termination. Assert exit status equals 0.
 
 ### 5.3 Diagnostic Bundle & Bounded AI Self-Healing
+
 When any gate fails, ForgeOps compiles a comprehensive diagnostic bundle:
+
 - The authoritative `ProjectBlueprint`.
 - Generated and validated deployment manifests (`Dockerfile`, `docker-compose.yml`, Kubernetes manifests).
 - Full execution context (stage, command line, exit code, attempt count, stderr, stdout).
@@ -287,6 +310,7 @@ When any gate fails, ForgeOps compiles a comprehensive diagnostic bundle:
 - Repository directory tree snippet centered around the application root.
 
 #### Root-Cause Classification & AI Constraints:
+
 1. **Blueprint Mismatch:** AI adjusts `ProjectBlueprint` fields (e.g. wrong start command or output directory) and re-synthesizes artifacts.
 2. **Generated Artifact Defect:** AI corrects Dockerfile or Compose manifest syntax/context.
 3. **Application Source Defect:** **STRICT CONSTRAINT:** ForgeOps and the AI self-healing loop **SHALL NEVER MODIFY THE USER'S APPLICATION SOURCE CODE**. If the failure is caused by application-level bugs, syntax errors, or missing project files, the engine halts immediately and presents an actionable diagnostic report to the operator.
@@ -312,7 +336,9 @@ To verify that ForgeOps operates generically without application-specific heuris
 12. **Existing Invalid Dockerfile:** Repository containing an outdated or broken Dockerfile that fails Level 2 semantic validation, verifying that ForgeOps rejects it and falls back to clean blueprint-grounded generation.
 
 ### Anti-Pattern Regression Linter
+
 A continuous integration regression test scans ForgeOps code ([`deployment.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/deployment.go), [`dispatcher.go`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/agent/internal/executor/dispatcher.go), [`prompt_compiler.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/prompt_compiler.py), [`routes.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/routes.py)):
+
 - Prohibits hardcoded application directory names (`frontend`, `Frontent`, `backend`, `client`, `ui`, `code-review`).
 - Prohibits hardcoded framework commands with hardcoded directory flags (`--prefix <name>`).
 - Prohibits hardcoded retry loops without error classification.

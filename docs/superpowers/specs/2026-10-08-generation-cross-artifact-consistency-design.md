@@ -9,12 +9,13 @@
 ## 1. Context & Problem Statement
 
 When deploying applications (such as the Portfolio project), deployment fails due to discrepancies generated across artifacts:
+
 1. **Port Inconsistency**:
    - `Dockerfile` declares/binds port `3000`.
    - `docker-compose.yml` maps port `3000:3000`.
    - `k8s/deployment.yaml` specifies `containerPort: 8080`.
    - `k8s/service.yaml` targets `targetPort: 8080`.
-   Individually, each manifest was syntactically valid YAML/Dockerfile syntax. Collectively, the deployment fails because the container listens on 3000 while Kubernetes routes to 8080.
+     Individually, each manifest was syntactically valid YAML/Dockerfile syntax. Collectively, the deployment fails because the container listens on 3000 while Kubernetes routes to 8080.
 2. **Naming & Identity Inconsistency**:
    - The project is named `portfolio`.
    - The model generates Kubernetes manifests naming `my-service` while Docker Compose names `portfolio`.
@@ -52,6 +53,7 @@ When deploying applications (such as the Portfolio project), deployment fails du
 ## 3. Detailed Architecture & Implementation
 
 ### 3.1 Compulsory `docker-compose.yml`
+
 - **Location:** [`backend/src/generation/model_prompt.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/model_prompt.py#L51-L64)
 - **Changes:**
   - Move `"docker-compose.yml"` from `OPTIONAL_ARTIFACTS` to `REQUIRED_ARTIFACTS`:
@@ -69,6 +71,7 @@ When deploying applications (such as the Portfolio project), deployment fails du
   - Update tests that assert `len(REQUIRED_ARTIFACTS) == 4` to 5.
 
 ### 3.2 Cross-Artifact Consistency Validator
+
 - **Location:** [`backend/src/generation/artifact_checks.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/artifact_checks.py)
 - **New Function:** `validate_cross_artifact_consistency(files: Sequence[GeneratedFile]) -> list[str]`
   1. **Port Extraction:**
@@ -92,6 +95,7 @@ When deploying applications (such as the Portfolio project), deployment fails du
      - Called at the end of `validate_artifacts(files)`.
 
 ### 3.3 Repair Loop Hardening & Drift Elimination
+
 - **Location:** [`backend/src/generation/service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py#L750-L800)
 - **Changes:**
   - When narrowing repair prompts:
@@ -102,6 +106,7 @@ When deploying applications (such as the Portfolio project), deployment fails du
       - If the newly generated artifact conflicts with a previously carried artifact, the carried artifact is evicted from `carried` and marked for repair rather than retained.
 
 ### 3.4 Fallback Compose Port Synchronization
+
 - **Location:** [`backend/src/generation/service.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/generation/service.py#L958-L963)
 - **Changes:**
   - If `docker-compose.yml` is ever synthesized via `_render`, parse the container port from the accepted `Dockerfile` or `k8s/deployment.yaml` rather than using a static default `3000`.
