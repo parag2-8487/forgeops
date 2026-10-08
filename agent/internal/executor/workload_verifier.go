@@ -16,12 +16,12 @@ import (
 
 // WorkloadVerificationResult stores the outcome of workload health verification.
 type WorkloadVerificationResult struct {
-	Healthy         bool          `json:"healthy"`
-	WorkloadType    string        `json:"workload_type"`
-	TargetEndpoint  string        `json:"target_endpoint"`
-	Latency         time.Duration `json:"latency"`
-	Message         string        `json:"message"`
-	CapturedLogs    string        `json:"captured_logs,omitempty"`
+	Healthy        bool          `json:"healthy"`
+	WorkloadType   string        `json:"workload_type"`
+	TargetEndpoint string        `json:"target_endpoint"`
+	Latency        time.Duration `json:"latency"`
+	Message        string        `json:"message"`
+	CapturedLogs   string        `json:"captured_logs,omitempty"`
 }
 
 // VerifyWorkloadHealth executes workload-specific verification without forcing HTTP on background workers.

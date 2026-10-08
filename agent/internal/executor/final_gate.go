@@ -12,13 +12,13 @@ import (
 
 // FinalGateResult stores the final deployment sign-off outcome.
 type FinalGateResult struct {
-	GateID          string   `json:"gate_id"`
-	Passed          bool     `json:"passed"`
-	AccessURL       string   `json:"access_url,omitempty"`
-	ExposedPorts    []int    `json:"exposed_ports"`
-	OutputSummary   string   `json:"output_summary"`
-	SignOffTime     string   `json:"sign_off_time"`
-	DurationSeconds float64  `json:"duration_seconds"`
+	GateID          string  `json:"gate_id"`
+	Passed          bool    `json:"passed"`
+	AccessURL       string  `json:"access_url,omitempty"`
+	ExposedPorts    []int   `json:"exposed_ports"`
+	OutputSummary   string  `json:"output_summary"`
+	SignOffTime     string  `json:"sign_off_time"`
+	DurationSeconds float64 `json:"duration_seconds"`
 }
 
 // ExecuteFinalDeploymentGate performs the final traffic readiness sign-off across all passed gates.

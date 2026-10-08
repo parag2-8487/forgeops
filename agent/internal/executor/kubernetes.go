@@ -589,6 +589,23 @@ func k8sWorkloadAction(ctx context.Context, d *dispatcher, v *envelope.Verified,
 		report.Health.Detail = rolloutErr.Error()
 	}
 	report.Healthy = report.Health.Ready
+
+	if args.Action == "scale" && args.Replicas == 0 && report.Healthy {
+		// `kubectl rollout status` returns immediately for replicas=0 without waiting for pods
+		// to finish terminating. Wait for the cluster to converge (status.readyReplicas becomes absent).
+	WaitZero:
+		for time.Since(started) < wait {
+			if r := readWorkloadReplicas(ctx, runner, base, args.Namespace, kind, args.Name); r == nil {
+				break WaitZero
+			}
+			select {
+			case <-ctx.Done():
+				break WaitZero
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+	}
+
 	report.ReplicasAfter = readWorkloadReplicas(ctx, runner, base, args.Namespace, kind, args.Name)
 
 	encoded, err := json.Marshal(report)

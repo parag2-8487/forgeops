@@ -72,17 +72,17 @@ type ProjectBlueprint struct {
 
 // DiagnosticBundle aggregates all forensic data when any verification gate fails.
 type DiagnosticBundle struct {
-	GateIdentifier     string            `json:"gate_identifier"`
-	Stage              string            `json:"stage"`
-	Blueprint          ProjectBlueprint  `json:"blueprint"`
-	DeploymentManifest map[string]string `json:"deployment_manifest"`
-	CommandLine        string            `json:"command_line"`
-	ExitCode           int               `json:"exit_code"`
-	AttemptCount       int               `json:"attempt_count"`
-	Stdout             string            `json:"stdout"`
-	Stderr             string            `json:"stderr"`
-	ErrorClassification string           `json:"error_classification"`
-	ContainerState     map[string]any    `json:"container_state"`
-	ContainerLogs      string            `json:"container_logs"`
-	TreeSnippet        string            `json:"tree_snippet"`
+	GateIdentifier      string            `json:"gate_identifier"`
+	Stage               string            `json:"stage"`
+	Blueprint           ProjectBlueprint  `json:"blueprint"`
+	DeploymentManifest  map[string]string `json:"deployment_manifest"`
+	CommandLine         string            `json:"command_line"`
+	ExitCode            int               `json:"exit_code"`
+	AttemptCount        int               `json:"attempt_count"`
+	Stdout              string            `json:"stdout"`
+	Stderr              string            `json:"stderr"`
+	ErrorClassification string            `json:"error_classification"`
+	ContainerState      map[string]any    `json:"container_state"`
+	ContainerLogs       string            `json:"container_logs"`
+	TreeSnippet         string            `json:"tree_snippet"`
 }

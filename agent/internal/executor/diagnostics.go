@@ -27,13 +27,13 @@ func AssembleDiagnosticBundle(
 	execErr *ExecutionError,
 ) models.DiagnosticBundle {
 	bundle := models.DiagnosticBundle{
-		GateIdentifier: gateID,
-		Stage:          stage,
-		CommandLine:    cmdLine,
-		ExitCode:       exitCode,
-		AttemptCount:   attempt,
-		Stdout:         stdout,
-		Stderr:         stderr,
+		GateIdentifier:     gateID,
+		Stage:              stage,
+		CommandLine:        cmdLine,
+		ExitCode:           exitCode,
+		AttemptCount:       attempt,
+		Stdout:             stdout,
+		Stderr:             stderr,
 		DeploymentManifest: make(map[string]string),
 	}
 
