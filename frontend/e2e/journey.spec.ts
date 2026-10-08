@@ -472,7 +472,7 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     //
     // This was measured BEFORE a CI run rather than discovered during one: the failure mode would have
     // been a timeout that reads as a flake, and the second run would have been blamed on the runner.
-    test.setTimeout(1_800_000);
+    test.setTimeout(2_400_000);
     const response = await page.request.post(`${API}/generation/runs`, {
       headers: authHeaders(),
       data: {
