@@ -177,7 +177,9 @@ export function VercelConnection() {
       <CardContent className="space-y-6">
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 rounded-lg border border-border bg-muted/20 p-4">
           <div>
-            <dt className="text-xs uppercase tracking-wide text-muted-foreground">User / Account</dt>
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+              User / Account
+            </dt>
             <dd data-testid="vercel-account-name" className="mt-1 font-mono text-xs">
               {link?.username ? `@${link.username}` : "Connected"}
             </dd>

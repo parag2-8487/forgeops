@@ -96,7 +96,9 @@ export function CloudDeployModal({
   const vercelLink = useQuery({
     queryKey: queryKeys.integrations.vercel(),
     queryFn: () =>
-      api.get<{ connected: boolean; username?: string; token_hint?: string }>("/integrations/vercel"),
+      api.get<{ connected: boolean; username?: string; token_hint?: string }>(
+        "/integrations/vercel",
+      ),
     enabled: isOpen,
   });
 
@@ -507,7 +509,9 @@ export function CloudDeployModal({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {vercelLink.data?.connected ? "Override / Update Vercel Access Token" : "Vercel Access Token"}
+                  {vercelLink.data?.connected
+                    ? "Override / Update Vercel Access Token"
+                    : "Vercel Access Token"}
                 </label>
                 <a
                   href="https://vercel.com/account/tokens"
@@ -638,7 +642,9 @@ export function CloudDeployModal({
               <Button
                 size="sm"
                 onClick={() => deployMutation.mutate()}
-                disabled={deployMutation.isPending || (!vercelToken.trim() && !vercelLink.data?.connected)}
+                disabled={
+                  deployMutation.isPending || (!vercelToken.trim() && !vercelLink.data?.connected)
+                }
               >
                 {deployMutation.isPending ? "Deploying to Vercel..." : "Deploy to Vercel"}
               </Button>
