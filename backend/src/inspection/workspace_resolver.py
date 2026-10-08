@@ -56,6 +56,8 @@ class WorkspacePackageInfo:
         self.listen_port: Optional[int] = 3000
         self.workload_type = WorkloadType.WEB_SERVICE
         self.dependencies: List[str] = []
+        self.is_workspace_root = False
+        self.declared_workspaces: List[str] = []
 
 
 def _inspect_node_package(pkg_path: Path, manifest: DiscoveredFile, repo_lockfiles: List[DiscoveredFile]) -> WorkspacePackageInfo:
@@ -65,6 +67,14 @@ def _inspect_node_package(pkg_path: Path, manifest: DiscoveredFile, repo_lockfil
     scripts = data.get("scripts", {})
     deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
     info.dependencies = list(deps.keys())
+
+    ws = data.get("workspaces")
+    if ws:
+        info.is_workspace_root = True
+        if isinstance(ws, list):
+            info.declared_workspaces = [w.rstrip("/*") for w in ws]
+        elif isinstance(ws, dict) and "packages" in ws:
+            info.declared_workspaces = [w.rstrip("/*") for w in ws["packages"]]
 
     # Detect package manager
     lock_names = {lf.filename for lf in repo_lockfiles}
@@ -231,6 +241,21 @@ def resolve_repository_blueprint(
         if matches:
             selected_package = matches[0]
             ambiguity.resolution_strategy = "operator_specified"
+
+    # Check for monorepo workspace root with declared workspace members
+    workspace_roots = [p for p in packages if p.is_workspace_root]
+    if not selected_package and workspace_roots:
+        root_ws = workspace_roots[0]
+        declared_candidates = [
+            p for p in packages
+            if not p.is_workspace_root and any(p.directory == dw or p.name == dw or p.directory.startswith(dw) for dw in root_ws.declared_workspaces)
+        ]
+        if len(declared_candidates) == 1:
+            selected_package = declared_candidates[0]
+            ambiguity.resolution_strategy = "workspace_root_declared_target"
+            ambiguity.confidence_score = 0.98
+        elif len(declared_candidates) > 1:
+            runnable_candidates = [p for p in declared_candidates if p.is_runnable]
 
     # Single package detected (root or nested subfolder)
     if not selected_package and len(packages) == 1:

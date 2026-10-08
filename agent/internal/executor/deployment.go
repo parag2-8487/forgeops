@@ -1243,7 +1243,7 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 	if dirEntries, err := os.ReadDir(baseDir); err == nil {
 		for _, de := range dirEntries {
 			if de.IsDir() && !strings.HasPrefix(de.Name(), ".") && de.Name() != "node_modules" {
-				for _, check := range []string{"vite.config.ts", "vite.config.js", "package.json", "index.html"} {
+				for _, check := range []string{"vite.config.ts", "vite.config.js", "index.html", "src/App.tsx", "src/App.jsx"} {
 					if _, err := os.Stat(filepath.Join(baseDir, de.Name(), check)); err == nil {
 						frontendDir = de.Name()
 						break
@@ -1251,6 +1251,28 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 				}
 				if frontendDir != "" {
 					break
+				}
+			}
+		}
+		if frontendDir == "" {
+			for _, de := range dirEntries {
+				if de.IsDir() && !strings.HasPrefix(de.Name(), ".") && de.Name() != "node_modules" {
+					if strings.Contains(strings.ToLower(de.Name()), "front") || strings.Contains(strings.ToLower(de.Name()), "client") || strings.Contains(strings.ToLower(de.Name()), "web") {
+						if _, err := os.Stat(filepath.Join(baseDir, de.Name(), "package.json")); err == nil {
+							frontendDir = de.Name()
+							break
+						}
+					}
+				}
+			}
+		}
+		if frontendDir == "" {
+			for _, de := range dirEntries {
+				if de.IsDir() && !strings.HasPrefix(de.Name(), ".") && de.Name() != "node_modules" {
+					if _, err := os.Stat(filepath.Join(baseDir, de.Name(), "package.json")); err == nil {
+						frontendDir = de.Name()
+						break
+					}
 				}
 			}
 		}
@@ -1306,8 +1328,12 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 			}
 		}
 
-		if profile.Framework == "vite" || profile.Framework == "react" || profile.Framework == "create-react-app" || strings.Contains(content, "serve -s") {
+		if profile.Framework == "vite" || profile.Framework == "react" || profile.Framework == "create-react-app" || strings.Contains(content, "serve -s") || (frontendDir != "" && strings.Contains(content, "Frontent")) {
 			serveCmd := fmt.Sprintf(`CMD ["serve", "-s", "%s", "-l", "tcp://0.0.0.0:3000"]`, distTarget)
+			reCmdNode := regexp.MustCompile(`(?m)^CMD\s+(\[.*node.*\]|.*node\s+.*)`)
+			if reCmdNode.MatchString(content) {
+				content = reCmdNode.ReplaceAllString(content, serveCmd)
+			}
 			content = strings.ReplaceAll(content, `CMD ["node", "server.js"]`, serveCmd)
 			content = strings.ReplaceAll(content, `CMD ["node", "./server.js"]`, serveCmd)
 			content = strings.ReplaceAll(content, `CMD node server.js`, serveCmd)
