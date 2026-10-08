@@ -94,12 +94,17 @@ func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("agent: identity provider for the scan submit: %w", err)
 	}
-	return newCodebaseIndexer(
+	indexer, err := newCodebaseIndexer(
 		root, origin, "", a.cfg.Scanner.MaxFileSize, provider,
 		deviceTokenSource(store),
 		scanSubmitTimeout,
 		store,
 	)
+	if err != nil {
+		return nil, err
+	}
+	indexer.configuredURL = a.cfg.BackendWSSURL
+	return indexer, nil
 }
 
 // deviceTokenSource reads the device token from the credential store at CALL time and presents it
@@ -149,10 +154,11 @@ func deviceTokenSource(store *session.FileStore) scanner.TokenFunc {
 // gets read and uploaded, and a signature proves who sent a command, not that where it points is
 // somewhere the operator agreed to expose.
 type codebaseIndexer struct {
-	root      string
-	scanner   *scanner.ReportScanner
-	submitter *scanner.HTTPReportSubmitter
-	store     *session.FileStore
+	root          string
+	scanner       *scanner.ReportScanner
+	submitter     *scanner.HTTPReportSubmitter
+	store         *session.FileStore
+	configuredURL string
 }
 
 // IndexFull scans the whole workspace and replaces the project's index.
@@ -211,8 +217,10 @@ func (c *codebaseIndexer) submit(
 	}
 	if c.store != nil {
 		if creds, err := c.store.Load(ctx); err == nil && strings.TrimSpace(creds.SessionWSURL) != "" {
-			if origin, oerr := session.HTTPOrigin(creds.SessionWSURL); oerr == nil && origin != "" {
-				c.submitter.BaseURL = origin
+			if endpoint, serr := session.SessionURL(creds.SessionWSURL, c.configuredURL); serr == nil {
+				if origin, oerr := session.HTTPOrigin(endpoint); oerr == nil && origin != "" {
+					c.submitter.BaseURL = origin
+				}
 			}
 		}
 	}

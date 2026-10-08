@@ -1484,6 +1484,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Reclaim runner disk
+        run: |
+          echo "before:"
+          df -h / | tail -n 1
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo docker image prune --all --force || true
+          echo "after:"
+          df -h / | tail -n 1
       # Debt D2 (design §0.5). Phase 0's job ran `docker compose config` and nothing
       # else: it never built either image and never started a container, so
       # criterion 4's own wording and the container half of criterion 1 rested on a
@@ -1510,11 +1524,11 @@ jobs:
           docker compose --profile tools config --services | grep -qx agent-dev
       # D2's substance: build both images and start the stack for real.
       - name: Build the backend and frontend images
-        # `backend-agent` NAMED EXPLICITLY even though it builds the same image as `backend`. Compose
+        # `backend-agent` and `worker` NAMED EXPLICITLY even though they build the same image as `backend`. Compose
         # treats them as separate build targets, so omitting it left `up --wait` to build it inline
         # and the 300-second wait expired on a build rather than on a healthcheck — a timeout that
         # reads as an unhealthy stack when nothing was unhealthy yet.
-        run: docker compose build backend backend-agent frontend
+        run: docker compose build backend backend-agent frontend worker
 
       # THE ONE THING A FRESH CLONE CANNOT INHERIT FROM `.env.example`.
       #

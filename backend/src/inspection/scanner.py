@@ -124,6 +124,11 @@ def scan_repository_tree(root_path: str | Path, max_depth: int = 6) -> Discovere
     discovered = DiscoveredRepository(root_path=str(root))
     tree_lines: list[str] = []
 
+    manifests: list[DiscoveredFile] = discovered.manifests
+    lockfiles: list[DiscoveredFile] = discovered.lockfiles
+    runtime_hints: list[DiscoveredFile] = discovered.runtime_hints
+    existing_artifacts: list[DiscoveredFile] = discovered.existing_artifacts
+
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune ignored directories in-place to avoid descending into them
         dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRECTORIES]
@@ -155,16 +160,16 @@ def scan_repository_tree(root_path: str | Path, max_depth: int = 6) -> Discovere
 
             # Check for manifests (exact name or *.csproj / *.sln)
             if f in MANIFEST_FILENAMES or f.endswith(".csproj") or f.endswith(".sln") or f.endswith(".fsproj"):
-                discovered.manifests.append(file_meta)
+                manifests.append(file_meta)
                 tree_lines.append(f"{indent}  * {f} [manifest]")
             elif f in LOCKFILE_FILENAMES:
-                discovered.lockfiles.append(file_meta)
+                lockfiles.append(file_meta)
                 tree_lines.append(f"{indent}  * {f} [lockfile]")
             elif f in RUNTIME_HINT_FILENAMES:
-                discovered.runtime_hints.append(file_meta)
+                runtime_hints.append(file_meta)
                 tree_lines.append(f"{indent}  * {f} [runtime-hint]")
             elif f in EXISTING_CONTAINER_FILENAMES:
-                discovered.existing_artifacts.append(file_meta)
+                existing_artifacts.append(file_meta)
                 tree_lines.append(f"{indent}  * {f} [container-artifact]")
 
     discovered.directory_tree_snippet = "\n".join(tree_lines[:150])
