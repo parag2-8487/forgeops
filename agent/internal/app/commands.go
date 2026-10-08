@@ -391,14 +391,26 @@ func newPairCmd(a *App) *cobra.Command {
 }
 
 func newRunCmd(a *App) *cobra.Command {
-	return &cobra.Command{
+	var workspace string
+	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the agent",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			a.logger.Info("agent starting", zap.String("version", a.bi.Version))
+			if strings.TrimSpace(workspace) != "" {
+				a.UseWorkspaceRoot(workspace)
+				if store, err := a.CredentialStore(); err == nil {
+					if creds, lerr := store.Load(cmd.Context()); lerr == nil {
+						creds.WorkspaceRoot = workspace
+						_ = store.Save(cmd.Context(), creds)
+					}
+				}
+			}
+			a.logger.Info("agent starting", zap.String("version", a.bi.Version), zap.String("workspace", a.cfg.Executor.WorkspaceRoot))
 			return a.Run(cmd.Context())
 		},
 	}
+	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace directory to confine commands to")
+	return cmd
 }
 
 // newScanCmd indexes the agent's workspace and submits the result (phases.md §1.3, §1.4).
@@ -505,7 +517,8 @@ func newWatchCmd(a *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot)
+			store, _ := a.CredentialStore()
+			root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot, store)
 			if err != nil {
 				return err
 			}

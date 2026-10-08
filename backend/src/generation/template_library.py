@@ -10,10 +10,54 @@ DEFAULT_TEMPLATES = {
             "FROM node:20-alpine\n"
             "WORKDIR /app\n"
             "COPY package*.json ./\n"
-            "RUN npm ci --only=production\n"
+            "RUN npm ci --only=production || npm install --omit=dev\n"
             "COPY . .\n"
             "EXPOSE {{PORT}}\n"
-            'CMD ["node", "server.js"]'
+            'CMD ["npm", "start"]'
+        ),
+    },
+    "nodejs-nextjs": {
+        "manifest": TemplateManifest(
+            name="nodejs-nextjs", language="nodejs", framework="nextjs", required_variables=["PORT"]
+        ),
+        "content": (
+            "FROM node:20-alpine AS builder\n"
+            "WORKDIR /app\n"
+            "COPY package*.json ./\n"
+            "RUN npm install\n"
+            "COPY . .\n"
+            "ENV NEXT_TELEMETRY_DISABLED=1\n"
+            "RUN npm run build || true\n"
+            "FROM node:20-alpine\n"
+            "WORKDIR /app\n"
+            "ENV NODE_ENV=production\n"
+            "ENV PORT={{PORT}}\n"
+            'ENV HOSTNAME="0.0.0.0"\n'
+            "COPY --from=builder /app ./\n"
+            "EXPOSE {{PORT}}\n"
+            "USER 10001\n"
+            'CMD ["npm", "start"]'
+        ),
+    },
+    "nodejs-vite": {
+        "manifest": TemplateManifest(
+            name="nodejs-vite", language="nodejs", framework="vite", required_variables=["PORT"]
+        ),
+        "content": (
+            "FROM node:22-alpine AS builder\n"
+            "WORKDIR /app\n"
+            "COPY package*.json ./\n"
+            "RUN npm install\n"
+            "COPY . .\n"
+            "RUN npm run build\n"
+            "FROM node:22-alpine\n"
+            "WORKDIR /app\n"
+            "RUN npm install -g serve\n"
+            "USER 10001\n"
+            "COPY --from=builder /app/dist ./\n"
+            "EXPOSE {{PORT}}\n"
+            "HEALTHCHECK --interval=30s --timeout=10s --retries=3 CMD wget -q --spider http://localhost:{{PORT}}/ || exit 1\n"
+            'CMD ["serve", "-s", ".", "-l", "{{PORT}}"]'
         ),
     },
     "python-fastapi": {

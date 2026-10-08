@@ -82,6 +82,9 @@ type Credentials struct {
 	// Empty means a credential written before this field existed. `connect` then cannot compare, so
 	// it proceeds exactly as it used to rather than refusing on a fact it does not have.
 	ProjectID string `json:"project_id,omitempty"`
+
+	// WorkspaceRoot is the local directory of the project this device serves.
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
 // Store persists the device credential set.

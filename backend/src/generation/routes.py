@@ -81,7 +81,20 @@ class GenerationRequest(BaseModel):
     """What a caller asks to have generated."""
 
     project_id: uuid.UUID
-    prompt: str = Field(min_length=1, max_length=4000)
+    #: THE PROMPT CARRIES A BUILD LOG when this run is a repair, so the ceiling is sized for one.
+    #:
+    #: It was 4000, and that made "Resolve Errors with AI" fail with a 422 the user saw as
+    #: "One or more fields failed validation." — a message that names neither the field nor the
+    #: reason. Measured: the resolver's own instructions are 3133 characters, and the real failure
+    #: a user pasted was 944 more, so a genuine repair request was 4977 and could never be accepted.
+    #: The limit was set when the prompt was a sentence a human typed; it stopped being that when
+    #: the resolver started attaching the host's error output, and nothing moved with it.
+    #:
+    #: 16000 is not a licence to send anything: it is roughly 4k tokens, comfortably inside every
+    #: model's context, and large enough for a truncated build log (the agent caps what it returns)
+    #: plus the instructions. A prompt past it is a bug worth rejecting rather than silently
+    #: truncating, because a truncated log is a log with the cause cut out of it.
+    prompt: str = Field(min_length=1, max_length=16000)
     #: Where the change is destined. Passed straight through to the chokepoint, and deliberately
     #: not defaulted here: `approval.rego` answers `require_approval` when the member is absent, so
     #: an omitted environment means a human reviews it rather than it auto-approving (finding 68).
@@ -174,7 +187,15 @@ async def _load_project_for_generation(session: AsyncSession, project_id: uuid.U
         {"id": project_id},
     )
     row = result.mappings().first()
-    return dict(row) if row is not None else None
+    if row is None:
+        return None
+    data = dict(row)
+    inv_res = await session.execute(
+        text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
+        {"p": project_id},
+    )
+    data["inventory"] = inv_res.scalar_one_or_none() or {}
+    return data
 
 
 @router.post(
@@ -322,25 +343,25 @@ async def create_generation_run(
                 break
             yield frame.encode("utf-8")
 
-        await _finish_run(session, run_id=run_id, outcome=outcome)
-
-        if not outcome.validation_passed:
-            # The service's own terminal frame is the right answer here: it is an `error` naming the
-            # validation gate, and nothing is submitted because nothing passed.
-            if withheld is not None:
-                yield withheld.encode("utf-8")
-            return
-
-        # THE PRE-IMAGES, loaded before the submit because that is where the session lives.
-        #
-        # An `update` needs the exact bytes on disk, and this endpoint has never read the working tree.
-        # `_editable_preimages` is what makes the difference between claiming a pre-image and having
-        # one, and it deliberately returns FEWER paths than exist.
-        preimages = await _editable_preimages(
-            session, project_id=body.project_id, paths=[f.path for f in outcome.files]
-        )
-
         try:
+            await _finish_run(session, run_id=run_id, outcome=outcome)
+
+            if not outcome.validation_passed:
+                # The service's own terminal frame is the right answer here: it is an `error` naming the
+                # validation gate, and nothing is submitted because nothing passed.
+                if withheld is not None:
+                    yield withheld.encode("utf-8")
+                return
+
+            # THE PRE-IMAGES, loaded before the submit because that is where the session lives.
+            #
+            # An `update` needs the exact bytes on disk, and this endpoint has never read the working tree.
+            # `_editable_preimages` is what makes the difference between claiming a pre-image and having
+            # one, and it deliberately returns FEWER paths than exist.
+            preimages = await _editable_preimages(
+                session, project_id=body.project_id, paths=[f.path for f in outcome.files]
+            )
+
             submission = await chokepoint.submit(
                 session,
                 MutationRequest(
@@ -354,10 +375,8 @@ async def create_generation_run(
                 principal=principal,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as the terminal frame
-            # A refusal by the chokepoint is a legitimate outcome, not a server fault: a policy
-            # deny, a blocked blast radius or a stale policy bundle all land here. This is THE
-            # terminal frame, not one appended after another — the artifacts were generated and
-            # then refused, so the run did not succeed.
+            # A refusal by the chokepoint or persistence issue is surfaced to the client as the
+            # terminal frame, guaranteeing the stream never ends without a terminal event.
             yield format_event(
                 SSEEventType.ERROR,
                 {

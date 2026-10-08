@@ -169,7 +169,20 @@ credentials.md
 # `deployment.md`. They carry the commit they were read from and are meant to be regenerated,
 # not maintained. Folding them into `docs/architecture.md` is fine, but only alongside a check
 # that asserts every service they name still exists in `docker-compose.yml`.
-ARCHITECTURE-DIAGRAMS.md
+#
+# THAT CONDITION IS NOW MET, 2026-10-08, so the file is TRACKED and removed from this list.
+# `scripts/check-architecture-diagrams.sh` asserts every service the diagrams name exists in the
+# compose files, that the stated service counts match the tree, that the base images match the
+# Dockerfiles, that the journey step count agrees with `PROGRESS.md`, and that both Mermaid blocks
+# still parse. It was verified against a negative control — a wrong count fails the check.
+#
+# The rule was right about the risk and the risk had already materialised: the snapshot had drifted
+# to nine services (there are 22), ten migrations (there are 37), and a journey at four of thirteen
+# steps (it is six). Tracking the file is what let those be the check's business rather than
+# somebody's memory.
+#
+# The rendered archive stays ignored, unchanged below: a binary blob cannot be diffed or reviewed,
+# and `docs/diagrams.zip` is over `check-added-large-files`' limit for exactly that reason.
 
 # The rendered diagrams and their archive, for the same reason as the file above: they are
 # generated from a snapshot of the tree at one commit, nothing gates them, and a committed copy

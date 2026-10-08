@@ -6,8 +6,12 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { getAccessToken } from "@/lib/session";
+import { AlertTriangle } from "lucide-react";
+import { queryKeys } from "@/lib/api";
+import { DeploymentAiResolver } from "./DeploymentAiResolver";
 
 export type WorkloadHealth = {
   kind?: string;
@@ -24,6 +28,9 @@ export type DeploymentReport = {
   kubectl_version?: string;
   cluster_context?: string;
   namespace?: string;
+  error?: string;
+  detail?: string;
+  message?: string;
 };
 
 /** Words for a workload's readiness, keeping "no entry" apart from "not ready". */
@@ -35,21 +42,57 @@ export function readinessWord(workload: WorkloadHealth): string {
 export function DeploymentResult({
   report,
   status,
+  projectId,
+  deploymentId,
+  manifests,
+  onRetryDeploy,
 }: {
   report: DeploymentReport | null;
   status: string;
+  projectId?: string;
+  deploymentId?: string;
+  manifests?: string[];
+  onRetryDeploy?: () => Promise<void> | void;
 }) {
+  const errorMessage =
+    report?.error ||
+    report?.detail ||
+    report?.message ||
+    (status === "failed" ? "The deployment failed during apply on the host machine." : null);
+
   if (report === null) {
     return (
       <div
         data-testid="deployment-result"
-        className="rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground"
+        className="rounded-md border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground space-y-2"
       >
         <p data-testid="deployment-result-absent">
           {status === "pending_approval"
             ? "No result yet: this is waiting for a human to approve it."
             : "No result has been reported for this deployment yet."}
         </p>
+
+        {errorMessage && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive space-y-1">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <AlertTriangle className="size-3.5" />
+              <span>Deployment Error:</span>
+            </div>
+            <pre className="whitespace-pre-wrap font-mono text-[11px] max-h-32 overflow-y-auto">
+              {errorMessage}
+            </pre>
+          </div>
+        )}
+
+        {errorMessage && projectId && deploymentId && (
+          <DeploymentAiResolver
+            projectId={projectId}
+            deploymentId={deploymentId}
+            manifests={manifests ?? []}
+            errorMessage={errorMessage}
+            onRetryDeploy={onRetryDeploy}
+          />
+        )}
       </div>
     );
   }
@@ -106,9 +149,41 @@ export function DeploymentResult({
                 {workload.waited_seconds !== undefined ? ` after ${workload.waited_seconds}s` : ""}
                 {workload.detail ? ` — ${workload.detail}` : ""}
               </span>
+              {workload.detail && /https?:\/\/[^\s]+/.test(workload.detail) && (
+                <a
+                  href={workload.detail.match(/https?:\/\/[^\s]+/)?.[0]}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 ml-2 shadow-xs transition-colors"
+                >
+                  Open App ↗
+                </a>
+              )}
             </li>
           ))}
         </ul>
+      )}
+
+      {errorMessage && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive space-y-1.5 mt-2">
+          <div className="flex items-center gap-1.5 font-semibold text-destructive">
+            <AlertTriangle className="size-4 shrink-0" />
+            <span>Deployment Failure Details:</span>
+          </div>
+          <pre className="whitespace-pre-wrap font-mono text-[11px] max-h-40 overflow-y-auto bg-destructive/5 p-2 rounded border border-destructive/20 text-destructive">
+            {errorMessage}
+          </pre>
+        </div>
+      )}
+
+      {errorMessage && projectId && deploymentId && (
+        <DeploymentAiResolver
+          projectId={projectId}
+          deploymentId={deploymentId}
+          manifests={manifests ?? []}
+          errorMessage={errorMessage}
+          onRetryDeploy={onRetryDeploy}
+        />
       )}
     </div>
   );
@@ -126,6 +201,7 @@ export function DeploymentLogStream({
   deploymentId: string;
   deliverable: boolean;
 }) {
+  const queryClient = useQueryClient();
   const [lines, setLines] = useState<string[]>([]);
   const [state, setState] = useState<"idle" | "open" | "closed" | "error">(
     deliverable ? "open" : "idle",
@@ -151,15 +227,17 @@ export function DeploymentLogStream({
     source.addEventListener("complete", () => {
       setState("closed");
       source.close();
+      void queryClient.invalidateQueries({ queryKey: queryKeys.deployments.list(projectId) });
     });
     source.addEventListener("error", () => {
       setState("error");
+      void queryClient.invalidateQueries({ queryKey: queryKeys.deployments.list(projectId) });
     });
     return () => {
       source.close();
       sourceRef.current = null;
     };
-  }, [projectId, deploymentId, deliverable]);
+  }, [projectId, deploymentId, deliverable, queryClient]);
 
   if (!deliverable) {
     return (

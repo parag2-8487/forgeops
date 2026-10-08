@@ -3,7 +3,7 @@ import { asRole, clearSession, getAccessToken, setSession } from "@/lib/session"
 import { ApiProblemError, ApiTransportError } from "./errors";
 import { isProblemDetails, PROBLEM_CONTENT_TYPE } from "./problem";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
  * The HTTP header carrying the access token, and the auth scheme it names (RFC 6750 §2.1).

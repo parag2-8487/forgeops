@@ -24,6 +24,10 @@ const ADDRESSABLE: Readonly<Record<string, string>> = {
   dockerfile_base_pinned: "pin the base image to an explicit version tag rather than latest",
   dockerfile_healthcheck_present: "declare a HEALTHCHECK",
 
+  // ── Compose: local development & container grouping ──
+  compose_file_present:
+    "add a docker-compose.yml configuring the service container with exposed host ports for local deployment",
+
   // ── Orchestration: properties of the three manifests it writes ──
   kubernetes_manifests_present: "add Kubernetes manifests: a Deployment, a Service and an Ingress",
   kubernetes_resource_limits_declared:
@@ -42,7 +46,6 @@ const ADDRESSABLE: Readonly<Record<string, string>> = {
 const OUT_OF_SCOPE: Readonly<Record<string, string>> = {
   dockerignore_present: "a .dockerignore",
   helm_chart_present: "a Helm chart",
-  compose_file_present: "a Compose file",
   ci_pipeline_present: "a CI workflow",
   automated_tests_present: "a test suite",
   lint_configuration_present: "a linter configuration",
@@ -96,10 +99,25 @@ export function suggestGenerationPrompt(
   // model is being asked to produce files, and the asks are the failing checks in the order the
   // report listed them, so a reader can match prompt to report line by line.
   const clauses = addresses.map((id) => ADDRESSABLE[id]);
+  const hasDocker = addresses.some((id) => id.startsWith("dockerfile_"));
+  const hasCompose = addresses.includes("compose_file_present");
+  const hasK8s = addresses.some((id) => id.startsWith("kubernetes_"));
+
+  const targets: string[] = [];
+  if (hasDocker) targets.push("a Dockerfile");
+  if (hasCompose) targets.push("a docker-compose.yml");
+  if (hasK8s) targets.push("Kubernetes manifests");
+  if (targets.length === 0) targets.push("deployment configurations");
+
+  const targetStr =
+    targets.length === 1
+      ? targets[0]
+      : targets.length === 2
+        ? `${targets[0]} and ${targets[1]}`
+        : `${targets.slice(0, -1).join(", ")}, and ${targets[targets.length - 1]}`;
+
   return {
-    prompt:
-      "Generate a Dockerfile and Kubernetes manifests for this service. " +
-      `Specifically: ${clauses.join("; ")}.`,
+    prompt: `Generate ${targetStr} for this service. Specifically: ${clauses.join("; ")}.`,
     addresses,
     outOfScope,
   };

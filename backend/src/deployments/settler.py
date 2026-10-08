@@ -93,7 +93,11 @@ class DeploymentSettler:
         if not succeeded:
             reason = _failure_reason(report)
             record = await self.deployments.fail(
-                session, deployment_id=deployment_id, reason=reason, environment=environment
+                session,
+                deployment_id=deployment_id,
+                reason=reason,
+                environment=environment,
+                report=dict(report) if report is not None else None,
             )
             await self._notify_failure(
                 session,

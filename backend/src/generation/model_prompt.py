@@ -42,12 +42,25 @@ from typing import Any
 
 #: The artifacts §12.6 step 6 names. Ordered, because the change set the governance chokepoint
 #: receives is built from this sequence and a stable order makes two runs comparable.
+#:
+#: MANDATORY, AND THAT WORD IS LOAD-BEARING. Every path here must come back or the whole attempt is
+#: discarded, so a path belongs in this tuple only when an attempt without it is genuinely unusable.
+#: `docker-compose.yml` is OFFERED rather than required (see `OPTIONAL_ARTIFACTS`): a Kubernetes
+#: deployment is complete without it, and requiring it discarded four correct files on every run whose
+#: model chose not to write a compose stack — strictly worse than the partial result it replaced.
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "Dockerfile",
     "k8s/deployment.yaml",
     "k8s/service.yaml",
     "k8s/ingress.yaml",
 )
+
+#: Artifacts the run asks for and accepts, without treating their absence as a failed attempt.
+#:
+#: The distinction is the same one `parse_artifacts` draws between `required` and `requested`: a
+#: shortfall is a shortfall. A compose file is useful for local runs and is still worth requesting, but
+#: a model that wrote four valid manifests and skipped it has not failed.
+OPTIONAL_ARTIFACTS: tuple[str, ...] = ("docker-compose.yml",)
 
 #: `### FILE: <path>`, tolerating any number of leading hashes and surrounding whitespace.
 #:
@@ -190,6 +203,9 @@ def build_generation_prompt(
         "- The Dockerfile contains a line that is exactly `USER 1001`, placed after the RUN",
         "  instructions and before CMD, so the container does not run as root.",
         f"- The Dockerfile EXPOSEs port {facts.port}.",
+        "- All application source files are at the root of the repository. Do NOT invent subdirectories like `frontend/`, `frontent/`, `backend/`, or `server/` when copying files.",
+        "- In Dockerfile, copy files directly from the root context: `COPY package*.json ./` followed by `RUN npm install`, then `COPY . .`. Do NOT invent `COPY frontent/...` or `COPY backend/...`.",
+        f"- The docker-compose.yml defines a top-level name '{facts.app_name}' and a services mapping with at least one service mapping host port {facts.port} to container port {facts.port}, with build context set to `.`.",
         "- Every Kubernetes manifest has top-level `apiVersion:`, `kind:`, `metadata:` and `spec:` keys.",
         f"- The Deployment labels its pods `app: {facts.app_name}` and the Service selects on that label.",
         f"- The Service is named `{facts.app_name}`, is type ClusterIP, publishes port 80 and targets",
@@ -198,10 +214,10 @@ def build_generation_prompt(
         f"- Use the real name `{facts.app_name}` everywhere. Never emit a placeholder such as",
         "  `<your-username>` or `example.com`: these files are applied as written.",
         "",
-        "OUTPUT FORMAT. Emit exactly these four files, in this order, and nothing else -",
+        "OUTPUT FORMAT. Emit exactly these files, in this order, and nothing else -",
         "no explanation, no summary, no extra files:",
     ]
-    for path in REQUIRED_ARTIFACTS:
+    for path in (*REQUIRED_ARTIFACTS, *OPTIONAL_ARTIFACTS):
         lines.append(f"### FILE: {path}")
         lines.append("```")
         lines.append("<the file's complete contents>")
@@ -316,13 +332,21 @@ def facts_from_project(
         if isinstance(raw_settings, Mapping):
             settings = raw_settings
 
+    # Lowered once and unconditionally: `is_spa` below reads it whether or not `settings` supplied a
+    # runtime, so binding it inside the `if not runtime` branch would leave it unbound for every
+    # project that declares one.
+    lowered = operator_prompt.lower()
+
     runtime = str(settings.get("runtime") or "").strip().lower()
     if not runtime:
-        lowered = operator_prompt.lower()
         runtime = "node" if ("node" in lowered or "express" in lowered) else "python"
 
+    is_spa = any(k in lowered for k in ("vite", "react", "vue", "frontend", "spa", "static"))
     if runtime.startswith("node"):
-        base_image, start, port = "node:20-alpine", ("node", "server.js"), 3000
+        if is_spa:
+            base_image, start, port = "node:22-alpine", ("npx", "serve", "-s", ".", "-l", "3000"), 3000
+        else:
+            base_image, start, port = "node:20-alpine", ("node", "server.js"), 3000
     else:
         base_image, start, port = "python:3.11-slim", ("python", "main.py"), 8000
 

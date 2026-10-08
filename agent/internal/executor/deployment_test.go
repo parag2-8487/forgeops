@@ -27,6 +27,10 @@
 package executor
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -121,5 +125,269 @@ func TestFirstLineTakesTheVerdictAndNotTheProgress(t *testing.T) {
 	// CRLF, because a Windows agent is a first-class host here.
 	if got := firstLine("first\r\nlast\r\n"); got != "last" {
 		t.Fatalf("firstLine CRLF = %q, want %q", got, "last")
+	}
+}
+
+func TestResolveExactCasePath(t *testing.T) {
+	tempDir := t.TempDir()
+	backendDir := filepath.Join(tempDir, "Backend")
+	if err := os.Mkdir(backendDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backendDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	frontentDir := filepath.Join(tempDir, "Frontent")
+	if err := os.Mkdir(frontentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontentDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	exactPath, exists := resolveExactCasePath(tempDir, "backend/package.json")
+	if !exists || exactPath != "Backend/package.json" {
+		t.Fatalf("expected ('Backend/package.json', true), got (%q, %v)", exactPath, exists)
+	}
+
+	exactFrontent, existsFrontent := resolveExactCasePath(tempDir, "frontent/package.json")
+	if !existsFrontent || exactFrontent != "Frontent/package.json" {
+		t.Fatalf("expected ('Frontent/package.json', true), got (%q, %v)", exactFrontent, existsFrontent)
+	}
+
+	_, existsMissing := resolveExactCasePath(tempDir, "nonexistent/file.txt")
+	if existsMissing {
+		t.Fatalf("expected exists=false for nonexistent path")
+	}
+}
+
+func TestAutoHealDockerfileForCompose_MonorepoExactCase(t *testing.T) {
+	tempDir := t.TempDir()
+	backendDir := filepath.Join(tempDir, "Backend")
+	if err := os.Mkdir(backendDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backendDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	frontentDir := filepath.Join(tempDir, "Frontent")
+	if err := os.Mkdir(frontentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontentDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerfile := `FROM node:18-alpine
+WORKDIR /app
+COPY backend/package.json backend/package-lock.json* ./backend/
+COPY frontent/package.json frontent/package-lock.json* ./frontent/
+RUN cd backend && npm install
+RUN cd frontent && npm install
+COPY . .
+RUN cd frontent && npm run build
+EXPOSE 5000 3000
+CMD ["npm", "start"]
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := SinkFunc(func(percent int, stage, message string) {})
+	autoHealDockerfileForCompose(tempDir, sink)
+
+	healedBytes, err := os.ReadFile(filepath.Join(tempDir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healed := string(healedBytes)
+
+	if !strings.Contains(healed, "COPY Backend/package.json ./Backend") {
+		t.Fatalf("expected Backend/package.json healed, got:\n%s", healed)
+	}
+	if !strings.Contains(healed, "COPY Frontent/package.json ./Frontent") {
+		t.Fatalf("expected Frontent/package.json healed, got:\n%s", healed)
+	}
+	if !strings.Contains(healed, "RUN cd Backend && npm install") {
+		t.Fatalf("expected cd Backend healed, got:\n%s", healed)
+	}
+	if !strings.Contains(healed, "RUN cd Frontent && npm run build") {
+		t.Fatalf("expected cd Frontent healed, got:\n%s", healed)
+	}
+}
+
+func TestAutoHealDockerfileForCompose_NoRootPackageJson(t *testing.T) {
+	tempDir := t.TempDir()
+	backendDir := filepath.Join(tempDir, "Backend")
+	if err := os.Mkdir(backendDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backendDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	frontentDir := filepath.Join(tempDir, "Frontent")
+	if err := os.Mkdir(frontentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontentDir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerfile := `FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+EXPOSE 3000
+CMD ["node", "Backend/server.js"]
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := SinkFunc(func(percent int, stage, message string) {})
+	autoHealDockerfileForCompose(tempDir, sink)
+
+	healedBytes, err := os.ReadFile(filepath.Join(tempDir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healed := string(healedBytes)
+
+	if !strings.Contains(healed, "skipped root package copy") {
+		t.Fatalf("expected root package copy skipped, got:\n%s", healed)
+	}
+	if !strings.Contains(healed, "(cd Backend && npm install)") || !strings.Contains(healed, "(cd Frontent && npm install)") {
+		t.Fatalf("expected subfolder installs, got:\n%s", healed)
+	}
+	if !strings.Contains(healed, "(cd Frontent && npm run build)") {
+		t.Fatalf("expected subfolder build, got:\n%s", healed)
+	}
+}
+
+func TestAutoHealDockerfileForCompose_FrontendMonorepo(t *testing.T) {
+	tempDir := t.TempDir()
+	frontentDir := filepath.Join(tempDir, "Frontent")
+	if err := os.Mkdir(frontentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontentDir, "package.json"), []byte(`{"name":"frontent","scripts":{"build":"vite build"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontentDir, "vite.config.js"), []byte(`export default {}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	composeFile := `services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 10s
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "docker-compose.yml"), []byte(composeFile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerfile := `FROM node:20-alpine
+WORKDIR /app
+COPY Frontent/package.json ./Frontent/package.json
+RUN (cd Frontent && npm install)
+COPY . .
+RUN (cd Frontent && npm run build) || true
+EXPOSE 3000
+HEALTHCHECK CMD curl -f http://localhost:3000/health || exit 1
+USER 1001
+CMD ["node", "Backend/server.js"]
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := SinkFunc(func(percent int, stage, message string) {})
+	autoHealDockerfileForCompose(tempDir, sink)
+
+	healedDBytes, err := os.ReadFile(filepath.Join(tempDir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healedD := string(healedDBytes)
+
+	if !strings.Contains(healedD, "npm install -g serve") {
+		t.Fatalf("expected serve installed in Dockerfile, got:\n%s", healedD)
+	}
+	if !strings.Contains(healedD, `CMD ["serve", "-s", "Frontent/dist", "-l", "tcp://0.0.0.0:3000"]`) {
+		t.Fatalf("expected CMD healed to serve Frontent/dist, got:\n%s", healedD)
+	}
+	if !strings.Contains(healedD, "GOOGLE_CLIENT_ID") {
+		t.Fatalf("expected fallback OAuth env vars in Dockerfile, got:\n%s", healedD)
+	}
+
+	healedCBytes, err := os.ReadFile(filepath.Join(tempDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healedC := string(healedCBytes)
+
+	if strings.Contains(healedC, "curl") {
+		t.Fatalf("expected curl healthcheck removed from docker-compose.yml, got:\n%s", healedC)
+	}
+	if !strings.Contains(healedC, "wget") {
+		t.Fatalf("expected wget spider healthcheck in docker-compose.yml, got:\n%s", healedC)
+	}
+	if strings.Contains(healedD, `\ CMD`) {
+		t.Fatalf("expected backslash before CMD removed, got:\n%s", healedD)
+	}
+}
+
+func TestAutoHealDockerfileForCompose_HealthcheckWithBackslash(t *testing.T) {
+	tempDir := t.TempDir()
+	dockerfile := `FROM node:20-alpine
+WORKDIR /app
+COPY . .
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \ CMD wget -q --spider http://127.0.0.1:3000/ || exit 0
+CMD ["node", "server.js"]
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := SinkFunc(func(percent int, stage, message string) {})
+	autoHealDockerfileForCompose(tempDir, sink)
+
+	healedDBytes, err := os.ReadFile(filepath.Join(tempDir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healedD := string(healedDBytes)
+
+	if strings.Contains(healedD, `\ CMD`) {
+		t.Fatalf("expected backslash before CMD removed from HEALTHCHECK, got:\n%s", healedD)
+	}
+	// The flags the author set survive, and the probe is one that CAN RUN IN THIS IMAGE.
+	//
+	// This used to assert `wget -q --spider ... || exit 0`. That command was wrong twice over:
+	// `wget` is absent from `node:*-slim` (the base image of every Node project this platform
+	// generates), so the probe never tested anything; and `|| exit 0` made it exit successfully
+	// anyway, so the container reported HEALTHY with a completely dead listener. A real deployment
+	// showed this in its health log — `"/bin/sh: 1: wget: not found"` with `ExitCode: 0`.
+	if !strings.Contains(healedD, "HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3") {
+		t.Fatalf("expected the HEALTHCHECK's own flags to survive, got:\n%s", healedD)
+	}
+	// The language is inferred from `FROM node:20-alpine`, so the probe is Node's own fetch.
+	if !strings.Contains(healedD, `node -e "fetch(`) {
+		t.Fatalf("expected a probe that can run in a node image, got:\n%s", healedD)
+	}
+	if strings.Contains(healedD, "wget") {
+		t.Fatalf("wget does not exist in node:*-slim, so this probe can never test anything, got:\n%s", healedD)
+	}
+	if regexp.MustCompile(`(?m)^HEALTHCHECK.*\|\| exit 0`).MatchString(healedD) {
+		t.Fatalf("a healthcheck that cannot fail is not a healthcheck, got:\n%s", healedD)
 	}
 }

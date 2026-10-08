@@ -323,7 +323,14 @@ class CommandResultRecorder(Protocol):
     left its change set at `applying` for ever with an empty rollback manifest.
     """
 
-    async def record(self, *, change_set_id: uuid.UUID, status: str, backup_manifest: Any) -> str: ...
+    async def record(
+        self,
+        *,
+        change_set_id: uuid.UUID,
+        status: str,
+        backup_manifest: Any = None,
+        output: Any = None,
+    ) -> str: ...
 
     async def record_rolled_back(self, *, change_set_id: uuid.UUID, reason: str) -> str:
         """Finalise a change set the agent rolled back itself.
@@ -784,6 +791,7 @@ class AgentHub:
                 change_set_id=uuid.UUID(str(change_set_id)),
                 status=str(params.get("status") or ""),
                 backup_manifest=params.get("backup_manifest"),
+                output=params.get("output"),
             )
         except Exception as exc:  # noqa: BLE001 - a failed finalise must not close a healthy socket
             logger.error(

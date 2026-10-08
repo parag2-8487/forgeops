@@ -33,16 +33,17 @@ export function GenerationPromptSuggestion({ checks }: { checks: ReadonlyArray<R
 
       {suggestion.prompt === null ? (
         <p className="mt-2 text-sm text-muted-foreground" data-testid="generation-cannot-help">
-          Generation cannot raise this score. It writes a Dockerfile and Kubernetes manifests, and
-          every check still failing here needs something else: {suggestion.outOfScope.join(", ")}.
-          Those are edits to make yourself — a change set from the generator would not touch them.
+          Generation cannot raise this score. It writes container and orchestration artifacts
+          (Dockerfile, Compose, Kubernetes), and every check still failing here needs something
+          else: {suggestion.outOfScope.join(", ")}. Those are edits to make yourself — a change set
+          from the generator would not touch them.
         </p>
       ) : (
         <>
           <p className="mt-2 text-sm text-muted-foreground">
             Paste this into the generator. It asks for exactly the {suggestion.addresses.length}{" "}
-            failing check{suggestion.addresses.length === 1 ? "" : "s"} that a Dockerfile and
-            Kubernetes manifests can satisfy, so the run has something to change.
+            failing check{suggestion.addresses.length === 1 ? "" : "s"} that containerization, compose,
+            and Kubernetes manifests can satisfy, so the run has something to change.
           </p>
           <div className="mt-3">
             <CommandBlock

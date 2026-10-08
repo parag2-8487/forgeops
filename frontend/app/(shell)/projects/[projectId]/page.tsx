@@ -28,6 +28,7 @@ import {
   type ProjectResponse,
   type ReadinessReport,
 } from "@/features/projects/types";
+import { CloudDeployModal } from "@/features/integrations/CloudDeployModal";
 
 /**
  * Everything about one project — phases.md §1.2 "Frontend: Project detail page".
@@ -35,6 +36,7 @@ import {
 export default function ProjectDetailPage() {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId;
+  const [cloudDeployOpen, setCloudDeployOpen] = useState(false);
 
   const project = useQuery({
     queryKey: queryKeys.projects.detail(projectId),
@@ -53,13 +55,30 @@ export default function ProjectDetailPage() {
             ← All projects
           </Link>
         </p>
-        <div className="mt-2 flex flex-wrap items-baseline justify-between gap-4">
-          <h1 className="text-3xl font-bold tracking-tight">{project.data?.name ?? "Project"}</h1>
-          <p className="font-mono text-xs text-muted-foreground rounded bg-muted px-2.5 py-1">
-            {projectId}
-          </p>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">{project.data?.name ?? "Project"}</h1>
+            <p className="font-mono text-xs text-muted-foreground rounded bg-muted px-2.5 py-1 mt-1 inline-block">
+              {projectId}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => setCloudDeployOpen(true)}
+              className="font-medium text-sm shadow-sm"
+            >
+              Push to GitHub / Deploy to Vercel
+            </Button>
+          </div>
         </div>
       </div>
+
+      <CloudDeployModal
+        projectId={projectId}
+        projectName={project.data?.name ?? "project"}
+        isOpen={cloudDeployOpen}
+        onClose={() => setCloudDeployOpen(false)}
+      />
 
       <AsyncState
         isPending={project.isPending}
@@ -153,7 +172,16 @@ export default function ProjectDetailPage() {
                     handle.
                   </p>
                 </div>
-                <Badge variant="outline">§2.2</Badge>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCloudDeployOpen(true)}
+                  >
+                    Export to GitHub / Vercel
+                  </Button>
+                  <Badge variant="outline">§2.2</Badge>
+                </div>
               </div>
               <DeploymentDashboard projectId={projectId} />
             </section>
@@ -358,10 +386,10 @@ function TagEditor({ project }: { project: ProjectResponse }) {
       </div>
       <div className="space-y-3">
         <ul className="flex flex-wrap gap-2">
-          {project.tags.length === 0 ? (
+          {(project.tags ?? []).length === 0 ? (
             <li className="text-sm text-muted-foreground">No tags yet.</li>
           ) : (
-            project.tags.map((tag) => (
+            (project.tags ?? []).map((tag) => (
               <li key={tag}>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs font-medium">
                   {tag}

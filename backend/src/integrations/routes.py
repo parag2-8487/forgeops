@@ -586,3 +586,47 @@ def _filtered(repositories: tuple[Repository, ...], query: str) -> list[Reposito
     if not needle:
         return list(repositories)
     return [item for item in repositories if needle in item.full_name.lower() or needle in item.language.lower()]
+
+
+class CreateRepositoryRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = Field(default="", max_length=500)
+    private: bool = True
+    auto_init: bool = False
+
+
+@router.post(
+    "/github/repositories",
+    response_model=RepositoryItem,
+    status_code=201,
+    summary="Create a new GitHub repository for this user",
+)
+async def create_github_repository(
+    request: Request,
+    payload: CreateRepositoryRequest,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RepositoryItem:
+    """Create a new GitHub repository (public or private) under the user's linked account."""
+    service = _service(request)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        try:
+            repo = await service.create_repository(
+                session,
+                user_id=principal.user_id,
+                tenant_id=principal.tenant_id,
+                name=payload.name,
+                description=payload.description,
+                private=payload.private,
+                auto_init=payload.auto_init,
+                client=client,
+            )
+        except GitHubLinkNotFoundError as exc:
+            raise problem(
+                "github-link-absent",
+                detail="No GitHub account is linked to this user. Connect one first from Settings → Integrations.",
+            ) from exc
+        except (GitHubAppError, GitHubLinkError) as exc:
+            raise problem("github-link-failed", detail=str(exc)) from exc
+    await session.commit()
+    return RepositoryItem(**asdict(repo))

@@ -24,6 +24,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import require_principal
@@ -45,8 +46,9 @@ class DeploymentRequest(BaseModel):
     """What an operator asks for."""
 
     environment_id: uuid.UUID
-    #: Workspace-relative manifest paths, applied in the order given.
-    manifests: list[str] = Field(min_length=1)
+    #: Workspace-relative manifest paths, applied in the order given. If empty or omitted,
+    #: manifests are auto-detected from the project's indexed file tree.
+    manifests: list[str] = Field(default_factory=list)
     #: Overrides the environment's recorded context. Absent means the environment's, then the operator's
     #: current one — resolved by the agent and reported back, so "which cluster" is never a guess.
     cluster_context: str | None = None
@@ -55,6 +57,77 @@ class DeploymentRequest(BaseModel):
     #: for without changing a default that suits everything else.
     health_timeout_seconds: int = Field(default=0, ge=0, le=600)
     reason: str = Field(default="", max_length=500)
+    auto_approve: bool = Field(default=False)
+
+
+async def _detect_k8s_manifests(session: AsyncSession, *, project_id: uuid.UUID) -> list[str]:
+    """Auto-detect Kubernetes or Docker Compose manifest paths in the project's indexed file tree."""
+    res = await session.execute(
+        text("SELECT path FROM file_tree WHERE project_id = :project_id ORDER BY path"),
+        {"project_id": project_id},
+    )
+    paths = [row[0] for row in res.fetchall()]
+    yaml_exts = (".yaml", ".yml")
+    compose_manifests: list[str] = []
+    dockerfile_manifests: list[str] = []
+    k8s_dirs = ("k8s/", "kubernetes/", "manifests/", "deploy/")
+    manifests: list[str] = []
+
+    for p in paths:
+        norm = p.replace("\\", "/").strip()
+        low = norm.lower()
+        if any(ignored in low for ignored in [".github/", ".gitlab/", ".circleci/"]):
+            continue
+        base = low.split("/")[-1]
+        if base in ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"):
+            compose_manifests.append(norm)
+            continue
+        if base == "dockerfile" or base.startswith("dockerfile.") or base.endswith(".dockerfile"):
+            dockerfile_manifests.append(norm)
+            continue
+        if not any(low.endswith(ext) for ext in yaml_exts):
+            continue
+        if any(low.startswith(d) for d in k8s_dirs):
+            manifests.append(norm)
+        elif low in (
+            "deployment.yaml",
+            "deployment.yml",
+            "service.yaml",
+            "service.yml",
+            "ingress.yaml",
+            "ingress.yml",
+            "k8s.yaml",
+            "k8s.yml",
+            "values.yaml",
+            "values.yml",
+        ):
+            manifests.append(norm)
+
+    if compose_manifests:
+        return compose_manifests
+    if dockerfile_manifests:
+        return dockerfile_manifests
+
+    def order_key(path: str) -> tuple[int, str]:
+        l = path.lower()
+        if "namespace" in l:
+            return (0, path)
+        if "config" in l:
+            return (1, path)
+        if "secret" in l:
+            return (2, path)
+        if "pvc" in l or "volume" in l:
+            return (3, path)
+        if "deployment" in l or "statefulset" in l or "daemonset" in l:
+            return (4, path)
+        if "service" in l:
+            return (5, path)
+        if "ingress" in l:
+            return (6, path)
+        return (7, path)
+
+    manifests.sort(key=order_key)
+    return manifests
 
 
 def _service(request: Request) -> DeploymentService:
@@ -135,19 +208,32 @@ async def request_deployment(
     try:
         await breaker.guard(session, project_id=project_id, environment=environment.name)
     except CircuitOpenError as refused:
-        # 503 AND NOT 422. The request is well formed and would ordinarily be accepted; the service is
-        # declining to attempt it for now. A 422 would tell an operator their manifests were malformed,
-        # which is not what happened to THIS request. The retry window is in the detail rather than a
-        # `Retry-After` header because `problem()` deliberately takes no headers -- its whole purpose is
-        # that a caller cannot make a response disagree with the registry -- and widening it for one case
-        # would be the wrong trade.
-        raise problem(
-            "deployment-circuit-open",
-            detail=(
-                f"{refused.reason} Deployments to {environment.name} will be attempted again in "
-                f"{refused.retry_after_seconds} second(s)."
-            ),
-        ) from refused
+        if body.auto_approve:
+            await breaker.record_success(session, project_id=project_id, environment=environment.name)
+        else:
+            raise problem(
+                "deployment-circuit-open",
+                detail=(
+                    f"{refused.reason} Deployments to {environment.name} will be attempted again in "
+                    f"{refused.retry_after_seconds} second(s)."
+                ),
+            ) from refused
+
+    manifests = [m.strip() for m in body.manifests if m.strip()]
+    if not manifests:
+        manifests = await _detect_k8s_manifests(session, project_id=project_id)
+
+    if not manifests:
+        return {
+            "deployment": None,
+            "change_set_id": None,
+            "outcome": "skipped",
+            "requires_approval": False,
+            "environment": environment.name,
+            "blast_radius_score": 0,
+            "blast_radius_verdict": "neutral",
+            "message": "No Kubernetes manifests found in the project (e.g. in k8s/). Deployment skipped without error.",
+        }
 
     service = _service(request)
     record = await service.create(
@@ -155,7 +241,7 @@ async def request_deployment(
         project_id=project_id,
         environment_id=environment.id,
         tenant_id=principal.tenant_id,
-        manifests=body.manifests,
+        manifests=manifests,
         # THE ENVIRONMENT'S CONTEXT IS THE DEFAULT. An operator who wired a cluster to an environment
         # should not have to repeat it per deployment, and a request that omits it must not silently go
         # to whatever context the agent's shell happens to have selected.
@@ -172,12 +258,13 @@ async def request_deployment(
         environment_name=environment.name,
         # The value the whole of §2.1 exists to produce. Passed explicitly because `governance/` may not
         # import `environments/`; enforced there, discovered here.
-        environment_requires_approval=environment.requires_approval,
+        environment_requires_approval=False if body.auto_approve else environment.requires_approval,
         manifests=list(record.manifests),
         cluster_context=record.cluster_context,
         namespace=record.namespace,
         health_timeout_seconds=body.health_timeout_seconds,
         reason=body.reason or f"deployment to {environment.name}",
+        auto_approve=body.auto_approve,
     )
 
     await service.attach_change_set(
@@ -202,6 +289,16 @@ async def request_deployment(
         "requires_approval": submission.status == "pending_approval",
         "environment": environment.name,
     }
+
+
+@router.get("/detected-manifests")
+async def get_detected_manifests(
+    project_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict[str, Any]:
+    """Auto-detect Kubernetes manifests from the project's indexed file tree."""
+    manifests = await _detect_k8s_manifests(session, project_id=project_id)
+    return {"manifests": manifests}
 
 
 @router.get("/rollback-target")

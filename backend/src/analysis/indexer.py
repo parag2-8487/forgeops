@@ -29,6 +29,7 @@ the first incremental scan.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -300,21 +301,20 @@ class SelfHostedChunkEmbedder:
     table = "embeddings_local"
     dimensions = EMBEDDING_DIMS_LOCAL
 
-    def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 60.0) -> None:
+    def __init__(self, *, base_url: str, model: str, timeout_seconds: float = 8.0) -> None:
         self.model_id = model
         self._base_url = base_url.rstrip("/")
-        self._timeout = timeout_seconds
+        self._timeout = min(timeout_seconds, 8.0)
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
             return []
-        out: list[list[float]] = []
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            # One request per chunk rather than a batch. The OpenAI-compatible `input` field accepts
-            # an array, but Ollama's implementation of it has returned a single vector for an array
-            # input, and a silently truncated batch would pair chunk N's text with chunk 0's vector —
-            # a wrong answer that no dimension check would catch. Serial is slower and correct.
-            for chunk_text in texts:
+        timeout = httpx.Timeout(self._timeout, connect=3.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            batch_size = 16
+            results: list[list[float]] = []
+
+            async def _embed_single(chunk_text: str) -> list[float]:
                 response = await client.post(
                     f"{self._base_url}/embeddings",
                     json={"input": chunk_text, "model": self.model_id},
@@ -337,8 +337,44 @@ class SelfHostedChunkEmbedder:
                         f"{self.table}.embedding is vector({self.dimensions}). D-48 sizes that column "
                         f"for BGE-M3; set SELF_HOSTED_EMBEDDING_MODEL_ID to a 1024-d model."
                     )
-                out.append([float(v) for v in vector])
-        return out
+                return [float(v) for v in vector]
+
+            for i in range(0, len(texts), batch_size):
+                batch = list(texts[i : i + batch_size])
+                if len(batch) == 1:
+                    vector = await _embed_single(batch[0])
+                    results.append(vector)
+                    continue
+
+                try:
+                    response = await client.post(
+                        f"{self._base_url}/embeddings",
+                        json={"input": batch, "model": self.model_id},
+                    )
+                    if response.status_code == 200:
+                        payload = response.json()
+                        data = payload.get("data") or []
+                        if len(data) == len(batch):
+                            sorted_data = sorted(data, key=lambda item: item.get("index", 0))
+                            batch_vectors: list[list[float]] = []
+                            valid = True
+                            for item in sorted_data:
+                                vector = item.get("embedding")
+                                if not isinstance(vector, list) or len(vector) != self.dimensions:
+                                    valid = False
+                                    break
+                                batch_vectors.append([float(v) for v in vector])
+                            if valid and len(batch_vectors) == len(batch):
+                                results.extend(batch_vectors)
+                                continue
+                except Exception:
+                    pass
+
+                for chunk_text in batch:
+                    vector = await _embed_single(chunk_text)
+                    results.append(vector)
+
+            return results
 
 
 def build_embedder(settings: Any) -> tuple[ChunkEmbedder | None, str]:
@@ -473,6 +509,7 @@ async def persist_scan_report(
 
     for path in changed_paths:
         file = incoming[path]
+        clean_content = (file.content or "").replace("\x00", "")
         await session.execute(
             text(
                 "INSERT INTO file_contents (file_id, content, language, redaction_count, updated_at) "
@@ -482,7 +519,7 @@ async def persist_scan_report(
             ),
             {
                 "file_id": file_ids[path],
-                "content": file.content,
+                "content": clean_content,
                 "language": file.language,
                 "redaction_count": file.redaction_count,
             },
@@ -747,12 +784,15 @@ async def _persist_embeddings(
         absent_reason = embedder_absent_reason or "no embedding provider is configured"
     else:
         try:
-            vectors = await embedder.embed([chunk.text for _, chunk in pending])
-        except (EmbeddingProviderError, httpx.HTTPError) as exc:
+            vectors = await asyncio.wait_for(
+                embedder.embed([chunk.text for _, chunk in pending]),
+                timeout=10.0,
+            )
+        except (EmbeddingProviderError, httpx.HTTPError, asyncio.TimeoutError, TimeoutError, Exception) as exc:
             # The scan still counts: tree, contents and edges are already written. The
             # alternative — failing the whole ingest — would leave the index empty because
-            # a third party was unreachable.
-            absent_reason = f"the embedding provider was unavailable: {type(exc).__name__}"
+            # a third party was slow or unreachable.
+            absent_reason = f"the embedding provider was unavailable or timed out: {type(exc).__name__}"
             vectors = []
         if vectors and len(vectors) == len(pending):
             for (file_id, chunk), vector in zip(pending, vectors, strict=True):
@@ -770,7 +810,7 @@ async def _persist_embeddings(
                         "file_id": file_id,
                         "tenant_id": tenant_id,
                         "chunk_index": chunk.chunk_index,
-                        "chunk_text": chunk.text,
+                        "chunk_text": (chunk.text or "").replace("\x00", ""),
                         "model_id": embedder.model_id,
                         "embedding": _vector_literal(vector),
                         "symbol": chunk.symbol,

@@ -35,9 +35,11 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { ContainerLogs } from "@/features/hostops/LogPanel";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { api, queryKeys } from "@/lib/api";
 
 /** How old a sample may be before the panel calls it stale. */
@@ -159,7 +161,7 @@ function FreshnessBadge({ freshness }: { freshness: Freshness }) {
 
 export function DockerDashboard({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
-  const [withStats, setWithStats] = useState(false);
+  const [withStats, setWithStats] = useState(true);
   const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState<string | null>(null);
   const [lastOutcome, setLastOutcome] = useState<string | null>(null);
@@ -168,8 +170,9 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
     queryKey: queryKeys.hostops.dockerInventory(projectId, withStats),
     queryFn: () =>
       api.get<DockerInventory>(
-        `/projects/${projectId}/docker/inventory${withStats ? "?stats=true" : ""}`,
+        `/projects/${projectId}/docker/inventory${withStats ? "?stats=true" : "?stats=false"}`,
       ),
+    refetchInterval: withStats ? 5000 : false,
   });
 
   const containerAction = useMutation<ActionAccepted, Error, { action: string; container: string }>(
@@ -246,263 +249,435 @@ export function DockerDashboard({ projectId }: { projectId: string }) {
     );
   }
 
-  const data = inventory.data;
-  if (!data) return null;
+  const raw = inventory.data;
+  if (!raw) return null;
+  const data: DockerInventory = {
+    ...raw,
+    containers: raw.containers ?? [],
+    images: raw.images ?? [],
+    volumes: raw.volumes ?? [],
+    networks: raw.networks ?? [],
+  };
   const freshness = freshnessOf(data.observed_at);
 
   return (
-    <section aria-label="Docker" data-testid="docker-dashboard">
-      <header>
-        <h2>Containers on this machine</h2>
-        <p>
-          <span data-testid="docker-version">Docker {data.docker_version}</span>{" "}
-          <FreshnessBadge freshness={freshness} />
-        </p>
-        <label>
-          <input
-            type="checkbox"
-            checked={withStats}
-            onChange={(event) => setWithStats(event.target.checked)}
-            data-testid="docker-stats-toggle"
-          />{" "}
-          Sample CPU, memory and network (adds about a second)
-        </label>
-        {!data.stats_sampled && (
-          <p data-testid="docker-stats-absent" className="text-sm text-slate-500">
-            No resource sample was taken, so the figures below read “not measured” rather than zero.
+    <section aria-label="Docker" data-testid="docker-dashboard" className="space-y-6">
+      <Card className="p-5">
+        <header className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">Containers on this machine</h2>
+              <p className="flex items-center gap-2 pt-1 font-mono text-xs text-muted-foreground">
+                <span data-testid="docker-version">Docker {data.docker_version}</span>
+                <span>•</span>
+                <FreshnessBadge freshness={freshness} />
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground cursor-pointer select-none rounded-md border border-border bg-muted/20 px-3 py-1.5 hover:bg-muted/40 transition-colors">
+              <input
+                type="checkbox"
+                checked={withStats}
+                onChange={(event) => setWithStats(event.target.checked)}
+                data-testid="docker-stats-toggle"
+                className="h-3.5 w-3.5 rounded border-border"
+              />
+              Sample CPU, memory and network (adds about a second)
+            </label>
+          </div>
+          {!data.stats_sampled && (
+            <p data-testid="docker-stats-absent" className="text-xs text-muted-foreground">
+              No resource sample was taken, so the figures below read “not measured” rather than zero.
+            </p>
+          )}
+        </header>
+
+        {lastOutcome && (
+          <p
+            data-testid="docker-last-outcome"
+            role="status"
+            className="mt-3 rounded-md border border-primary/20 bg-primary/10 p-2.5 text-xs text-foreground font-medium"
+          >
+            {lastOutcome === "applying"
+              ? "Sent to the agent."
+              : lastOutcome === "approval-required"
+                ? "Waiting for a human to approve it. Nothing has changed on the host yet."
+                : `The governance gate answered: ${lastOutcome}.`}
           </p>
         )}
-      </header>
+      </Card>
 
-      {lastOutcome && (
-        <p data-testid="docker-last-outcome" role="status">
-          {lastOutcome === "applying"
-            ? "Sent to the agent."
-            : lastOutcome === "approval-required"
-              ? "Waiting for a human to approve it. Nothing has changed on the host yet."
-              : `The governance gate answered: ${lastOutcome}.`}
-        </p>
-      )}
-
-      <h3>Containers</h3>
-      {data.containers.length === 0 ? (
-        <p data-testid="docker-containers-empty">
-          The agent reached the daemon and it is running no containers.
-        </p>
-      ) : (
-        <table data-testid="docker-containers">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">State</th>
-              <th scope="col">Image</th>
-              <th scope="col">CPU</th>
-              <th scope="col">Memory</th>
-              <th scope="col">Network in / out</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.containers.map((container) => (
-              <tr key={container.id} data-testid={`docker-container-${container.name}`}>
-                <td>{container.name}</td>
-                <td data-testid={`docker-state-${container.name}`}>{container.state}</td>
-                <td>{container.image}</td>
-                <td data-testid={`docker-cpu-${container.name}`}>
-                  {measurement(container.cpu_percent, (value) => `${value.toFixed(2)}%`)}
-                </td>
-                <td data-testid={`docker-memory-${container.name}`}>
-                  {measurement(container.memory_bytes, (value) =>
-                    container.memory_limit_bytes === null
-                      ? bytes(value)
-                      : `${bytes(value)} of ${bytes(container.memory_limit_bytes)}`,
-                  )}
-                </td>
-                <td data-testid={`docker-network-${container.name}`}>
-                  {measurement(container.network_rx_bytes, bytes)} /{" "}
-                  {measurement(container.network_tx_bytes, bytes)}
-                </td>
-                <td>
-                  {(["start", "stop", "restart"] as const).map((action) => (
-                    <button
-                      key={action}
-                      type="button"
-                      data-testid={`docker-${action}-${container.name}`}
-                      disabled={containerAction.isPending}
-                      onClick={() => containerAction.mutate({ action, container: container.name })}
-                    >
-                      {action}
-                    </button>
-                  ))}
-                  {/* The irreversible one, and the only one that asks. */}
-                  <button
-                    type="button"
-                    data-testid={`docker-logs-${container.name}`}
-                    onClick={() => setShowLogs(showLogs === container.name ? null : container.name)}
-                  >
-                    {showLogs === container.name ? "hide logs" : "logs"}
-                  </button>
-                  {showLogs === container.name && (
-                    <ContainerLogs projectId={projectId} container={container.name} />
-                  )}
-                  {pendingRemoval === container.name ? (
-                    <>
-                      <span data-testid={`docker-remove-confirm-${container.name}`}>
-                        Remove {container.name}? Anything it holds that is not in a volume is lost.
-                      </span>
-                      <button
-                        type="button"
-                        data-testid={`docker-remove-yes-${container.name}`}
-                        onClick={() =>
-                          containerAction.mutate({ action: "remove", container: container.name })
-                        }
-                      >
-                        Remove it
-                      </button>
-                      <button type="button" onClick={() => setPendingRemoval(null)}>
-                        Keep it
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      data-testid={`docker-remove-${container.name}`}
-                      onClick={() => setPendingRemoval(container.name)}
-                    >
-                      remove
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <h3>Images</h3>
-      {data.images.length === 0 ? (
-        <p data-testid="docker-images-empty">The daemon holds no images.</p>
-      ) : (
-        <table data-testid="docker-images">
-          <thead>
-            <tr>
-              <th scope="col">Repository</th>
-              <th scope="col">Tag</th>
-              <th scope="col">Size</th>
-              <th scope="col">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.images.map((image) => {
-              const reference = `${image.repository}:${image.tag}`;
-              return (
-                <tr key={image.id} data-testid={`docker-image-${image.repository}`}>
-                  <td>{image.repository}</td>
-                  <td>{image.tag}</td>
-                  <td>{image.size}</td>
-                  <td>
-                    <button
-                      type="button"
-                      data-testid={`docker-pull-${image.repository}`}
-                      onClick={() => imageAction.mutate({ action: "pull", image: reference })}
-                    >
-                      pull
-                    </button>
-                    <button
-                      type="button"
-                      data-testid={`docker-push-${image.repository}`}
-                      onClick={() => imageAction.mutate({ action: "push", image: reference })}
-                    >
-                      push
-                    </button>
-                    <button
-                      type="button"
-                      data-testid={`docker-rmi-${image.repository}`}
-                      onClick={() => imageAction.mutate({ action: "remove", image: reference })}
-                    >
-                      remove
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-
-      <h3>Build an image</h3>
-      {/*
-        NO COMMAND FIELD, and that is the point. A build takes a TAG and two paths the agent contains
-        against the workspace root; there is nowhere here to type `docker build && curl ...`. The
-        registry credential is not on this form either -- it is resolved from the project's secret
-        store at delivery, so a push cannot be performed by pasting somebody else's token into a
-        browser.
-      */}
-      <form
-        data-testid="docker-build-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (buildTag.trim() === "") {
-            return;
-          }
-          imageAction.mutate({
-            action: "build",
-            image: buildTag.trim(),
-            ...(buildContext.trim() === "" ? {} : { build_context: buildContext.trim() }),
-            ...(buildDockerfile.trim() === "" ? {} : { dockerfile: buildDockerfile.trim() }),
-          });
-        }}
-      >
-        <label htmlFor="docker-build-tag">Tag</label>
-        <input
-          id="docker-build-tag"
-          data-testid="docker-build-tag"
-          value={buildTag}
-          onChange={(event) => setBuildTag(event.target.value)}
-          placeholder="registry.example.com/app:v1"
-        />
-        <label htmlFor="docker-build-context">
-          Context (optional, relative to the workspace root)
-        </label>
-        <input
-          id="docker-build-context"
-          data-testid="docker-build-context"
-          value={buildContext}
-          onChange={(event) => setBuildContext(event.target.value)}
-        />
-        <label htmlFor="docker-build-dockerfile">
-          Dockerfile (optional, relative to the context)
-        </label>
-        <input
-          id="docker-build-dockerfile"
-          data-testid="docker-build-dockerfile"
-          value={buildDockerfile}
-          onChange={(event) => setBuildDockerfile(event.target.value)}
-        />
-        <button type="submit" data-testid="docker-build-submit" disabled={buildTag.trim() === ""}>
-          build
-        </button>
-      </form>
-
-      <h3>Volumes and networks</h3>
-      <ul data-testid="docker-volumes">
-        {data.volumes.length === 0 ? (
-          <li>No volumes.</li>
+      <Card className="p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold tracking-tight">Containers</h3>
+          <Badge variant="outline">{data.containers.length} total</Badge>
+        </div>
+        {data.containers.length === 0 ? (
+          <p data-testid="docker-containers-empty" className="text-sm text-muted-foreground py-4 text-center">
+            The agent reached the daemon and it is running no containers.
+          </p>
         ) : (
-          data.volumes.map((volume) => (
-            <li key={volume.name}>
-              {volume.name} ({volume.driver})
-            </li>
-          ))
+          <div className="overflow-x-auto rounded-md border border-border">
+            <table data-testid="docker-containers" className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
+                  <th scope="col" className="p-2.5">Name</th>
+                  <th scope="col" className="p-2.5">State</th>
+                  <th scope="col" className="p-2.5">Image</th>
+                  <th scope="col" className="p-2.5">Ports</th>
+                  <th scope="col" className="p-2.5">CPU</th>
+                  <th scope="col" className="p-2.5">Memory</th>
+                  <th scope="col" className="p-2.5">Network in / out</th>
+                  <th scope="col" className="p-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {Object.entries(
+                  data.containers.reduce<Record<string, DockerContainer[]>>((acc, c) => {
+                    const low = c.name.toLowerCase();
+                    let group = "Standalone Containers";
+                    if (low.startsWith("portfolio")) group = "Project: Portfolio";
+                    else if (low.startsWith("forgeops")) group = "System: ForgeOps Platform";
+                    else if (low.startsWith("worknest")) group = "Project: Worknest";
+                    else {
+                      const prefix = c.name.split(/[-_]/)[0];
+                      if (prefix && prefix !== c.name) group = `Project: ${prefix}`;
+                    }
+                    acc[group] = acc[group] ?? [];
+                    acc[group].push(c);
+                    return acc;
+                  }, {})
+                ).map(([groupName, groupContainers]) => (
+                  <Fragment key={groupName}>
+                    <tr className="bg-muted/50 border-y border-border">
+                      <td colSpan={8} className="p-2 font-semibold text-xs text-foreground">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-foreground">{groupName}</span>
+                          <Badge variant="outline" className="text-[10px]">
+                            {groupContainers.length} container{groupContainers.length === 1 ? "" : "s"}
+                          </Badge>
+                        </div>
+                      </td>
+                    </tr>
+                    {groupContainers.map((container) => {
+                      const matches = container.ports ? (container.ports.match(/(?:0\.0\.0\.0|127\.0\.0\.1|\[::\])?:?(\d+)->/g) || []) : [];
+                      const hostPorts = Array.from(new Set(matches.map((m) => m.replace(/[^0-9]/g, "")).filter(Boolean)));
+                      return (
+                        <tr key={container.id} data-testid={`docker-container-${container.name}`} className="hover:bg-muted/20 transition-colors">
+                          <td className="p-2.5 font-medium font-mono text-foreground">{container.name}</td>
+                          <td data-testid={`docker-state-${container.name}`} className="p-2.5">
+                            <Badge
+                              variant={container.state === "running" ? "success" : "outline"}
+                              className="text-[10px] uppercase font-mono tracking-wider"
+                            >
+                              {container.state}
+                            </Badge>
+                          </td>
+                          <td className="p-2.5 font-mono text-muted-foreground truncate max-w-[180px]" title={container.image}>
+                            {container.image}
+                          </td>
+                          <td data-testid={`docker-ports-${container.name}`} className="p-2.5">
+                            {hostPorts.length > 0 ? (
+                              <div className="flex flex-wrap gap-1 items-center">
+                                {hostPorts.map((port) => (
+                                  <a
+                                    key={port}
+                                    href={`http://localhost:${port}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 font-semibold font-mono text-[11px] transition-colors"
+                                    title={`Open http://localhost:${port}`}
+                                  >
+                                    :{port} ↗
+                                  </a>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="font-mono text-muted-foreground truncate max-w-[120px] inline-block" title={container.ports || ""}>
+                                {container.ports || "—"}
+                              </span>
+                            )}
+                          </td>
+                          <td data-testid={`docker-cpu-${container.name}`} className="p-2.5 font-mono">
+                            {measurement(container.cpu_percent, (value) => `${value.toFixed(2)}%`)}
+                          </td>
+                          <td data-testid={`docker-memory-${container.name}`} className="p-2.5 font-mono text-muted-foreground">
+                            {measurement(container.memory_bytes, (value) =>
+                              container.memory_limit_bytes === null
+                                ? bytes(value)
+                                : `${bytes(value)} of ${bytes(container.memory_limit_bytes)}`,
+                            )}
+                          </td>
+                          <td data-testid={`docker-network-${container.name}`} className="p-2.5 font-mono text-muted-foreground">
+                            {measurement(container.network_rx_bytes, bytes)} /{" "}
+                            {measurement(container.network_tx_bytes, bytes)}
+                          </td>
+                          <td className="p-2.5 text-right">
+                            <div className="flex flex-wrap items-center justify-end gap-1.5">
+                              {(["start", "stop", "restart"] as const).map((action) => (
+                                <button
+                                  key={action}
+                                  type="button"
+                                  data-testid={`docker-${action}-${container.name}`}
+                                  disabled={containerAction.isPending}
+                                  onClick={() => containerAction.mutate({ action, container: container.name })}
+                                  className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-border bg-background hover:bg-muted text-foreground transition-colors disabled:opacity-40"
+                                >
+                                  {action}
+                                </button>
+                              ))}
+                              {/* The irreversible one, and the only one that asks. */}
+                              <button
+                                type="button"
+                                data-testid={`docker-logs-${container.name}`}
+                                onClick={() => setShowLogs(showLogs === container.name ? null : container.name)}
+                                className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-border bg-background hover:bg-muted text-foreground transition-colors"
+                              >
+                                {showLogs === container.name ? "hide logs" : "logs"}
+                              </button>
+                              {showLogs === container.name && (
+                                <div className="w-full mt-2 text-left">
+                                  <ContainerLogs projectId={projectId} container={container.name} />
+                                </div>
+                              )}
+                              {pendingRemoval === container.name ? (
+                                <div className="flex items-center gap-1.5 p-1 rounded border border-destructive/30 bg-destructive/10 text-xs">
+                                  <span data-testid={`docker-remove-confirm-${container.name}`} className="text-destructive font-medium px-1">
+                                    Remove {container.name}? Anything it holds that is not in a volume is lost.
+                                  </span>
+                                  <button
+                                    type="button"
+                                    data-testid={`docker-remove-yes-${container.name}`}
+                                    onClick={() =>
+                                      containerAction.mutate({ action: "remove", container: container.name })
+                                    }
+                                    className="px-2 py-0.5 rounded bg-destructive text-destructive-foreground font-semibold hover:bg-destructive/90 transition-colors"
+                                  >
+                                    Remove it
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPendingRemoval(null)}
+                                    className="px-2 py-0.5 rounded border border-border hover:bg-background transition-colors"
+                                  >
+                                    Keep it
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  data-testid={`docker-remove-${container.name}`}
+                                  onClick={() => setPendingRemoval(container.name)}
+                                  className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                                >
+                                  remove
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </ul>
-      <ul data-testid="docker-networks">
-        {data.networks.map((network) => (
-          <li key={network.name}>
-            {network.name} ({network.driver})
-          </li>
-        ))}
-      </ul>
+      </Card>
+
+      <Card className="p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold tracking-tight">Images</h3>
+          <Badge variant="outline">{data.images.length} images</Badge>
+        </div>
+        {data.images.length === 0 ? (
+          <p data-testid="docker-images-empty" className="text-sm text-muted-foreground py-4 text-center">
+            The daemon holds no images.
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border border-border">
+            <table data-testid="docker-images" className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 font-mono text-[11px] text-muted-foreground uppercase tracking-wider">
+                  <th scope="col" className="p-2.5">Repository</th>
+                  <th scope="col" className="p-2.5">Tag</th>
+                  <th scope="col" className="p-2.5">Size</th>
+                  <th scope="col" className="p-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {data.images.map((image) => {
+                  const reference = `${image.repository}:${image.tag}`;
+                  return (
+                    <tr key={image.id} data-testid={`docker-image-${image.repository}`} className="hover:bg-muted/20 transition-colors">
+                      <td className="p-2.5 font-medium font-mono text-foreground">{image.repository}</td>
+                      <td className="p-2.5 font-mono text-muted-foreground">{image.tag}</td>
+                      <td className="p-2.5 font-mono text-muted-foreground">{image.size}</td>
+                      <td className="p-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            data-testid={`docker-pull-${image.repository}`}
+                            onClick={() => imageAction.mutate({ action: "pull", image: reference })}
+                            className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-border bg-background hover:bg-muted text-foreground transition-colors"
+                          >
+                            pull
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`docker-push-${image.repository}`}
+                            onClick={() => imageAction.mutate({ action: "push", image: reference })}
+                            className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-border bg-background hover:bg-muted text-foreground transition-colors"
+                          >
+                            push
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`docker-rmi-${image.repository}`}
+                            onClick={() => imageAction.mutate({ action: "remove", image: reference })}
+                            className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                          >
+                            remove
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-5 space-y-3">
+        <div>
+          <h3 className="text-base font-semibold tracking-tight">Build an image</h3>
+          <p className="text-xs text-muted-foreground">
+            A build takes a tag and paths contained in the workspace root.
+          </p>
+        </div>
+        <form
+          data-testid="docker-build-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (buildTag.trim() === "") {
+              return;
+            }
+            imageAction.mutate({
+              action: "build",
+              image: buildTag.trim(),
+              ...(buildContext.trim() === "" ? {} : { build_context: buildContext.trim() }),
+              ...(buildDockerfile.trim() === "" ? {} : { dockerfile: buildDockerfile.trim() }),
+            });
+          }}
+          className="space-y-4 pt-1"
+        >
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-1">
+              <label htmlFor="docker-build-tag" className="block text-xs font-medium text-foreground">
+                Tag <span className="text-destructive">*</span>
+              </label>
+              <input
+                id="docker-build-tag"
+                data-testid="docker-build-tag"
+                value={buildTag}
+                onChange={(event) => setBuildTag(event.target.value)}
+                placeholder="registry.example.com/app:v1"
+                className="w-full h-8 px-2.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="docker-build-context" className="block text-xs font-medium text-foreground">
+                Context (optional, relative to root)
+              </label>
+              <input
+                id="docker-build-context"
+                data-testid="docker-build-context"
+                value={buildContext}
+                onChange={(event) => setBuildContext(event.target.value)}
+                className="w-full h-8 px-2.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1">
+              <label htmlFor="docker-build-dockerfile" className="block text-xs font-medium text-foreground">
+                Dockerfile (optional, relative to context)
+              </label>
+              <input
+                id="docker-build-dockerfile"
+                data-testid="docker-build-dockerfile"
+                value={buildDockerfile}
+                onChange={(event) => setBuildDockerfile(event.target.value)}
+                className="w-full h-8 px-2.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+          </div>
+          <button
+            type="submit"
+            data-testid="docker-build-submit"
+            disabled={buildTag.trim() === ""}
+            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            build
+          </button>
+        </form>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-sm">Volumes</h3>
+            <Badge variant="outline">{data.volumes.length}</Badge>
+          </div>
+          <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-muted/10 p-2">
+            <ul data-testid="docker-volumes" className="space-y-1 font-mono text-xs">
+              {data.volumes.length === 0 ? (
+                <li className="text-muted-foreground p-1">No volumes.</li>
+              ) : (
+                data.volumes.map((volume) => (
+                  <li
+                    key={volume.name}
+                    className="flex items-center justify-between py-1 px-2 rounded bg-card border border-border/40 text-[11px] hover:bg-muted/30 transition-colors"
+                  >
+                    <span className="truncate max-w-[240px]" title={volume.name}>
+                      {volume.name}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground ml-2 shrink-0">
+                      ({volume.driver})
+                    </span>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+        </Card>
+
+        <Card className="p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-sm">Networks</h3>
+            <Badge variant="outline">{data.networks.length}</Badge>
+          </div>
+          <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-muted/10 p-2">
+            <ul data-testid="docker-networks" className="space-y-1 font-mono text-xs">
+              {data.networks.length === 0 ? (
+                <li className="text-muted-foreground p-1">No networks.</li>
+              ) : (
+                data.networks.map((network) => (
+                  <li
+                    key={network.name}
+                    className="flex items-center justify-between py-1 px-2 rounded bg-card border border-border/40 text-[11px] hover:bg-muted/30 transition-colors"
+                  >
+                    <span className="font-medium text-foreground">{network.name}</span>
+                    <span className="text-[10px] text-muted-foreground ml-2 shrink-0">
+                      ({network.driver})
+                    </span>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+        </Card>
+      </div>
     </section>
   );
 }

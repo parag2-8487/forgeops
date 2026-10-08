@@ -118,6 +118,8 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "device-not-found": ProblemSpec(404, "Device not found"),
     "device-revoked": ProblemSpec(401, "Device revoked"),
     "device-not-connected": ProblemSpec(409, "No agent connected"),
+    "agent-timeout": ProblemSpec(504, "Agent operation timed out"),
+    "agent-error": ProblemSpec(502, "Agent operation failed"),
     # ─── Command envelopes (§7.6) ────────────────────────────────────────────
     "envelope-signature-invalid": ProblemSpec(401, "Envelope signature invalid"),
     "envelope-replayed": ProblemSpec(409, "Envelope replayed"),
@@ -380,13 +382,28 @@ def install_problem_handlers(app: FastAPI) -> None:
             loc_parts = [str(p) for p in e["loc"][1:]] if len(e["loc"]) > 1 else [str(p) for p in e["loc"]]
             pointer = "#/" + "/".join(loc_parts) if loc_parts else "#/"
             errors_list.append({"pointer": pointer, "detail": e["msg"]})
+
+        # THE DETAIL NAMES THE FIELD. It said only "One or more fields failed validation.", which is
+        # a sentence that sends the reader to look at their whole request. A `max_length` rejection on
+        # a generation prompt then surfaced to a user as a vague health-sounding error, when the
+        # actual complaint — "String should have at most 4000 characters" — was sitting unused in
+        # `errors` the whole time. The generic sentence is kept only for the case where `errors` is
+        # empty and there is genuinely nothing more specific to say.
+        detail = "One or more fields failed validation."
+        if errors_list:
+            first = errors_list[0]
+            field = first["pointer"].rsplit("/", 1)[-1] or "request"
+            detail = f"{field}: {first['detail']}"
+            if len(errors_list) > 1:
+                detail += f" (and {len(errors_list) - 1} more)"
+
         return _render(
             request,
             ProblemDetail(
                 type=f"{TYPE_BASE}/validation-failed",
                 title="Request validation failed",
                 status=422,
-                detail="One or more fields failed validation.",
+                detail=detail,
                 errors=errors_list,
             ),
         )

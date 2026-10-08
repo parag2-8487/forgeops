@@ -7,6 +7,7 @@ import { api, ApiProblemError, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
 import { Button } from "@/components/ui/button";
+import type { ProjectPage } from "@/features/projects/types";
 
 /**
  * The Change Approval Center (design.md §3.6, §12.6 steps 7–9).
@@ -53,6 +54,7 @@ interface ChangeSetSummary {
   generation_run_id: string | null;
   created_at: string;
   applied_at: string | null;
+  operation?: string;
 }
 
 interface ChangeSetDetail extends ChangeSetSummary {
@@ -139,6 +141,20 @@ function isProblemShaped(body: unknown): body is { type: string; title: string; 
     typeof (body as { type?: unknown }).type === "string" &&
     typeof (body as { title?: unknown }).title === "string"
   );
+}
+
+/** Formats the operation and origin into a clear human-readable description of what is requested. */
+export function formatOperation(op?: string, origin?: string): string {
+  if (op === "repository.clone") return "Clone repository to agent";
+  if (op === "deployment.apply_manifests") return "Deploy Kubernetes manifests";
+  if (op === "changeset.apply") return "Apply code changes";
+  if (op === "docker.container_action") return "Docker container action";
+  if (op === "docker.image_action") return "Docker image action";
+  if (op === "kubernetes.workload_action") return "Kubernetes workload mutation";
+  if (op === "iac.apply") return "OpenTofu / Terraform apply";
+  if (op === "devtools.run") return "Developer tool execution";
+  if (origin === "generation") return "Apply generated DevOps artifacts";
+  return op || origin || "Change request";
 }
 
 // ── diffing ─────────────────────────────────────────────────────────────────
@@ -423,6 +439,7 @@ export function ApprovalCenter() {
   const [mode, setMode] = useState<ViewMode>("unified");
   const [comment, setComment] = useState("");
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [deliverError, setDeliverError] = useState<string | null>(null);
   const [deliverOutcome, setDeliverOutcome] = useState<DecisionResponse | null>(null);
   const [revertOutcome, setRevertOutcome] = useState<DecisionResponse | null>(null);
   const [revertEscalation, setRevertEscalation] = useState<string | null>(null);
@@ -432,6 +449,17 @@ export function ApprovalCenter() {
     queryFn: () => api.get<ChangeSetPage>(`/approvals?status=${queue}&limit=50`),
     retry: false,
   });
+
+  const projects = useQuery({
+    queryKey: queryKeys.projects.all,
+    queryFn: () => api.get<ProjectPage>("/projects"),
+    staleTime: 60_000,
+  });
+
+  const projectNameMap = useMemo(
+    () => new Map(projects.data?.projects.map((p) => [p.id, p.name]) ?? []),
+    [projects.data],
+  );
 
   const detail = useQuery({
     queryKey: queryKeys.approvals.detail(selected ?? ""),
@@ -455,15 +483,31 @@ export function ApprovalCenter() {
         // The version THIS screen displayed. A stale tab therefore gets a 409 rather than deciding
         // on state it never showed the reviewer.
         expected_version: version,
-      }),
+      }, { timeoutMs: 180_000 }),
     onSuccess: async () => {
       setComment("");
       setDecisionError(null);
+      setDeliverError(null);
       setSelected(null);
       await queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
     },
     onError: (error: unknown) => {
       const problem = error instanceof ApiProblemError ? error.problem : null;
+      const detailStr = String(problem?.detail ?? "");
+      const titleStr = String(problem?.title ?? "");
+      const msg = typeof error === "object" && error !== null && "message" in error ? String((error as { message?: unknown }).message ?? "") : "";
+      if (
+        detailStr.includes("aborted") ||
+        detailStr.includes("signal is aborted") ||
+        titleStr.includes("aborted") ||
+        msg.includes("aborted") ||
+        msg.includes("AbortError")
+      ) {
+        setDecisionError(
+          "The request was interrupted or timed out. Please verify your agent connection and try again.",
+        );
+        return;
+      }
       // BRANCH ON THE PROBLEM TYPE, NOT THE STATUS. Three different situations answer 409 here, and
       // keying on the number collapsed them into one sentence that was false for two of them:
       //
@@ -519,11 +563,42 @@ export function ApprovalCenter() {
    * admission and policy before sending, so a device revoked since the approval cannot be handed work.
    */
   const deliver = useMutation({
-    mutationFn: (id: string) => api.post<DecisionResponse>(`/approvals/${id}/deliver`, undefined),
+    mutationFn: (id: string) =>
+      api.post<DecisionResponse>(`/approvals/${id}/deliver`, undefined, { timeoutMs: 180_000 }),
     onSuccess: async (body) => {
       setDecisionError(null);
+      setDeliverError(null);
       setDeliverOutcome(body);
       await queryClient.invalidateQueries({ queryKey: queryKeys.approvals.all });
+    },
+    onError: (error: unknown) => {
+      const problem = error instanceof ApiProblemError ? error.problem : null;
+      const detailStr = String(problem?.detail ?? "");
+      const titleStr = String(problem?.title ?? "");
+      const msg =
+        typeof error === "object" && error !== null && "message" in error
+          ? String((error as { message?: unknown }).message ?? "")
+          : "";
+      if (
+        detailStr.includes("aborted") ||
+        detailStr.includes("signal is aborted") ||
+        titleStr.includes("aborted") ||
+        msg.includes("aborted") ||
+        msg.includes("AbortError")
+      ) {
+        setDeliverError(
+          "The delivery request was interrupted or timed out. Please verify your agent connection and try again.",
+        );
+        return;
+      }
+      const type = problem?.type ?? "";
+      if (type.endsWith("device-not-connected")) {
+        setDeliverError(
+          "No agent is currently connected for this project. Start the agent in your terminal with forgeops-agent.exe run, then try again.",
+        );
+        return;
+      }
+      setDeliverError(problem?.detail ?? problem?.title ?? "The delivery could not be performed.");
     },
   });
 
@@ -587,31 +662,43 @@ export function ApprovalCenter() {
             {QUEUES.find((q) => q.status === queue)?.label ?? queue}
           </h2>
           <ul className="space-y-2">
-            {list.data?.change_sets.map((cs) => (
-              <li key={cs.id}>
-                <button
-                  type="button"
-                  aria-pressed={selected === cs.id}
-                  onClick={() => {
-                    setSelected(cs.id);
-                    setDecisionError(null);
-                  }}
-                  className={`w-full rounded-md border p-3 text-left text-sm ${
-                    selected === cs.id ? "border-primary bg-primary/5" : "border-border"
-                  }`}
-                >
-                  <span className="flex flex-wrap items-baseline justify-between gap-2">
-                    <code className="font-semibold">{cs.id}</code>
-                    <span className="text-xs text-muted-foreground">
-                      {cs.origin} · blast radius {cs.blast_radius_score}
-                      {cs.blast_radius_verdict ? ` (${cs.blast_radius_verdict})` : ""} · v
-                      {cs.version}
-                    </span>
-                  </span>
-                  <span className="mt-1 block text-xs text-muted-foreground">{cs.status}</span>
-                </button>
-              </li>
-            ))}
+            {list.data?.change_sets.map((cs) => {
+              const projectName = projectNameMap.get(cs.project_id) ?? cs.project_id;
+              const opDescription = formatOperation(cs.operation, cs.origin);
+              return (
+                <li key={cs.id}>
+                  <button
+                    type="button"
+                    aria-pressed={selected === cs.id}
+                    onClick={() => {
+                      setSelected(cs.id);
+                      setDecisionError(null);
+                    }}
+                    className={`w-full rounded-md border p-3 text-left text-sm transition-colors ${
+                      selected === cs.id ? "border-primary bg-primary/5" : "border-border hover:bg-muted/30"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-foreground">{opDescription}</span>
+                        <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
+                          {projectName}
+                        </span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {cs.origin} · blast radius {cs.blast_radius_score}
+                        {cs.blast_radius_verdict ? ` (${cs.blast_radius_verdict})` : ""} · v{cs.version}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <span>Change Set: <code className="text-xs">{cs.id}</code></span>
+                      <span>Project ID: <code className="text-xs">{cs.project_id}</code></span>
+                      <span className="capitalize">{cs.status.replace("_", " ")}</span>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       </AsyncState>
@@ -625,7 +712,14 @@ export function ApprovalCenter() {
           {current ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold">Proposed changes</h2>
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    {formatOperation(current.operation, current.origin)}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Project: <span className="font-medium text-foreground">{projectNameMap.get(current.project_id) ?? current.project_id}</span> (<code className="text-xs">{current.project_id}</code>) · Change Set: <code className="text-xs">{current.id}</code>
+                  </p>
+                </div>
                 <div role="group" aria-label="Diff view mode" className="flex gap-1">
                   {(["unified", "split"] as const).map((option) => (
                     <Button
@@ -823,6 +917,12 @@ export function ApprovalCenter() {
                     needed nor possible — §3.6 has no second <code>pending_approval</code> to return
                     to.
                   </p>
+                  {deliverError ? (
+                    <p role="alert" className="text-sm text-destructive">
+                      {deliverError}
+                    </p>
+                  ) : null}
+
                   <Button
                     disabled={deliver.isPending}
                     onClick={() => deliver.mutate(current.id)}

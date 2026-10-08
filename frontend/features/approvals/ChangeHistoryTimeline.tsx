@@ -87,6 +87,11 @@ export function ChangeHistoryTimeline({ projectId }: { projectId: string }) {
     queryFn: () => api.get<ChangeSetPage>(`/approvals?project_id=${projectId}&limit=${PAGE_LIMIT}`),
     enabled: projectId !== "",
     retry: false,
+    refetchInterval: (query) => {
+      const list = query.state.data?.change_sets ?? [];
+      const hasActive = list.some((cs) => !TERMINAL.has(cs.status));
+      return hasActive ? 2500 : 15000;
+    },
   });
 
   return (

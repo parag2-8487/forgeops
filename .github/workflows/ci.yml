@@ -1695,6 +1695,15 @@ jobs:
 
       - name: Every gate script must actually run somewhere
         run: python scripts/check-gate-reachability.py
+      # `ARCHITECTURE-DIAGRAMS.md` is TRACKED because this check exists. Its `.gitignore` entry
+      # carried the condition in writing — "folded in ... only alongside a check that asserts every
+      # service they name still exists in `docker-compose.yml`" — and the risk that rule predicted had
+      # already materialised by the time anyone looked: the committed snapshot named nine services
+      # (there are 22), ten migrations (there are 37) and a journey passing four of thirteen steps
+      # (it passes six). Tracking the file is what makes those numbers this job's business rather
+      # than somebody's memory.
+      - name: The architecture diagrams must describe the tree (services, images, journey steps)
+        run: bash scripts/check-architecture-diagrams.sh
       # Promoted from the untracked `scripts/_state.sh`, which reconciled the plan against the
       # record by hand for months and ran nowhere. Wiring it up immediately surfaced that leaf
       # 20.10 still read `pending` with the words "0 of 13 steps pass" long after the journey

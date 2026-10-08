@@ -232,7 +232,9 @@ func (c *entryPointClassifier) readNodeManifest(manifestPath string, content []b
 	}
 
 	// A start script names how the application runs. The FILE it names is extracted where the command
-	// is a direct invocation; a script that runs a bundler is not itself an entry point.
+	// is a direct invocation; a script that runs a bundler is not itself an entry point. `next start`
+	// names no file, and reporting `package.json` as the way to start the application would point at a
+	// manifest rather than at something runnable.
 	for _, key := range []string{"start", "serve", "dev"} {
 		command, ok := pkg.Scripts[key]
 		if !ok {

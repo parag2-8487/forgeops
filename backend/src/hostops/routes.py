@@ -195,7 +195,7 @@ async def docker_inventory(
                 "never zero."
             )
         ),
-    ] = False,
+    ] = True,
 ) -> dict[str, Any]:
     """Read the host's container inventory through the agent.
 

@@ -117,15 +117,32 @@ export interface CodebaseStatus {
   total_chunks: number;
   languages: string[];
   /**
-   * `empty` — nothing indexed. `indexed_without_vectors` — tree and contents stored but no
-   * embeddings, which is what an unavailable embedding provider honestly looks like and means
-   * retrieval is sparse-only. `indexed` — both.
+   * `empty` — nothing indexed. `awaiting_clone` — project created from GitHub awaiting clone by paired agent.
+   * `cloning` — repository clone in progress. `clone_failed` — clone attempt failed.
+   * `indexed_without_vectors` — tree and contents stored but no embeddings. `indexed` — both.
    */
-  status: "empty" | "indexed_without_vectors" | "indexed";
+  status:
+    | "empty"
+    | "awaiting_clone"
+    | "cloning"
+    | "clone_failed"
+    | "indexed_without_vectors"
+    | "indexed"
+    | (string & {});
   total_bytes: number;
   resolved_dependencies: number;
   unresolved_dependencies: number;
   last_indexed_at: string | null;
+}
+
+/** Mirrors `CloneDispatchResponse` in `backend/src/projects/routes.py`. */
+export interface CloneDispatchResponse {
+  project_id: string;
+  change_set_id: string;
+  status: string;
+  outcome: string;
+  audit_seq: number;
+  clone_state: string;
 }
 
 /** Mirrors `SymbolQueryResponse`. */

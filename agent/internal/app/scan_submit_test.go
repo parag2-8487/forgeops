@@ -77,7 +77,7 @@ func TestScanSubmit_ThePresentedTokenIsHexEncoded(t *testing.T) {
 
 	indexer, err := newCodebaseIndexer(
 		t.TempDir(), server.URL, "", 1024, plaintextProvider{},
-		deviceTokenSource(store), 10*time.Second,
+		deviceTokenSource(store), 10*time.Second, store,
 	)
 	if err != nil {
 		t.Fatalf("newCodebaseIndexer: %v", err)
@@ -138,7 +138,7 @@ func TestScanSubmit_ADialThatCannotGetACertificateFailsBeforeSending(t *testing.
 	store := storeWithToken(t, tokenBytes)
 	indexer, err := newCodebaseIndexer(
 		t.TempDir(), "https://127.0.0.1:1/", "", 1024, failingProvider{},
-		deviceTokenSource(store), 2*time.Second,
+		deviceTokenSource(store), 2*time.Second, store,
 	)
 	if err != nil {
 		t.Fatalf("newCodebaseIndexer: %v", err)

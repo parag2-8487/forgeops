@@ -8,11 +8,22 @@
  * failed — because a stream that failed and one that ended look identical without that distinction.
  */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DeploymentLogStream } from "@/features/deployments/DeploymentResult";
+
+// The component invalidates the deployment list when its stream settles, so it reads the query client
+// and therefore needs a provider — the same setup the other dashboard suites use.
+function renderStream(element: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(<QueryClientProvider client={client}>{element}</QueryClientProvider>);
+}
 
 type Listener = (event: unknown) => void;
 
@@ -58,7 +69,7 @@ afterEach(() => {
 
 describe("the deployment log stream", () => {
   it("opens no stream for a deployment that was never delivered", () => {
-    render(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable={false} />);
+    renderStream(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable={false} />);
     // An EventSource on a pending_approval deployment would show an empty log, and an operator would read
     // that as "nothing is happening" rather than "a human has not approved it".
     expect(StubEventSource.last).toBeNull();
@@ -68,7 +79,7 @@ describe("the deployment log stream", () => {
   });
 
   it("subscribes to the deployment's own stream", () => {
-    render(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
+    renderStream(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
     expect(StubEventSource.last?.url).toContain("/projects/p1/deployments/d1/logs");
     expect(screen.getByTestId("deployment-log-state")).toHaveTextContent("streaming");
     // Nothing yet is stated, not left blank.
@@ -76,7 +87,7 @@ describe("the deployment log stream", () => {
   });
 
   it("appends each log frame in order", () => {
-    render(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
+    renderStream(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
     act(() => {
       StubEventSource.last?.emit("log", "applying 2 manifest(s)");
       StubEventSource.last?.emit("log", "waiting for deployment/api");
@@ -91,7 +102,7 @@ describe("the deployment log stream", () => {
   });
 
   it("closes the stream when the deployment settles, and says so", () => {
-    render(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
+    renderStream(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
     act(() => {
       StubEventSource.last?.emit("complete", '{"status":"applied"}');
     });
@@ -101,7 +112,7 @@ describe("the deployment log stream", () => {
   });
 
   it("keeps a failed stream apart from a finished one", () => {
-    render(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
+    renderStream(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
     act(() => {
       StubEventSource.last?.emit("error", null);
     });
@@ -112,7 +123,7 @@ describe("the deployment log stream", () => {
   });
 
   it("closes the stream when the component goes away", () => {
-    const view = render(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
+    const view = renderStream(<DeploymentLogStream projectId="p1" deploymentId="d1" deliverable />);
     const source = StubEventSource.last;
     view.unmount();
     expect(source?.closed).toBe(true);

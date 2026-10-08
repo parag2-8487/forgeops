@@ -2,10 +2,17 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
-import type { ChunkDetail, CodebaseStatus, SymbolResult } from "@/features/projects/types";
+import { Button } from "@/components/ui/button";
+import type {
+  ChunkDetail,
+  CloneDispatchResponse,
+  CodebaseStatus,
+  SymbolResult,
+} from "@/features/projects/types";
 
 /**
  * Has this project ever been scanned, and what is in the index?
@@ -29,12 +36,27 @@ import type { ChunkDetail, CodebaseStatus, SymbolResult } from "@/features/proje
  * it as "indexed" would leave someone puzzled by weak retrieval; one that showed it as "failed" would
  * be wrong, because the tree, the contents and the dependency graph are all there.
  */
-const STATUS_MEANING: Record<CodebaseStatus["status"], { headline: string; detail: string }> = {
+const STATUS_MEANING: Record<string, { headline: string; detail: string }> = {
   empty: {
     headline: "Never scanned",
     detail:
       "No files, no chunks, no dependency edges. Readiness cannot be scored, retrieval has nothing to " +
       "search, and generation will run without context from your codebase. Run a scan.",
+  },
+  awaiting_clone: {
+    headline: "Awaiting repository clone",
+    detail:
+      "This project was created from GitHub and is awaiting its repository to be cloned onto the paired agent's machine.",
+  },
+  cloning: {
+    headline: "Cloning repository...",
+    detail:
+      "A clone command has been dispatched through governance to the paired agent and is currently running.",
+  },
+  clone_failed: {
+    headline: "Clone failed",
+    detail:
+      "The repository clone failed on the paired agent. Check your agent terminal and try again.",
   },
   indexed_without_vectors: {
     headline: "Indexed, without vectors",
@@ -59,6 +81,9 @@ export function CodebaseIndexPanel({
   /** Shown in the scan command, so the operator can copy the exact invocation. */
   projectPath: string;
 }) {
+  const queryClient = useQueryClient();
+  const [cloneError, setCloneError] = useState<string | null>(null);
+
   const status = useQuery({
     queryKey: queryKeys.codebase.status(projectId),
     queryFn: () => api.get<CodebaseStatus>(`/analysis/codebase/${projectId}/status`),
@@ -66,17 +91,79 @@ export function CodebaseIndexPanel({
     retry: false,
   });
 
+  const cloneMutation = useMutation({
+    mutationFn: () => api.post<CloneDispatchResponse>(`/projects/${projectId}/clone`),
+    onSuccess: () => {
+      setCloneError(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.codebase.status(projectId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(projectId) });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "Failed to trigger repository clone";
+      setCloneError(msg);
+    },
+  });
+
+  const statusMeaning =
+    STATUS_MEANING[status.data?.status ?? ""] ?? {
+      headline: status.data?.status ?? "Never scanned",
+      detail: "Codebase status reported by analysis engine.",
+    };
+
   return (
     <div className="space-y-4">
       <AsyncState isPending={status.isPending} error={status.error} label="index status">
         {status.data ? (
           <div className="rounded-lg border border-border bg-background p-4 text-sm">
             <p className="font-semibold" data-testid="index-headline">
-              {STATUS_MEANING[status.data.status].headline}
+              {statusMeaning.headline}
             </p>
             <p className="mt-1 text-muted-foreground">
-              {STATUS_MEANING[status.data.status].detail}
+              {statusMeaning.detail}
             </p>
+
+            {status.data.status === "awaiting_clone" ||
+            status.data.status === "cloning" ||
+            status.data.status === "clone_failed" ? (
+              <div className="mt-4 pt-3 border-t border-border/60">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    onClick={() => cloneMutation.mutate()}
+                    disabled={cloneMutation.isPending || status.data.status === "cloning"}
+                    className="font-medium text-xs"
+                    data-testid="trigger-clone-btn"
+                  >
+                    {cloneMutation.isPending || status.data.status === "cloning"
+                      ? "Cloning on agent..."
+                      : "Start repository clone on agent"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Requires your agent to be paired and connected.
+                  </span>
+                </div>
+                {cloneError ? (
+                  <p className="mt-2 text-xs text-destructive" role="alert">
+                    {cloneError}
+                  </p>
+                ) : null}
+                {cloneMutation.isSuccess ? (
+                  cloneMutation.data?.status === "pending_approval" ? (
+                    <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                      Clone change set created and requires approval. Go to{" "}
+                      <Link href="/approvals" className="underline font-semibold">
+                        Approvals
+                      </Link>{" "}
+                      to approve and deliver it to your agent.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
+                      Clone command dispatched to agent! Check agent terminal.
+                    </p>
+                  )
+                ) : null}
+              </div>
+            ) : null}
 
             <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
               <Fact label="Files" value={String(status.data.indexed_files)} />

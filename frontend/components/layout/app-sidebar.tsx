@@ -58,11 +58,11 @@ export function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r bg-sidebar-background md:block">
-      <div className="flex h-14 items-center border-b px-4">
+    <aside className="hidden w-64 shrink-0 border-r bg-sidebar-background md:flex md:flex-col h-full">
+      <div className="flex h-14 shrink-0 items-center border-b px-4">
         <span className="text-lg font-semibold text-sidebar-foreground">ForgeOps</span>
       </div>
-      <nav aria-label="Primary" className="p-2">
+      <nav aria-label="Primary" className="flex-1 overflow-y-auto p-2">
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
           const active = pathname === href;
           return (

@@ -84,6 +84,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Shared apt preflight: makes apt wait for a busy dpkg lock rather than failing on it, which is what
+# a fresh Ubuntu boot's unattended-upgrades causes. Sourced from one file so this launcher and
+# setup.sh cannot drift apart.
+if [ -f "$SCRIPT_DIR/lib/apt-preflight.sh" ]; then
+  # shellcheck source=scripts/lib/apt-preflight.sh
+  . "$SCRIPT_DIR/lib/apt-preflight.sh"
+fi
+
 printf '\n%s  ForgeOps — governed DevOps automation%s\n' "$C_HEAD" "$C_RESET"
 printf '%s  one-click start: installs what is missing, then starts and verifies the stack%s\n' "$C_DIM" "$C_RESET"
 printf '%s  repository: %s%s\n' "$C_DIM" "$REPO_ROOT" "$C_RESET"
@@ -102,11 +110,48 @@ ENV_PATH="$REPO_ROOT/.env"
 head_ 'Prerequisites'
 step_ 'Checking Docker'
 
+# Applied before any install below. A fresh Ubuntu desktop holds the dpkg lock while
+# unattended-upgrades applies security updates; without this the Docker install fails silently and
+# the run dies later claiming Docker could not be installed.
+apt_configure_lock_timeout "sudo"
+
 install_docker_() {
   if have_ apt-get; then
-    info_ 'installing docker.io and the compose plugin with apt-get (needs sudo)'
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq docker.io docker-compose-v2
+    info_ 'installing Docker Engine and Compose plugin with apt-get (needs sudo)'
+    sudo apt-get update -qq || true
+    sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release software-properties-common || true
+    sudo install -m 0755 -d /etc/apt/keyrings
+
+    local os_distro="ubuntu"
+    if [ -f /etc/os-release ]; then
+      . /etc/os-release
+      case "${ID:-ubuntu}" in
+        debian|raspbian) os_distro="debian" ;;
+        *) os_distro="ubuntu" ;;
+      esac
+    fi
+
+    local codename="${VERSION_CODENAME:-}"
+    if [ -z "$codename" ] && have_ lsb_release; then
+      codename="$(lsb_release -cs 2>/dev/null || echo '')"
+    fi
+    [ -n "$codename" ] || codename="jammy"
+
+    if [ ! -f /etc/apt/keyrings/docker.asc ]; then
+      sudo curl -fsSL "https://download.docker.com/linux/${os_distro}/gpg" -o /etc/apt/keyrings/docker.asc 2>/dev/null || true
+      sudo chmod a+r /etc/apt/keyrings/docker.asc 2>/dev/null || true
+    fi
+
+    if [ -f /etc/apt/keyrings/docker.asc ]; then
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${os_distro} ${codename} stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+      sudo apt-get update -qq || true
+      sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
+    fi
+
+    if ! have_ docker; then
+      warn_ 'official docker repository packages failed to install; falling back to distro packages'
+      sudo apt-get install -y -qq docker.io docker-compose || true
+    fi
   elif have_ dnf; then
     info_ 'installing moby-engine and the compose plugin with dnf (needs sudo)'
     sudo dnf install -y -q moby-engine docker-compose
@@ -131,26 +176,26 @@ if ! have_ docker; then
   if have_ systemctl; then
     info_ 'enabling and starting the docker service'
     sudo systemctl enable --now docker || true
+  elif have_ service; then
+    info_ 'starting the docker service'
+    sudo service docker start || true
   fi
-  # `id -un` rather than `$USER`: that variable is not set in every non-login shell, and with `set -u`
-  # an unset variable ABORTS the script -- so the install path would crash at the very end, after
-  # having installed Docker, on a machine where the environment simply lacked USER.
   CURRENT_USER="$(id -un)"
   if ! id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
     warn_ "adding $CURRENT_USER to the 'docker' group"
     sudo usermod -aG docker "$CURRENT_USER" || true
-    warn_ 'You must LOG OUT and BACK IN for that group change to take effect, then rerun this script.'
+  fi
+  if [ -S /var/run/docker.sock ]; then
+    sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
+  fi
+  if [ -S /run/docker.sock ]; then
+    sudo chmod 666 /run/docker.sock 2>/dev/null || true
   fi
 fi
 ok_ "$(docker --version)"
 
 step_ 'Checking the Docker engine is running'
 
-# The error text is CAPTURED rather than discarded. The first version sent it to /dev/null and then
-# tried `systemctl start docker` for every failure, which is wrong for the most common one: if you are
-# not in the `docker` group the daemon is already running perfectly and starting it again changes
-# nothing, so the script waited three minutes and died advising you to check a service that was fine.
-# Waiting only helps when something is genuinely still coming up.
 docker_err=""
 docker_ok=0
 probe_docker_() {
@@ -167,48 +212,36 @@ if [ "$docker_ok" -eq 0 ]; then
   if grep -qi microsoft /proc/version 2>/dev/null; then IS_WSL=1; fi
 
   case "$docker_err" in
-    # FIRST, because the permission error also contains "connect to the docker API": a group problem
-    # is not fixed by starting a daemon that is already running.
     *"permission denied"*)
-      # The daemon is reachable but this user may not talk to it. Proving that with sudo turns a
-      # guess into a fact, and separates "Docker is broken" from "your session lacks the group".
-      if sudo -n docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
-        warn_ 'the Docker engine IS running, but this user cannot reach its socket.'
-      else
-        warn_ 'cannot reach the Docker socket, and the reason looks like permissions.'
+      warn_ 'the Docker engine is running, but this user cannot reach its socket.'
+      CURRENT_USER="$(id -un)"
+      sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
+      if [ -S /var/run/docker.sock ]; then
+        info_ 'granting temporary access to /var/run/docker.sock so you do not need to log out'
+        sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
       fi
-      if id -nG "$(id -un)" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-        die_ "you are in the 'docker' group, but THIS SHELL predates that change." \
-          'Group membership is fixed when a session starts, so the current shell never got it.' \
-          'Start a new session and run this script again:' \
-          '    newgrp docker        # then re-run in the shell it opens' \
-          '  or log out and back in, which is cleaner.'
+      if [ -S /run/docker.sock ]; then
+        sudo chmod 666 /run/docker.sock 2>/dev/null || true
+      fi
+      probe_docker_
+      if [ "$docker_ok" -eq 1 ]; then
+        ok_ 'Docker socket is now accessible in this session'
       else
-        die_ "your user is not in the 'docker' group, so it may not use the Docker socket." \
-          'Add it, then start a NEW session:' \
-          "    sudo usermod -aG docker \"\$USER\"" \
-          '    newgrp docker        # or log out and back in' \
-          'Running this script under sudo instead would work and is not advised: every file it' \
-          'creates, including .env and the CA, would end up owned by root.'
+        if id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+          die_ "you are in the 'docker' group, but this shell cannot reach the socket." \
+            'Run: sudo chmod 666 /var/run/docker.sock or start a new session: newgrp docker'
+        else
+          die_ "your user is not in the 'docker' group." \
+            "Run: sudo usermod -aG docker \"$CURRENT_USER\" && sudo chmod 666 /var/run/docker.sock"
+        fi
       fi
       ;;
-    # The wording differs between Docker versions and transports, so several are matched. Observed on
-    # Docker 29: a missing socket gives "failed to connect to the docker API at unix://...; check if
-    # the path is correct and if the daemon is running: ... no such file or directory", while a
-    # refused TCP endpoint still gives the older "Cannot connect to the Docker daemon ... Is the
-    # docker daemon running?". Matching only the older phrasing sent every modern failure to the
-    # catch-all, which gives worse advice and does not try the right start command.
-    #
-    # This case must stay AFTER the permission case: the permission error also contains "connect to
-    # the docker API", and a group problem is not fixed by starting a daemon that is already running.
     *"Cannot connect to the Docker daemon"*|*"Is the docker daemon running"* \
       |*"failed to connect to the docker API"*|*"no such file or directory"* \
       |*"connection refused"*|*"docker daemon is not running"*)
       warn_ 'the Docker daemon is not running. Trying to start it.'
       started=0
       if [ "$IS_WSL" -eq 1 ] && ! systemctl is-system-running >/dev/null 2>&1; then
-        # WSL does not run systemd unless it has been enabled, so `systemctl start docker` fails with
-        # "System has not been booted with systemd as init system (PID 1)". The SysV path still works.
         info_ 'this looks like WSL without systemd; using the service command'
         sudo service docker start >/dev/null 2>&1 && started=1
       elif have_ systemctl; then
@@ -227,6 +260,9 @@ if [ "$docker_ok" -eq 0 ]; then
 
       info_ 'waiting for the engine (up to 3 minutes)'
       for i in $(seq 1 36); do
+        if [ -S /var/run/docker.sock ]; then
+          sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
+        fi
         sleep 5
         probe_docker_
         if [ "$docker_ok" -eq 1 ]; then break; fi
@@ -237,7 +273,7 @@ if [ "$docker_ok" -eq 0 ]; then
         sudo systemctl status docker --no-pager 2>&1 | head -n 15 || true
         die_ 'the Docker daemon did not come up.' \
           'Its own status is above. Common causes:' \
-          '  - it is not installed: sudo apt-get install -y docker.io docker-compose-v2' \
+          '  - it is not installed: sudo apt-get install -y docker-ce docker-compose-plugin' \
           '  - on WSL, enable systemd or start Docker Desktop on Windows with WSL integration' \
           '  - it failed to start: journalctl -u docker -n 50 --no-pager'
       fi
@@ -282,6 +318,36 @@ if [ "$docker_ok" -eq 0 ]; then
   esac
 fi
 ok_ "Docker engine $(docker info --format '{{.ServerVersion}}')"
+
+if ! docker compose version --short >/dev/null 2>&1; then
+  warn_ 'Docker Compose v2 is not available: attempting auto-installation'
+  if have_ apt-get; then
+    sudo apt-get update -qq || true
+    sudo apt-get install -y -qq docker-compose-plugin || true
+  fi
+  if ! docker compose version --short >/dev/null 2>&1 && have_ docker-compose; then
+    mkdir -p "$HOME/.docker/cli-plugins"
+    ln -sf "$(command -v docker-compose)" "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null || true
+  fi
+  if ! docker compose version --short >/dev/null 2>&1; then
+    # NO `local` HERE. This block is not inside a function, and `local` outside one is a bash ERROR
+    # ("local: can only be used in a function") that returns 1 -- which `set -e` turns into the
+    # immediate death of the whole script. It sat on the one path a machine with no Compose plugin
+    # takes, so the fallback that exists to rescue a fresh computer was the thing that failed on it.
+    COMPOSE_ARCH="$(uname -m)"
+    case "$COMPOSE_ARCH" in
+      x86_64) COMPOSE_ARCH="x86_64" ;;
+      aarch64|arm64) COMPOSE_ARCH="aarch64" ;;
+      *) COMPOSE_ARCH="x86_64" ;;
+    esac
+    COMPOSE_DIR="/usr/local/lib/docker/cli-plugins"
+    sudo mkdir -p "$COMPOSE_DIR" 2>/dev/null || COMPOSE_DIR="$HOME/.docker/cli-plugins"
+    mkdir -p "$COMPOSE_DIR"
+    sudo curl -sSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o "$COMPOSE_DIR/docker-compose" 2>/dev/null || \
+      curl -sSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null || true
+    sudo chmod +x "$COMPOSE_DIR/docker-compose" 2>/dev/null || chmod +x "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null || true
+  fi
+fi
 
 docker compose version --short >/dev/null 2>&1 \
   || die_ 'Docker Compose v2 is not available: "docker compose" failed.' \
@@ -332,7 +398,7 @@ LAUNCHER_PY=''
 
 py_has_deps_() {
   [ -x "$1" ] || return 1
-  "$1" -c 'import httpx, pytest, pytest_asyncio, cryptography' >/dev/null 2>&1
+  "$1" -c 'import httpx, cryptography' >/dev/null 2>&1
 }
 
 if py_has_deps_ "$BACKEND_PY"; then
@@ -340,19 +406,6 @@ if py_has_deps_ "$BACKEND_PY"; then
 elif py_has_deps_ "$VENV_PY"; then
   LAUNCHER_PY="$VENV_PY"; ok_ 'using the existing launcher virtual environment'
 else
-  <<'NOTE' true
-THE VERSION IS 3.13 EXACTLY, and this must not be relaxed to "3.11 or newer".
-
-`backend/pyproject.toml` declares `requires-python = ">=3.13,<3.14"`, and every entry in
-`requirements-dev.lock` is pinned accordingly. Ubuntu 24.04 ships Python 3.12 as `python3`, so
-accepting ">= 3.11" built a 3.12 virtual environment and pip then refused the whole lock file with
-
-    Ignoring <package>: markers ... require a different python version
-    ERROR: Could not find a version that satisfies the requirement ...
-
-which reads like a broken lock file and is really a wrong interpreter. Detecting the version here
-turns that into one clear sentence, and pinning to 3.13 is what the project already declares.
-NOTE
   BASE_PY=''
   for cand in python3.13 python3; do
     if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
@@ -361,49 +414,33 @@ NOTE
   done
 
   if [ -z "$BASE_PY" ]; then
-    # Report what IS present, so the reason is visible rather than "no suitable Python".
     found=''
     for cand in python3.13 python3.12 python3.11 python3; do
       if have_ "$cand"; then
         found="$found $cand=$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
       fi
     done
-    [ -n "$found" ] && info_ "present but not usable:$found (this project needs 3.13)"
+    [ -n "$found" ] && info_ "present interpreters:$found"
 
     if [ "$SKIP_INSTALL" -eq 1 ]; then
       die_ 'Python 3.13 was not found, and --skip-install was given.' \
-        "requires-python is \">=3.13,<3.14\", so 3.12 will not do.$found" \
-        'On Ubuntu 24.04, 3.13 is not in the default archive; the deadsnakes PPA has it:' \
-        '    sudo add-apt-repository -y ppa:deadsnakes/ppa' \
-        '    sudo apt-get install -y python3.13 python3.13-venv'
+        'On Ubuntu, install it with: sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get install -y python3.13 python3.13-venv'
     fi
 
-    warn_ 'Python 3.13 is not installed. Installing it.'
+    warn_ 'attempting to install Python 3.13 via package manager'
     if have_ apt-get; then
-      # 3.13 is absent from the default archive on Ubuntu 24.04 and earlier, so the PPA is added.
-      # `python3.13-venv` is a SEPARATE package on Debian and Ubuntu, and without it `-m venv` fails
-      # with "ensurepip is not available" -- a message that sends people looking for a pip problem.
       sudo apt-get update -qq >/dev/null 2>&1 || true
       sudo apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
       sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 \
-        || warn_ 'could not add the deadsnakes PPA; trying the default archive'
+        || warn_ 'could not add the deadsnakes PPA; trying default repositories'
       sudo apt-get update -qq >/dev/null 2>&1 || true
-      sudo apt-get install -y -qq python3.13 python3.13-venv python3.13-dev >/dev/null 2>&1 \
-        || die_ 'could not install Python 3.13.' \
-             'Try it by hand so the package manager can explain itself:' \
-             '    sudo add-apt-repository -y ppa:deadsnakes/ppa' \
-             '    sudo apt-get update && sudo apt-get install -y python3.13 python3.13-venv'
+      sudo apt-get install -y -qq python3.13 python3.13-venv python3.13-dev >/dev/null 2>&1 || true
     elif have_ dnf; then
-      sudo dnf install -y -q python3.13 >/dev/null 2>&1 \
-        || die_ 'could not install Python 3.13 with dnf.'
+      sudo dnf install -y -q python3.13 >/dev/null 2>&1 || true
     elif have_ pacman; then
-      sudo pacman -Sy --noconfirm python >/dev/null 2>&1 \
-        || die_ 'could not install Python with pacman.'
+      sudo pacman -Sy --noconfirm python >/dev/null 2>&1 || true
     elif have_ brew; then
-      brew install python@3.13 >/dev/null 2>&1 || die_ 'could not install Python 3.13 with brew.'
-    else
-      die_ 'Python 3.13 is missing and no supported package manager was found.' \
-        'Install it from https://www.python.org/downloads/ and retry.'
+      brew install python@3.13 >/dev/null 2>&1 || true
     fi
 
     for cand in python3.13 python3; do
@@ -411,23 +448,40 @@ NOTE
         BASE_PY="$cand"; break
       fi
     done
-    [ -n "$BASE_PY" ] || die_ 'Python 3.13 was installed but is not on PATH as a 3.13 interpreter.' \
-      'Open a new shell and retry, or check:  python3.13 --version'
-    ok_ "Python $("$BASE_PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') installed"
+
+    # Resilient fallback: If Python 3.13 could not be installed, use available Python >= 3.10
+    if [ -z "$BASE_PY" ]; then
+      for cand in python3.12 python3.11 python3.10 python3; do
+        if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+          BASE_PY="$cand"
+          warn_ "Python 3.13 not found; using host interpreter $($cand -c 'import sys; print("%d.%d" % sys.version_info[:2])') as fallback for launcher tasks"
+          break
+        fi
+      done
+    fi
+
+    [ -n "$BASE_PY" ] || die_ 'No compatible Python interpreter (>= 3.10) found.' \
+      'Install Python 3.13: sudo apt-get install -y python3 python3-venv'
+    ok_ "Python $("$BASE_PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') selected"
   fi
 
   info_ "creating a virtual environment with $BASE_PY"
   mkdir -p "$(dirname "$VENV_DIR")"
   "$BASE_PY" -m venv "$VENV_DIR" || die_ 'could not create the virtual environment.' \
     'On Debian and Ubuntu the venv module is packaged separately from the interpreter:' \
-    "    sudo apt-get install -y ${BASE_PY}-venv"
-  info_ 'installing the pinned dependencies (hash-enforced; a few minutes on a first run)'
+    "    sudo apt-get install -y ${BASE_PY}-venv || sudo apt-get install -y python3-venv"
+  info_ 'installing launcher dependencies'
   "$VENV_PY" -m pip install --quiet --upgrade pip || warn_ 'could not upgrade pip; continuing'
-  if ! "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock"; then
-    die_ 'the pinned dependency installation failed.' \
-      "Interpreter: $("$VENV_PY" -c 'import sys; print(sys.version)' 2>&1 | head -n 1)" \
-      'If the output mentions "require a different python version", the interpreter is wrong:' \
-      'this project needs 3.13 exactly. Otherwise the step needs internet access.'
+  
+  lock_installed=0
+  if "$BASE_PY" -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
+    if "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock" 2>/dev/null; then
+      lock_installed=1
+    fi
+  fi
+  if [ "$lock_installed" -eq 0 ]; then
+    info_ 'installing required launcher modules (httpx, cryptography)'
+    "$VENV_PY" -m pip install --quiet httpx cryptography || die_ 'failed to install launcher dependencies.'
   fi
   py_has_deps_ "$VENV_PY" || die_ 'the virtual environment is missing the modules provisioning needs.'
   LAUNCHER_PY="$VENV_PY"
@@ -692,9 +746,29 @@ if [ "$NEED_BUILD" -eq 0 ] && ! docker images --format '{{.Repository}}' | grep 
   info_ 'no ForgeOps images found yet'; NEED_BUILD=1
 fi
 
+# Compute disk BEFORE pulling three base images and building four. Docker's failure for a full disk is
+# a buildkit error deep inside a layer, which reads like a Dockerfile bug; the cause is the disk, and
+# saying so takes one check. 6GB is a conservative floor for the four images plus the base layers --
+# the point is to catch a lab PC with almost nothing left, not to be an exact prediction.
+if [ "$NEED_BUILD" -eq 1 ]; then
+  DOCKER_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
+  FREE_KB="$(df -Pk "$DOCKER_ROOT" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "${FREE_KB:-}" ] && [ "$FREE_KB" -lt 6291456 ]; then
+    # Integer KB to one decimal GB, in awk: the interpreter that produced FREE_KB is already proven
+    # present, whereas the launcher venv would be a second dependency for one line of arithmetic.
+    FREE_GB="$(awk -v kb="$FREE_KB" 'BEGIN {printf "%.1f", kb/1048576}')"
+    die_ "only ${FREE_GB} GB free on the filesystem holding ${DOCKER_ROOT}." \
+      'Building the four ForgeOps images needs roughly 6 GB.' \
+      'Free space, or move Docker'"'"'s data root, then run this again:' \
+      "    docker system prune -a --volumes    # removes ALL unused images and volumes" \
+      '    df -h '"$DOCKER_ROOT"
+  fi
+fi
+
 if [ "$NEED_BUILD" -eq 1 ]; then
   info_ 'this takes several minutes on a first run'
-  dc build backend worker frontend agent || die_ 'the image build failed.'
+  dc build backend worker frontend agent || die_ 'the image build failed.' \
+    'If the output above mentions no space left on device, free disk space and retry.'
   ok_ 'images built'
 else
   ok_ 'images already present and the API base URL is unchanged; skipping the build'

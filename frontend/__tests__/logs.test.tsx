@@ -184,6 +184,25 @@ describe("the deployment result", () => {
     expect(screen.getByTestId("workload-api")).toHaveTextContent("timed out");
     expect(screen.getByTestId("deployment-result-client")).toHaveTextContent("v1.28.0");
   });
+
+  it("renders deployment failure error details and AI resolver button on failure", () => {
+    const failedReport: DeploymentReport = {
+      applied: [],
+      error: "docker compose up failed: ERROR: Could not open requirements file",
+    };
+    render(
+      <DeploymentResult
+        report={failedReport}
+        status="failed"
+        projectId="proj-1"
+        deploymentId="dep-1"
+        manifests={["docker-compose.yml"]}
+      />,
+    );
+    expect(screen.getByText(/Deployment Failure Details/i)).toBeInTheDocument();
+    expect(screen.getByText(/Could not open requirements file/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Resolve Errors with AI/i })).toBeInTheDocument();
+  });
 });
 
 describe("the fetchers on a successful read", () => {

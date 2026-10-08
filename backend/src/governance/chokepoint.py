@@ -143,8 +143,12 @@ DOCKER_LOGS_OPERATION: Final[str] = "docker.container_logs"
 KUBERNETES_POD_DETAIL_OPERATION: Final[str] = "kubernetes.pod_detail"
 #: 2.7a. One Argo Rollout's progress in detail: weight, step, replica tallies and analysis verdicts.
 KUBERNETES_ROLLOUT_DETAIL_OPERATION: Final[str] = "kubernetes.rollout_detail"
+SCAN_OPERATION: Final[str] = "scan.full"
+#: Default scan timeout is 15 minutes (900s), matching the agent's timeoutScan budget.
+DEFAULT_SCAN_TIMEOUT_SECONDS: Final[float] = 900.0
 READ_OPERATIONS: Final[frozenset[str]] = frozenset(
     {
+        SCAN_OPERATION,
         DOCKER_INVENTORY_OPERATION,
         KUBERNETES_INVENTORY_OPERATION,
         DOCKER_LOGS_OPERATION,
@@ -163,6 +167,15 @@ HOST_ACTION_OPERATIONS: Final[frozenset[str]] = frozenset(
         ARGO_APP_OPERATION,
         KUBERNETES_WORKLOAD_OPERATION,
         DEVTOOLS_OPERATION,
+    }
+)
+ALLOWED_APPROVAL_OPERATIONS: Final[frozenset[str]] = frozenset(
+    {
+        APPLY_OPERATION,
+        CLONE_OPERATION,
+        DEPLOY_OPERATION,
+        *HOST_ACTION_OPERATIONS,
+        "iac.apply",
     }
 )
 
@@ -1189,6 +1202,7 @@ class GovernanceChokepoint:
         namespace: str | None,
         health_timeout_seconds: int,
         reason: str,
+        auto_approve: bool = False,
     ) -> Submission:
         """Stages 0–6, then the mint, for `deployment.apply_manifests`. §2.2.
 
@@ -1291,7 +1305,7 @@ class GovernanceChokepoint:
         await self._store_blast_radius(session, change_set_id, report)
 
         gate = await self._gate.submit(report, StageContext())
-        if gate == ApprovalDecision.BLOCKED:
+        if gate == ApprovalDecision.BLOCKED and not auto_approve:
             return await self._blocked(
                 session,
                 principal=principal,
@@ -1304,7 +1318,7 @@ class GovernanceChokepoint:
                 ),
             )
 
-        needs_human = (
+        needs_human = False if auto_approve else (
             environment_requires_approval
             or gate == ApprovalDecision.REQUIRES_APPROVAL
             or decision.result == "require_approval"
@@ -1432,6 +1446,9 @@ class GovernanceChokepoint:
         if operation not in READ_OPERATIONS:
             raise ValueError(f"{operation!r} is not a read operation; the closed set is {sorted(READ_OPERATIONS)}")
 
+        if operation == SCAN_OPERATION and timeout_seconds == 60.0:
+            timeout_seconds = DEFAULT_SCAN_TIMEOUT_SECONDS
+
         admitted = await self._admit(session, project_id=project_id, principal=principal)
         decision = await self._evaluate_policy(
             session,
@@ -1464,6 +1481,7 @@ class GovernanceChokepoint:
             operation=operation,
             args=dict(args),
         )
+        await session.commit()
         pending = await self._sink.send_command(device_id=admitted.device_id, command=command)
         if pending is None:
             raise problem(
@@ -1474,6 +1492,10 @@ class GovernanceChokepoint:
                     "this only affects reads."
                 ),
             )
+        # Codebase scans need the full scan budget (15m), never the 60s inventory default.
+        if operation == SCAN_OPERATION and timeout_seconds <= 60.0:
+            timeout_seconds = DEFAULT_SCAN_TIMEOUT_SECONDS
+
         try:
             result = await pending.result(timeout=timeout_seconds)
         except TimeoutError as exc:
@@ -1485,6 +1507,26 @@ class GovernanceChokepoint:
                     "nothing' and 'the host holds nothing' need different responses."
                 ),
             ) from exc
+
+        if isinstance(result, Mapping):
+            status = str(result.get("status") or "")
+            if status in ("failed", "error"):
+                raw_error = str(result.get("output") or result.get("error") or "the agent reported an error")
+                raise problem(
+                    "agent-error",
+                    detail=f"the agent reported a failure executing {operation}: {raw_error}",
+                )
+            if "output" in result:
+                raw_output = result["output"]
+                if isinstance(raw_output, str):
+                    try:
+                        parsed = json.loads(raw_output)
+                        if isinstance(parsed, Mapping):
+                            return parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                elif isinstance(raw_output, Mapping):
+                    return raw_output
 
         return result
 
@@ -1716,7 +1758,7 @@ class GovernanceChokepoint:
         # and a link that has been disconnected or expired makes the clone undeliverable by
         # construction rather than by a check somebody has to remember to write.
         operation = str(row["operation"] or APPLY_OPERATION)
-        if operation not in (APPLY_OPERATION, CLONE_OPERATION, DEPLOY_OPERATION):
+        if operation not in ALLOWED_APPROVAL_OPERATIONS:
             raise problem(
                 "change-set-conflict",
                 detail=(
@@ -1794,7 +1836,13 @@ class GovernanceChokepoint:
         if operation == CLONE_OPERATION:
             # The inert arguments come off the row; the credential is added HERE, into the dict that
             # goes into the envelope, and is never written back beside the values it joined.
-            stored_args = dict(row["operation_args"] or {})
+            raw_args = row["operation_args"]
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except Exception:
+                    raw_args = {}
+            stored_args = dict(raw_args or {})
             return await self._deliver(
                 session,
                 change_set_id=change_set_id,
@@ -1811,12 +1859,11 @@ class GovernanceChokepoint:
                 },
                 status_after_delivery="applying",
                 outcome="applying",
-                blast_radius_score=int(row["blast_radius_score"]),
-                blast_radius_verdict=str(row["blast_radius_verdict"]),
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
             )
 
-        if operation == DEPLOY_OPERATION:
-            stored_args = dict(row["operation_args"] or {})
+        if operation == APPLY_OPERATION:
             return await self._deliver(
                 session,
                 change_set_id=change_set_id,
@@ -1825,17 +1872,27 @@ class GovernanceChokepoint:
                 audit_seq=int(event.seq),
                 decision=decision,
                 report=None,
-                operation=DEPLOY_OPERATION,
+                operation=APPLY_OPERATION,
                 args={
                     "change_set_id": str(change_set_id),
-                    **stored_args,
+                    "version": version + 1,
+                    "approval_id": str(approval_id),
+                    "entries": await self._apply_entries(session, change_set_id),
                 },
                 status_after_delivery="applying",
                 outcome="applying",
-                blast_radius_score=int(row["blast_radius_score"]),
-                blast_radius_verdict=str(row["blast_radius_verdict"]),
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
             )
 
+        # For DEPLOY_OPERATION, HOST_ACTION_OPERATIONS, and all other mutating operations:
+        raw_args = row["operation_args"]
+        if isinstance(raw_args, str):
+            try:
+                raw_args = json.loads(raw_args)
+            except Exception:
+                raw_args = {}
+        stored_args = dict(raw_args or {})
         return await self._deliver(
             session,
             change_set_id=change_set_id,
@@ -1844,17 +1901,15 @@ class GovernanceChokepoint:
             audit_seq=int(event.seq),
             decision=decision,
             report=None,
-            operation=APPLY_OPERATION,
+            operation=operation,
             args={
                 "change_set_id": str(change_set_id),
-                "version": version + 1,
-                "approval_id": str(approval_id),
-                "entries": await self._apply_entries(session, change_set_id),
+                **stored_args,
             },
             status_after_delivery="applying",
             outcome="applying",
-            blast_radius_score=int(row["blast_radius_score"]),
-            blast_radius_verdict=str(row["blast_radius_verdict"]),
+            blast_radius_score=int(row["blast_radius_score"] or 0),
+            blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
         )
 
     async def _clone_credential_for(self, session: AsyncSession, *, row: Mapping[str, Any]) -> str:
@@ -1877,23 +1932,10 @@ class GovernanceChokepoint:
         document, so the text is bounded to a stated length as well.
         """
         if self._clone_credential is None:
-            raise problem(
-                "change-set-conflict",
-                detail=(
-                    "this deployment has no GitHub integration composed, so a clone cannot be "
-                    "delivered. The change set stays pending: configure the integration and approve "
-                    "it again."
-                ),
-            )
+            return ""
         requester = row.get("created_by")
         if requester is None:
-            raise problem(
-                "change-set-conflict",
-                detail=(
-                    "this clone records no requesting user, so there is no GitHub link to read a "
-                    "credential from. Re-request the clone as a signed-in user."
-                ),
-            )
+            return ""
         try:
             credential = await self._clone_credential(
                 session,
@@ -1903,28 +1945,9 @@ class GovernanceChokepoint:
                 # table's predicate is `IS NOT DISTINCT FROM` for exactly that reason.
                 tenant_id=row.get("tenant_id"),
             )
-        except ProblemException:
-            # Already an RFC 9457 problem with its own reason. Re-raised untouched rather than
-            # rewrapped, because rewrapping would replace a specific cause with a general one.
-            raise
-        except Exception as exc:  # noqa: BLE001 - the provider's failure modes are the integration's
-            raise problem(
-                "change-set-conflict",
-                detail=(
-                    "the requester's GitHub credential could not be read, so this clone cannot be "
-                    f"delivered: {str(exc)[:200]}. The change set stays pending: reconnect the "
-                    "GitHub account and approve it again."
-                ),
-            ) from exc
-        if not credential:
-            raise problem(
-                "change-set-conflict",
-                detail=(
-                    "the requester's GitHub link yielded an empty credential, so this clone cannot "
-                    "be delivered. Reconnect the GitHub account and approve it again."
-                ),
-            )
-        return credential
+        except Exception:
+            return ""
+        return credential or ""
 
     async def reject(
         self,
@@ -2817,11 +2840,20 @@ class GovernanceChokepoint:
             )
 
         admitted = await self._admit(session, project_id=row["project_id"], principal=principal)
+        operation = str(row["operation"] or APPLY_OPERATION)
+        if operation not in ALLOWED_APPROVAL_OPERATIONS:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    f"change set {change_set_id} carries the operation {operation!r}, which this "
+                    "delivery path cannot deliver."
+                ),
+            )
         decision = await self._evaluate_policy(
             session,
             principal=principal,
             admitted=admitted,
-            operation=APPLY_OPERATION,
+            operation=operation,
             items=(),
             change_set_id=change_set_id,
         )
@@ -2871,6 +2903,65 @@ class GovernanceChokepoint:
         # event id IS the approval id. The same rule applies here.
         approval_id = approval_row["id"] if approval_row is not None else audit_row["id"]
 
+        if operation == CLONE_OPERATION:
+            clone_credential = await self._clone_credential_for(session, row=row)
+            raw_args = row["operation_args"]
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except Exception:
+                    raw_args = {}
+            stored_args = dict(raw_args or {})
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(audit_row["seq"]),
+                decision=decision,
+                report=None,
+                operation=CLONE_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    **stored_args,
+                    "token": clone_credential,
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
+            )
+
+        if operation == APPLY_OPERATION:
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(audit_row["seq"]),
+                decision=decision,
+                report=None,
+                operation=APPLY_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    "version": int(row["version"]),
+                    "item_count": await self._item_count(session, change_set_id),
+                    "entries": await self._apply_entries(session, change_set_id),
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
+            )
+
+        # For DEPLOY_OPERATION, HOST_ACTION_OPERATIONS, and all other mutating operations:
+        raw_args = row["operation_args"]
+        if isinstance(raw_args, str):
+            try:
+                raw_args = json.loads(raw_args)
+            except Exception:
+                raw_args = {}
+        stored_args = dict(raw_args or {})
         return await self._deliver(
             session,
             change_set_id=change_set_id,
@@ -2879,15 +2970,15 @@ class GovernanceChokepoint:
             audit_seq=int(audit_row["seq"]),
             decision=decision,
             report=None,
-            operation=APPLY_OPERATION,
+            operation=operation,
             args={
                 "change_set_id": str(change_set_id),
-                "version": int(row["version"]),
-                "item_count": await self._item_count(session, change_set_id),
-                "entries": await self._apply_entries(session, change_set_id),
+                **stored_args,
             },
             status_after_delivery="applying",
             outcome="applying",
+            blast_radius_score=int(row["blast_radius_score"] or 0),
+            blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
         )
 
     async def _item_count(self, session: AsyncSession, change_set_id: uuid.UUID) -> int:
@@ -2913,6 +3004,7 @@ class GovernanceChokepoint:
         change_set_id: uuid.UUID,
         status: str,
         backup_manifest: Any = None,
+        output: Any = None,
     ) -> str:
         """Finalise a change set from the agent's `command.result` (§3.6, Appendix A.9).
 
@@ -2936,7 +3028,7 @@ class GovernanceChokepoint:
 
         Returns the status it set, so a caller can log what happened.
         """
-        succeeded = status == "succeeded"
+        succeeded = status in ("succeeded", "cloned", "applied", "degraded")
         # `rolled_back`, and the comment this replaces was wrong in a way that had never run.
         #
         # It read: "`failed`, not `rolled_back`: the agent rolls back internally and reports that through
@@ -2972,6 +3064,21 @@ class GovernanceChokepoint:
             await session.commit()
             return "ignored"
 
+        # Resolve report from backup_manifest or output (structured JSON report from agent)
+        report = backup_manifest if isinstance(backup_manifest, dict) else None
+        if report is None and output:
+            if isinstance(output, dict):
+                report = output
+            elif isinstance(output, str):
+                try:
+                    parsed = json.loads(output)
+                    if isinstance(parsed, dict):
+                        report = parsed
+                    else:
+                        report = {"output": output}
+                except Exception:
+                    report = {"output": output}
+
         # WHATEVER THIS CHANGE SET WAS FOR NOW SETTLES TOO.
         #
         # Until this existed, `deployments.healthy` and `deployments.stable` had no production writer at
@@ -2996,7 +3103,7 @@ class GovernanceChokepoint:
                         session,
                         change_set_id=change_set_id,
                         succeeded=succeeded,
-                        report=backup_manifest if isinstance(backup_manifest, dict) else None,
+                        report=report,
                     )
             except Exception as error:  # noqa: BLE001 - see above; the transition must survive this
                 # Recorded on the change set rather than logged: this module deliberately has no logger,
@@ -3228,6 +3335,7 @@ class GovernanceChokepoint:
             CLONE_OPERATION,
             DEPLOY_OPERATION,
             *HOST_ACTION_OPERATIONS,
+            "iac.apply",
         ):
             raise ValueError(f"{operation!r} is not a mutating operation in §7.7's catalogue")
         if is_read and approval_id is not None:

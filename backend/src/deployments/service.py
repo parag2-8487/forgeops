@@ -221,10 +221,14 @@ class DeploymentService:
         self-healing that the objects are absent when they are present.
         """
         status = "applied" if healthy else "degraded"
+        cluster_ctx = report.get("cluster_context") if isinstance(report, dict) else None
+        ns = report.get("namespace") if isinstance(report, dict) else None
         result = await session.execute(
             text(
                 "UPDATE deployments SET status = :status, healthy = :healthy, stable = :stable, "
-                "report = CAST(:report AS jsonb), completed_at = now() "
+                "report = CAST(:report AS jsonb), completed_at = now(), "
+                "cluster_context = COALESCE(deployments.cluster_context, :cluster_ctx), "
+                "namespace = COALESCE(deployments.namespace, :ns) "
                 "WHERE id = :id AND status = ANY(:open) "
                 "RETURNING id"
             ),
@@ -234,6 +238,8 @@ class DeploymentService:
                 # The invariant, applied at the one place that sets it.
                 "stable": healthy,
                 "report": json.dumps(report or {}),
+                "cluster_ctx": cluster_ctx,
+                "ns": ns,
                 "id": deployment_id,
                 "open": list(_OPEN_STATUSES),
             },
@@ -256,6 +262,7 @@ class DeploymentService:
         deployment_id: uuid.UUID,
         reason: str,
         environment: str | None = None,
+        report: dict[str, Any] | None = None,
     ) -> DeploymentRecord:
         """The apply itself was refused. Nothing was verified, so `healthy` stays NULL.
 
@@ -263,13 +270,26 @@ class DeploymentService:
         ready, and nothing checked them. The distinction is what stops a failed apply from looking like a
         cluster problem.
         """
+        cluster_ctx = report.get("cluster_context") if isinstance(report, dict) else None
+        ns = report.get("namespace") if isinstance(report, dict) else None
+        payload = dict(report) if isinstance(report, dict) else {"error": reason}
+        if "error" not in payload and reason:
+            payload["error"] = reason
         await session.execute(
             text(
                 "UPDATE deployments SET status = 'failed', stable = false, "
-                "report = CAST(:report AS jsonb), completed_at = now() "
+                "report = CAST(:report AS jsonb), completed_at = now(), "
+                "cluster_context = COALESCE(deployments.cluster_context, :cluster_ctx), "
+                "namespace = COALESCE(deployments.namespace, :ns) "
                 "WHERE id = :id AND status = ANY(:open)"
             ),
-            {"report": json.dumps({"error": reason}), "id": deployment_id, "open": list(_OPEN_STATUSES)},
+            {
+                "report": json.dumps(payload),
+                "cluster_ctx": cluster_ctx,
+                "ns": ns,
+                "id": deployment_id,
+                "open": list(_OPEN_STATUSES),
+            },
         )
         record = await self.read(session, deployment_id=deployment_id)
 

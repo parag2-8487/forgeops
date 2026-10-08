@@ -216,6 +216,15 @@ func newConnectCmd(a *App) *cobra.Command {
 				}
 			}
 
+			if strings.TrimSpace(workspace) != "" {
+				if store, err := a.CredentialStore(); err == nil {
+					if creds, lerr := store.Load(ctx); lerr == nil {
+						creds.WorkspaceRoot = workspace
+						_ = store.Save(ctx, creds)
+					}
+				}
+			}
+
 			if resolvedProject == "" {
 				// Reached only when the agent was already paired and no --project was given: the
 				// pairing response that carried the project id belongs to an earlier run.
@@ -226,6 +235,7 @@ func newConnectCmd(a *App) *cobra.Command {
 			}
 
 			// ── stage 2: scan ────────────────────────────────────────────────────────────
+			_, _ = fmt.Fprintf(out, "[2/3] scan   scanning codebase and submitting index to backend...\n")
 			indexer, err := a.codebaseIndexer()
 			if err != nil {
 				return fmt.Errorf("connect: stage 2 (scan): %w", err)
@@ -235,7 +245,7 @@ func newConnectCmd(a *App) *cobra.Command {
 				return fmt.Errorf("connect: stage 2 (scan): %w", err)
 			}
 			_, _ = fmt.Fprintf(out,
-				"[2/3] scan   %d file(s), %d chunk(s), %d dependency edge(s), %d redaction(s)\n",
+				"[2/3] scan   indexed %d file(s), %d chunk(s), %d dependency edge(s), %d redaction(s)\n",
 				summary.FilesIndexed, summary.ChunksIndexed, summary.Dependencies,
 				summary.RedactionCount)
 			if summary.VectorsAbsentReason != "" {

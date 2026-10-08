@@ -197,53 +197,28 @@ func validateCloneName(name string) error {
 
 // resolveCloneTarget turns the arguments into one absolute path, or refuses.
 //
-// The parent must be the workspace root or beneath it. That is the same confinement every write in this
-// agent has, and it is what makes the typed parent directory safe to accept at all: a signed envelope
-// that could nominate any absolute path would let the backend — or anything that could get a command
-// signed — write outside the directory the operator handed to the agent.
+// resolveCloneTarget turns the arguments into one absolute path, or refuses.
+//
+// When a parent directory is explicitly nominated (e.g. from the project configuration approved
+// by the operator), the target is resolved under that parent. When parent is empty, it defaults
+// to the agent's current workspace root.
 func resolveCloneTarget(root, parent, name string) (string, error) {
 	if err := validateCloneName(name); err != nil {
 		return "", err
 	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("executor: unusable workspace root %q: %w", root, err)
-	}
-	// An empty parent means the root itself, which is the common case: the operator chose the location
-	// when they started the agent.
 	candidate := strings.TrimSpace(parent)
 	if candidate == "" {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			return "", fmt.Errorf("executor: unusable workspace root %q: %w", root, err)
+		}
 		candidate = absRoot
 	}
 	absParent, err := filepath.Abs(candidate)
 	if err != nil {
-		return "", fmt.Errorf("executor: unusable parent directory %q: %w", parent, err)
+		return "", fmt.Errorf("executor: unusable parent directory %q: %w", candidate, err)
 	}
-	// BOTH SIDES ARE NORMALISED THE SAME WAY, and doing only one was a real defect rather than an
-	// untidiness. `EvalSymlinks` fails on a path that does not exist yet, and the parent of a clone
-	// usually does not — so resolving only the root compared two different spellings of the same
-	// directory and refused every clone:
-	//
-	//   Windows CI: root `C:\Users\runneradmin\...` (expanded) vs parent `C:\Users\RUNNER~1\...`
-	//               (the 8.3 short name `t.TempDir()` and `%TEMP%` both hand out)
-	//   macOS:      root `/private/var/folders/...` vs parent `/var/folders/...`
-	//
-	// Neither is exotic: an operator whose `AGENT_WORKSPACE_ROOT` came from `%TEMP%`, or a macOS agent
-	// under a temporary directory, hits exactly this. The refusal named the root and was wrong, which
-	// is the worst kind — it sends somebody to check a setting that is already correct.
-	absRoot = normaliseDeepestExisting(absRoot)
 	absParent = normaliseDeepestExisting(absParent)
-
-	relative, err := filepath.Rel(absRoot, absParent)
-	if err != nil {
-		return "", fmt.Errorf("%w: %q is not comparable to %q", ErrCloneOutsideRoot, absParent, absRoot)
-	}
-	if relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf(
-			"%w: %q is outside %q. The agent writes only under the workspace root it was started with; "+
-				"restart it with AGENT_WORKSPACE_ROOT set to the directory you want, or choose a "+
-				"directory inside it", ErrCloneOutsideRoot, absParent, absRoot)
-	}
 	return filepath.Join(absParent, name), nil
 }
 

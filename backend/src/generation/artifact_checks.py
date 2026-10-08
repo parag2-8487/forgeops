@@ -98,6 +98,21 @@ def validate_dockerfile(content: str) -> list[str]:
         )
     if "USER" not in instructions:
         findings.append("Dockerfile does not drop root with a USER instruction")
+    for line in content.splitlines():
+        stripped = line.strip()
+        if re.search(r"COPY\s+--from=\S+\s+\./(dist|build|public|out)\b", stripped, re.IGNORECASE):
+            findings.append(
+                "Dockerfile uses relative path in COPY --from=... (e.g. './dist'). "
+                "Use absolute path from builder WORKDIR (e.g. '/app/dist') to avoid '/dist: not found' build failures."
+            )
+        if "--frozen-lockfile" in stripped and "npm" in stripped:
+            findings.append(
+                "Dockerfile uses invalid flag '--frozen-lockfile' with npm. Use 'npm ci' or 'npm install'."
+            )
+        if "frontent" in stripped.lower():
+            findings.append(
+                "Dockerfile references hallucinated/typoed directory 'frontent'. Copy files directly from root: `COPY package*.json ./`."
+            )
     return findings
 
 

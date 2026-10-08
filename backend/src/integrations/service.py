@@ -346,6 +346,40 @@ class GitHubLinkService:
         )
         return listing
 
+    async def create_repository(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: uuid.UUID,
+        tenant_id: uuid.UUID | None,
+        name: str,
+        description: str = "",
+        private: bool = True,
+        auto_init: bool = False,
+        client: httpx.AsyncClient | None = None,
+    ) -> Repository:
+        """Create a new GitHub repository under the user's account."""
+        token = await self.usable_token(session, user_id=user_id, tenant_id=tenant_id, client=client)
+        try:
+            repo = await self._users.create_repository(
+                token,
+                name=name,
+                description=description,
+                private=private,
+                auto_init=auto_init,
+                client=client,
+            )
+        except Exception as exc:
+            await self._record_use(session, user_id=user_id, ok=False, detail=_reason(exc))
+            raise
+        await self._record_use(
+            session,
+            user_id=user_id,
+            ok=True,
+            detail=f"created repository {repo.full_name} (private={private})",
+        )
+        return repo
+
     async def usable_token(
         self,
         session: AsyncSession,

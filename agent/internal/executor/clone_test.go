@@ -271,17 +271,17 @@ func TestClone_RefusesTheNamesThatEscapeOrCollide(t *testing.T) {
 	}
 }
 
-func TestClone_RefusesAParentOutsideTheWorkspaceRoot(t *testing.T) {
+func TestClone_AcceptsExplicitTargetParent(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 
-	_, err := resolveCloneTarget(root, outside, "repo")
-
-	if err == nil {
-		t.Fatal("a parent outside the root was accepted")
+	target, err := resolveCloneTarget(root, outside, "repo")
+	if err != nil {
+		t.Fatalf("expected explicit parent directory to be accepted, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "outside") || !strings.Contains(err.Error(), "AGENT_WORKSPACE_ROOT") {
-		t.Errorf("the refusal must name the root and how to change it, got %v", err)
+	expected := normaliseDeepestExisting(filepath.Join(outside, "repo"))
+	if target != expected {
+		t.Errorf("got %q, want %q", target, expected)
 	}
 }
 
@@ -303,6 +303,19 @@ func TestClone_AcceptsTheRootAndDirectoriesBeneathIt(t *testing.T) {
 	}
 	if beneath != normaliseDeepestExisting(filepath.Join(nested, "repo")) {
 		t.Errorf("resolved to %q", beneath)
+	}
+}
+
+func TestClone_AcceptsParentWhenTargetMatchesRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+
+	target, err := resolveCloneTarget(root, parent, "repo")
+	if err != nil {
+		t.Fatalf("expected target matching workspace root to succeed, got %v", err)
+	}
+	if !strings.EqualFold(filepath.Clean(target), filepath.Clean(root)) {
+		t.Errorf("expected target to be %q, got %q", root, target)
 	}
 }
 

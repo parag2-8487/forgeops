@@ -352,10 +352,70 @@ t_compose_services() {
   done
 }
 
+# ─── the fallback a machine with no Compose plugin takes ─────────────────────────────────────────
+#
+# `local` outside a function is a bash ERROR, not a warning: "local: can only be used in a function",
+# exit status 1, which `set -e` turns into the death of the whole script. This branch sat on the one
+# path a fresh computer takes -- no `docker compose` plugin -- so the code written to rescue a bare
+# machine was the code that failed on it. `local` is only legal inside a function, and the test is a
+# lint rather than an execution because the branch itself needs root and a missing plugin to reach.
+t_no_local_outside_function() {
+  local src
+  src="$(awk '
+    /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/ { depth=1; next }
+    depth > 0 { if (/\{/) depth++; if (/\}/) depth--; next }
+    { print NR": "$0 }
+  ' "$TARGET")"
+
+  local bad
+  bad="$(printf '%s\n' "$src" | grep -E '^[0-9]+: *local ' || true)"
+  [ -z "$bad" ] || { echo "local used at file scope: $bad"; return 1; }
+}
+
+# ─── setup.sh, the entry point the README actually tells people to run ─────────────────────────────
+#
+# TWO SEPARATE WAYS IT FAILED, both on a fresh machine, both found by running it rather than reading it.
+#
+#   1. `"${ARRAY[@]:-}"` expands to ONE EMPTY STRING when the array is empty, not to nothing. The
+#      downstream parser reads that as an unknown option and exits 2, so the documented `./setup.sh`
+#      failed while `./setup.sh --fresh` worked. The correct idiom is `"${ARRAY[@]+"${ARRAY[@]}"}"`.
+#   2. The file was never committed and was mode 100644 on disk. A fresh clone either lacks the file
+#      entirely or gets `Permission denied` from `./setup.sh` -- the exact two lines the README prints.
+t_setup_sh_present_and_executable() {
+  [ -f "$REPO_ROOT/setup.sh" ] || { echo "setup.sh is not in the repository"; return 1; }
+  local mode
+  mode="$(cd "$REPO_ROOT" && git ls-files -s setup.sh 2>/dev/null | awk '{print $1}')"
+  [ "$mode" = "100755" ] || { echo "git mode is [$mode], not 100755 -- ./setup.sh would not run"; return 1; }
+}
+
+t_setup_sh_forwards_no_argument_correctly() {
+  # The regression, as behaviour rather than as text. A parser that rejects unknown options stands in
+  # for start-forgeops.sh's own, so a stray empty argument fails here exactly as it did in the field.
+  local out
+  out="$(bash -c '
+    set -Eeuo pipefail
+    parser() { while [ "$#" -gt 0 ]; do case "$1" in --fresh|--force) ;; *) printf "unknown option: [%s]" "$1" >&2; exit 2 ;; esac; shift; done; printf ok; }
+    LAUNCHER_ARGS=()
+    parser ${LAUNCHER_ARGS[@]+"${LAUNCHER_ARGS[@]}"}
+  ' 2>&1)" || { echo "no-argument invocation failed: $out"; return 1; }
+  [ "$out" = "ok" ] || { echo "expected the parser to see zero arguments, got [$out]"; return 1; }
+
+  out="$(bash -c '
+    set -Eeuo pipefail
+    parser() { local seen=""; while [ "$#" -gt 0 ]; do case "$1" in --fresh) seen="$seen FRESH" ;; --force) seen="$seen FORCE" ;; *) printf "unknown option: [%s]" "$1" >&2; exit 2 ;; esac; shift; done; printf "%s" "$seen"; }
+    LAUNCHER_ARGS=(--fresh --force)
+    parser ${LAUNCHER_ARGS[@]+"${LAUNCHER_ARGS[@]}"}
+  ' 2>&1)" || { echo "the flags were not forwarded: $out"; return 1; }
+  [ "$out" = " FRESH FORCE" ] || { echo "flags did not survive forwarding, got [$out]"; return 1; }
+}
+
 check 'the launcher is executable in git'       t_executable_bit
 check 'it declares a bash shebang'              t_shebang
 check 'it has no CRLF line endings'             t_no_crlf
 check 'every service it starts is declared'     t_compose_services
+check 'no local outside a function'             t_no_local_outside_function
+check 'setup.sh is committed and executable'    t_setup_sh_present_and_executable
+check 'setup.sh forwards arguments correctly'   t_setup_sh_forwards_no_argument_correctly
 
 printf '\n  passed %s, failed %s\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

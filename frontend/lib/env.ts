@@ -14,6 +14,9 @@ export type Env = z.infer<typeof envSchema>;
 
 function getEnv(): Env {
   return envSchema.parse({
+    // The fallback matches the Compose default for BACKEND_PORT, so a fresh checkout works with no
+    // .env at all. A checkout that moves the backend (this one publishes 18000) must say so in .env;
+    // hardcoding one machine's port here would silently point every other checkout at a dead port.
     NEXT_PUBLIC_API_BASE_URL:
       process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1",
     NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME ?? "ForgeOps",

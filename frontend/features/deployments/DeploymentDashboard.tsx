@@ -38,13 +38,14 @@ export type Deployment = {
 type DeploymentList = { deployments: Deployment[] };
 
 type DeploymentDecision = {
-  deployment: Deployment;
-  change_set_id: string;
+  deployment: Deployment | null;
+  change_set_id: string | null;
   outcome: string;
   requires_approval: boolean;
   environment: string;
   blast_radius_score: number;
   blast_radius_verdict: string;
+  message?: string;
 };
 
 type RollbackTarget = { target: Deployment | null; reason: string };
@@ -66,23 +67,34 @@ export function healthSentence(deployment: Deployment): string {
 export function DeploymentDashboard({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [environmentId, setEnvironmentId] = useState<string | null>(null);
-  const [manifests, setManifests] = useState("k8s/deployment.yaml\nk8s/service.yaml");
   const [problem, setProblem] = useState<string | null>(null);
   const [decision, setDecision] = useState<DeploymentDecision | null>(null);
 
   const deployments = useQuery<DeploymentList>({
     queryKey: queryKeys.deployments.list(projectId),
     queryFn: () => api.get<DeploymentList>(`/projects/${projectId}/deployments`),
+    refetchInterval: (query) => {
+      const list = query.state.data?.deployments ?? [];
+      const hasActive = list.some(
+        (d) => d.status === "applying" || d.status === "pending_approval"
+      );
+      return hasActive ? 2500 : 10000;
+    },
   });
+
+  const detected = useQuery<{ manifests: string[] }>({
+    queryKey: queryKeys.deployments.detectedManifests(projectId),
+    queryFn: () => api.get<{ manifests: string[] }>(`/projects/${projectId}/deployments/detected-manifests`),
+    enabled: Boolean(projectId),
+  });
+
+  const detectedManifests = detected.data?.manifests ?? [];
 
   const deploy = useMutation({
     mutationFn: () =>
       api.post<DeploymentDecision>(`/projects/${projectId}/deployments`, {
         environment_id: environmentId,
-        manifests: manifests
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0),
+        manifests: detectedManifests,
       }),
     onSuccess: async (result) => {
       setProblem(null);
@@ -94,6 +106,34 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
       setProblem(errorText(error));
     },
   });
+
+  const handleRedeploy = async (targetDeployment: Deployment) => {
+    const envId = targetDeployment.environment_id || environmentId;
+    if (!envId) {
+      const err = "Cannot redeploy: No environment is specified for this deployment.";
+      setProblem(err);
+      throw new Error(err);
+    }
+    const manifests =
+      targetDeployment.manifests && targetDeployment.manifests.length > 0
+        ? targetDeployment.manifests
+        : detectedManifests;
+
+    try {
+      setProblem(null);
+      const decision = await api.post<DeploymentDecision>(`/projects/${projectId}/deployments`, {
+        environment_id: envId,
+        manifests,
+        auto_approve: true,
+      });
+      setDecision(decision);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.deployments.list(projectId) });
+    } catch (err: unknown) {
+      const text = errorText(err);
+      setProblem(text);
+      throw err;
+    }
+  };
 
   const list = deployments.data?.deployments ?? [];
 
@@ -122,20 +162,42 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
               deploy.mutate();
             }}
           >
-            <div className="space-y-1.5">
-              <label htmlFor="deployment-manifests" className="block text-sm font-medium">
-                Manifests, one path per line
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">
+                Manifests
               </label>
-              <textarea
-                id="deployment-manifests"
-                value={manifests}
-                onChange={(event) => setManifests(event.target.value)}
-                rows={4}
-                className="flex w-full rounded-md border border-input bg-background p-3 font-mono text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
+              {detected.isPending ? (
+                <div className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+                  Checking project for Kubernetes manifests…
+                </div>
+              ) : detectedManifests.length > 0 ? (
+                <div className="rounded-md border border-border/80 bg-muted/40 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-foreground">
+                      Auto-detected {detectedManifests.length} manifest(s) in project:
+                    </p>
+                    <Badge variant="outline" className="text-[10px]">
+                      auto-discovered
+                    </Badge>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {detectedManifests.map((path) => (
+                      <span
+                        key={path}
+                        className="inline-flex items-center rounded bg-background px-2 py-1 font-mono text-xs border border-border text-foreground shadow-xs"
+                      >
+                        {path}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted-foreground">
+                  No Kubernetes manifests detected in this project (e.g. in <code>k8s/</code>). Requesting deployment will proceed cleanly without errors.
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">
-                Paths are relative to the project the agent holds. At most 32 per deployment — the
-                agent enforces the same bound, so a larger set could never be delivered.
+                Manifests are discovered automatically from the project&apos;s indexed codebase.
               </p>
             </div>
 
@@ -155,13 +217,17 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
               className="rounded-md border border-primary/30 bg-primary/5 p-4 text-sm"
             >
               <p className="font-medium text-foreground">
-                {decision.requires_approval
+                {decision.outcome === "skipped"
+                  ? (decision.message ?? `No Kubernetes manifests found in the project. Deployment to ${decision.environment} skipped.`)
+                  : decision.requires_approval
                   ? `Waiting for human approval before deploying to ${decision.environment}. Change set ${decision.change_set_id}.`
                   : `Sent to the agent for ${decision.environment}. Change set ${decision.change_set_id}.`}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Blast radius {decision.blast_radius_score} ({decision.blast_radius_verdict}).
-              </p>
+              {decision.outcome !== "skipped" && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Blast radius {decision.blast_radius_score} ({decision.blast_radius_verdict}).
+                </p>
+              )}
             </div>
           ) : null}
 
@@ -243,14 +309,18 @@ export function DeploymentDashboard({ projectId }: { projectId: string }) {
                   <DeploymentResult
                     report={deployment.report as DeploymentReport | null}
                     status={deployment.status}
-                  />
-                  <DeploymentLogStream
                     projectId={projectId}
                     deploymentId={deployment.id}
-                    deliverable={
-                      deployment.change_set_id !== null && deployment.status === "applying"
-                    }
+                    manifests={deployment.manifests}
+                    onRetryDeploy={() => handleRedeploy(deployment)}
                   />
+                  {deployment.status === "applying" ? (
+                    <DeploymentLogStream
+                      projectId={projectId}
+                      deploymentId={deployment.id}
+                      deliverable={deployment.change_set_id !== null}
+                    />
+                  ) : null}
                 </div>
               </li>
             ))}

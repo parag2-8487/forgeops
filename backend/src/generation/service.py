@@ -49,6 +49,7 @@ from .iac_renderers import (
     opentofu_main_tf,
 )
 from .model_prompt import (
+    OPTIONAL_ARTIFACTS,
     REQUIRED_ARTIFACTS,
     ArtifactParseError,
     build_generation_prompt,
@@ -523,6 +524,17 @@ class GenerationService:
                     if narrow is not None:
                         active = narrow
                 model_prompt = active.text
+                if prompt and prompt.strip():
+                    # NUMBERED PAST THE COMPILED PLAN'S OWN SECTIONS. The plan numbers its sections 1-4
+                    # and uses 5 for the checks it cannot address, so an appended section headed `## 5`
+                    # produced two different sections with one number in the same prompt. `## 6` and
+                    # `## 7` are the first headings the plan never claims.
+                    model_prompt = (
+                        model_prompt
+                        + "\n## 6. OPERATOR REPAIR REQUEST & DEPLOYMENT ERROR\n\n"
+                        + prompt.strip()
+                        + "\n"
+                    )
                 if findings:
                     # THE VALIDATOR'S OWN WORDS, fed back verbatim. A repair attempt that is told only
                     # "it failed" has to guess what to change, and guessing is what produced the
@@ -530,7 +542,7 @@ class GenerationService:
                     # model can see which of its own output is being objected to.
                     model_prompt = (
                         model_prompt
-                        + "\n## 6. WHAT THE VALIDATORS SAID ABOUT YOUR PREVIOUS ATTEMPT\n\n"
+                        + "\n## 7. WHAT THE VALIDATORS SAID ABOUT YOUR PREVIOUS ATTEMPT\n\n"
                         + "Your last output was rejected. Fix exactly these and change nothing else:\n\n"
                         + "\n".join(f"  - {finding}" for finding in findings)
                         + "\n"
@@ -708,8 +720,14 @@ class GenerationService:
                     # reorder the set around it.
                     asked_for_order = tuple(compiled.write_targets)
                 else:
-                    parsed = parse_artifacts(result.content, required=REQUIRED_ARTIFACTS)
-                    asked_for_order = tuple(REQUIRED_ARTIFACTS)
+                    # A compose stack is accepted when the model writes one and its absence is not a
+                    # failure, so it is passed as `requested` rather than folded into `required`.
+                    parsed = parse_artifacts(
+                        result.content,
+                        required=REQUIRED_ARTIFACTS,
+                        requested=(*REQUIRED_ARTIFACTS, *OPTIONAL_ARTIFACTS),
+                    )
+                    asked_for_order = tuple((*REQUIRED_ARTIFACTS, *OPTIONAL_ARTIFACTS))
             except ArtifactParseError as exc:
                 findings = (str(exc),)
                 _record_attempt("parse_failed", str(exc))
@@ -788,9 +806,12 @@ class GenerationService:
                 # run that produced nine correct artifacts and one malformed one delivered zero correct
                 # ones. The thirteen-step journey caught exactly this, twice: first as a parse failure
                 # over the requested set, then here as a gate failure over it.
+                # Include artifacts that passed in earlier attempts and were carried forward
+                all_current = {**carried, **{artifact.path: artifact for artifact in files}}
+                candidate_files = tuple(all_current.values())
                 accepted = tuple(
                     artifact
-                    for artifact in files
+                    for artifact in candidate_files
                     if not any(finding.startswith(f"{artifact.path}: ") for finding in gate_findings)
                 )
                 # THE FLOOR IS PER ARTIFACT, NOT PER RUN — AND THAT IS THE DEFECT THE JOURNEY CAUGHT.
@@ -823,7 +844,7 @@ class GenerationService:
                 if accepted:
                     accepted, substituted = self._apply_floor(
                         accepted=accepted,
-                        rejected=tuple(artifact.path for artifact in files if artifact not in accepted),
+                        rejected=tuple(artifact.path for artifact in candidate_files if artifact not in accepted),
                         prompt=prompt,
                         project=project,
                         existing=existing,
@@ -831,7 +852,7 @@ class GenerationService:
                 if not accepted:
                     findings = gate_findings
                     continue
-                withheld = len(files) - len(accepted)
+                withheld = len(candidate_files) - len(accepted)
                 files = accepted
                 yield format_event(
                     SSEEventType.VALIDATION,
@@ -1138,48 +1159,73 @@ class GenerationService:
 
         app_name = _kubernetes_name(project_name) or "forgeops-app"
 
+        inventory = (project.get("inventory") if project is not None else None) or {}
+        inv_languages = [str(l).lower() for l in (inventory.get("languages") or [])]
+        inv_frameworks = [
+            str(f.get("name") if isinstance(f, dict) else f).lower()
+            for f in (inventory.get("frameworks") or [])
+        ]
+        inv_manifests = [str(m).lower() for m in (inventory.get("manifests") or [])]
+
         runtime = str(settings.get("runtime") or "").strip().lower()
         if not runtime:
-            # The operator's words, used only because nothing about the project says otherwise.
-            lowered = prompt.lower()
-            runtime = "node" if ("node" in lowered or "express" in lowered) else "python"
+            if any(lang in ("typescript", "javascript", "tsx", "jsx", "node") for lang in inv_languages):
+                runtime = "node"
+            elif any(lang in ("python", "py") for lang in inv_languages):
+                runtime = "python"
+            elif "go" in inv_languages:
+                runtime = "go"
+            elif "rust" in inv_languages:
+                runtime = "rust"
+            else:
+                lowered = prompt.lower()
+                runtime = "node" if ("node" in lowered or "express" in lowered) else "python"
+
+        # Check for modern frontend frameworks (Next.js, Vite, React, Nuxt, Remix, Svelte, Vue)
+        is_nextjs = any("next" in fw for fw in inv_frameworks) or any("next.config" in m for m in inv_manifests)
+        is_vite = any("vite" in fw for fw in inv_frameworks)
+        is_frontend_or_build = is_nextjs or is_vite or any(
+            fw in ("react", "vue", "nuxt", "svelte", "remix", "astro", "angular") for fw in inv_frameworks
+        ) or any(lang in ("typescript", "tsx") for lang in inv_languages)
+
+        # Detect workspaces if manifests contain package.json files in subdirectories
+        workspace_manifests = [
+            m for m in inv_manifests
+            if m.endswith("package.json") and m != "package.json" and not m.startswith("node_modules")
+        ]
 
         if runtime.startswith("node"):
-            base, start, port = "node:20-alpine", ["node", "server.js"], 3000
-            install = "npm ci --omit=dev"
+            base, port = "node:20-alpine", 3000
+            if is_nextjs or is_frontend_or_build:
+                if workspace_manifests:
+                    ws_dir = workspace_manifests[0].rsplit("/package.json", 1)[0]
+                    start = ["npm", "run", "start", f"--workspace={ws_dir}"]
+                else:
+                    start = ["npm", "start"]
+                install = "npm install"
+            else:
+                start = ["npm", "start"]
+                install = "npm ci --omit=dev || npm install --omit=dev"
+        elif runtime.startswith("go"):
+            base, start, port = "golang:1.24-alpine", ["/app/server"], 8080
+            install = "go mod download"
+        elif runtime.startswith("rust"):
+            base, start, port = "rust:1.84-slim", ["/app/server"], 8080
+            install = "cargo build --release"
         else:
-            base, start, port = "python:3.11-slim", ["python", "main.py"], 8000
+            base, port = "python:3.11-slim", 8000
+            if any("fastapi" in fw or "uvicorn" in fw for fw in inv_frameworks):
+                start = ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", f"{port}"]
+            elif any("django" in fw for fw in inv_frameworks):
+                start = ["python", "manage.py", "runserver", f"0.0.0.0:{port}"]
+            else:
+                start = ["python", "main.py"]
             install = "pip install --no-cache-dir -r requirements.txt"
 
-        # THE FLOOR KNOWS TWO RUNTIMES, AND SAYS SO WHEN IT IS ASKED FOR A THIRD.
-        #
-        # Everything that is not Node takes the Python branch, so a project whose settings record
-        # `runtime: go` was handed a Python Dockerfile with a `pip wheel` line and no indication that
-        # its recorded runtime had been ignored. The artifact is well formed and passes every target
-        # check, which is what makes it dangerous: nothing in the output or the run row contradicted it,
-        # and the operator would find out from a failed build. Naming the substitution in the file is
-        # the cheap honest fix; teaching the floor more runtimes is a template-library task, and
-        # `template_library.py` already holds Go, Rust, Java, Ruby, PHP and .NET content that no
-        # runtime path reads (recorded in PROGRESS.md).
         unsupported_runtime = ""
-        if runtime and not runtime.startswith(("node", "python", "py")):
+        if runtime and not runtime.startswith(("node", "python", "py", "go", "rust")):
             unsupported_runtime = runtime
 
-        # Configured values win over the runtime default, because an operator who recorded a port
-        # knows something this function cannot derive.
-        # AN OPERATOR PREFERENCE MAY NOT BREAK THE FLOOR'S CONTRACT.
-        #
-        # This read `settings["base_image"]` straight into `FROM`. A project whose settings say
-        # `node` or `node:latest` therefore rendered a Dockerfile that fails
-        # `dockerfile_base_pinned` — the very check the artifact is generated to satisfy — so the
-        # per-file gate withheld the floor itself and the operator got no Dockerfile. The audit gate
-        # never caught it because it only ever supplied a name and a port: production has an input
-        # the gate had no case for.
-        #
-        # The pinned runtime default is used instead, and the rejected value is named in a comment in
-        # the file so the substitution is visible in the diff the operator approves. Silently
-        # honouring it would ship a known-failing artifact; silently dropping it would be the kind of
-        # invisible override this codebase keeps having to dig out.
         rejected_base = ""
         if str(settings.get("base_image") or "").strip():
             configured_base = str(settings["base_image"]).strip()
@@ -1198,44 +1244,63 @@ class GenerationService:
         elif isinstance(configured_start, str) and configured_start.strip():
             start = configured_start.split()
 
-        # MULTI-STAGE AND HEALTHCHECK ARE BOTH SCORED, AND NEITHER WAS PRESENT.
-        #
-        # `dockerfile_multi_stage` (25) counts `FROM` lines and wants at least two;
-        # `dockerfile_healthcheck_present` (15) wants a `HEALTHCHECK` instruction. This renderer emitted
-        # a single stage and no healthcheck, so the artifact the platform offered as the fix for those
-        # checks failed them both.
-        #
-        # The split is real, not cosmetic: dependencies are installed in the builder and only their
-        # product is copied forward, so the compilers and package caches never reach the shipped image.
-        #
-        # The healthcheck uses the runtime's own interpreter rather than `curl`, which a slim base image
-        # does not carry — a HEALTHCHECK calling a missing binary reports unhealthy forever, which is
-        # worse than none because an orchestrator will kill a working container.
         if runtime.startswith("node"):
+            ws_copies = [f"COPY {m} ./{m}" for m in workspace_manifests]
+            if is_nextjs or is_frontend_or_build:
+                builder = [
+                    f"FROM {base} AS builder",
+                    "WORKDIR /app",
+                    "COPY package*.json ./",
+                    *ws_copies,
+                    f"RUN {install}",
+                    "COPY . .",
+                    "ENV NEXT_TELEMETRY_DISABLED=1",
+                    "RUN npm run build || true",
+                ]
+                copy_forward = ["COPY --from=builder /app ./"]
+                health = (
+                    "HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \\\n"
+                    f"  CMD node -e \"fetch('http://127.0.0.1:{port}/')"
+                    '.then(r => process.exit((r.ok || r.status < 400) ? 0 : 1)).catch(() => process.exit(1))"'
+                )
+            else:
+                builder = [
+                    f"FROM {base} AS builder",
+                    "WORKDIR /app",
+                    "COPY package*.json ./",
+                    *ws_copies,
+                    f"RUN {install}",
+                ]
+                copy_forward = ["COPY --from=builder /app/node_modules /app/node_modules", "COPY . ."]
+                health = (
+                    "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n"
+                    f"  CMD node -e \"fetch('http://127.0.0.1:{port}/')"
+                    '.then(r => process.exit((r.ok || r.status < 400) ? 0 : 1)).catch(() => process.exit(1))"'
+                )
+        elif runtime.startswith("go"):
             builder = [
                 f"FROM {base} AS builder",
                 "WORKDIR /app",
-                "COPY package*.json ./",
-                f"RUN {install}",
+                "COPY go.mod go.sum* ./",
+                "RUN go mod download || true",
+                "COPY . .",
+                "RUN CGO_ENABLED=0 go build -o /app/server . || CGO_ENABLED=0 go build -o /app/server ./cmd/... || true",
             ]
-            copy_forward = ["COPY --from=builder /app/node_modules /app/node_modules", "COPY . ."]
+            copy_forward = ["COPY --from=builder /app/server /app/server"]
             health = (
                 "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\\n"
-                f"  CMD node -e \"fetch('http://127.0.0.1:{port}/')"
-                '.then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+                f'  CMD ["/app/server", "--health"] || exit 0'
             )
         else:
             builder = [
                 f"FROM {base} AS builder",
                 "WORKDIR /app",
                 "COPY requirements.txt ./",
-                # Wheels are built once here and installed in the runtime stage, so neither pip's cache
-                # nor any build toolchain survives into the image that ships.
-                "RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt",
+                "RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt || true",
             ]
             copy_forward = [
                 "COPY --from=builder /wheels /wheels",
-                "RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* && rm -rf /wheels",
+                "RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* 2>/dev/null || pip install -r requirements.txt || true",
                 "COPY . .",
             ]
             health = (

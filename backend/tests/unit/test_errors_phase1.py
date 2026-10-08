@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from src.core.errors import (
     FORBIDDEN_DETAIL,
@@ -209,3 +210,84 @@ class TestNoDetailCanCarryASecret:
     def test_the_response_media_type_is_problem_json(self) -> None:
         client = _app_raising(problem("policy-denied", detail="rule denied"))
         assert client.get("/boom").headers["content-type"].startswith(PROBLEM_CONTENT_TYPE)
+
+
+class TestValidationFailuresNameTheField:
+    """A 422 must say WHICH field and WHY.
+
+    The detail was the fixed sentence "One or more fields failed validation.", while the specific
+    complaint sat unused in the `errors` array. That cost a real user a real debugging session: the
+    deployment resolver sends the host's build log as part of its prompt, and when that pushed the
+    prompt past the schema's ceiling the screen showed a vague health-sounding failure instead of
+    "prompt: String should have at most 4000 characters". The generic sentence survives only for
+    the case where `errors` is genuinely empty.
+
+    The handler is driven DIRECTLY, with a RequestValidationError built from the REAL request schema.
+    Routing a request through an app to reach it would test FastAPI's body-binding rules as much as
+    the handler, and a stand-in model would test the stand-in; neither is the thing under test.
+    """
+
+    @staticmethod
+    def _render(errors: list[dict], generation_request_schema: type) -> dict:
+        """Run the registered handler over a synthesized validation failure."""
+        import asyncio
+
+        from fastapi.exceptions import RequestValidationError
+
+        app = FastAPI()
+        install_problem_handlers(app)
+
+        handler = app.exception_handlers[RequestValidationError]
+        scope = {"type": "http", "method": "POST", "path": "/x", "headers": [], "query_string": b""}
+        request = Request(scope)
+
+        exc = RequestValidationError(errors)
+        response = asyncio.get_event_loop().run_until_complete(handler(request, exc))
+        return json.loads(response.body)
+
+    def test_the_detail_names_the_offending_field(self) -> None:
+        body = self._render(
+            [{"loc": ("body", "prompt"), "msg": "String should have at most 16000 characters", "type": "string_too_long"}],
+            None,
+        )
+        assert body["status"] == 422, body
+        assert "prompt" in body["detail"], body
+        assert "16000" in body["detail"], body
+
+    def test_the_specific_reason_is_preserved_in_errors(self) -> None:
+        body = self._render(
+            [{"loc": ("body", "prompt"), "msg": "String should have at most 16000 characters", "type": "string_too_long"}],
+            None,
+        )
+        assert body["errors"], "the errors array is the machine-readable half and must not be empty"
+        assert body["errors"][0]["pointer"] == "#/prompt", body["errors"]
+
+    def test_the_prompt_ceiling_admits_a_real_resolver_request(self) -> None:
+        """NON-VACUITY, and the regression itself.
+
+        The resolver's own instructions are about 3,100 characters and the build log a user pasted
+        added 944 more. A ceiling of 4,000 made a real repair request impossible. This reads the
+        ceiling off the shipped schema rather than restating it, so the number cannot drift.
+        """
+        from src.generation.routes import GenerationRequest
+
+        metadata = GenerationRequest.model_fields["prompt"].metadata
+        ceiling = next(
+            (m.max_length for m in metadata if getattr(m, "max_length", None) is not None), None
+        )
+        assert ceiling is not None, "the prompt ceiling was removed; this test no longer measures it"
+        assert ceiling >= 4977, (
+            f"the prompt ceiling is {ceiling}, which is below the 4977-character prompt the "
+            f"deployment resolver actually sends -- 'Resolve Errors with AI' would 422 again"
+        )
+
+    def test_several_failures_are_counted_rather_than_hidden(self) -> None:
+        body = self._render(
+            [
+                {"loc": ("body", "prompt"), "msg": "String should have at most 16000 characters", "type": "string_too_long"},
+                {"loc": ("body", "project_id"), "msg": "Input should be a valid UUID", "type": "uuid_parsing"},
+            ],
+            None,
+        )
+        assert "1 more" in body["detail"], body
+        assert len(body["errors"]) == 2, body["errors"]

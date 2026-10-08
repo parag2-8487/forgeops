@@ -221,8 +221,9 @@ describe("the Docker dashboard", () => {
       expect(get).toHaveBeenCalledWith("/projects/p1/docker/inventory?stats=true");
     });
     // THE STATLESS CALL IS STILL THE OTHER CALL. One key for both would serve every-figure-null to the
-    // panel that asked to measure.
-    expect(get).toHaveBeenCalledWith("/projects/p1/docker/inventory");
+    // panel that asked to measure — and it must SAY stats=false rather than omit the parameter, because
+    // the endpoint samples by default and an omitted parameter would mean the expensive call anyway.
+    expect(get).toHaveBeenCalledWith("/projects/p1/docker/inventory?stats=false");
   });
 
   it("reports a governance outcome for an action rather than a result", async () => {

@@ -266,7 +266,14 @@ class _ChangeSetResultRecorder:
         self._sessionmaker = sessionmaker
         self._chokepoint = chokepoint
 
-    async def record(self, *, change_set_id: uuid.UUID, status: str, backup_manifest: Any) -> str:
+    async def record(
+        self,
+        *,
+        change_set_id: uuid.UUID,
+        status: str,
+        backup_manifest: Any = None,
+        output: Any = None,
+    ) -> str:
         chokepoint = self._chokepoint()
         if chokepoint is None:
             raise RuntimeError("the governance chokepoint is not composed yet")
@@ -276,6 +283,7 @@ class _ChangeSetResultRecorder:
                 change_set_id=change_set_id,
                 status=status,
                 backup_manifest=backup_manifest,
+                output=output,
             )
 
     async def record_rolled_back(self, *, change_set_id: uuid.UUID, reason: str) -> str:

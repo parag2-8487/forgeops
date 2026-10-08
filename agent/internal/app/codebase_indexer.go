@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/parag8487/ForgeOps/agent/internal/artifactcheck"
@@ -23,10 +24,9 @@ import (
 //
 // Generous, because the body is a whole repository's redacted contents and the backend embeds every
 // chunk before answering — but bounded, because a submit that never returns holds the operation's
-// entire `timeoutScan` budget and the session reports nothing until that expires. Five minutes sits
-// inside the executor's fifteen, so the agent's own deadline is the one that fires first and the
-// error names the submit rather than the operation.
-const scanSubmitTimeout = 5 * time.Minute
+// entire `timeoutScan` budget and the session reports nothing until that expires. Fifteen minutes matches
+// the executor's fifteen, so the submit does not cut off before the operation budget expires.
+const scanSubmitTimeout = 15 * time.Minute
 
 // codebaseIndexer builds the workspace indexer this agent's credentials authorise.
 //
@@ -36,10 +36,6 @@ const scanSubmitTimeout = 5 * time.Minute
 // and the failure that produces — an agent that scans one tree and uploads to another backend — is
 // silent until somebody reads the index.
 func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
-	root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot)
-	if err != nil {
-		return nil, err
-	}
 	// The credential store is opened here rather than passed in, because `forgeops-agent scan`
 	// has no session to take one from. `session.NewStore` is idempotent — it opens the same
 	// on-disk store `Session` uses, so the two cannot read different credentials.
@@ -48,6 +44,11 @@ func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
 	store, err := session.NewStore(a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
 	if err != nil {
 		return nil, fmt.Errorf("agent: credential store: %w", err)
+	}
+
+	root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot, store)
+	if err != nil {
+		return nil, err
 	}
 	// THE SAME ENDPOINT THE SESSION DIALS, derived from the address the backend stated when it
 	// issued this device's certificate — so an agent cannot pair with one backend and upload its
@@ -97,6 +98,7 @@ func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
 		root, origin, "", a.cfg.Scanner.MaxFileSize, provider,
 		deviceTokenSource(store),
 		scanSubmitTimeout,
+		store,
 	)
 }
 
@@ -150,6 +152,7 @@ type codebaseIndexer struct {
 	root      string
 	scanner   *scanner.ReportScanner
 	submitter *scanner.HTTPReportSubmitter
+	store     *session.FileStore
 }
 
 // IndexFull scans the whole workspace and replaces the project's index.
@@ -206,6 +209,13 @@ func (c *codebaseIndexer) submit(
 	if report == nil {
 		return executor.IndexSummary{}, errors.New("the scanner produced no report")
 	}
+	if c.store != nil {
+		if creds, err := c.store.Load(ctx); err == nil && strings.TrimSpace(creds.SessionWSURL) != "" {
+			if origin, oerr := session.HTTPOrigin(creds.SessionWSURL); oerr == nil && origin != "" {
+				c.submitter.BaseURL = origin
+			}
+		}
+	}
 	result, err := c.submitter.Submit(ctx, projectID, report)
 	if err != nil {
 		return executor.IndexSummary{}, fmt.Errorf("submitting the scan report: %w", err)
@@ -229,7 +239,7 @@ func (c *codebaseIndexer) submit(
 // `NewReportScanner` enforces that itself rather than accepting a nil and skipping redaction.
 func newCodebaseIndexer(
 	root, baseURL, projectLang string, maxFileSize int64, provider identity.Provider,
-	tokens scanner.TokenSource, timeout time.Duration,
+	tokens scanner.TokenSource, timeout time.Duration, store *session.FileStore,
 ) (*codebaseIndexer, error) {
 	if root == "" {
 		return nil, errors.New("a workspace root is required to scan")
@@ -254,6 +264,7 @@ func newCodebaseIndexer(
 	return &codebaseIndexer{
 		root:    root,
 		scanner: built,
+		store:   store,
 		submitter: &scanner.HTTPReportSubmitter{
 			BaseURL: baseURL,
 			// A bounded client, because a submit that never returns holds the operation's whole

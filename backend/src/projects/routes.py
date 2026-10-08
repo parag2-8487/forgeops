@@ -45,7 +45,19 @@ from .github_import import (
     GitHubAppTokenSource,
     GitHubImporter,
 )
+from .github_push import (
+    GitHubPushRequest,
+    GitHubPushResponse,
+    push_project_to_github,
+)
 from .models import ProjectSettingsError, validate_project_settings
+from .vercel_deploy import (
+    VercelConfigCheckResponse,
+    VercelDeployRequest,
+    VercelDeployResponse,
+    check_project_vercel_config,
+    deploy_project_to_vercel,
+)
 
 router = APIRouter(
     prefix="/api/v1/projects",
@@ -616,6 +628,41 @@ async def get_project_readiness(
             for check in result.checks
         ],
     )
+
+
+@router.post(
+    "/{project_id}/scan",
+    summary="Trigger an agent codebase scan for this project",
+)
+async def scan_project_codebase(
+    project_id: uuid.UUID,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    timeout_seconds: Annotated[
+        float,
+        Query(
+            description="Maximum time in seconds to wait for the agent scan. Defaults to 900s (15 minutes).",
+            ge=10.0,
+            le=1800.0,
+        ),
+    ] = 900.0,
+) -> dict[str, Any]:
+    """Trigger an agent codebase scan for this project and wait for the result."""
+    await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    chokepoint = getattr(request.app.state, "governance_chokepoint", None)
+    if chokepoint is None:
+        raise RuntimeError("app.state.governance_chokepoint is not composed")
+
+    result = await chokepoint.read_inventory(
+        session,
+        project_id=project_id,
+        principal=principal,
+        operation="scan.full",
+        args={"project_id": str(project_id)},
+        timeout_seconds=timeout_seconds,
+    )
+    return {"status": "succeeded", "result": result}
 
 
 # ─── PRD FR-05: archive and delete ───────────────────────────────────────────────────────────────
@@ -1384,3 +1431,67 @@ async def import_github_repository(
     await session.commit()
     loaded = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
     return (await hydrate_projects(session, [loaded], user_id=principal.user_id))[0]
+
+
+@router.post(
+    "/{project_id}/github/push",
+    response_model=GitHubPushResponse,
+    summary="Push project codebase to GitHub",
+)
+async def push_project_github(
+    project_id: uuid.UUID,
+    payload: GitHubPushRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GitHubPushResponse:
+    """Push the project's codebase directly to a new or existing GitHub repository."""
+    await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    github_service = getattr(request.app.state, "github_link_service", None)
+    if github_service is None:
+        raise RuntimeError("app.state.github_link_service is not composed")
+
+    return await push_project_to_github(
+        session,
+        project_id=project_id,
+        principal=principal,
+        github_service=github_service,
+        req=payload,
+    )
+
+
+@router.get(
+    "/{project_id}/vercel/config-check",
+    response_model=VercelConfigCheckResponse,
+    summary="Check project Vercel deployment configuration",
+)
+async def check_project_vercel(
+    project_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VercelConfigCheckResponse:
+    """Inspect project files and framework to determine if vercel.json is needed."""
+    await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    return await check_project_vercel_config(session, project_id=project_id)
+
+
+@router.post(
+    "/{project_id}/vercel/deploy",
+    response_model=VercelDeployResponse,
+    summary="Deploy project to Vercel",
+)
+async def deploy_project_vercel(
+    project_id: uuid.UUID,
+    payload: VercelDeployRequest,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VercelDeployResponse:
+    """Deploy the project's codebase to Vercel and return the live deployment URL."""
+    project = await load_visible_project(session, project_id=project_id, tenant_id=principal.tenant_id)
+    return await deploy_project_to_vercel(
+        session,
+        project_id=project_id,
+        project_name=project.name,
+        principal=principal,
+        req=payload,
+    )

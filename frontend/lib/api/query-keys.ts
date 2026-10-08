@@ -143,6 +143,8 @@ export const queryKeys = {
      */
     rollbackTarget: (environmentId: string) =>
       [...queryKeys.deployments.all, "rollback-target", environmentId] as const,
+    detectedManifests: (projectId: string) =>
+      [...queryKeys.deployments.all, "detected-manifests", projectId] as const,
   },
   /**
    * 2.4 and 2.9's host inventories, read through the agent.

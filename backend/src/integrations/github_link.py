@@ -551,6 +551,48 @@ class GitHubUserClient:
                 await http.aclose()
         return tuple(found), truncated
 
+    async def create_repository(
+        self,
+        token: str,
+        *,
+        name: str,
+        description: str = "",
+        private: bool = True,
+        auto_init: bool = False,
+        client: httpx.AsyncClient | None = None,
+    ) -> Repository:
+        """Create a new GitHub repository for the authenticated user."""
+        owned = client is None
+        http = client or httpx.AsyncClient(timeout=httpx.Timeout(20.0))
+        try:
+            payload = {
+                "name": name,
+                "description": description,
+                "private": private,
+                "auto_init": auto_init,
+            }
+            response = await http.post(
+                f"{self.api_base_url}/user/repos",
+                headers=self._headers(token),
+                json=payload,
+            )
+        except httpx.HTTPError as exc:
+            raise GitHubAppError("create the repository", 502, type(exc).__name__) from exc
+        finally:
+            if owned:
+                await http.aclose()
+        if response.status_code not in (200, 201):
+            detail = response.text
+            try:
+                msg = response.json().get("message", detail)
+            except Exception:
+                msg = detail
+            raise GitHubAppError("create the repository", response.status_code, msg)
+        payload = response.json()
+        if not isinstance(payload, dict) or not payload.get("full_name"):
+            raise GitHubAppError("create the repository", response.status_code, "no repository in the response")
+        return _repository(payload)
+
 
 def _repository(entry: dict[str, Any]) -> Repository:
     owner = entry.get("owner") if isinstance(entry.get("owner"), dict) else {}

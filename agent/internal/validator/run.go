@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -240,6 +241,102 @@ func (r *Runner) RunWithStdin(ctx context.Context, stdin string, tool string, ar
 		return Outcome{Tool: tool}, err
 	}
 	return r.execWithStdin(ctx, stdin, tool, args...)
+}
+
+// LineCallback is called on each line emitted to stdout or stderr.
+type LineCallback func(string)
+
+type streamingWriter struct {
+	underlying io.Writer
+	onLine     LineCallback
+	buf        bytes.Buffer
+	mu         sync.Mutex
+}
+
+func (s *streamingWriter) Write(p []byte) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, err = s.underlying.Write(p)
+	s.buf.Write(p)
+	for {
+		line, err := s.buf.ReadString('\n')
+		if err != nil {
+			s.buf.WriteString(line)
+			break
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && s.onLine != nil {
+			s.onLine(trimmed)
+		}
+	}
+	return n, err
+}
+
+func (s *streamingWriter) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.buf.Len() > 0 && s.onLine != nil {
+		trimmed := strings.TrimSpace(s.buf.String())
+		if trimmed != "" {
+			s.onLine(trimmed)
+		}
+		s.buf.Reset()
+	}
+}
+
+// RunWithStreaming executes a tool and streams every stdout/stderr line to onLine in real time.
+func (r *Runner) RunWithStreaming(ctx context.Context, onLine LineCallback, tool string, args ...string) (Outcome, error) {
+	if _, err := r.Look(tool); err != nil {
+		return Outcome{Tool: tool}, err
+	}
+	return r.execWithStreaming(ctx, onLine, tool, args...)
+}
+
+func (r *Runner) execWithStreaming(ctx context.Context, onLine LineCallback, tool string, args ...string) (Outcome, error) {
+	started := time.Now()
+	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd.Dir = r.Dir
+	if len(r.Env) > 0 {
+		cmd.Env = append(cmd.Environ(), r.Env...)
+	}
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { return terminateGroup(cmd) }
+	cmd.WaitDelay = 5 * time.Second
+
+	var combined bytes.Buffer
+	limited := &limitedWriter{w: &combined, remaining: maxCaptureBytes}
+	streamer := &streamingWriter{underlying: limited, onLine: onLine}
+	cmd.Stdout = streamer
+	cmd.Stderr = streamer
+
+	runErr := cmd.Run()
+	streamer.Flush()
+
+	outcome := Outcome{
+		Tool:     tool,
+		Command:  append([]string{tool}, args...),
+		Output:   strings.TrimRight(combined.String(), "\r\n"),
+		Duration: time.Since(started),
+	}
+	if limited.truncated {
+		outcome.Output += fmt.Sprintf("\n[output truncated at %d bytes]", maxCaptureBytes)
+	}
+
+	var exitErr *exec.ExitError
+	switch {
+	case runErr == nil:
+		outcome.ExitCode = 0
+		outcome.Passed = true
+	case errors.As(runErr, &exitErr):
+		outcome.ExitCode = exitErr.ExitCode()
+		outcome.Passed = false
+	default:
+		return outcome, fmt.Errorf("validator: %s could not be run: %w", tool, runErr)
+	}
+	if ctx.Err() != nil {
+		return outcome, fmt.Errorf("validator: %s did not finish: %w", tool, ctx.Err())
+	}
+	return outcome, nil
 }
 
 func (r *Runner) exec(ctx context.Context, tool string, args ...string) (Outcome, error) {

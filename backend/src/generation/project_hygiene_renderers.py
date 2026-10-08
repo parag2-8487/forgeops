@@ -277,8 +277,11 @@ def compose_file(app_name: str, port: int, image_tag: str) -> str:
 # Local development stack. `docker compose up --build` builds the same image tag the Kubernetes
 # manifests and the Helm chart deploy, so what runs here is what ships.
 
+name: {app_name}
+
 services:
   {app_name}:
+    container_name: {app_name}
     build:
       context: .
       dockerfile: Dockerfile

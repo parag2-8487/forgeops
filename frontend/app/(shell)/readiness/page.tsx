@@ -2,9 +2,10 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api, queryKeys } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, ApiProblemError, queryKeys } from "@/lib/api";
 import { AsyncState } from "@/components/ui/async-state";
+import { Button } from "@/components/ui/button";
 import { GenerationPromptSuggestion } from "@/features/projects/GenerationPromptSuggestion";
 import { ProjectPicker } from "@/components/ui/project-picker";
 import { ReadinessRadarChart } from "@/features/readiness/RadarChart";
@@ -12,7 +13,10 @@ import { ReadinessBreakdown } from "@/features/readiness/ReadinessBreakdown";
 import { categoryLabel, type ReadinessReport } from "@/features/projects/types";
 
 export default function ReadinessPage() {
+  const queryClient = useQueryClient();
   const [projectId, setProjectId] = useState("");
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const readiness = useQuery({
     queryKey: queryKeys.projects.readiness(projectId),
@@ -22,19 +26,80 @@ export default function ReadinessPage() {
     // "does not exist" identical) to a request that should never have been made.
     enabled: projectId !== "",
     retry: false,
+    refetchInterval: (query) => (query.state.data?.indexed ? 15_000 : 2_500),
+  });
+
+  const scan = useMutation({
+    mutationFn: () =>
+      api.post<{ status: string; result?: unknown }>(
+        `/projects/${projectId}/scan`,
+        undefined,
+        { timeoutMs: 900_000 },
+      ),
+    onSuccess: async () => {
+      setScanError(null);
+      setScanMessage("Codebase scanned and indexed successfully!");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.projects.readiness(projectId) });
+    },
+    onError: (error: unknown) => {
+      setScanMessage(null);
+      const problem = error instanceof ApiProblemError ? error.problem : null;
+      if (problem?.type?.endsWith("device-not-connected")) {
+        setScanError(
+          "No agent is connected for this project. Start the agent with forgeops-agent.exe run, then try again.",
+        );
+        return;
+      }
+      setScanError(
+        problem?.detail ?? problem?.title ?? "Scan request failed. Make sure your agent is running.",
+      );
+    },
   });
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Deployment readiness</h1>
-        <p className="mt-1 text-muted-foreground">
-          Scored by the backend&apos;s <code>ReadinessEngine</code> from the project&apos;s codebase
-          index, read from <code>GET /api/v1/projects/{"{id}"}/readiness</code>.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Deployment readiness</h1>
+          <p className="mt-1 text-muted-foreground">
+            Scored by the backend&apos;s <code>ReadinessEngine</code> from the project&apos;s codebase
+            index, read from <code>GET /api/v1/projects/{"{id}"}/readiness</code>.
+          </p>
+        </div>
+        {projectId ? (
+          <Button
+            disabled={scan.isPending}
+            onClick={() => scan.mutate()}
+            variant={readiness.data?.indexed ? "outline" : "default"}
+          >
+            {scan.isPending ? "Scanning workspace…" : "Trigger codebase scan"}
+          </Button>
+        ) : null}
       </div>
 
-      <ProjectPicker value={projectId} onChange={setProjectId} id="readiness-project" />
+      <ProjectPicker value={projectId} onChange={(id) => {
+        setProjectId(id);
+        setScanMessage(null);
+        setScanError(null);
+      }} id="readiness-project" />
+
+      {scanMessage ? (
+        <div
+          role="status"
+          className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-600 dark:text-emerald-400"
+        >
+          {scanMessage}
+        </div>
+      ) : null}
+
+      {scanError ? (
+        <div
+          role="alert"
+          className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+        >
+          {scanError}
+        </div>
+      ) : null}
 
       <AsyncState
         isPending={readiness.isPending}
@@ -73,6 +138,16 @@ export default function ReadinessPage() {
                       }`
                     : "Nothing — never scanned"}
                 </p>
+                {!readiness.data.indexed ? (
+                  <Button
+                    size="sm"
+                    className="mt-2 text-xs"
+                    disabled={scan.isPending}
+                    onClick={() => scan.mutate()}
+                  >
+                    {scan.isPending ? "Scanning…" : "Scan now"}
+                  </Button>
+                ) : null}
               </div>
             </div>
 

@@ -196,7 +196,7 @@ func decodeJSONLines(output string, each func(json.RawMessage) error) error {
 // rather than zero: "the daemon said something this code did not understand" must not render as "idle".
 func parseStatPercent(raw string) *float64 {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(raw), "%"))
-	if trimmed == "" {
+	if trimmed == "" || trimmed == "--" {
 		return nil
 	}
 	var value float64
@@ -220,30 +220,30 @@ var byteUnits = []struct {
 	suffix string
 	scale  float64
 }{
-	{"GiB", 1024 * 1024 * 1024},
-	{"MiB", 1024 * 1024},
-	{"KiB", 1024},
+	{"GIB", 1024 * 1024 * 1024},
+	{"MIB", 1024 * 1024},
+	{"KIB", 1024},
 	{"GB", 1000 * 1000 * 1000},
 	{"MB", 1000 * 1000},
-	{"kB", 1000},
+	{"KB", 1000},
 	{"B", 1},
 }
 
 func parseByteSize(raw string) *float64 {
 	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	if trimmed == "" || trimmed == "--" {
 		return nil
 	}
+	upper := strings.ToUpper(trimmed)
 	for _, unit := range byteUnits {
-		if !strings.HasSuffix(trimmed, unit.suffix) {
-			continue
+		if strings.HasSuffix(upper, unit.suffix) {
+			numPart := strings.TrimSpace(trimmed[:len(trimmed)-len(unit.suffix)])
+			var value float64
+			if _, err := fmt.Sscanf(numPart, "%g", &value); err == nil {
+				scaled := value * unit.scale
+				return &scaled
+			}
 		}
-		var value float64
-		if _, err := fmt.Sscanf(strings.TrimSpace(strings.TrimSuffix(trimmed, unit.suffix)), "%g", &value); err != nil {
-			return nil
-		}
-		scaled := value * unit.scale
-		return &scaled
 	}
 	return nil
 }
@@ -368,12 +368,18 @@ func dockerInventory(ctx context.Context, d *dispatcher, v *envelope.Verified, s
 		if statsErr == nil && stats.Passed {
 			byName := map[string]*DockerContainer{}
 			for index := range inventory.Containers {
-				byName[inventory.Containers[index].Name] = &inventory.Containers[index]
-				byName[inventory.Containers[index].ID] = &inventory.Containers[index]
+				c := &inventory.Containers[index]
+				cleanName := strings.TrimPrefix(c.Name, "/")
+				byName[cleanName] = c
+				byName[c.Name] = c
+				byName[c.ID] = c
+				if len(c.ID) >= 12 {
+					byName[c.ID[:12]] = c
+				}
 			}
 			// The flag is set only if the sample actually parsed into at least one container, so a
 			// `docker stats` that returned nothing usable does not claim to have measured anything.
-			if err := decodeJSONLines(stats.Output, func(raw json.RawMessage) error {
+			_ = decodeJSONLines(stats.Output, func(raw json.RawMessage) error {
 				var row struct {
 					Name     string `json:"Name"`
 					ID       string `json:"ID"`
@@ -382,11 +388,27 @@ func dockerInventory(ctx context.Context, d *dispatcher, v *envelope.Verified, s
 					NetIO    string `json:"NetIO"`
 				}
 				if err := json.Unmarshal(raw, &row); err != nil {
-					return err
+					return nil
 				}
-				target := byName[row.Name]
+				cleanRowName := strings.TrimPrefix(row.Name, "/")
+				target := byName[cleanRowName]
+				if target == nil {
+					target = byName[row.Name]
+				}
 				if target == nil {
 					target = byName[row.ID]
+				}
+				if target == nil && len(row.ID) >= 12 {
+					target = byName[row.ID[:12]]
+				}
+				if target == nil {
+					for _, c := range inventory.Containers {
+						cClean := strings.TrimPrefix(c.Name, "/")
+						if cClean == cleanRowName || strings.HasSuffix(cClean, cleanRowName) || strings.HasPrefix(c.ID, row.ID) || strings.HasPrefix(row.ID, c.ID) {
+							target = byName[c.Name]
+							break
+						}
+					}
 				}
 				if target == nil {
 					return nil
@@ -396,12 +418,7 @@ func dockerInventory(ctx context.Context, d *dispatcher, v *envelope.Verified, s
 				target.NetworkRx, target.NetworkTx = parseStatBytes(row.NetIO)
 				inventory.StatsSampled = true
 				return nil
-			}); err != nil {
-				// A stats line this code cannot read leaves every figure nil and SAYS SO through the
-				// flag. Reporting an error for the whole inventory would hide a perfectly good
-				// container list because one optional column was unavailable.
-				inventory.StatsSampled = false
-			}
+			})
 		}
 	}
 
