@@ -247,6 +247,52 @@ describe("requesting a deployment", () => {
     await waitFor(() => expect(screen.getByTestId("deployment-problem")).toBeInTheDocument());
     expect(screen.getByTestId("deployment-problem")).toHaveTextContent(/at most 32 manifests/);
   });
+
+  it("renders detected Kubernetes manifests when available", async () => {
+    get.mockImplementation((path: string) => {
+      if (path.includes("/environments")) return Promise.resolve({ environments: [] });
+      if (path.includes("/detected-manifests")) {
+        return Promise.resolve({ manifests: ["k8s/deploy.yaml", "k8s/service.yaml"] });
+      }
+      return Promise.resolve({ deployments: [] });
+    });
+
+    renderWithQuery(<DeploymentDashboard projectId={PROJECT} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("k8s/deploy.yaml")).toBeInTheDocument();
+      expect(screen.getByText("k8s/service.yaml")).toBeInTheDocument();
+    });
+  });
+
+  it("falls back to error message when rejection has no problem envelope", async () => {
+    get.mockImplementation((path: string) => {
+      if (path.includes("/environments")) {
+        return Promise.resolve({
+          environments: [
+            {
+              id: ENVIRONMENT,
+              name: "dev",
+              kind: "development",
+              k8s_context: "kind-forgeops",
+              requires_approval: false,
+              position: 0,
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ deployments: [] });
+    });
+    post.mockRejectedValue(new Error("network error"));
+
+    renderWithQuery(<DeploymentDashboard projectId={PROJECT} />);
+    await waitFor(() => expect(screen.getByTestId("environment-selector")).toBeInTheDocument());
+    await userEvent.selectOptions(screen.getByTestId("environment-selector"), ENVIRONMENT);
+    await userEvent.click(screen.getByTestId("deploy-submit"));
+
+    await waitFor(() => expect(screen.getByTestId("deployment-problem")).toBeInTheDocument());
+    expect(screen.getByTestId("deployment-problem")).toHaveTextContent("network error");
+  });
 });
 
 describe("the rollback target", () => {
