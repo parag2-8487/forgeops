@@ -1238,18 +1238,20 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 		}
 	}
 
-	// 4. Monorepo and static frontend detection
+	// 4. Monorepo and static frontend detection (dynamic directory scan)
 	var frontendDir string
-	for _, sub := range []string{"Frontent", "frontend", "client", "ui", "web"} {
-		if exactSub, ok := resolveExactCaseSegment(baseDir, sub); ok {
-			for _, check := range []string{"vite.config.ts", "vite.config.js", "package.json", "index.html"} {
-				if _, err := os.Stat(filepath.Join(baseDir, exactSub, check)); err == nil {
-					frontendDir = exactSub
+	if dirEntries, err := os.ReadDir(baseDir); err == nil {
+		for _, de := range dirEntries {
+			if de.IsDir() && !strings.HasPrefix(de.Name(), ".") && de.Name() != "node_modules" {
+				for _, check := range []string{"vite.config.ts", "vite.config.js", "package.json", "index.html"} {
+					if _, err := os.Stat(filepath.Join(baseDir, de.Name(), check)); err == nil {
+						frontendDir = de.Name()
+						break
+					}
+				}
+				if frontendDir != "" {
 					break
 				}
-			}
-			if frontendDir != "" {
-				break
 			}
 		}
 	}
@@ -1304,18 +1306,8 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 			}
 		}
 
-		composeContentForCheck := ""
-		if cBytes, cErr := os.ReadFile(filepath.Join(baseDir, "docker-compose.yml")); cErr == nil {
-			composeContentForCheck = string(cBytes)
-		}
-		isFrontendService := strings.Contains(composeContentForCheck, "frontend:") || strings.Contains(composeContentForCheck, "ui:") || strings.Contains(composeContentForCheck, "client:") || strings.Contains(composeContentForCheck, "web:")
-
-		if isFrontendService || strings.Contains(content, `"Backend/server.js"`) || strings.Contains(content, `Backend/server.js`) || strings.Contains(content, `"server.js"`) || strings.Contains(content, `node server.js`) {
+		if profile.Framework == "vite" || profile.Framework == "react" || profile.Framework == "create-react-app" || strings.Contains(content, "serve -s") {
 			serveCmd := fmt.Sprintf(`CMD ["serve", "-s", "%s", "-l", "tcp://0.0.0.0:3000"]`, distTarget)
-			reNodeBackend := regexp.MustCompile(`(?i)CMD\s+\[?"node",?\s+"?Backend/server\.js"?\]?`)
-			if reNodeBackend.MatchString(content) {
-				content = reNodeBackend.ReplaceAllString(content, serveCmd)
-			}
 			content = strings.ReplaceAll(content, `CMD ["node", "server.js"]`, serveCmd)
 			content = strings.ReplaceAll(content, `CMD ["node", "./server.js"]`, serveCmd)
 			content = strings.ReplaceAll(content, `CMD node server.js`, serveCmd)
@@ -1389,31 +1381,27 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 				if exactWd, exists := resolveExactCasePath(baseDir, cleanWd); exists {
 					line = fmt.Sprintf("WORKDIR /app/%s", exactWd)
 				} else {
-					for _, bad := range []string{"frontent", "frontend", "backend", "client", "server"} {
-						if _, exists := resolveExactCaseSegment(baseDir, bad); !exists {
-							if strings.HasSuffix(workdirRel, "/"+bad) || workdirRel == bad || workdirRel == "/"+bad {
-								line = "WORKDIR /app"
-								break
-							}
-						}
-					}
+					line = "WORKDIR /app"
 				}
 			}
 		}
 
 		// Check for RUN commands with directory changes
 		if strings.HasPrefix(upper, "RUN ") {
-			for _, bad := range []string{"frontent", "frontend", "backend", "client", "server"} {
-				if exactName, exists := resolveExactCaseSegment(baseDir, bad); exists {
-					// Normalize case if real directory exists
-					reCdExact := regexp.MustCompile(`(?i)cd\s+(?:\./)?` + bad + `\s*(&&|;)\s*`)
-					line = reCdExact.ReplaceAllString(line, fmt.Sprintf("cd %s $1 ", exactName))
-				} else {
-					// Strip if directory doesn't exist
-					reCd := regexp.MustCompile(`cd\s+(?:\./)?` + bad + `\s*(&&|;)\s*`)
-					line = reCd.ReplaceAllString(line, "")
+			reCd := regexp.MustCompile(`(?i)cd\s+(?:\./)?([a-zA-Z0-9_\-\.]+)\s*(&&|;)\s*`)
+			line = reCd.ReplaceAllStringFunc(line, func(m string) string {
+				submatches := reCd.FindStringSubmatch(m)
+				if len(submatches) >= 3 {
+					targetDir := submatches[1]
+					delim := submatches[2]
+					if exactName, exists := resolveExactCaseSegment(baseDir, targetDir); exists {
+						return fmt.Sprintf("cd %s %s ", exactName, delim)
+					}
+					// Directory does not exist on disk, strip the non-existent cd
+					return ""
 				}
-			}
+				return m
+			})
 
 			// Heal RUN npm install when no root package.json exists
 			if (trimmed == "RUN npm install" || trimmed == "RUN npm i") && !hasRootPackageJson {
@@ -1433,35 +1421,27 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 
 			// Heal RUN npm run build when no root package.json exists
 			if strings.Contains(line, "npm run build") && !strings.Contains(line, "cd ") && !hasRootPackageJson {
-				for _, sub := range []string{"Frontent", "frontend", "client", "ui"} {
-					if exactSub, ok := resolveExactCaseSegment(baseDir, sub); ok {
-						if _, err := os.Stat(filepath.Join(baseDir, exactSub, "package.json")); err == nil {
-							line = fmt.Sprintf("RUN (cd %s && npm run build) || true", exactSub)
-							break
-						}
-					}
+				if frontendDir != "" && frontendDir != "." {
+					line = fmt.Sprintf("RUN (cd %s && npm run build) || true", frontendDir)
 				}
 			}
 		}
 
 		// Heal CMD workspace when no root workspaces exist
 		if strings.HasPrefix(upper, "CMD ") && strings.Contains(line, "--workspace=") && !hasRootPackageJson {
-			lowerLine := strings.ToLower(line)
-			if strings.Contains(lowerLine, "frontend") || strings.Contains(lowerLine, "frontent") || strings.Contains(lowerLine, "client") || strings.Contains(lowerLine, "ui") {
-				distTarget := "dist"
-				if frontendDir != "" && frontendDir != "." {
-					distTarget = frontendDir + "/dist"
-				}
+			if frontendDir != "" && frontendDir != "." {
+				distTarget := frontendDir + "/dist"
 				line = fmt.Sprintf(`CMD ["serve", "-s", "%s", "-l", "tcp://0.0.0.0:3000"]`, distTarget)
 			} else {
-				for _, sub := range []string{"Backend", "backend", "server", "api"} {
-					if exactSub, ok := resolveExactCaseSegment(baseDir, sub); ok {
-						if _, err := os.Stat(filepath.Join(baseDir, exactSub, "server.js")); err == nil {
-							line = fmt.Sprintf(`CMD ["node", "%s/server.js"]`, exactSub)
-							break
-						} else if _, err := os.Stat(filepath.Join(baseDir, exactSub, "app.js")); err == nil {
-							line = fmt.Sprintf(`CMD ["node", "%s/app.js"]`, exactSub)
-							break
+				if dirEntries, err := os.ReadDir(baseDir); err == nil {
+					for _, de := range dirEntries {
+						if de.IsDir() {
+							for _, ep := range []string{"server.js", "app.js", "index.js"} {
+								if _, err := os.Stat(filepath.Join(baseDir, de.Name(), ep)); err == nil {
+									line = fmt.Sprintf(`CMD ["node", "%s/%s"]`, de.Name(), ep)
+									break
+								}
+							}
 						}
 					}
 				}
@@ -1830,60 +1810,72 @@ func applyComposeManifests(ctx context.Context, d *dispatcher, args deploymentAr
 
 		var outcome validator.Outcome
 		var err error
-		maxAttempts := 10
-		for attempt := 1; attempt <= maxAttempts; attempt++ {
-			sink.Progress(50+attempt*4, "deployment.apply_manifests",
-				fmt.Sprintf("building and starting containers for %s (attempt %d/%d)...", filepath.Base(abs), attempt, maxAttempts))
+
+		// Gate G4: Build Phase with Intelligent Error Classification and Fast-Fail
+		buildSucceeded := false
+		maxTransientRetries := 2
+		for buildAttempt := 1; buildAttempt <= maxTransientRetries+1; buildAttempt++ {
+			sink.Progress(50+buildAttempt*5, "deployment.apply_manifests",
+				fmt.Sprintf("building container images for %s (attempt %d)...", filepath.Base(abs), buildAttempt))
 			outcome, err = runner.RunWithStreaming(ctx, func(line string) {
 				clean := strings.TrimSpace(line)
 				if clean != "" {
-					sink.Progress(50+attempt*4, "deployment.apply_manifests", fmt.Sprintf("[docker] %s", clean))
+					sink.Progress(50+buildAttempt*5, "deployment.apply_manifests", fmt.Sprintf("[docker] %s", clean))
 				}
-			}, "docker", "compose", "-p", projectName, "-f", abs, "up", "-d", "--build", "--pull", "missing", "--force-recreate", "--remove-orphans")
+			}, "docker", "compose", "-p", projectName, "-f", abs, "build")
+
 			if err == nil && outcome.Passed {
+				buildSucceeded = true
+				sink.Progress(65, "deployment.apply_manifests", "Gate G4 passed: container images built successfully")
 				break
 			}
 
-			lowerOut := strings.ToLower(outcome.Output)
-			if strings.Contains(lowerOut, "conflict") || strings.Contains(lowerOut, "already in use") {
-				sink.Progress(50+attempt*4, "deployment.apply_manifests", "resolving container conflict, removing stale container...")
-				re := regexp.MustCompile(`already in use by container "([a-zA-Z0-9_-]+)"`)
-				m := re.FindStringSubmatch(outcome.Output)
-				if len(m) > 1 {
-					_, _ = runner.Run(ctx, "docker", "rm", "-f", m[1])
+			classified := ClassifyError("build", 1, outcome.Output, outcome.Output)
+			if classified.Class == ErrorClassDeterministic || classified.Class == ErrorClassApplicationCode {
+				// Deterministic compilation/syntax/manifest error: Fast-fail on Attempt 1 immediately!
+				errMsg := composeErrorSnippet(outcome.Output)
+				if errMsg == "" && err != nil {
+					errMsg = err.Error()
 				}
-				_, _ = runner.Run(ctx, "docker", "compose", "-p", projectName, "-f", abs, "down", "--remove-orphans")
+				return Result{}, fmt.Errorf("Gate G4 build fast-failed (deterministic error on attempt %d): %s\n%s", buildAttempt, classified.Message, errMsg)
 			}
 
-			if strings.Contains(lowerOut, "timeout") || strings.Contains(lowerOut, "tls handshake") ||
-				strings.Contains(lowerOut, "failed to do request") || strings.Contains(lowerOut, "connection was reset") ||
-				strings.Contains(lowerOut, "failed to resolve") {
-				sink.Progress(50+attempt*4, "deployment.apply_manifests",
-					fmt.Sprintf("network timeout encountered during build, giving 5s before retry (%d/%d)...", attempt, maxAttempts))
+			// Transient error: retry up to maxTransientRetries
+			if buildAttempt <= maxTransientRetries {
+				backoff := time.Duration(buildAttempt*3) * time.Second
+				sink.Progress(50+buildAttempt*5, "deployment.apply_manifests",
+					fmt.Sprintf("transient network issue detected, retrying build after %s (attempt %d/%d)...", backoff, buildAttempt, maxTransientRetries))
 				select {
 				case <-ctx.Done():
 					return Result{}, ctx.Err()
-				case <-time.After(5 * time.Second):
+				case <-time.After(backoff):
 				}
-				continue
 			}
+		}
 
-			if strings.Contains(lowerOut, "checksum of ref") || strings.Contains(lowerOut, "not found") ||
-				strings.Contains(lowerOut, "failed to solve") || strings.Contains(lowerOut, "cannot find module") ||
-				strings.Contains(lowerOut, "server.js") || strings.Contains(lowerOut, "frozen-lockfile") ||
-				strings.Contains(lowerOut, "failed to compute cache key") ||
-				strings.Contains(lowerOut, "parse error") || strings.Contains(lowerOut, "unknown type") ||
-				strings.Contains(lowerOut, "dockerfile parse error") || strings.Contains(lowerOut, "healthcheck") ||
-				strings.Contains(lowerOut, "exit code: 127") || strings.Contains(lowerOut, "exit code 127") ||
-				strings.Contains(lowerOut, "npm run build") || strings.Contains(lowerOut, "command not found") {
-				// Same entry point as the pre-build pass, so a retry repairs the project the same way
-				// the first attempt would have. A second healing implementation would drift from the
-				// first, and the drift would only show up on a user's build.
-				_, _ = ensureBuildableArtifacts(filepath.Dir(abs), sink)
+		if !buildSucceeded {
+			errMsg := composeErrorSnippet(outcome.Output)
+			if errMsg == "" && err != nil {
+				errMsg = err.Error()
 			}
+			return Result{}, fmt.Errorf("Gate G4 build failed after transient retries for %s: %s", filepath.Base(abs), errMsg)
+		}
 
-			if attempt < maxAttempts && !outcome.Passed {
-				time.Sleep(3 * time.Second)
+		// Gate G5: Apply Phase
+		sink.Progress(75, "deployment.apply_manifests", fmt.Sprintf("Gate G5: starting containers for %s...", filepath.Base(abs)))
+		outcome, err = runner.RunWithStreaming(ctx, func(line string) {
+			clean := strings.TrimSpace(line)
+			if clean != "" {
+				sink.Progress(75, "deployment.apply_manifests", fmt.Sprintf("[docker] %s", clean))
+			}
+		}, "docker", "compose", "-p", projectName, "-f", abs, "up", "-d", "--no-build", "--remove-orphans")
+
+		if err != nil || !outcome.Passed {
+			lowerOut := strings.ToLower(outcome.Output)
+			if strings.Contains(lowerOut, "conflict") || strings.Contains(lowerOut, "already in use") {
+				sink.Progress(76, "deployment.apply_manifests", "resolving port/container conflict, removing stale container...")
+				_, _ = runner.Run(ctx, "docker", "compose", "-p", projectName, "-f", abs, "down", "--remove-orphans")
+				outcome, err = runner.RunWithStreaming(ctx, nil, "docker", "compose", "-p", projectName, "-f", abs, "up", "-d", "--no-build", "--remove-orphans")
 			}
 		}
 
@@ -1892,7 +1884,7 @@ func applyComposeManifests(ctx context.Context, d *dispatcher, args deploymentAr
 			if errMsg == "" && err != nil {
 				errMsg = err.Error()
 			}
-			return Result{}, fmt.Errorf("docker compose up failed for %s: %s", filepath.Base(abs), errMsg)
+			return Result{}, fmt.Errorf("Gate G5 container startup failed for %s: %s", filepath.Base(abs), errMsg)
 		}
 	}
 

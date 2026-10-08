@@ -1,989 +1,137 @@
-# SPDX-License-Identifier: FSL-1.1-ALv2
-"""Compile the scan facts and the failing readiness checks into one explicit instruction.
+"""Blueprint-grounded prompt compilation for ForgeOps deployment manifest generation.
 
-WHY A COMPILER RATHER THAN A PROMPT
-
-Generation used to receive whatever the operator typed and was expected to work the rest out. That is
-the condition under which a model invents: asked for "a Dockerfile" with no facts, it has to guess the
-language, the package manager, the entry point, the port and the layout, and a guess that reads
-plausibly is indistinguishable from a fact until it fails.
-
-So the model is told, rather than asked to infer. Everything in the output of this module comes from the
-index or from a readiness check that examined the repository; nothing is a default, a template value or
-an assumption. Where a fact is not known, the prompt says it is not known for that artifact instead of
-filling the gap — which is the same rule this codebase already applies to an absent embedding, to
-`served_from`, and to an unresolved dependency version.
-
-THE FOUR PROPERTIES THAT MAKE IT TRUSTWORTHY
-
-* DERIVED. Two repositories produce visibly different prompts, because every section is built from
-  their own paths, frameworks and findings. A template with substitutions would read the same.
-* VERIFIABLE. Every path the prompt states as existing is in the index, and every path it instructs a
-  write to is listed as a target. `test_every_path_in_a_compiled_prompt_is_real` asserts it — a prompt
-  naming a path the scan never saw is the exact failure this module exists to prevent.
-* DETERMINISTIC. No clock, no randomness, no set iteration. The same index and the same failing checks
-  compile byte-identically, so a generation run can be reproduced and two runs can be compared.
-* BOUNDED. It will be long. When it exceeds the budget of the tier it is routed to, whole artifact
-  sections are DROPPED, lowest-weight first, and the ones dropped are named on the result. Nothing is
-  ever cut mid-sentence: a truncated instruction is worse than an absent one, because the model acts on
-  the half it received.
+Derives all Dockerfile, Docker Compose, and Kubernetes generation instructions
+strictly from the authoritative ProjectBlueprint contract, with zero hardcoded path assumptions.
 """
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
-from typing import Any, Final
-
-from pydantic import BaseModel
-
-from ..core.content_regression import properties_to_preserve
-from ..core.readiness import CATEGORY_WEIGHTS, ReadinessCheck
-from ..core.readiness_findings import CHECK_EXPLANATIONS
-from .model_prompt import output_format_section
-
-#: Roughly four characters to a token for English prose and configuration. Deliberately an ESTIMATE and
-#: named as one: the real count depends on the tokeniser of whichever model the tier resolves to, and
-#: this module must not pretend to know that. Used only to decide whether to defer a section, and a
-#: pessimistic estimate errs towards deferring — which is the safe direction, because a deferred artifact
-#: is reported and a truncated one is not.
-CHARS_PER_TOKEN_ESTIMATE: Final = 4
-
-#: What will actually be run against each artifact kind, so the model knows the bar before it writes.
-#:
-#: Empty means there is no executable validator for that kind and the readiness checks are the whole
-#: criterion. Stated rather than omitted: "this will be checked by a tool" and "this will be checked by
-#: the score" are different promises, and claiming the first where only the second is true would be the
-#: kind of overstatement this file exists to avoid.
-#: The BLOCKING gate's requirements, stated mechanically, per artifact kind.
-#:
-#: WHY PROSE WAS NOT ENOUGH. Section 2 already tells the model what is wrong — "declares no USER, so the
-#: image runs as root" — and that is a good explanation for a human. A 1.5b model given an explanation
-#: produced a Dockerfile that the gate then rejected for exactly the named fault, so the file was withheld
-#: and the user's most important recommendation went unaddressed. The prompt this replaced stated the same
-#: requirements LITERALLY ("contains a line that is exactly `USER 1001`") and its output passed.
-#:
-#: These are the checks in `generation/artifact_checks.py`, which is blocking under §11.5.5. An artifact
-#: that fails one is discarded, so the model is told the rule rather than only the consequence.
-GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
-    "dockerfile": (
-        "The very first line of the Dockerfile MUST be `FROM` (for example: "
-        "`FROM <image>:<exact-version> AS builder`). Do NOT write `ARG` anywhere in the "
-        "Dockerfile; never define an `ARG` before `FROM` or anywhere else.",
-        # AN EXACT, COPYABLE LINE, not a description of one. This requirement previously read "there is a
-        # `USER` instruction that switches to a non-root account, placed after the RUN instructions" — a
-        # correct description that the model failed on all three attempts, every time for this same fault,
-        # so the Dockerfile was withheld and the user's most important recommendation went unaddressed.
-        # The prompt this work replaced said "contains a line that is exactly `USER 1001`" and its output
-        # passed. A small model copies a literal; it does not reliably synthesise from a description.
-        "It contains a line that is exactly `USER 10001`, placed after the last RUN instruction and "
-        "before CMD or ENTRYPOINT. Write that line verbatim — a numeric id is required because "
-        "Kubernetes' runAsNonRoot check reads the uid and cannot resolve a name from the image.",
-        # THE SAME LESSON AS `USER 10001`, found the same way and by the harness rather than by review.
-        # `dockerfile_base_pinned` was the check failing every attempt, and the only instruction the model
-        # had for it was the finding restated as prose -- "every FROM pinned to a digest or an exact
-        # version, never a floating tag". 7b answered `FROM alpine:latest`, which is a reasonable-looking
-        # base image and an unambiguous failure. Naming the forbidden token and the accepted shape gives
-        # the model something to copy instead of something to infer.
-        "NO `FROM` line ends in `:latest`, and none omits a tag. Every `FROM` is either "
-        "`image:<exact-version>` (never a floating tag such as `latest`, and never a bare image name "
-        "with no tag at all) or `image@sha256:<digest>`. Do NOT write `FROM $SOMETHING` or define an `ARG` for any "
-        "image: write literal image names and exact version tags directly (for example: "
-        "`FROM <image>:<exact-version> AS builder` and `FROM <image>:<exact-version>`). "
-        "Build arguments and `$` variables are strictly forbidden by `dockerfile_base_pinned`. "
-        "This applies to EVERY stage of a multi-stage build, including the builder: a build "
-        "whose builder floats is not reproducible even when its final stage is pinned.",
-        # The language is stated as a REQUIREMENT rather than left to the facts section. 7b read a Python
-        # project's index and wrote a Go build -- `FROM golang:1.17` with `go mod download` -- so the
-        # facts alone did not carry it. An artifact for the wrong language fails every content check at
-        # once and the findings then describe symptoms rather than the cause.
-        # Multi-stage and HEALTHCHECK get the same treatment, in one edit rather than one 7-minute harness
-        # iteration each: they fail for the same reason (prose the model must synthesise from) and the
-        # remedy is identical (a shape it can copy). Iterating one check at a time would have been three
-        # more runs to learn the same thing.
-        "There are AT LEAST TWO `FROM` instructions. The first is the build stage and ends with "
-        "` AS builder`; the second is the final runtime image and copies from it with "
-        "`COPY --from=builder`. A single-stage Dockerfile ships the build tooling in the runtime image "
-        "and does not satisfy this.",
-        "When copying files with `COPY --from=builder`, ALWAYS use the absolute path from "
-        "builder's WORKDIR "
-        "(for example: `COPY --from=builder /app/dist ./` or `COPY --from=builder /app/build "
-        "./`). Never use relative paths like `./dist` or `dist`, which resolve to `/` "
-        "(container root) and cause build failures.",
-        "For frontend client applications (Vite, React, Vue, Svelte, static web apps) without a backend server, "
-        "if you run `npm start` in the final image, you MUST also `COPY package*.json ./` to the final stage so npm can find package.json. "
-        "Better yet, serve the built static directory with a lightweight static server (e.g. `npx serve -s dist -l $PORT`) or copy `package*.json` so `npm` commands do not fail with ENOENT.",
-        "Install with the package manager this repository's lockfile names, using that manager's own "
-        "install command. Do not invent flags it does not have, and never run an install command whose "
-        "lockfile is absent from section 1.",
-        # STATED AS A RULE because a mismatch here is invisible to every other requirement, and one
-        # reached a user: `EXPOSE 8080` against a CMD binding 3000 shipped, deployed, and reported
-        # healthy — the healthcheck probes inside the container, so it passed — while the browser got
-        # an empty response from the published port nothing was listening on.
-        "EVERY PORT IN THE FILE IS THE SAME NUMBER. The port in `EXPOSE`, the port the CMD or "
-        "ENTRYPOINT binds, and the port `ENV PORT` sets must all be "
-        "identical. `EXPOSE` is a declaration no runtime reads, so a different number there does not "
-        "move the listener — it only misdirects whatever publishes the port, and the result is a "
-        "container that reports healthy and answers nothing.",
-        "The base image and the build steps match the language of THIS repository, as stated in the "
-        "facts section above. Do not write a build for a different language.",
-        "All repository source files are located at the root of the repository unless "
-        "subdirectories are explicitly listed in section 1. "
-        "Do NOT invent monorepo subdirectories that are not listed in section 1. "
-        "CRITICAL FOR CASE SENSITIVITY: Linux Docker builds are strictly case-sensitive. "
-        "Every directory name in `COPY`, `WORKDIR`, and compose build contexts MUST match the "
-        "exact letter casing shown in section 1 manifests (for example: if section 1 lists "
-        "`Backend/package.json` and `Frontent/package.json`, you MUST write "
-        "`COPY Backend/package.json ./Backend/package.json` and "
-        "`COPY Frontent/package.json ./Frontent/package.json` with capital `B` and capital `F`). "
-        "Copy each manifest from the directory section 1 shows it in, install its dependencies with the package "
-        "manager that directory's lockfile names, then copy the remaining source and run that directory's own build "
-        "command.",
-        "The file contains at least one real instruction, not only comments.",
-    ),
-    "k8s": (
-        "Every document declares top-level `apiVersion`, `kind` and `metadata.name`.",
-        "Separate documents with `---` and put no document in a comment.",
-    ),
-    "compose": (
-        "There is a top-level `name` equal to the project name and a `services` mapping with at least one service.",
-        "No service uses the `latest` tag or omits its tag.",
-        "Services define explicit `container_name` using the project name prefix to keep project containers grouped "
-        "cleanly on the Docker host.",
-        'Services define port mappings (for example: `"<port>:<port>"`) to expose the application to localhost so '
-        "the service is directly testable and accessible.",
-        "Set service build context to `.` when project files and Dockerfile are at repository root. Do NOT invent "
-        "subdirectories like `build: ./frontent` or `build: ./backend`.",
-    ),
-    "helm": ("`Chart.yaml` declares `apiVersion`, `name` and `version`.",),
-    "github_workflow": (
-        "There is a top-level `on` trigger and a `jobs` mapping with at least one job.",
-        "Every job has `runs-on` and at least one step.",
-    ),
-    "opentofu": ("There is at least one `terraform`, `provider` or `resource` block, and the file parses as HCL.",),
-}
-
-#: A copyable, pinned base image per language, used to make the Dockerfile requirement CONCRETE.
-#:
-#: MEASURED, AND IT WAS MY OWN INSTRUCTION'S FAULT. The requirement list named `python:3.13-slim` as its
-#: example. Given a NODE repository -- the criterion-10 journey's fixture -- 7b wrote
-#: `ARG BASE_IMAGE=python:3.13-slim` with `COPY requirements.txt` and `pip install`, for a project whose
-#: only source file is `server.js`. The prose requirement "the base image and the build steps match the
-#: language of THIS repository" was already present and was not enough: the only CONCRETE image name in
-#: the whole block was a Python one, and a small model copies the literal it can see over the sentence it
-#: has to reason about. That is the `USER 10001` lesson a third time, arriving from the other direction --
-#: the copyable shape was right about pinning and wrong about language.
-#:
-#: So the example is resolved from the inventory, exactly as linter configuration filenames are, and for
-#: the same stated reason: a language not listed produces NO example rather than a guessed one, because a
-#: wrong literal is worse than an absent one. It is the wrong literal that caused this.
-BASE_IMAGE_BY_LANGUAGE: Final[Mapping[str, str]] = {
-    "python": "python:3.13-slim",
-    "javascript": "node:22-slim",
-    "typescript": "node:22-slim",
-    "go": "golang:1.24-alpine",
-    "rust": "rust:1.84-slim",
-    "java": "eclipse-temurin:21-jre-alpine",
-}
+from typing import Optional
+from backend.src.blueprint.models import ProjectBlueprint, WorkloadType
 
 
-#: Files an artifact kind does not work without, written alongside it.
-#:
-#: A Deployment with no Service is reachable by nothing: it applies cleanly, reports healthy, and serves no
-#: traffic. The readiness checks map one kind to one path, so generation produced exactly that and left the
-#: user to discover the gap. An Ingress is included for the same reason one step further out — a ClusterIP
-#: Service is reachable only from inside the cluster.
-#:
-#: A Dockerfile is deliberately NOT paired with a compose file. It is usable without one — the Kubernetes
-#: manifests are what deploy it — and a companion costs a write-target slot, which measurably pushed the
-#: CI workflow OUT of the capped set on a repository whose own failing check was about that workflow. The
-#: compose stack a local run needs is produced at deployment time by the agent, which knows the port, the
-#: detected profile and whether a stack already exists, rather than being provoked here from a prompt that
-#: has no view of any of that.
-ARTIFACT_COMPANIONS: Final[Mapping[str, tuple[str, ...]]] = {
-    "k8s": ("k8s/service.yaml", "k8s/ingress.yaml"),
-}
+def compile_dockerfile_prompt(blueprint: ProjectBlueprint) -> str:
+    """Compiles a strict, blueprint-parameterized prompt for generating a production Dockerfile."""
+    bp = blueprint
+    source_dir = bp.build_config.source_dir
+    lang = bp.runtime.language
+    ver = bp.runtime.runtime_version
+    pkg_mgr = bp.runtime.package_manager
+    framework = bp.runtime.framework or "generic"
+    build_cmd = bp.build_config.build_command
+    start_cmd = bp.runtime.start_command
+    port = bp.network.listen_port
+    output_dir = bp.build_config.artifact_output_dir or "dist"
 
-ARTIFACT_VALIDATORS: Final[Mapping[str, str]] = {
-    "k8s": "validate.k8s (kubectl apply --dry-run=server against the cluster's own schema)",
-    "compose": "validate.compose (docker compose config)",
-    "helm": "validate.helm (helm lint, then helm template --validate)",
-    "opentofu": "validate.tofu (tofu validate)",
-    "github_workflow": "validate.yaml (yamllint, plus the workflow schema)",
-    "dockerfile": "validate.trivy (image vulnerability scan, failing at HIGH and above)",
-}
+    subfolder_guidance = ""
+    if source_dir not in {".", "./", ""}:
+        subfolder_guidance = f"""
+CRITICAL DIRECTORY STRUCTURE REQUIREMENT:
+- The target application lives in subfolder: '{source_dir}'
+- Do NOT flatten the repository directory structure arbitrarily.
+- Ensure WORKDIR in the builder and runner stages reflects '{source_dir}' or properly navigates to '{source_dir}' before executing build and start commands.
+- If copying files, preserve the subdirectory structure so relative imports and framework path resolution (e.g. pages, app directories) remain intact.
+"""
 
-#: The maximum number of lines of an existing file quoted back into the prompt.
-#:
-#: A modify instruction has to show the model what it is editing, and the whole file is often too much.
-#: Quoting the head is chosen over a summary because a summary is a paraphrase, and a paraphrase of the
-#: file the model must preserve is exactly where content gets silently dropped.
-#: How many artifacts one run may ask a model to write.
-#:
-#: A COUNT CAP AND A TOKEN CAP BOUND DIFFERENT THINGS. `token_budget` limits the instruction sent; this
-#: limits the answer expected, and nothing limited that before. A run whose write targets came from every
-#: failing check asked for eleven files, and a small model — the end-to-end journey uses
-#: `qwen2.5-coder:1.5b` — cannot emit eleven complete valid files in one response. It produced a handful,
-#: malformed, none passed the gate, and the run fell back to canned templates: nothing delivered, for
-#: minutes of compute. A capable model handles the same prompt, which is why it was invisible until a
-#: small one ran it.
-#:
-#: Six because the contract this replaced asked for four and that was demonstrably within reach, and six
-#: leaves headroom for the checks a user selected. The remainder is DEFERRED, not dropped: it is recorded
-#: on the run and named in the UI, so the user knows what to ask for next.
-DEFAULT_MAX_WRITE_TARGETS: Final = 6
-
-MAX_QUOTED_LINES: Final = 120
-
-#: The file a DIRECTORY remedy path resolves to when the repository has none of that kind indexed.
-#:
-#: Only for kinds where the convention is unambiguous. Anything absent from here resolves to "" and the
-#: check is reported as unaddressable with its reason, which is the established treatment for a location
-#: this scan cannot determine -- a fabricated path in an instruction is worse than an artifact the run
-#: does not attempt.
-DIRECTORY_DEFAULT_FILENAME: Final[Mapping[str, str]] = {
-    # The name the sibling CI checks already state, so there is one spelling of it.
-    "github_workflow": "ci.yml",
-}
-
-
-#: Where each ecosystem puts a linter configuration, keyed by the language the scan detected.
-#:
-#: The findings table gives a CONVENTION for these — "(depends on language: ruff.toml,
-#: eslint.config.mjs, .golangci.yml)" — because the table is repository-independent and cannot know
-#: which applies. Resolving it needs a fact, and the fact is in the inventory, so it is resolved here
-#: rather than left as a parenthetical the model would have to interpret.
-#:
-#: A language not listed produces NO instruction rather than a guessed filename. That is the difference
-#: between deriving and inventing: an unlisted ecosystem is a gap in this table, and writing
-#: `lint.config` into somebody's repository because nothing better was known is exactly the fabrication
-#: the prohibitions forbid.
-LINT_CONFIG_BY_LANGUAGE: Final[Mapping[str, str]] = {
-    "python": "ruff.toml",
-    "javascript": "eslint.config.mjs",
-    "typescript": "eslint.config.mjs",
-    "go": ".golangci.yml",
-    "rust": "rustfmt.toml",
-    "ruby": ".rubocop.yml",
-    "php": ".php-cs-fixer.php",
-}
-
-
-def _slugify(name: str) -> str:
-    """A DNS-label-safe form of the project name, or "" when nothing usable remains.
-
-    Empty rather than a fallback like "app": a chart directory named after a default is named after
-    nothing, and the caller reads "" as "this path cannot be resolved" and says so in the prompt.
-    """
-    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip()).strip("-")
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug[:63]
-
-
-def _resolve_target(
-    artifact: str,
-    remedy_path: str,
-    languages: Sequence[str],
-    project_slug: str = "",
-    indexed: Collection[str] = (),
-) -> str:
-    """Turn a remedy path into a concrete file, or return "" when it cannot be known.
-
-    A remedy path containing a parenthesis is a CONVENTION rather than a location, and one containing
-    `<…>` carries a PLACEHOLDER the table cannot fill. Both need a fact from this repository, and the
-    facts come from the scan: the detected languages resolve a linter configuration, and the project's own
-    name resolves a chart directory.
-
-    Returning "" is deliberate for anything unresolvable. The artifact is then not requested and the
-    reason appears in the prompt's "cannot address" section. Naming a plausible file instead would put a
-    fabricated path into an instruction — and `charts/<name>/Chart.yaml` reaching a model verbatim is
-    exactly that, because the model would either invent a name or write the angle brackets into the tree.
-    """
-    first = remedy_path.split(",")[0].strip() if remedy_path else ""
-
-    # A PATH ENDING IN `/` IS A DIRECTORY, AND A DIRECTORY IS NOT A FILE THE MODEL CAN WRITE.
-    #
-    # `pipeline_actions_pinned` states its remedy location as `.github/workflows/`, which is right for a
-    # human -- the fix is "every unpinned action in every workflow that was found", and that is not one
-    # file. It was returned verbatim as a write target.
-    #
-    # WHAT THAT COST, MEASURED. The criterion-10 journey asked for
-    # `['.env.example', '.github/workflows/', 'Dockerfile', 'k8s/deployment.yaml', 'k8s/ingress.yaml',
-    # 'k8s/service.yaml']`. No model can produce a file AT a directory, and `parse_artifacts` accepts only
-    # a path it was told to expect, so that target could never be satisfied by anything. Every run on the
-    # fixture reached the template path with `iterations_used=0` -- and the fixture is not unusual: any
-    # repository that already has a `.github/workflows/` directory and an unpinned action lands here.
-    # The harness's own fixture has no workflows directory, which is why it passed while the journey did
-    # not, and why this needed the journey's real files to find.
-    #
-    # Resolved against the INDEX: an existing workflow is what the check is complaining about, so fixing
-    # THAT file is both the correct action and a `modify` rather than a `create`. With none indexed, a
-    # conventional filename is used -- the same one the sibling CI checks already name, so there is one
-    # spelling of it.
-    if first.endswith("/"):
-        candidates = sorted(
-            path
-            for path in indexed
-            if path.lower().startswith(first.lower()) and path.lower().endswith((".yml", ".yaml"))
-        )
-        if candidates:
-            return candidates[0]
-        default = DIRECTORY_DEFAULT_FILENAME.get(artifact)
-        # No default rather than a guessed filename, for the reason stated below: a fabricated path in an
-        # instruction is worse than an artifact this run does not attempt.
-        return f"{first}{default}" if default else ""
-
-    if remedy_path and "(" not in remedy_path and "<" not in remedy_path:
-        return first
-
-    if artifact == "lint_config":
-        for language in languages:
-            resolved = LINT_CONFIG_BY_LANGUAGE.get(language.lower())
-            if resolved:
-                return resolved
-
-    if "<name>" in remedy_path and project_slug:
-        # Slugified rather than used raw: a chart directory becomes part of a Helm release name, which
-        # Kubernetes requires to be a DNS label.
-        return remedy_path.split(",")[0].strip().replace("<name>", project_slug)
-
-    return ""
-
-
-class ArtifactInstruction(BaseModel):
-    """One file the model must produce or edit, and everything it needs to know about it."""
-
-    path: str
-    #: "create" or "modify". Never inferred by the model: the compiler knows whether the path is in the
-    #: index, and letting the model decide is how an existing file gets overwritten.
-    action: str
-    artifact: str
-    #: The readiness check ids this artifact would satisfy.
-    satisfies: tuple[str, ...]
-    #: For a modify: what is specifically wrong, one entry per failing property, with line numbers where
-    #: the check could locate them.
-    faults: tuple[str, ...] = ()
-    #: For a modify: the current content, or its head when the file is long.
-    current_content: str = ""
-    current_line_count: int = 0
-    #: What the model must not remove. Derived from the file itself, not from a guess about intent.
-    preserve: tuple[str, ...] = ()
-    #: The validator that will be run, or "" when only the readiness checks apply.
-    validator: str = ""
-    #: Files this one does not work without, written in the same answer.
-    #:
-    #: A DEPLOYMENT ALONE RECEIVES NO TRAFFIC. The readiness checks map one artifact kind to one path, so
-    #: `kubernetes_manifests_present` produced `k8s/deployment.yaml` and nothing else — a manifest set that
-    #: applies cleanly, reports healthy, and cannot be reached by anything. The user is left to discover
-    #: they need a Service themselves, which is the opposite of what generating manifests is for.
-    #:
-    #: These ride on the same instruction rather than becoming instructions of their own so they cost one
-    #: slot against the artifact cap, not three: they are one deployable unit and deferring the Service
-    #: while keeping the Deployment would be worse than deferring both.
-    companions: tuple[str, ...] = ()
-    #: The weight this artifact carries, used to decide what to defer when the budget is exceeded.
-    weight: int = 0
-
-    model_config = {"frozen": True}
-
-
-class CompiledPrompt(BaseModel):
-    """The instruction, plus everything needed to audit it."""
-
-    text: str
-    #: Every path the prompt asserts EXISTS. A test checks each against the index.
-    referenced_paths: tuple[str, ...] = ()
-    #: Every path the prompt instructs a write to.
-    write_targets: tuple[str, ...] = ()
-    #: The failing checks this prompt sets out to fix.
-    addressed_checks: tuple[str, ...] = ()
-    #: Failing checks left out because the budget could not hold them, lowest weight first. NAMED rather
-    #: than silently dropped, so a user can see that one run cannot cover everything and why.
-    deferred_checks: tuple[str, ...] = ()
-    #: Failing checks no generated artifact can address, with the reason from the findings table.
-    unaddressable: tuple[str, ...] = ()
-    token_estimate: int = 0
-    token_budget: int = 0
-    #: One sentence naming what was done about the budget. Always populated, including when nothing had
-    #: to be done, so a reader never has to infer it from the absence of a warning.
-    budget_strategy: str = ""
-
-    model_config = {"frozen": True}
-
-
-def _fmt_list(values: Sequence[str], *, empty: str) -> str:
-    return ", ".join(values) if values else empty
-
-
-def _quote(path: str, body: str) -> tuple[str, int]:
-    """The file as the model will see it, with real line numbers, and its true length."""
-    lines = body.splitlines()
-    shown = lines[:MAX_QUOTED_LINES]
-    numbered = "\n".join(f"{n:>5} | {text}" for n, text in enumerate(shown, start=1))
-    if len(lines) > MAX_QUOTED_LINES:
-        numbered += (
-            f"\n      | … {len(lines) - MAX_QUOTED_LINES} further line(s) not shown. "
-            f"They are part of {path} and must be preserved."
-        )
-    return numbered, len(lines)
-
-
-def _preserve_notes(body: str) -> tuple[str, ...]:
-    """What a modify must keep, read off the file rather than assumed.
-
-    Comment blocks and named build stages are the two things a wholesale regeneration destroys most
-    often, and both are visible in the text. Nothing here guesses at intent: it points at regions that
-    exist and says they must survive.
-    """
-    notes: list[str] = []
-    lines = body.splitlines()
-
-    comment_runs: list[tuple[int, int]] = []
-    start: int | None = None
-    for number, text in enumerate(lines, start=1):
-        stripped = text.strip()
-        if stripped.startswith("#") or stripped.startswith("//"):
-            start = number if start is None else start
-        else:
-            if start is not None and number - start >= 2:
-                comment_runs.append((start, number - 1))
-            start = None
-    if start is not None and len(lines) - start >= 1:
-        comment_runs.append((start, len(lines)))
-    for first, last in comment_runs[:4]:
-        notes.append(f"the comment block at lines {first} to {last}")
-
-    for number, text in enumerate(lines, start=1):
-        upper = text.strip().upper()
-        if upper.startswith("FROM ") and " AS " in upper:
-            stage = text.strip().rsplit(" AS ", 1)[-1].strip()
-            notes.append(f"the build stage {stage!r} declared at line {number}")
-    return tuple(notes)
-
-
-def _facts_section(
-    *,
-    paths: Sequence[str],
-    inventory: Mapping[str, Any],
-    devops_paths: Sequence[str],
-) -> list[str]:
-    """Everything established about the repository, each item with where it came from."""
-    out = [
-        "## 1. ESTABLISHED FACTS ABOUT THIS REPOSITORY",
-        "",
-        "Every line in this section was read from the index built by scanning the repository. None of it",
-        "is a default or an assumption. Treat it as the complete set of what is known: if something you",
-        "need is not here, it is not known, and you must say so rather than supply a plausible value.",
-        "",
-        f"Files indexed: {inventory.get('file_count', len(paths))}",
-    ]
-
-    languages = [str(v) for v in (inventory.get("languages") or [])]
-    out.append(f"Languages detected: {_fmt_list(languages, empty='none detected')}")
-
-    managers = [str(v) for v in (inventory.get("package_managers") or [])]
-    out.append(f"Package managers detected: {_fmt_list(managers, empty='none detected')}")
-
-    frameworks = inventory.get("frameworks") or []
-    if frameworks:
-        out.append("")
-        out.append("Frameworks, each with the file that establishes it and how firmly:")
-        for framework in sorted(frameworks, key=lambda f: (str(f.get("name", "")))):
-            name = framework.get("name", "?")
-            kind = framework.get("kind", "?")
-            confidence = framework.get("confidence", "?")
-            evidence = framework.get("evidence", "?")
-            version = framework.get("version") or "no version declared"
-            note = (
-                "declared in a manifest, so you may rely on it"
-                if confidence == "declared"
-                else "INFERRED from the layout only, nothing declares it — do not rely on it"
-            )
-            out.append(f"  - {name} ({kind}), version {version}, from {evidence}: {note}")
+    workload_guidance = ""
+    if bp.workload_type == WorkloadType.STATIC_SPA:
+        workload_guidance = f"""
+WORKLOAD TYPE: Static Single-Page Application (SPA)
+- Stage 1 (Builder): Install dependencies using '{pkg_mgr}', run build '{build_cmd or f"{pkg_mgr} run build"}', outputting static files to '{output_dir}'.
+- Stage 2 (Runner): Use 'nginx:alpine'. Copy static files from builder '{output_dir}' into '/usr/share/nginx/html'.
+- Configure Nginx for SPA fallback (try_files $uri $uri/ /index.html).
+- Expose port {port or 80}.
+"""
+    elif bp.workload_type == WorkloadType.BACKGROUND_WORKER:
+        workload_guidance = f"""
+WORKLOAD TYPE: Background Worker / Daemon
+- This is a headless worker service. Do NOT expose any HTTP port unless explicitly requested.
+- Runner stage executes start command: '{start_cmd}'.
+"""
     else:
-        out.append("Frameworks: none detected.")
+        workload_guidance = f"""
+WORKLOAD TYPE: Web Service ({framework})
+- Multi-stage build: Stage 1 compiles/builds, Stage 2 packages minimal production runner.
+- Expose port {port}.
+- Start command: '{start_cmd}'.
+"""
 
-    entry_points = [str(v) for v in (inventory.get("entry_points") or [])]
-    out.append("")
-    out.append(f"Entry points: {_fmt_list(entry_points, empty='none identified by the scan')}")
+    return f"""You are generating an optimized, multi-stage, production-ready Dockerfile for ForgeOps.
 
-    manifests = [str(v) for v in (inventory.get("manifests") or [])]
-    out.append(f"Dependency manifests present: {_fmt_list(manifests, empty='none')}")
+PROJECT BLUEPRINT SPECIFICATION:
+- Runtime Language: {lang} (Version: {ver})
+- Framework: {framework}
+- Package Manager: {pkg_mgr}
+- Application Source Subdirectory: '{source_dir}'
+- Install Command: '{bp.build_config.install_command or f"{pkg_mgr} install"}'
+- Build Command: '{build_cmd or "N/A"}'
+- Start Command: '{start_cmd}'
+- Listen Port: {port or "None"}
+{subfolder_guidance}
+{workload_guidance}
 
-    configs = [str(v) for v in (inventory.get("config_files") or [])]
-    out.append(f"Configuration files present: {_fmt_list(configs, empty='none')}")
-
-    out.append("")
-    out.append(f"DevOps configuration already in the repository: {_fmt_list(list(devops_paths), empty='none')}")
-    out.append(
-        "Match the layout this repository already uses. Where it places something, put related files "
-        "beside it rather than in the location a tutorial would choose."
-    )
-
-    # Repository layout grounding to eliminate directory hallucinations
-    root_items = sorted({p.split("/")[0] for p in paths if p and not p.startswith(".git")})
-    out.append("")
-    out.append(f"Top-level directory and file structure: {_fmt_list(root_items, empty='(root only)')}")
-    top_level_files = sorted(p for p in paths if "/" not in p and not p.startswith("."))
-    if top_level_files:
-        out.append(f"Root files present: {_fmt_list(top_level_files, empty='none')}")
-
-    return out
-
-
-def _prohibitions() -> list[str]:
-    return [
-        "## 4. PROHIBITIONS",
-        "",
-        "These are the failure modes that make generated infrastructure dangerous rather than merely",
-        "wrong, because each produces output that reads correctly and does not work.",
-        "",
-        "  1. Do not reference any file, package, module, image or path that is not named in section 1.",
-        "  2. Do not invent a dependency name or a version number. If a version is needed and section 1",
-        "     does not give it, say so for that artifact.",
-        "  3. Do not assume a framework, package manager, port or base image that section 1 does not",
-        "     state. An INFERRED framework is not a statement you may build on.",
-        "  4. Do not write to any path outside the targets listed in section 2.",
-        "  5. When modifying a file, do not remove existing content unless the instruction says to. If",
-        "     you must remove a line, say which line and why.",
-        "  6. If the facts are insufficient for one artifact, produce the others and state plainly what",
-        "     is missing for that one. A plausible guess is worse than an omission here: an omission is",
-        "     visible and a guess is not.",
-        "  7. Do NOT invent non-existent subdirectories (e.g. frontend/, frontent/, backend/, client/, server/)",
-        "     in COPY instructions or docker-compose build contexts. If the project files are at repository root,",
-        "     copy directly from root (`COPY package*.json ./`, `COPY . .`) and set build context to `.`.",
-    ]
+STRICT PRODUCTION RULES:
+1. Multi-Stage Build: Separate dependencies/compilation from the lightweight runtime image.
+2. Layer Caching: Copy manifest and lockfiles first, run install, then copy source files.
+3. Non-Root User: Run container process as non-root user (e.g. node, appuser) where supported.
+4. Clean Output: Output ONLY the raw Dockerfile content. Do not include markdown code fence formatting or commentary.
+"""
 
 
-def compile_repair_prompts(
-    *,
-    checks: Sequence[ReadinessCheck],
-    paths: Sequence[str],
-    contents: Mapping[str, str],
-    inventory: Mapping[str, Any],
-    selected_check_ids: Sequence[str] | None = None,
-    token_budget: int = 24_000,
-    project_name: str = "",
-) -> dict[str, CompiledPrompt]:
-    """One prompt per artifact, each carrying ONLY that artifact's requirements, keyed by write target.
+def compile_compose_prompt(blueprint: ProjectBlueprint, dockerfile_relative_path: str = "Dockerfile") -> str:
+    """Compiles a strict prompt for generating a Compose manifest aligned with the blueprint."""
+    bp = blueprint
+    port = bp.network.listen_port
+    svc_name = "app"
 
-    WHY THIS EXISTS, MEASURED. The whole-plan prompt asks for six files and states 55 mechanical
-    requirements in one call. Asked that way, `qwen2.5-coder:7b` produced a Dockerfile whose base image
-    was `node:$NODE_VERSION` -- unpinned -- and **kept producing it when the finding was fed back, twice**.
-    Asked for the Dockerfile ALONE, with that artifact's 24 requirements, it produced the same fault once
-    and then fixed it on the first correction: `FROM node:22-slim`.
+    port_mapping = f"- \"{port}:{port}\"" if port else ""
 
-        ASK A  6 artifacts, 55 requirements:  FAIL, FAIL, FAIL   (node:$NODE_VERSION each time)
-        ASK B  1 artifact,  24 requirements:  FAIL, PASS         (FROM node:22-slim)
+    return f"""You are generating an authoritative docker-compose.yml file for ForgeOps.
 
-    Same model, same check, same repository. It is not capability: every other requirement was satisfied
-    in both asks (two stages, USER, HEALTHCHECK). What fails under a wide ask is the model's ability to
-    ACT ON A CORRECTION while regenerating five unrelated files at the same time.
+BLUEPRINT SPECIFICATION:
+- Service Name: {svc_name}
+- Dockerfile Path: {dockerfile_relative_path}
+- Build Context: .
+- Listen Port: {port or "None"}
+- Workload Type: {bp.workload_type.value}
 
-    So the repair is narrowed and the first ask is left alone. The budget of model calls is unchanged --
-    this buys compliance rather than spending wall clock, which matters because the journey's generation
-    step is already the slowest thing in CI.
-
-    COMPANIONS ARE DROPPED HERE, and that is the same finding rather than an exception to it. A companion
-    is a file the artifact does not work without, so the opening ask names it -- that is what makes a
-    Deployment arrive with its Service. A repair regenerates ONE file because the gate rejected that one,
-    and asking for its companion again is the wide ask reintroduced at the point it hurts most: the
-    correction. The measured failure was the model re-emitting five unrelated files instead of acting on
-    the finding it was handed, and a repair that re-asks for `docker-compose.yml` alongside a rejected
-    Dockerfile is that failure in miniature.
-
-    KEYED BY WRITE TARGET so the service can look up the artifact the gate rejected without knowing
-    anything about readiness checks. The Kubernetes manifests share one prompt, because they share one
-    instruction, and the group is the unit of repair for the same reason it is the unit of generation.
-    """
-    failing = [c for c in checks if not c.passed]
-    if selected_check_ids is not None:
-        wanted = set(selected_check_ids)
-        failing = [c for c in failing if c.id in wanted]
-
-    by_kind: dict[str, list[str]] = {}
-    for check in failing:
-        explanation = CHECK_EXPLANATIONS.get(check.id)
-        if explanation is None or not explanation.artifact or not check.generatable:
-            # Unaddressable here for the same reason `compile_prompt` skips it: no generated artifact
-            # fixes it, so there is no repair prompt to build.
-            continue
-        by_kind.setdefault(explanation.artifact, []).append(check.id)
-
-    repairs: dict[str, CompiledPrompt] = {}
-    for kind in sorted(by_kind):
-        one = compile_prompt(
-            checks=checks,
-            paths=paths,
-            contents=contents,
-            inventory=inventory,
-            selected_check_ids=by_kind[kind],
-            token_budget=token_budget,
-            project_name=project_name,
-            include_companions=False,
-        )
-        for target in one.write_targets:
-            # `setdefault`: the first kind to claim a path owns it. Two kinds naming one path would be
-            # a contradiction in the findings table rather than something to merge here.
-            repairs.setdefault(target, one)
-    return repairs
+STRICT REQUIREMENTS:
+1. Use Compose Specification standard syntax.
+2. Define service '{svc_name}' with build context '.' and dockerfile '{dockerfile_relative_path}'.
+3. Map ports: {port_mapping}
+4. Configure restart policy: 'unless-stopped' (or 'no' if batch job).
+5. Output ONLY valid YAML without markdown formatting or commentary.
+"""
 
 
-def compile_prompt(
-    *,
-    checks: Sequence[ReadinessCheck],
-    paths: Sequence[str],
-    contents: Mapping[str, str],
-    inventory: Mapping[str, Any],
-    selected_check_ids: Sequence[str] | None = None,
-    token_budget: int = 24_000,
-    max_write_targets: int = DEFAULT_MAX_WRITE_TARGETS,
-    project_name: str = "",
-    include_companions: bool = True,
-) -> CompiledPrompt:
-    """Build the instruction for the failing checks a generated artifact can satisfy.
+def compile_kubernetes_prompt(blueprint: ProjectBlueprint, image_name: str = "app:latest") -> str:
+    """Compiles a strict prompt for generating Kubernetes Deployment and Service manifests."""
+    bp = blueprint
+    port = bp.network.listen_port
+    app_label = "forgeops-workload"
 
-    `selected_check_ids` narrows the work to checks the user picked; `None` means every failing one. A
-    check that PASSES never produces an instruction, so a repository with a correct Dockerfile is never
-    told to write one.
-    """
-    indexed = {p.replace("\\", "/") for p in paths}
-    project_slug = _slugify(project_name)
-    lowered = {p.lower(): p for p in indexed}
+    service_yaml_req = ""
+    if port:
+        service_yaml_req = f"""
+- Include a Kubernetes Service resource:
+  - kind: Service
+  - type: ClusterIP (or LoadBalancer)
+  - port: {port}
+  - targetPort: {port}
+"""
 
-    failing = [c for c in checks if not c.passed]
-    if selected_check_ids is not None:
-        wanted = set(selected_check_ids)
-        failing = [c for c in failing if c.id in wanted]
+    return f"""You are generating production Kubernetes manifests for ForgeOps.
 
-    # Group by the artifact that would fix them, so one instruction covers every fault in one file.
-    by_artifact: dict[str, list[ReadinessCheck]] = {}
-    unaddressable: list[str] = []
-    for check in sorted(failing, key=lambda c: c.id):
-        explanation = CHECK_EXPLANATIONS.get(check.id)
-        if explanation is None or not explanation.artifact or not check.generatable:
-            reason = check.blocked_because or "no generated artifact addresses this check"
-            unaddressable.append(f"{check.id}: {reason}")
-            continue
-        if explanation.artifact == "opentofu" or check.id.startswith("iac_"):
-            unaddressable.append(f"{check.id}: infrastructure-as-code state management is out of scope for container deployment generation")
-            continue
-        by_artifact.setdefault(explanation.artifact, []).append(check)
+BLUEPRINT SPECIFICATION:
+- Image: {image_name}
+- Workload Type: {bp.workload_type.value}
+- Listen Port: {port or "None"}
+- Health Check Path: {bp.network.health_check_path or "/health"}
 
-    instructions: list[ArtifactInstruction] = []
-    for artifact in sorted(by_artifact):
-        group = by_artifact[artifact]
-        # The path comes from the check's own remedy_path, which is the table's statement of where this
-        # ecosystem puts the file. A path containing a parenthetical is a convention rather than a
-        # location and is resolved against the repository instead of used literally.
-        languages = [str(v) for v in (inventory.get("languages") or [])]
-        resolved = [
-            path
-            for c in group
-            if (path := _resolve_target(artifact, c.remedy_path, languages, project_slug, indexed=indexed))
-        ]
-        target = resolved[0] if resolved else ""
-        if not target:
-            # No concrete path could be derived, so no instruction is written. The failing checks are
-            # reported as unaddressable with their reason rather than being silently dropped.
-            unaddressable.extend(
-                f"{c.id}: the file that would fix this has no location this scan can determine "
-                f"(convention: {c.remedy_path or 'none stated'})"
-                for c in group
-            )
-            continue
-
-        existing = lowered.get(target.lower())
-        body = contents.get(target.lower(), "") or contents.get(target, "")
-        action = "modify" if existing else "create"
-
-        faults = tuple(
-            f"{c.found}{f' (line {c.line})' if c.line is not None else ''} — required: {c.looked_for}" for c in group
-        )
-        # THE BLOCKING RULES BESIDE THE FILE THEY GOVERN, not only in section 3.
-        #
-        # They were listed once, further down, under a heading about how files are checked. A 1.5b model
-        # given a 9,500-character instruction failed the SAME requirement on all three attempts — the
-        # Dockerfile's `USER` line — so the file was withheld every time and the user's most important
-        # recommendation went unaddressed. Attention falls off with distance from the point of writing, so
-        # the rule now sits directly under the path it applies to as well.
-        #
-        # Duplicated deliberately: repetition in a prompt is cheap, and a rule the model misses is not.
-        faults = faults + GATE_REQUIREMENTS.get(artifact, ())
-        quoted, line_count = _quote(target, body) if body else ("", 0)
-        instructions.append(
-            ArtifactInstruction(
-                path=existing or target,
-                action=action,
-                artifact=artifact,
-                satisfies=tuple(c.id for c in group),
-                faults=faults,
-                current_content=quoted,
-                current_line_count=line_count,
-                # BOTH SOURCES. `_preserve_notes` protects what is visibly structural - comment
-                # blocks, named build stages. `properties_to_preserve` protects what the readiness
-                # score measures, which is what the reported regression actually dropped.
-                preserve=((*_preserve_notes(body), *properties_to_preserve(path, body)) if body else ()),
-                validator=ARTIFACT_VALIDATORS.get(artifact, ""),
-                companions=(
-                    tuple(c for c in ARTIFACT_COMPANIONS.get(artifact, ()) if c.lower() not in lowered)
-                    if include_companions
-                    else ()
-                ),
-                weight=sum(CATEGORY_WEIGHTS.get(c.category, 0) + c.max_points for c in group),
-            )
-        )
-
-    # Heaviest first, so a budget cut drops the least valuable work rather than an arbitrary tail.
-    instructions.sort(key=lambda i: (-i.weight, i.path))
-
-    devops_paths = sorted(
-        p
-        for p in indexed
-        if any(
-            marker in p.lower()
-            for marker in (
-                "dockerfile",
-                "docker-compose",
-                ".github/workflows/",
-                "k8s/",
-                "kubernetes/",
-                "chart.yaml",
-                ".tf",
-                ".dockerignore",
-            )
-        )
-    )
-
-    header = [
-        "# GENERATION INSTRUCTION",
-        "",
-        "You are producing DevOps configuration for one specific repository. Everything you need is",
-        "stated below. Produce only the files listed in section 2, at exactly the paths given.",
-        "",
-    ]
-
-    kept: list[ArtifactInstruction] = []
-    deferred: list[ArtifactInstruction] = []
-
-    def render(selected: Sequence[ArtifactInstruction]) -> str:
-        body_lines = list(header)
-        body_lines += _facts_section(paths=paths, inventory=inventory, devops_paths=devops_paths)
-        body_lines += ["", "## 2. WHAT TO PRODUCE", ""]
-        if not selected:
-            body_lines.append(
-                "Nothing. No failing check in this report can be satisfied by a file this generator "
-                "produces, and section 5 says which and why."
-            )
-        for number, item in enumerate(selected, start=1):
-            body_lines.append(f"### 2.{number} {item.action.upper()} `{item.path}`")
-            body_lines.append("")
-            if item.action == "create":
-                body_lines.append(f"This file does not exist in the repository. Create it at exactly `{item.path}`.")
-            else:
-                body_lines.append(
-                    f"This file EXISTS, at {item.current_line_count} line(s). MODIFY it — do not replace "
-                    "it and do not regenerate it from scratch. What is wrong with it:"
-                )
-                for fault in item.faults:
-                    body_lines.append(f"  - {fault}")
-                if item.preserve:
-                    body_lines.append("")
-                    body_lines.append("You must preserve, unchanged:")
-                    for note in item.preserve:
-                        body_lines.append(f"  - {note}")
-                if item.current_content:
-                    body_lines.append("")
-                    body_lines.append("Its current content, with line numbers:")
-                    body_lines.append("")
-                    body_lines.append(item.current_content)
-            if item.action == "create" and item.faults:
-                body_lines.append("")
-                body_lines.append("It must satisfy:")
-                for fault in item.faults:
-                    body_lines.append(f"  - {fault}")
-            if item.companions:
-                body_lines.append("")
-                body_lines.append(
-                    "Write these alongside it, in the same answer and each with its own marker — this file "
-                    "does not work without them:"
-                )
-                for companion in item.companions:
-                    body_lines.append(f"  - `{companion}`")
-                body_lines.append("")
-                body_lines.append(
-                    "A Deployment with no Service is reachable by nothing: it applies cleanly, reports "
-                    "healthy and serves no traffic. The Service must select the Deployment's pod labels, "
-                    "and the Ingress must name the Service and its port."
-                )
-            body_lines.append("")
-        body_lines += ["## 3. HOW EACH FILE WILL BE CHECKED", ""]
-        body_lines.append(
-            "Your output is not accepted on inspection. Each file is run through a validator and then "
-            "re-scored by the readiness checks named above. Write for these:"
-        )
-        body_lines.append("")
-        for item in selected:
-            criterion = item.validator or (
-                "no executable validator exists for this kind; the readiness checks above are the whole criterion"
-            )
-            body_lines.append(f"  - `{item.path}`: {criterion}")
-
-        # THE BLOCKING RULES, STATED AS RULES. Section 2 explains the FAULT; this states the REQUIREMENT.
-        # A small model given "declares no USER, so the image runs as root" produced a Dockerfile that the
-        # gate rejected for exactly that fault, so the file was withheld and the user's most important
-        # recommendation went unaddressed. The prompt this replaced said "contains a line that is exactly
-        # `USER 1001`" and its output passed. An explanation is for a human; a rule is for a checker.
-        mechanical = [
-            (item.path, GATE_REQUIREMENTS[item.artifact]) for item in selected if item.artifact in GATE_REQUIREMENTS
-        ]
-        if mechanical:
-            body_lines += [
-                "",
-                "These are checked mechanically and are not matters of judgement. A file that breaks one",
-                "is discarded in full, so satisfy them literally:",
-                "",
-            ]
-            # The language-resolved base image, appended to the Dockerfile's own rules so it sits with
-            # the pinning requirement it makes concrete rather than in a distant facts section.
-            base_image = ""
-            for name in (str(v).lower() for v in (inventory.get("languages") or [])):
-                if name in BASE_IMAGE_BY_LANGUAGE:
-                    base_image = BASE_IMAGE_BY_LANGUAGE[name]
-                    break
-            for path, rules in mechanical:
-                body_lines.append(f"`{path}`:")
-                for rule in rules:
-                    body_lines.append(f"  - {rule}")
-                if base_image and path.endswith("Dockerfile"):
-                    body_lines.append(
-                        f"  - Use `{base_image}` as the base image for every stage, written exactly "
-                        f"like that. It is pinned and it matches this repository's language. Do not "
-                        f"substitute another language's image."
-                    )
-                body_lines.append("")
-        body_lines += ["", *_prohibitions()]
-        if unaddressable:
-            body_lines += [
-                "",
-                "## 5. FAILING CHECKS THIS RUN CANNOT ADDRESS",
-                "",
-                "Listed so nothing here looks like an oversight. Do not attempt these.",
-                "",
-            ]
-            body_lines += [f"  - {entry}" for entry in unaddressable]
-
-        # THE SECTION WITHOUT WHICH NOTHING ELSE MATTERS, and it was missing.
-        #
-        # Every section above describes WHAT to write. None described HOW to format the answer, and
-        # `parse_artifacts` reads exactly one shape: `### FILE: <path>` followed by a fenced block. So the
-        # model complied with everything it was told, returned plausible artifacts with zero markers, the
-        # parse found nothing, all attempts were recorded as failures and the run served canned templates.
-        # Measured back to back on one service and one model: `accepted` with four files without a compiled
-        # prompt, `template_fallback` with one.
-        #
-        # Shared with `build_generation_prompt` rather than restated, so the contract and its parser cannot
-        # drift apart again. It goes LAST because it is the instruction the model should still have in view
-        # when it starts emitting.
-        # Companions included, and in the same order the instructions were given, so the format block
-        # and section 2 name the same set. A path shown in one and not the other is a path the model
-        # will either skip or invent a location for.
-        ordered: list[str] = []
-        for i in selected:
-            ordered.append(i.path)
-            ordered.extend(i.companions)
-        body_lines += output_format_section(ordered)
-        return "\n".join(body_lines) + "\n"
-
-    def _write_target_count(groups: list) -> int:  # noqa: ANN001 - the local Instruction type
-        """The number of FILES these sections ask the model to produce.
-
-        Derived by the SAME expression `CompiledPrompt.write_targets` uses, so the bound and the reported
-        targets cannot drift apart -- which is the drift that made a cap of 6 mean 8.
-        """
-        return len({i.path for i in groups} | {c for i in groups for c in i.companions})
-
-    kept = list(instructions)
-    text = render(kept)
-    strategy = "the whole instruction fits the tier's context budget; nothing was deferred"
-    budget_chars = token_budget * CHARS_PER_TOKEN_ESTIMATE
-
-    # A COUNT CAP AS WELL AS A TOKEN CAP, because they bound different things and only one of them was
-    # bounded. `token_budget` limits the INSTRUCTION; nothing limited the ANSWER.
-    #
-    # THE FAILURE THIS FIXES, MEASURED. Deriving the write targets from the failing checks let one run ask
-    # for eleven artifacts. The end-to-end journey's model is `qwen2.5-coder:1.5b`, and a 1.5-billion
-    # parameter model cannot emit eleven complete, valid files in one response — it produced a few,
-    # malformed, none passed the gate, and the run fell back to templates. The user got nothing for eight
-    # minutes of compute. On a capable model the same prompt succeeds, which is why this was invisible
-    # until the journey ran it.
-    #
-    # SIX IS NOT ARBITRARY. The contract this replaced asked for four (a Dockerfile and three manifests)
-    # and that was demonstrably within this model's reach; six gives headroom for the checks a user
-    # actually selected while staying inside a small model's single-response capacity.
-    #
-    # DEFERRING IS NOT LOSING. The remainder goes to `deferred_checks`, which the run records and the UI
-    # names, so the user is told precisely which recommendations this run did not attempt and can run
-    # generation again for them. Six artifacts delivered beats eleven requested and none delivered.
-    # COUNTED IN FILES, NOT IN SECTIONS, and that distinction was a real defect rather than a nicety.
-    #
-    # `len(kept)` counts INSTRUCTION GROUPS, and a group carries companions: the Deployment group also
-    # names a Service and an Ingress, because the parser only accepts a path it was told to expect. So the
-    # cap bounded the wrong quantity. MEASURED, before the fix: `max_write_targets=6` produced EIGHT write
-    # targets and `8` produced TEN. The bound was silently 30-40% loose in exactly the direction that
-    # matters -- towards asking a small model for more files than it can complete.
-    #
-    # Every reason this cap exists is written in terms of FILES: eleven artifacts requested, a 1.5b model
-    # unable to emit eleven complete valid files, four demonstrably within reach. A cap named
-    # `max_write_targets` that does not bound write targets fails its own stated purpose, so the count is
-    # corrected to match the name rather than the name loosened to match the count.
-    #
-    # ONE GROUP ALWAYS SURVIVES. A single group can exceed the cap by itself -- the k8s group is three
-    # files against a cap of two -- and popping it would leave an empty instruction, which is worse than
-    # an over-budget one: the run would deliver nothing at all. Delivering one group and SAYING it
-    # exceeded the cap keeps the run useful and the report honest.
-    while len(kept) > 1 and _write_target_count(kept) > max_write_targets:
-        deferred.insert(0, kept.pop())
-        strategy = (
-            f"the run asked for more than {max_write_targets} artifacts, so "
-            f"{len(deferred)} instruction section(s) covering "
-            f"{_write_target_count(deferred)} file(s) were deferred to a later run, lowest weight "
-            "first. A model asked for more files than it can complete in one answer returns none of "
-            "them usable."
-        )
-        text = render(kept)
-
-    # The cap can still be exceeded by the one group that must survive, and the strategy must SAY so
-    # rather than report a bound it did not achieve. A run that quietly claims six and asks for eight is
-    # how the original defect stayed invisible.
-    if _write_target_count(kept) > max_write_targets:
-        strategy = (
-            f"one instruction section asks for {_write_target_count(kept)} files, which exceeds the "
-            f"{max_write_targets}-artifact cap on its own. It was kept rather than deferred, because "
-            "deferring it would leave the run with no instruction at all."
-        )
-
-    # WHOLE SECTIONS, LOWEST WEIGHT FIRST, and never a partial one. A truncated instruction is acted on
-    # by the model as though it were complete, so it is strictly more dangerous than a missing one.
-    while kept and len(text) > budget_chars:
-        deferred.insert(0, kept.pop())
-        text = render(kept)
-        strategy = (
-            f"the instruction exceeded the {token_budget}-token budget, so "
-            f"{len(deferred)} artifact section(s) were deferred to a later run, lowest weight first. "
-            "Nothing was truncated: a cut instruction is acted on as though it were whole."
-        )
-
-    return CompiledPrompt(
-        text=text,
-        referenced_paths=tuple(sorted({i.path for i in kept if i.action == "modify"} | set(devops_paths))),
-        # Companions are write targets too: the parser only accepts a path it was told to expect, so a
-        # Service the model was asked for and this list omitted would be produced and then dropped.
-        write_targets=tuple(sorted({i.path for i in kept} | {c for i in kept for c in i.companions})),
-        addressed_checks=tuple(sorted(cid for i in kept for cid in i.satisfies)),
-        deferred_checks=tuple(sorted(cid for i in deferred for cid in i.satisfies)),
-        unaddressable=tuple(unaddressable),
-        token_estimate=len(text) // CHARS_PER_TOKEN_ESTIMATE,
-        token_budget=token_budget,
-        budget_strategy=strategy,
-    )
+STRICT REQUIREMENTS:
+1. Generate a Deployment resource with label selector 'app: {app_label}'.
+2. Set container port to {port or 8080}.
+{service_yaml_req}
+3. If web service, configure livenessProbe and readinessProbe targeting {bp.network.health_check_path or "/"} on port {port or 8080}.
+4. Output valid Kubernetes YAML separated by '---' without markdown code blocks.
+"""
