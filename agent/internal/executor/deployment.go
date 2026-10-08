@@ -376,20 +376,131 @@ func isDockerfile(path string) bool {
 	return base == "dockerfile" || strings.HasPrefix(base, "dockerfile.") || strings.HasSuffix(base, ".dockerfile")
 }
 
+// servedPort returns the TCP port the application ACTUALLY listens on.
+//
+// AUTHORITY ORDER, and it is the opposite of what this used to do. `detectExposePort` read `EXPOSE`
+// and nothing else, and `EXPOSE` is the least reliable statement in a Dockerfile: it is documentation
+// that no runtime reads, so it drifts from the process silently. A real deployment exposed exactly
+// that — a generated Dockerfile declaring `EXPOSE 8080`, setting `ENV PORT=3000`, and starting
+// `serve ... -l tcp://0.0.0.0:3000`. The platform published 8080, the app listened on 3000, and the
+// browser got `ERR_EMPTY_RESPONSE` from a container ForgeOps had just reported healthy.
+//
+// So the order is by what the process does, most specific first:
+//
+//  1. the START COMMAND — `--port N`, `-p N`, or the port in a `host:port` listen address. This is
+//     what the container actually runs, so it wins over every declaration.
+//  2. `ENV PORT=N` / `LISTEN_PORT` / `APP_PORT` — what the app is configured to bind, when the start
+//     command defers to the environment.
+//  3. `EXPOSE N` — a declaration, consulted only when nothing above stated a port.
+//  4. the profile's default — the language's conventional port.
+//
+// A port found in a later layer is returned only if no earlier layer stated one, so a Dockerfile that
+// contradicts itself resolves to the port the process will really use rather than to whichever line
+// came first.
+func servedPort(dockerfile string, profile *ProjectProfile) int {
+	if p := portFromStartCommand(dockerfile); p > 0 {
+		return p
+	}
+	if p := portFromEnv(dockerfile); p > 0 {
+		return p
+	}
+	if p := portFromExpose(dockerfile); p > 0 {
+		return p
+	}
+	if profile != nil && profile.DefaultPort > 0 {
+		return profile.DefaultPort
+	}
+	return 3000
+}
+
+// portFromStartCommand reads the listen port out of CMD/ENTRYPOINT.
+func portFromStartCommand(dockerfile string) int {
+	for _, line := range strings.Split(dockerfile, "\n") {
+		trimmed := strings.TrimSpace(line)
+		upper := strings.ToUpper(trimmed)
+		if !strings.HasPrefix(upper, "CMD ") && !strings.HasPrefix(upper, "ENTRYPOINT ") {
+			continue
+		}
+		if p := firstPortIn(trimmed); p > 0 {
+			return p
+		}
+	}
+	return 0
+}
+
+// portFromEnv reads the listen port out of an ENV instruction.
+//
+// Only the well-known names are accepted. Scanning an ENV line for ANY number would pick up a version
+// or a timeout — the same class of mistake as reading a port out of prose.
+func portFromEnv(dockerfile string) int {
+	for _, line := range strings.Split(dockerfile, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToUpper(trimmed), "ENV ") {
+			continue
+		}
+		for _, name := range []string{"PORT", "LISTEN_PORT", "APP_PORT", "HTTP_PORT", "SERVER_PORT"} {
+			re := regexp.MustCompile(`(?i)(?:^|\s)` + name + `=["']?(\d{1,5})`)
+			if m := re.FindStringSubmatch(trimmed); len(m) > 1 {
+				if p := atoiPort(m[1]); p > 0 {
+					return p
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// portFromExpose reads the first port out of an EXPOSE instruction.
+func portFromExpose(dockerfile string) int {
+	re := regexp.MustCompile(`(?im)^\s*EXPOSE\s+(\d{1,5})`)
+	if m := re.FindStringSubmatch(dockerfile); len(m) > 1 {
+		return atoiPort(m[1])
+	}
+	return 0
+}
+
+// firstPortIn extracts a listen port from a command line.
+//
+// It looks for an explicit flag first (`--port 3000`, `-p 3000`, `--port=3000`) and then for a port in
+// a listen ADDRESS (`tcp://0.0.0.0:3000`, `0.0.0.0:8080`). A bare number is not accepted: a CMD is
+// full of numbers that are not ports — Node heap sizes, timeouts, replica counts — and treating the
+// first one as a port is how a container ends up published on a number it never binds.
+func firstPortIn(command string) int {
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)--(?:port|listen-port|http-port)[= ]+(\d{1,5})\b`),
+		regexp.MustCompile(`(?i)(?:^|\s)-p[= ]+(\d{1,5})\b`),
+		regexp.MustCompile(`(?i)(?:tcp|http)://[^:"'\s]*:(\d{1,5})\b`),
+		regexp.MustCompile(`(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})\b`),
+	} {
+		if m := re.FindStringSubmatch(command); len(m) > 1 {
+			if p := atoiPort(m[1]); p > 0 {
+				return p
+			}
+		}
+	}
+	return 0
+}
+
+// atoiPort parses a port and rejects anything outside the usable range, so a matched number that is
+// obviously not a port cannot be returned as one.
+func atoiPort(raw string) int {
+	var p int
+	if _, err := fmt.Sscanf(raw, "%d", &p); err != nil {
+		return 0
+	}
+	if p < 1 || p > 65535 {
+		return 0
+	}
+	return p
+}
+
 func detectExposePort(dockerfilePath string) int {
 	content, err := os.ReadFile(dockerfilePath)
 	if err != nil {
 		return 3000
 	}
-	re := regexp.MustCompile(`(?i)^\s*EXPOSE\s+(\d+)`)
-	for _, line := range strings.Split(string(content), "\n") {
-		m := re.FindStringSubmatch(line)
-		if len(m) > 1 {
-			var p int
-			if _, err := fmt.Sscanf(m[1], "%d", &p); err == nil && p > 0 {
-				return p
-			}
-		}
+	if p := servedPort(string(content), nil); p > 0 {
+		return p
 	}
 	return 3000
 }
@@ -962,9 +1073,18 @@ func ensureBuildableArtifacts(baseDir string, sink ProgressSink) (*ProjectProfil
 
 	// A repository with a Dockerfile but no compose file still needs a deployment unit. Compose is the
 	// local deployment method the compose executor understands, so synthesise the minimal stack.
+	//
+	// THE PORT COMES FROM THE DOCKERFILE, NOT FROM THE PROFILE'S DEFAULT.
+	//
+	// A generated Dockerfile states its own port in `ENV PORT` and in its CMD, and that is what the
+	// process binds. The profile default is only the language's convention, which the Dockerfile may
+	// override — and publishing the convention while the app binds something else produces a container
+	// that is healthy, mapped, and answers nothing: `ERR_EMPTY_RESPONSE` from a service ForgeOps has
+	// just reported ready. `servedPort` reads the Dockerfile in the order that reflects what actually
+	// runs (start command, then ENV, then EXPOSE), so the published port matches the bound one.
 	port := profile.DefaultPort
-	if port <= 0 {
-		port = detectExposePort(dockerfilePath)
+	if raw, err := os.ReadFile(dockerfilePath); err == nil {
+		port = servedPort(string(raw), profile)
 	}
 	composeContent := fmt.Sprintf("services:\n  app:\n    build:\n      context: .\n      dockerfile: Dockerfile\n    ports:\n      - \"%d:%d\"\n    restart: unless-stopped\n",
 		port, port)

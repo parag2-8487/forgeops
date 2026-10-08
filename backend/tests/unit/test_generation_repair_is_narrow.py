@@ -325,7 +325,14 @@ class TestTheDeliveredOrderIsThePlansOrder:
 
         delivered = [artifact.path for artifact in outcome.files]
         expected = [path for path in compiled.write_targets if path in set(delivered)]
-        assert delivered == expected, f"delivered {delivered}, but the plan asked in the order {expected}"
+        # The plan's targets keep the plan's order. A compose file is always delivered and is APPENDED
+        # after them, because it is not a plan target — it is a floor this code adds so the deployment
+        # path always has a stack to run. Asserting the full list against the plan would fail on that
+        # file for a reason unrelated to ordering.
+        plan_part = [p for p in delivered if p in set(compiled.write_targets)]
+        assert plan_part == expected, f"delivered {delivered}, but the plan asked in the order {expected}"
+        # And everything the plan did not name sorts after it, rather than being interleaved.
+        assert delivered == plan_part + [p for p in delivered if p not in set(compiled.write_targets)]
 
     async def test_a_repair_does_not_move_the_repaired_artifact(self) -> None:
         """The specific regression a repair introduces: the fixed file landing last."""

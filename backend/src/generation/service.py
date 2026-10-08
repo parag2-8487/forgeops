@@ -738,6 +738,7 @@ class GenerationService:
             merged = dict(carried)
             for path, content in parsed.items():
                 merged[path] = GeneratedFile(path=path, content=content)
+
             files = tuple(merged.values())
             passed, gate_findings = self._validate(files, existing)
             yield format_event(
@@ -936,6 +937,32 @@ class GenerationService:
                     key=lambda f: (delivery_order.get(f.path, len(delivery_order)), f.path),
                 )
             )
+
+            # A COMPOSE FILE IS ALWAYS DELIVERED, and it is added HERE — after the gate, before delivery.
+            #
+            # The agent deploys a local stack through Compose: `ensureBuildableArtifacts` synthesises one
+            # when a repository has none. A run that omits the file therefore does not fail; it produces a
+            # project whose stack is whatever the agent inferred — its port, its service name, its
+            # environment — instead of the ones this run already computed. Adding it here means the
+            # compose file agrees with the Dockerfile delivered beside it, because both come from the same
+            # derivation.
+            #
+            # AFTER THE GATE, deliberately. Folding it in before `_validate` would let a file this code
+            # generated change the verdict on files the model produced: an attempt whose artifacts the
+            # gate rejected could be recorded as accepted on the strength of a file the model never
+            # wrote. That is the difference between completing a shortfall and hiding one, and
+            # `test_the_template_is_still_reached_when_no_artifact_passes` asserts it.
+            #
+            # APPENDED, so it cannot disturb the plan's order. The plan's write targets are the sequence
+            # a reviewer sees and the one repairs are keyed by; inserting a file this code generated
+            # among them would make the delivered order disagree with the compiled order for no gain.
+            # The model's own compose file still wins when it produced a usable one — this is a floor,
+            # not a requirement, and requiring it would discard a whole attempt over one optional file.
+            if not any(f.path == "docker-compose.yml" for f in files):
+                for rendered in self._render(prompt, project):
+                    if rendered.path == "docker-compose.yml":
+                        files = (*files, rendered)
+                        break
 
             if outcome is not None:
                 outcome.files = list(files)

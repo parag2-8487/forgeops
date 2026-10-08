@@ -261,7 +261,17 @@ class TestAGenuineModelCallRecordsProvider:
         outcome, _, _ = await _run(_service(lambda r: httpx.Response(200, content=_sse_for(GOOD_OUTPUT))))
         by_path = {f.path: f.content for f in outcome.files}
 
-        assert sorted(by_path) == ["Dockerfile", "k8s/deployment.yaml", "k8s/ingress.yaml", "k8s/service.yaml"]
+        # The four the model was asked for are its bytes. A compose file is additionally always
+        # delivered — see the note where it is added, after the gate — so the set is the model's
+        # artifacts plus that one, and asserting the model's EXACT set would now fail for a reason
+        # that has nothing to do with what this test is about.
+        assert sorted(by_path) == [
+            "Dockerfile",
+            "docker-compose.yml",
+            "k8s/deployment.yaml",
+            "k8s/ingress.yaml",
+            "k8s/service.yaml",
+        ]
         # `RUN pip install ... requirements.txt` on its own line and `COPY . .` are the fixture's
         # wording; `service.py::_render`'s Dockerfile has neither in this arrangement.
         # A discriminator the template CANNOT produce. The Dockerfile line this used to assert on is
