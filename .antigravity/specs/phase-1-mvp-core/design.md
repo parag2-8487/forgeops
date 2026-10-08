@@ -5296,6 +5296,8 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `device-not-found` | 404 | Revocation named a device id that does not exist (**D-71**) | Admin-only route, so a 404 discloses nothing a caller could not already read; §4.2's enumeration rule constrains the `forbidden` body |
 | `device-revoked` | 401 | Device token or certificate revoked | Names the revocation time, not the actor |
 | `device-not-connected` | 409 | No active agent session for the project | Suggests pairing or starting the agent |
+| `agent-timeout` | 504 | The agent did not answer a read inside its operation timeout | Names the operation and the timeout. Reported rather than answered with an empty inventory, because "the agent said nothing" and "the host holds nothing" need different responses |
+| `agent-error` | 502 | The agent answered, and its answer reported a failed operation | Carries the agent's own error text; an agent that ran and failed is not the same as one that never ran |
 | `envelope-signature-invalid` | 401 | HMAC mismatch (JSON-RPC `agent.error` counterpart) | Never includes the expected signature |
 | `envelope-replayed` | 409 | Duplicate nonce or non-increasing `seq` | States which condition, not the counter value |
 | `envelope-expired` | 401 | Outside `not_after` ± skew | Includes the tolerated skew so a clock problem is diagnosable |
