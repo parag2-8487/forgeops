@@ -115,6 +115,15 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "Install with the package manager this repository's lockfile names, using that manager's own "
         "install command. Do not invent flags it does not have, and never run an install command whose "
         "lockfile is absent from section 1.",
+        # STATED AS A RULE because a mismatch here is invisible to every other requirement, and one
+        # reached a user: `EXPOSE 8080` against a CMD binding 3000 shipped, deployed, and reported
+        # healthy — the healthcheck probes inside the container, so it passed — while the browser got
+        # an empty response from the published port nothing was listening on.
+        "EVERY PORT IN THE FILE IS THE SAME NUMBER. The port in `EXPOSE`, the port the CMD or "
+        "ENTRYPOINT binds, the port `ENV PORT` sets, and the port the HEALTHCHECK probes must all be "
+        "identical. `EXPOSE` is a declaration no runtime reads, so a different number there does not "
+        "move the listener — it only misdirects whatever publishes the port, and the result is a "
+        "container that reports healthy and answers nothing.",
         "There is a `HEALTHCHECK` instruction. Write it as a single line beginning `HEALTHCHECK ` with "
         "`--interval`, `--timeout` and `--retries` options and a `CMD` that exercises the service's own "
         "health endpoint. A comment mentioning health does not count; the instruction must be present.",
@@ -143,7 +152,7 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "No service uses the `latest` tag or omits its tag.",
         "Services define explicit `container_name` using the project name prefix to keep project containers grouped "
         "cleanly on the Docker host.",
-        "Services define port mappings (for example: `\"<port>:<port>\"`) to expose the application to localhost so "
+        'Services define port mappings (for example: `"<port>:<port>"`) to expose the application to localhost so '
         "the service is directly testable and accessible.",
         "Set service build context to `.` when project files and Dockerfile are at repository root. Do NOT invent "
         "subdirectories like `build: ./frontent` or `build: ./backend`.",

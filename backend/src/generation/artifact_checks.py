@@ -106,15 +106,102 @@ def validate_dockerfile(content: str) -> list[str]:
                 "Use absolute path from builder WORKDIR (e.g. '/app/dist') to avoid '/dist: not found' build failures."
             )
         if "--frozen-lockfile" in stripped and "npm" in stripped:
-            findings.append(
-                "Dockerfile uses invalid flag '--frozen-lockfile' with npm. Use 'npm ci' or 'npm install'."
-            )
+            findings.append("Dockerfile uses invalid flag '--frozen-lockfile' with npm. Use 'npm ci' or 'npm install'.")
         if "frontent" in stripped.lower():
             findings.append(
                 "Dockerfile references hallucinated/typoed directory 'frontent'. Copy files directly from root: "
                 "`COPY package*.json ./`."
             )
+    findings.extend(_port_disagreements(content))
     return findings
+
+
+#: A listen port in a start command: an explicit flag, or the port of a `host:port` listen address.
+#:
+#: A BARE NUMBER IS NOT ACCEPTED. A CMD is full of numbers that are not ports — heap sizes, timeouts,
+#: worker counts — and treating the first one as a port is how a container ends up published on a
+#: number it never binds, which is the defect this whole check exists to catch.
+_CMD_PORT_PATTERNS: Final = (
+    re.compile(r"--(?:port|listen-port|http-port)[= ]+(\d{1,5})\b", re.IGNORECASE),
+    re.compile(r"(?:^|\s)-p[= ]+(\d{1,5})\b", re.IGNORECASE),
+    re.compile(r"(?:tcp|http)://[^:\"'\s]*:(\d{1,5})\b", re.IGNORECASE),
+    re.compile(r"(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})\b"),
+)
+
+_EXPOSE = re.compile(r"^\s*EXPOSE\s+(.+?)\s*$", re.IGNORECASE)
+_ENV_PORT = re.compile(r"(?:^|\s)(?:PORT|LISTEN_PORT|APP_PORT|HTTP_PORT|SERVER_PORT)=[\"']?(\d{1,5})", re.IGNORECASE)
+
+
+def _port_disagreements(content: str) -> list[str]:
+    """Reject a Dockerfile that states two different ports for the same service.
+
+    THE DEFECT THIS PREVENTS, and it reached a user. A generated Dockerfile declared `EXPOSE 8080`
+    while its start command bound 3000 and its `ENV PORT` said 3000. Nothing compared the two, so the
+    file shipped. The deployment then published the port `EXPOSE` named, the process listened on the
+    port the CMD named, and a browser got `ERR_EMPTY_RESPONSE` from a container that was genuinely
+    healthy — the healthcheck runs inside and probed the right port, so it passed, and every status
+    the platform reported was true. A port mismatch is invisible to every check that looks at one
+    line at a time, which is why this one looks at the file as a whole.
+
+    `EXPOSE` is the line reported as wrong, deliberately. The start command is what DETERMINES the
+    port: it is the process's own argument. `EXPOSE` is a declaration no runtime reads, so when they
+    disagree it is the declaration that is mistaken, and naming it tells the model which line to
+    change rather than leaving it to pick.
+
+    A Dockerfile with no `EXPOSE`, or whose CMD states no port, produces no finding. Both are legal
+    and neither is a contradiction — this checks for DISAGREEMENT, not for completeness.
+    """
+    exposed: list[int] = []
+    cmd_ports: set[int] = set()
+    env_ports: set[int] = set()
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        found = _EXPOSE.match(stripped)
+        if found:
+            for token in found.group(1).split():
+                # `EXPOSE 8080/tcp` is legal; the protocol is not part of the number.
+                number = token.split("/", 1)[0]
+                if number.isdigit() and 1 <= int(number) <= 65535:
+                    exposed.append(int(number))
+            continue
+
+        upper = stripped.upper()
+        if upper.startswith("CMD ") or upper.startswith("ENTRYPOINT "):
+            for pattern in _CMD_PORT_PATTERNS:
+                match = pattern.search(stripped)
+                if match and 1 <= int(match.group(1)) <= 65535:
+                    cmd_ports.add(int(match.group(1)))
+                    break
+        elif upper.startswith("ENV "):
+            for match in _ENV_PORT.finditer(stripped):
+                if 1 <= int(match.group(1)) <= 65535:
+                    env_ports.add(int(match.group(1)))
+
+    if not exposed:
+        return []
+
+    # The start command is the authority. `ENV PORT` is consulted only when the command states no port
+    # of its own, because a program may read the variable or ignore it, whereas a flag it was launched
+    # with is not in doubt.
+    bound = cmd_ports or env_ports
+    if not bound:
+        return []
+
+    if set(exposed) & bound:
+        return []
+
+    bound_list = ", ".join(str(port) for port in sorted(bound))
+    source = "its start command" if cmd_ports else "its ENV PORT"
+    return [
+        f"Dockerfile declares EXPOSE {exposed[0]} but {source} binds {bound_list}. "
+        f"A published port that nothing listens on accepts the connection and closes it, which reaches "
+        f"a browser as an empty response from a container that reports healthy. Change EXPOSE to "
+        f"{sorted(bound)[0]}, or bind the port EXPOSE names."
+    ]
 
 
 def validate_kubernetes(content: str) -> list[str]:

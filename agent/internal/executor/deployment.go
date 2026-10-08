@@ -376,6 +376,97 @@ func isDockerfile(path string) bool {
 	return base == "dockerfile" || strings.HasPrefix(base, "dockerfile.") || strings.HasSuffix(base, ".dockerfile")
 }
 
+// reconcileDockerfilePort rewrites every port DECLARATION to the port the process actually binds.
+//
+// Only `EXPOSE` is rewritten, and that is the point: `EXPOSE` is a declaration that no runtime reads,
+// so it is the one safe to correct. The CMD and the HEALTHCHECK are left exactly as they are — they
+// are what DETERMINES the port, and rewriting them would be this function deciding where the
+// application should listen rather than recording where it does.
+//
+// `ENV PORT` is also left alone. An application reads it at runtime and may bind it, so changing it
+// could move the listener; `servedPort` already treats it as authority above `EXPOSE` for that
+// reason. When `ENV PORT` and the start command disagree the start command wins, because the flag is
+// explicit and the environment variable is only a default the program may ignore.
+//
+// A Dockerfile with no `EXPOSE` gains one. An image that declares no port is legal, but the
+// declaration is what a reader and `docker ps` consult, and omitting it on a service that listens is
+// a gap rather than a decision.
+func reconcileDockerfilePort(dockerfile string, port int) string {
+	if port <= 0 {
+		return dockerfile
+	}
+
+	lines := strings.Split(dockerfile, "\n")
+	reExpose := regexp.MustCompile(`(?i)^(\s*)EXPOSE\s+(.+?)\s*$`)
+	found := false
+	lastInstruction := -1
+
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			lastInstruction = i
+		}
+		m := reExpose.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		found = true
+		// A multi-port EXPOSE is replaced by the one the process binds rather than filtered: the
+		// others were never listened on, and carrying them forward would keep the ambiguity this
+		// function exists to remove.
+		lines[i] = fmt.Sprintf("%sEXPOSE %d", m[1], port)
+	}
+
+	if found {
+		return strings.Join(lines, "\n")
+	}
+
+	// No EXPOSE at all. Insert before the final instruction rather than appending, so the
+	// declaration sits with the rest of the image's configuration instead of after its CMD.
+	declaration := fmt.Sprintf("EXPOSE %d", port)
+	if lastInstruction < 0 {
+		return strings.TrimRight(dockerfile, "\n") + "\n" + declaration + "\n"
+	}
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[:lastInstruction]...)
+	out = append(out, declaration)
+	out = append(out, lines[lastInstruction:]...)
+	return strings.Join(out, "\n")
+}
+
+// reconcileComposePort rewrites a compose `ports:` mapping so its CONTAINER side is the port the
+// process binds, keeping whatever host port the file already published.
+//
+// The host side is deliberately preserved. It is the address a person has bookmarked and the one the
+// UI links to; moving it would fix the connection by breaking the URL. Only the container side was
+// ever wrong — it is the half that has to match the listener.
+//
+// Returns the content unchanged when it cannot parse the mapping confidently. A compose file this
+// does not understand is left for a human rather than rewritten on a guess.
+func reconcileComposePort(compose string, port int) string {
+	if port <= 0 || compose == "" {
+		return compose
+	}
+
+	// `- "8080:8080"`, `- 8080:8080`, `- "127.0.0.1:8080:8080"`, with or without a trailing protocol.
+	//
+	// The trailing class is `[ \t]*` and NOT `\s*`: in Go's regexp `\s` includes `\n`, so with `(?m)`
+	// a greedy `\s*$` consumed the line's own newline and the replacement — which does not put one
+	// back — silently joined two lines together. Caught by the no-op test, which is the one case where
+	// the damage is visible as a diff on input that should not change at all.
+	re := regexp.MustCompile(`(?m)^(\s*-\s*"?)((?:[0-9.]+:)?)(\d{1,5}):(\d{1,5})("?(?:/(?:tcp|udp))?"?)[ \t]*$`)
+	return re.ReplaceAllStringFunc(compose, func(m string) string {
+		parts := re.FindStringSubmatch(m)
+		if len(parts) < 6 {
+			return m
+		}
+		host := atoiPort(parts[3])
+		if host <= 0 {
+			return m
+		}
+		return fmt.Sprintf("%s%s%d:%d%s", parts[1], parts[2], host, port, parts[5])
+	})
+}
+
 // servedPort returns the TCP port the application ACTUALLY listens on.
 //
 // AUTHORITY ORDER, and it is the opposite of what this used to do. `detectExposePort` read `EXPOSE`
@@ -1467,6 +1558,24 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 	}
 	content = strings.Join(newLines, "\n")
 
+	// EVERY PORT REFERENCE IS MADE TO AGREE, as the last step before the file is written.
+	//
+	// THE BUG THIS EXISTS TO PREVENT, observed on a real deployment. A model generated a Dockerfile
+	// with `EXPOSE 8080` and `CMD ["npm", "start"]`. The healing above correctly recognised a static
+	// SPA and rewrote the CMD to `serve -s dist -l tcp://0.0.0.0:3000` and the HEALTHCHECK to probe
+	// 3000 — and left `EXPOSE 8080` untouched, because nothing here had ever been responsible for it.
+	// The file now contradicted itself: four lines said 3000, one said 8080. Compose then published
+	// `8080:8080`, the process bound 3000, and the browser got `ERR_EMPTY_RESPONSE` from a container
+	// that was genuinely healthy — the healthcheck probed the right port, so it passed.
+	//
+	// The healer is what introduced the disagreement, so the healer is what has to resolve it. Any
+	// step that changes where the process listens must leave the file self-consistent, or it has
+	// traded one defect for a subtler one.
+	content = reconcileDockerfilePort(content, servedPort(content, profile))
+	// Kept so the compose sanitising below publishes the same port, rather than re-deriving it from a
+	// file it has already changed.
+	boundPort := servedPort(content, profile)
+
 	if content != original {
 		if err := os.WriteFile(dockerfilePath, []byte(content), 0644); err == nil {
 			sink.Progress(32, "deployment.apply_manifests", "auto-healed Dockerfile configuration (normalized case-sensitive paths, install commands, and entrypoint)")
@@ -1478,6 +1587,19 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 	if cRaw, cErr := os.ReadFile(composePath); cErr == nil {
 		cContent := string(cRaw)
 		cOriginal := cContent
+
+		// THE CONTAINER SIDE OF EVERY PUBLISHED PORT IS MADE TO MATCH THE LISTENER.
+		//
+		// This is the other half of the `ERR_EMPTY_RESPONSE` defect. The compose file published
+		// `8080:8080` against a process bound to 3000, so the host port forwarded to a container port
+		// nothing was listening on — Docker accepted the connection and closed it immediately, which
+		// is exactly what an empty response is. The deployment reported success truthfully: the
+		// container WAS healthy, because the healthcheck runs inside and probed the right port.
+		//
+		// The host side is preserved, so a bookmarked URL keeps working; only the container half was
+		// ever wrong.
+		cContent = reconcileComposePort(cContent, boundPort)
+
 		reVersion := regexp.MustCompile(`(?m)^version:\s*['"][^'"]+['"]\s*\n?`)
 		cContent = reVersion.ReplaceAllString(cContent, "")
 		if strings.Contains(cContent, "curl") || strings.Contains(cContent, "healthcheck") {

@@ -530,10 +530,7 @@ class GenerationService:
                     # produced two different sections with one number in the same prompt. `## 6` and
                     # `## 7` are the first headings the plan never claims.
                     model_prompt = (
-                        model_prompt
-                        + "\n## 6. OPERATOR REPAIR REQUEST & DEPLOYMENT ERROR\n\n"
-                        + prompt.strip()
-                        + "\n"
+                        model_prompt + "\n## 6. OPERATOR REPAIR REQUEST & DEPLOYMENT ERROR\n\n" + prompt.strip() + "\n"
                     )
                 if findings:
                     # THE VALIDATOR'S OWN WORDS, fed back verbatim. A repair attempt that is told only
@@ -1191,8 +1188,7 @@ class GenerationService:
         # fonts, which is why ruff's E741 flags it.
         inv_languages = [str(lang).lower() for lang in (inventory.get("languages") or [])]
         inv_frameworks = [
-            str(f.get("name") if isinstance(f, dict) else f).lower()
-            for f in (inventory.get("frameworks") or [])
+            str(f.get("name") if isinstance(f, dict) else f).lower() for f in (inventory.get("frameworks") or [])
         ]
         inv_manifests = [str(m).lower() for m in (inventory.get("manifests") or [])]
 
@@ -1213,13 +1209,17 @@ class GenerationService:
         # Check for modern frontend frameworks (Next.js, Vite, React, Nuxt, Remix, Svelte, Vue)
         is_nextjs = any("next" in fw for fw in inv_frameworks) or any("next.config" in m for m in inv_manifests)
         is_vite = any("vite" in fw for fw in inv_frameworks)
-        is_frontend_or_build = is_nextjs or is_vite or any(
-            fw in ("react", "vue", "nuxt", "svelte", "remix", "astro", "angular") for fw in inv_frameworks
-        ) or any(lang in ("typescript", "tsx") for lang in inv_languages)
+        is_frontend_or_build = (
+            is_nextjs
+            or is_vite
+            or any(fw in ("react", "vue", "nuxt", "svelte", "remix", "astro", "angular") for fw in inv_frameworks)
+            or any(lang in ("typescript", "tsx") for lang in inv_languages)
+        )
 
         # Detect workspaces if manifests contain package.json files in subdirectories
         workspace_manifests = [
-            m for m in inv_manifests
+            m
+            for m in inv_manifests
             if m.endswith("package.json") and m != "package.json" and not m.startswith("node_modules")
         ]
 
