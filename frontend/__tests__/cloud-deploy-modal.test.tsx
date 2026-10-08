@@ -257,10 +257,12 @@ describe("CloudDeployModal", () => {
   it("handles GitHub push errors", async () => {
     const user = userEvent.setup();
     post.mockRejectedValue(
-      new ApiProblemError(
-        { title: "Push Error", detail: "Repository already exists", status: 409 },
-        409,
-      ),
+      new ApiProblemError({
+        type: "https://forgeops.dev/problems/push-error",
+        title: "Push Error",
+        detail: "Repository already exists",
+        status: 409,
+      }),
     );
 
     renderWithClient(
@@ -344,10 +346,12 @@ describe("CloudDeployModal", () => {
   it("handles Vercel deploy errors", async () => {
     const user = userEvent.setup();
     post.mockRejectedValue(
-      new ApiProblemError(
-        { title: "Unauthorized", detail: "Invalid Vercel token", status: 401 },
-        401,
-      ),
+      new ApiProblemError({
+        type: "https://forgeops.dev/problems/unauthorized",
+        title: "Unauthorized",
+        detail: "Invalid Vercel token",
+        status: 401,
+      }),
     );
 
     renderWithClient(

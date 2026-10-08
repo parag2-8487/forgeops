@@ -205,10 +205,12 @@ describe("DeploymentAiResolver", () => {
   it("handles network ApiProblemError on request", async () => {
     const user = userEvent.setup();
     stream.mockRejectedValue(
-      new ApiProblemError(
-        { title: "Service Unavailable", detail: "Provider down", status: 503 },
-        503,
-      ),
+      new ApiProblemError({
+        type: "https://forgeops.dev/problems/unavailable",
+        title: "Service Unavailable",
+        detail: "Provider down",
+        status: 503,
+      }),
     );
 
     render(

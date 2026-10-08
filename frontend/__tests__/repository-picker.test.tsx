@@ -75,15 +75,12 @@ describe("RepositoryPicker", () => {
 
   it("renders unlinked state when error has github-link-absent", async () => {
     get.mockRejectedValue(
-      new ApiProblemError(
-        {
-          type: "https://forgeops.dev/problems/github-link-absent",
-          title: "GitHub Not Linked",
-          detail: "Connect a GitHub account to choose repositories.",
-          status: 400,
-        },
-        400,
-      ),
+      new ApiProblemError({
+        type: "https://forgeops.dev/problems/github-link-absent",
+        title: "GitHub Not Linked",
+        detail: "Connect a GitHub account to choose repositories.",
+        status: 400,
+      }),
     );
 
     renderWithClient(<RepositoryPicker selected={null} onSelect={vi.fn()} />);
