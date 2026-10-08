@@ -425,7 +425,9 @@ class Settings(BaseSettings):
     ai_rate_limit_fail_mode: Literal["fail_closed"] = "fail_closed"
 
     # CORS
-    cors_allow_origins: str = Field(default="http://localhost:3000")
+    cors_allow_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:13000,http://127.0.0.1:13000"
+    )
 
     # ─── Phase 1 §1.11 auth ──────────────────────────────────────────────────
     # The app API audience is DISTINCT from the MCP gateway audience, so a token

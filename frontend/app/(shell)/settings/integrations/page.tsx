@@ -6,6 +6,7 @@
  */
 
 import { GitHubConnection } from "@/features/integrations/GitHubConnection";
+import { VercelConnection } from "@/features/integrations/VercelConnection";
 
 export default function IntegrationsPage() {
   return (
@@ -22,6 +23,7 @@ export default function IntegrationsPage() {
       </div>
 
       <GitHubConnection />
+      <VercelConnection />
     </main>
   );
 }

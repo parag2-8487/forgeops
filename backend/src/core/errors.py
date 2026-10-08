@@ -254,6 +254,16 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "notification-preference-invalid": ProblemSpec(422, "The notification preference is not valid"),
     # ─── Tenancy (§6.7) ──────────────────────────────────────────────────────
     "tenant-context-missing": ProblemSpec(500, "Tenant context missing"),
+    # ─── Direct Export & Deployment ──────────────────────────────────────────
+    "github-push-failed": ProblemSpec(502, "Failed to push to GitHub"),
+    "github-create-failed": ProblemSpec(502, "Failed to create GitHub repository"),
+    "github-blob-upload-failed": ProblemSpec(502, "Failed to upload file to GitHub"),
+    "github-tree-failed": ProblemSpec(502, "Failed to create GitHub tree"),
+    "github-commit-failed": ProblemSpec(502, "Failed to create GitHub commit"),
+    "github-ref-failed": ProblemSpec(502, "Failed to update GitHub reference"),
+    "project-empty": ProblemSpec(400, "Project has no indexed files"),
+    "validation-error": ProblemSpec(422, "Request validation error"),
+    "vercel-deploy-failed": ProblemSpec(502, "Failed to deploy to Vercel"),
 }
 
 #: The 403 body, byte-identical for every forbidden outcome (design §4.2, Appendix

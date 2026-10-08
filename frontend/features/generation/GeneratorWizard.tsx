@@ -112,10 +112,6 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
         if (event === "status") {
           const payload = message.data as StatusPayload;
           if (payload.run_id) setRunId(payload.run_id);
-        } else if (event === "progress") {
-          // A new attempt has started: reset the live token accumulator so previous attempt tokens are not concatenated
-          live = "";
-          setLiveOutput("");
         } else if (event === "token") {
           const payload = message.data as TokenPayload;
           if (payload.path) {

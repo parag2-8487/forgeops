@@ -1491,7 +1491,7 @@ async def deploy_project_vercel(
     return await deploy_project_to_vercel(
         session,
         project_id=project_id,
-        project_name=project.name,
+        project_name=project["name"],
         principal=principal,
         req=payload,
     )

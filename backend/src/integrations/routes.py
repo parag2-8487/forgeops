@@ -42,7 +42,7 @@ from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
 from ..core.db import get_session
 from ..core.errors import problem
-from ..core.github import GitHubAppError, GitHubAppNotConfiguredError
+from ..core.github import AUTH_HEADER, BEARER_SCHEME, GitHubAppError, GitHubAppNotConfiguredError
 from .github_link import (
     STATE_TTL_SECONDS,
     GitHubLinkError,
@@ -630,3 +630,184 @@ async def create_github_repository(
             raise problem("github-link-failed", detail=str(exc)) from exc
     await session.commit()
     return RepositoryItem(**asdict(repo))
+
+
+class VercelLinkStatus(BaseModel):
+    configured: bool = True
+    connected: bool = False
+    username: str | None = None
+    email: str | None = None
+    token_hint: str | None = None
+    last_tested_at: str | None = None
+    last_test_ok: bool | None = None
+    last_test_detail: str = ""
+
+
+class VercelTokenLinkRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=200)
+
+
+@router.get(
+    "/vercel",
+    response_model=VercelLinkStatus,
+    summary="Get current user's Vercel integration status",
+)
+async def get_vercel_status(
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VercelLinkStatus:
+    """Check if the current user has linked a Vercel account."""
+    from sqlalchemy import text
+
+    result = await session.execute(
+        text(
+            "SELECT value_hint, last_tested_at, last_test_ok, last_test_detail "
+            "FROM provider_credentials WHERE key_ref = :ref"
+        ),
+        {"ref": f"vercel:{principal.user_id}"},
+    )
+    row = result.mappings().first()
+    if not row or not row.get("last_test_ok"):
+        return VercelLinkStatus(connected=False)
+
+    detail = str(row.get("last_test_detail") or "")
+    username = detail.replace("connected as ", "").strip() if "connected as " in detail else None
+
+    return VercelLinkStatus(
+        configured=True,
+        connected=True,
+        username=username,
+        token_hint=row.get("value_hint"),
+        last_tested_at=str(row.get("last_tested_at")) if row.get("last_tested_at") else None,
+        last_test_ok=row.get("last_test_ok"),
+        last_test_detail=detail,
+    )
+
+
+@router.put(
+    "/vercel/token",
+    response_model=VercelLinkStatus,
+    summary="Link a Vercel account with a personal access token",
+)
+async def link_vercel_token(
+    body: VercelTokenLinkRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VercelLinkStatus:
+    """Validate a Vercel Access Token and store it sealed for the user."""
+    from sqlalchemy import text
+
+    from .github_link import derive_link_key, seal_token
+
+    raw_token = body.token.strip()
+    if not raw_token:
+        raise problem("validation-error", detail="Token cannot be empty")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        resp = await client.get(
+            "https://api.vercel.com/v2/user",
+            headers={AUTH_HEADER: f"{BEARER_SCHEME} {raw_token}"},
+        )
+        if resp.status_code != 200:
+            detail = resp.text
+            try:
+                detail = resp.json().get("error", {}).get("message", detail)
+            except Exception:
+                pass
+            raise problem("vercel-deploy-failed", detail=f"Vercel refused token ({resp.status_code}): {detail}")
+
+        user_data = resp.json().get("user", {})
+        username = user_data.get("username") or user_data.get("email") or "Vercel User"
+        email = user_data.get("email")
+
+    seal_key = derive_link_key(request.app.state.settings.envelope_pepper)
+    encrypted = seal_token(raw_token, user_id=principal.user_id, key=seal_key)
+    hint = raw_token[-4:] if len(raw_token) > 4 else ""
+    detail_str = f"connected as {username}"
+
+    insert_sql = (
+        "INSERT INTO provider_credentials "
+        "(key_ref, encrypted_value, value_length, value_hint, last_tested_at, "
+        "last_test_ok, last_test_detail, updated_by, created_at, updated_at) "
+        "VALUES (:ref, :enc, :vlen, :vhint, now(), true, :detail, :uid, now(), now()) "
+        "ON CONFLICT (key_ref) DO UPDATE SET "
+        "encrypted_value = EXCLUDED.encrypted_value, "
+        "value_length = EXCLUDED.value_length, "
+        "value_hint = EXCLUDED.value_hint, "
+        "last_tested_at = now(), "
+        "last_test_ok = true, "
+        "last_test_detail = EXCLUDED.last_test_detail, "
+        "updated_by = EXCLUDED.updated_by, "
+        "updated_at = now()"
+    )
+    await session.execute(
+        text(insert_sql),
+        {
+            "ref": f"vercel:{principal.user_id}",
+            "enc": encrypted,
+            "vlen": len(raw_token),
+            "vhint": hint,
+            "detail": detail_str,
+            "uid": principal.user_id,
+        },
+    )
+
+    await _writer(request).append(
+        session,
+        AuditDraft(
+            action="vercel_account_linked",
+            resource_kind="vercel_account_link",
+            resource_id=str(principal.user_id),
+            reason=f"linked Vercel account {username} with a token supplied in ForgeOps",
+            outcome="allowed",
+            actor_kind="user",
+            actor_user_id=principal.user_id,
+            tenant_id=principal.tenant_id,
+        ),
+    )
+    await session.commit()
+
+    return VercelLinkStatus(
+        configured=True,
+        connected=True,
+        username=username,
+        email=email,
+        token_hint=hint,
+        last_test_ok=True,
+        last_test_detail=detail_str,
+    )
+
+
+@router.delete(
+    "/vercel",
+    response_model=VercelLinkStatus,
+    summary="Disconnect Vercel account",
+)
+async def disconnect_vercel(
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VercelLinkStatus:
+    """Disconnect and delete the user's stored Vercel token."""
+    from sqlalchemy import text
+
+    await session.execute(
+        text("DELETE FROM provider_credentials WHERE key_ref = :ref"),
+        {"ref": f"vercel:{principal.user_id}"},
+    )
+    await _writer(request).append(
+        session,
+        AuditDraft(
+            action="vercel_account_unlinked",
+            resource_kind="vercel_account_link",
+            resource_id=str(principal.user_id),
+            reason="disconnected Vercel account link",
+            outcome="allowed",
+            actor_kind="user",
+            actor_user_id=principal.user_id,
+            tenant_id=principal.tenant_id,
+        ),
+    )
+    await session.commit()
+    return VercelLinkStatus(connected=False)

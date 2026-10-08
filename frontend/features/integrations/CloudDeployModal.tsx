@@ -92,6 +92,16 @@ export function CloudDeployModal({
     enabled: isOpen,
   });
 
+  // Fetch Vercel link status
+  const vercelLink = useQuery({
+    queryKey: queryKeys.integrations.vercel(),
+    queryFn: () =>
+      api.get<{ connected: boolean; username?: string; token_hint?: string }>("/integrations/vercel"),
+    enabled: isOpen,
+  });
+
+  const [quickVercelConnecting, setQuickVercelConnecting] = useState(false);
+
   // Fetch Vercel config check
   const vercelCheck = useQuery<VercelConfigCheckResponse>({
     queryKey: ["projects", projectId, "vercel-check"],
@@ -120,6 +130,22 @@ export function CloudDeployModal({
       setQuickGhError(msg || "Failed to link GitHub token.");
     } finally {
       setQuickGhConnecting(false);
+    }
+  };
+
+  // Connect Vercel token
+  const handleQuickConnectVercel = async () => {
+    if (!vercelToken.trim()) return;
+    setQuickVercelConnecting(true);
+    setVercelError(null);
+    try {
+      await api.put("/integrations/vercel/token", { token: vercelToken.trim() });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.integrations.vercel() });
+    } catch (err: unknown) {
+      const msg = err instanceof ApiProblemError ? err.problem.detail : String(err);
+      setVercelError(msg || "Failed to link Vercel token.");
+    } finally {
+      setQuickVercelConnecting(false);
     }
   };
 
@@ -154,8 +180,16 @@ export function CloudDeployModal({
     mutationFn: async () => {
       setVercelError(null);
       setVercelSuccess(null);
+      if (vercelToken.trim() && !vercelLink.data?.connected) {
+        try {
+          await api.put("/integrations/vercel/token", { token: vercelToken.trim() });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.integrations.vercel() });
+        } catch {
+          // ignore auto-save error and proceed with deploy
+        }
+      }
       const payload = {
-        vercel_token: vercelToken.trim(),
+        vercel_token: vercelToken.trim() || undefined,
         project_name: customVercelName.trim() || undefined,
         auto_configure_spa: autoConfigSpa,
       };
@@ -177,9 +211,9 @@ export function CloudDeployModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="cloud-deploy-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 overflow-y-auto overscroll-contain"
     >
-      <div className="relative w-full max-w-2xl rounded-xl border border-border bg-card p-6 shadow-xl space-y-6">
+      <div className="relative w-full max-w-2xl rounded-xl border border-border bg-card p-6 shadow-xl space-y-6 overscroll-contain">
         <div className="flex items-center justify-between border-b border-border pb-4">
           <div>
             <h2 id="cloud-deploy-title" className="text-xl font-bold tracking-tight">
@@ -454,11 +488,26 @@ export function CloudDeployModal({
         {/* VERCEL TAB */}
         {activeTab === "vercel" && (
           <div className="space-y-5">
+            {/* Vercel Integration Status */}
+            {vercelLink.data?.connected && (
+              <div className="flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                    Connected as @{vercelLink.data.username || "Vercel User"}
+                  </span>
+                  <Badge variant="outline">Saved in Integrations</Badge>
+                </div>
+                <span className="text-muted-foreground font-mono">
+                  ••••••••{vercelLink.data.token_hint || ""}
+                </span>
+              </div>
+            )}
+
             {/* Token Input */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Vercel Access Token
+                  {vercelLink.data?.connected ? "Override / Update Vercel Access Token" : "Vercel Access Token"}
                 </label>
                 <a
                   href="https://vercel.com/account/tokens"
@@ -469,15 +518,32 @@ export function CloudDeployModal({
                   Create token on Vercel →
                 </a>
               </div>
-              <Input
-                type="password"
-                placeholder="Paste Vercel Token"
-                value={vercelToken}
-                onChange={(e) => setVercelToken(e.target.value)}
-                className="text-sm font-mono"
-              />
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  placeholder={
+                    vercelLink.data?.connected
+                      ? "Using saved token from Integrations (paste to override)"
+                      : "Paste Vercel Token (vcp_...)"
+                  }
+                  value={vercelToken}
+                  onChange={(e) => setVercelToken(e.target.value)}
+                  className="text-sm font-mono flex-1"
+                />
+                {vercelToken.trim().length >= 10 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={quickVercelConnecting}
+                    onClick={handleQuickConnectVercel}
+                  >
+                    {quickVercelConnecting ? "Saving…" : "Save to Integrations"}
+                  </Button>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
-                Your token is sent directly to Vercel via HTTPS and never exposed in logs.
+                Your token is securely stored and sealed with AES-256-GCM envelope encryption.
               </p>
             </div>
 
@@ -572,7 +638,7 @@ export function CloudDeployModal({
               <Button
                 size="sm"
                 onClick={() => deployMutation.mutate()}
-                disabled={deployMutation.isPending || !vercelToken.trim()}
+                disabled={deployMutation.isPending || (!vercelToken.trim() && !vercelLink.data?.connected)}
               >
                 {deployMutation.isPending ? "Deploying to Vercel..." : "Deploy to Vercel"}
               </Button>

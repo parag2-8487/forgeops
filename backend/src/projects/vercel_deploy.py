@@ -41,7 +41,9 @@ class VercelConfigCheckResponse(BaseModel):
 
 
 class VercelDeployRequest(BaseModel):
-    vercel_token: str = Field(..., min_length=10, description="Vercel Access Token")
+    vercel_token: str | None = Field(
+        default=None, description="Vercel Access Token (optional if linked in Settings → Integrations)"
+    )
     project_name: str | None = Field(default=None, max_length=100, description="Custom Vercel project name")
     auto_configure_spa: bool = Field(
         default=True, description="Automatically supply vercel.json SPA rewrites if needed"
@@ -181,9 +183,32 @@ async def deploy_project_to_vercel(
     req: VercelDeployRequest,
 ) -> VercelDeployResponse:
     """Package and deploy project files directly to Vercel via Vercel REST API."""
-    token = req.vercel_token.strip()
+    token = req.vercel_token.strip() if req.vercel_token else ""
     if not token:
-        raise problem("validation-error", detail="Vercel Access Token is required.")
+        # Check provider_credentials for stored user token
+        result = await session.execute(
+            text("SELECT encrypted_value FROM provider_credentials WHERE key_ref = :ref"),
+            {"ref": f"vercel:{principal.user_id}"},
+        )
+        row = result.mappings().first()
+        if row and row.get("encrypted_value"):
+            try:
+                from ..core.config import get_settings
+                from ..integrations.github_link import derive_link_key, unseal_token
+
+                settings = get_settings()
+                key = derive_link_key(settings.envelope_pepper)
+                token = unseal_token(row["encrypted_value"], user_id=principal.user_id, key=key)
+            except Exception:
+                token = ""
+
+    if not token:
+        raise problem(
+            "validation-error",
+            detail=(
+                "Vercel Access Token is required. Please paste a token or connect Vercel in Settings → Integrations."
+            ),
+        )
 
     # 1. Fetch Project Files from DB
     file_rows = await session.execute(

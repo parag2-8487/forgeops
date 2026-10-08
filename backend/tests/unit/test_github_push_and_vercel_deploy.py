@@ -64,3 +64,24 @@ def test_evaluate_vercel_config_preserves_existing():
     res = evaluate_vercel_config(files)
     assert res.has_vercel_json is True
     assert res.needs_vercel_json is False
+
+
+def test_export_and_deploy_problem_types_registered():
+    from src.core.errors import PROBLEM_REGISTRY, problem
+
+    expected_types = [
+        "github-push-failed",
+        "github-create-failed",
+        "github-blob-upload-failed",
+        "github-tree-failed",
+        "github-commit-failed",
+        "github-ref-failed",
+        "project-empty",
+        "validation-error",
+        "vercel-deploy-failed",
+    ]
+    for p_type in expected_types:
+        assert p_type in PROBLEM_REGISTRY
+        prob = problem(p_type, detail="test detail")
+        assert prob.problem.type.endswith(p_type)
+        assert prob.problem.detail == "test detail"

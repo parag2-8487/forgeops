@@ -112,6 +112,7 @@ export const queryKeys = {
   integrations: {
     all: ["integrations"] as const,
     github: () => [...queryKeys.integrations.all, "github"] as const,
+    vercel: () => [...queryKeys.integrations.all, "vercel"] as const,
     /**
      * The repository picker. The query and the page are part of the key for the reason the project
      * filters are: two searches are two different responses, and a key that ignored the term would

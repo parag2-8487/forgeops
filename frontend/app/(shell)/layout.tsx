@@ -14,7 +14,7 @@ export default function ShellLayout({ children }: { children: React.ReactNode })
       <AppSidebar />
       <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden">
         <AppHeader />
-        <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto p-6">
+        <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto overscroll-y-contain p-6">
           {/* Inside <main> rather than around the whole shell, so the sidebar and header stay
               rendered while the session is being restored -- the chrome is not what needs
               guarding, the panels that fetch are. */}

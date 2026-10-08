@@ -62,7 +62,7 @@ export function AppSidebar() {
       <div className="flex h-14 shrink-0 items-center border-b px-4">
         <span className="text-lg font-semibold text-sidebar-foreground">ForgeOps</span>
       </div>
-      <nav aria-label="Primary" className="flex-1 overflow-y-auto p-2">
+      <nav aria-label="Primary" className="flex-1 overflow-y-auto overscroll-y-contain p-2">
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
           const active = pathname === href;
           return (
