@@ -15,17 +15,17 @@ async def main():
         chokepoint = app.state.governance_chokepoint
         deployments = DeploymentService()
         redis_client = app.state.agent_hub._deps.redis
-        
+
         project_id = uuid.UUID("d782e0e4-c5ea-4276-a454-171ddc31a5ca")
         user_id = uuid.UUID("fe5aa283-2f7e-43cc-a440-259e09a53dae")
         env_id = uuid.UUID("532bd099-1869-404d-87df-bbff3796f070")
-        
+
         async with maker() as session:
             user_row = (await session.execute(
                 text("SELECT idp_subject, email, tenant_id FROM users WHERE id = :id"),
                 {"id": user_id}
             )).mappings().one()
-            
+
             principal = Principal.for_user(
                 user_id=user_id,
                 subject=user_row["idp_subject"],
@@ -33,7 +33,7 @@ async def main():
                 role=UserRole.ADMIN,
                 tenant_id=user_row["tenant_id"],
             )
-            
+
             manifests = ["docker-compose.yml"]
             record = await deployments.create(
                 session,
@@ -45,7 +45,7 @@ async def main():
                 namespace=None,
                 requested_by=principal.user_id,
             )
-            
+
             submission = await chokepoint.deploy_manifests(
                 session,
                 project_id=project_id,
@@ -60,7 +60,7 @@ async def main():
                 reason="Phase 2 live verification",
                 auto_approve=True,
             )
-            
+
             await deployments.attach_change_set(
                 session,
                 deployment_id=record.id,
@@ -68,7 +68,7 @@ async def main():
                 status="applying" if submission.status == "applying" else "pending_approval",
             )
             await session.commit()
-            
+
             cs_row = (await session.execute(
                 text("SELECT command_id FROM change_sets WHERE id = :id"),
                 {"id": submission.change_set_id}
@@ -94,7 +94,7 @@ async def main():
                     text("SELECT status, healthy, stable, completed_at FROM deployments WHERE id = :id"),
                     {"id": record.id}
                 )).mappings().first()
-                
+
                 cs_row = (await session.execute(
                     text("SELECT status, applied_at FROM change_sets WHERE id = :id"),
                     {"id": submission.change_set_id}

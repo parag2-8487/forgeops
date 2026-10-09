@@ -324,7 +324,7 @@ func (f *flakyTransport) Send(ctx context.Context, payload []byte) error {
 	return nil
 }
 func (f *flakyTransport) Receive(ctx context.Context) ([]byte, error) { return nil, nil }
-func (f *flakyTransport) Ping(ctx context.Context) error             { return nil }
+func (f *flakyTransport) Ping(ctx context.Context) error              { return nil }
 func (f *flakyTransport) Close(code connection.StatusCode, reason string) error {
 	return nil
 }
