@@ -99,6 +99,7 @@ def verify_consistency_gate(
         if root_pkg.exists():
             try:
                 import json
+
                 pkg_data = json.loads(root_pkg.read_text(encoding="utf-8"))
                 ws_entry = pkg_data.get("workspaces")
                 if isinstance(ws_entry, list):
@@ -119,7 +120,8 @@ def verify_consistency_gate(
             copied_workspaces = False
             for line in lines:
                 s = line.strip()
-                if s.startswith("RUN ") and any(cmd in s for cmd in ["npm install", "npm ci", "pnpm install", "yarn install"]):
+                has_install_cmd = any(cmd in s for cmd in ["npm install", "npm ci", "pnpm install", "yarn install"])
+                if s.startswith("RUN ") and has_install_cmd:
                     install_seen = True
                     break
                 if s.startswith("COPY "):
@@ -129,11 +131,14 @@ def verify_consistency_gate(
             if install_seen and not copied_workspaces:
                 errors.append(
                     "Workspace repository runs dependency installation before copying workspace package manifests. "
-                    "Workspace manifests must be copied before RUN install to prevent missing executables (exit code 127)."
+                    "Workspace manifests must be copied before RUN install to prevent missing executables "
+                    "(exit code 127)."
                 )
 
         # Multi-stage SSR check: if Next.js/SSR and not standalone, check for invalid /app/dist copies
-        framework_lower = getattr(blueprint.runtime, "framework", "").lower() if hasattr(blueprint, "runtime") and blueprint.runtime and blueprint.runtime.framework else ""
+        framework_lower = ""
+        if hasattr(blueprint, "runtime") and blueprint.runtime and blueprint.runtime.framework:
+            framework_lower = getattr(blueprint.runtime, "framework", "").lower()
         if "next" in framework_lower or "nuxt" in framework_lower:
             for idx, line in enumerate(lines, 1):
                 s = line.strip()

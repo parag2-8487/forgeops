@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from src.blueprint.models import (
     BuildConfig,
     NetworkContract,
@@ -70,9 +69,7 @@ def nextjs_blueprint(tmp_path: Path) -> ProjectBlueprint:
     )
 
 
-def test_consistency_gate_rejects_missing_workspace_manifests(
-    workspace_repo: Path, nextjs_blueprint: ProjectBlueprint
-):
+def test_consistency_gate_rejects_missing_workspace_manifests(workspace_repo: Path, nextjs_blueprint: ProjectBlueprint):
     df_content = """FROM node:22-slim
 WORKDIR /app
 COPY package*.json ./
@@ -92,7 +89,8 @@ CMD ["npm", "start"]
         blueprint=nextjs_blueprint,
     )
     assert not result.passed
-    assert any("Workspace repository runs dependency installation before copying workspace package manifests" in e for e in result.errors)
+    expected_msg = "Workspace repository runs dependency installation before copying workspace package manifests"
+    assert any(expected_msg in e for e in result.errors)
 
 
 def test_consistency_gate_accepts_workspace_manifests_copied_before_install(

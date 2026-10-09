@@ -1124,12 +1124,6 @@ func (m *Manager) clearActiveSession(s *liveSession) {
 	m.activeSessionMu.Unlock()
 }
 
-func (m *Manager) getActiveSession() *liveSession {
-	m.activeSessionMu.Lock()
-	defer m.activeSessionMu.Unlock()
-	return m.activeSession
-}
-
 func (m *Manager) enqueuePending(method string, params map[string]any) {
 	m.pendingMu.Lock()
 	defer m.pendingMu.Unlock()

@@ -139,7 +139,7 @@ async def push_project_to_github(
             headers=headers,
         )
         if branches_resp.status_code == 200 and len(branches_resp.json()) == 0:
-            init_content = base64.b64encode(f"# {repo}\n\nProject export from ForgeOps\n".encode("utf-8")).decode("ascii")
+            init_content = base64.b64encode(f"# {repo}\n\nProject export from ForgeOps\n".encode()).decode("ascii")
             init_resp = await client.put(
                 f"https://api.github.com/repos/{owner}/{repo}/contents/README.md",
                 headers=headers,

@@ -125,4 +125,3 @@ def test_github_push_binary_base64_decoding():
 
     assert encoded == b64_str
     assert base64.b64decode(encoded) == raw_bytes
-

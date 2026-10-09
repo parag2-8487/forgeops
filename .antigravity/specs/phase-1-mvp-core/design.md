@@ -5361,6 +5361,16 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `knowledge-refused` | 404 | No project with that id, OR the project belongs to another tenant, OR the topic is not in the closed set. The first two share one sentence deliberately: a distinct message would let a caller probe which project ids exist in other tenants. |
 | `notification-absent` | 404 | The named notification does not belong to this project | A 404 rather than a 403 for the reason `environment-absent` is one: the caller is already authorised for the project that owns it, so concealing which notifications exist would buy nothing |
 | `notification-preference-invalid` | 422 | The notification preference cannot be stored as asked | Raised for one case above all: an ENABLED channel with no target. A preference that delivers nowhere is a setting that silently does nothing, and a user who set it believes they are covered — so it is refused at the point of saving rather than discovered when nothing arrives |
+| `github-push-failed` | 502 | Upstream GitHub API refused export push | Upstream response status |
+| `github-create-failed` | 502 | Upstream GitHub API refused repository creation | Upstream response status |
+| `github-init-failed` | 502 | Upstream GitHub API refused repository initialization | Upstream response status |
+| `github-blob-upload-failed` | 502 | Upstream GitHub API refused file blob upload | Upstream response status |
+| `github-tree-failed` | 502 | Upstream GitHub API refused git tree creation | Upstream response status |
+| `github-commit-failed` | 502 | Upstream GitHub API refused git commit creation | Upstream response status |
+| `github-ref-failed` | 502 | Upstream GitHub API refused git reference update | Upstream response status |
+| `project-empty` | 400 | Project has no indexed files to export or deploy | Clear actionable message |
+| `validation-error` | 422 | Request body or parameters failed validation schema | Names invalid field |
+| `vercel-deploy-failed` | 502 | Upstream Vercel API refused project deployment | Upstream response status |
 
 `audit-write-failed` deserves a note. A failed audit write **aborts the mutation**, because §1.9's guarantee is that every action is logged — an action that happened without a record would break Q-04 and, worse, would be invisible. Availability is traded for auditability, deliberately.
 

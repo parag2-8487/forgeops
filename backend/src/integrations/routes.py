@@ -825,6 +825,7 @@ async def test_vercel_connection(
 ) -> VercelLinkStatus:
     """Test the stored Vercel token live against api.vercel.com."""
     from sqlalchemy import text
+
     from .github_link import derive_link_key, unseal_token
 
     result = await session.execute(
@@ -876,4 +877,3 @@ async def test_vercel_connection(
         last_test_ok=True,
         last_test_detail=detail_str,
     )
-

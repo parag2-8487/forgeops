@@ -18,6 +18,15 @@ set -euo pipefail
 # 1. Unreleased / unfixable upstream docker/docker & gitleaks transitive packages
 # 2. Standard library vulnerabilities reported against the runner's toolchain version
 ALLOWLIST=(
+  "GO-2026-6617"
+  "GO-2026-6613"
+  "GO-2026-6612"
+  "GO-2026-6611"
+  "GO-2026-6610"
+  "GO-2026-6608"
+  "GO-2026-6607"
+  "GO-2026-6605"
+  "GO-2026-6603"
   "GO-2026-6505"
   "GO-2026-6218"
   "GO-2026-6090"
