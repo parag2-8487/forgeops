@@ -306,15 +306,15 @@ func TestProjectDetector_PnpmWorkspace(t *testing.T) {
 func TestUniversalDockerfileHealer_SSRCopiesHealed(t *testing.T) {
 	tempDir := t.TempDir()
 	profile := &ProjectProfile{
-		BaseDir:             tempDir,
-		PrimaryLanguage:     LangNode,
-		Framework:           "Next.js",
-		AppType:             AppTypeFullstackSSR,
-		HasRootPackageJson:  true,
-		HasBuildScript:      true,
-		DefaultPort:         3000,
-		BuildOutputDir:      ".next",
-		Subprojects:         make(map[string]*ProjectProfile),
+		BaseDir:            tempDir,
+		PrimaryLanguage:    LangNode,
+		Framework:          "Next.js",
+		AppType:            AppTypeFullstackSSR,
+		HasRootPackageJson: true,
+		HasBuildScript:     true,
+		DefaultPort:        3000,
+		BuildOutputDir:     ".next",
+		Subprojects:        make(map[string]*ProjectProfile),
 	}
 
 	dockerfileWithDist := `FROM node:22-slim AS builder
@@ -338,4 +338,3 @@ CMD ["npm", "start"]`
 		t.Fatalf("healed Dockerfile should copy /app from builder for conventional SSR:\n%s", healed)
 	}
 }
-
