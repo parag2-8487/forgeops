@@ -180,6 +180,55 @@ func TestReconcileRefusesWithoutAPort(t *testing.T) {
 	}
 }
 
+func TestPortFromEnvTakesLastDeclaration(t *testing.T) {
+	dockerfile := `FROM node:22-slim
+WORKDIR /app
+ENV PORT=8080
+ENV PORT=3000 NODE_ENV=production
+CMD ["npm", "start"]
+`
+	if got := portFromEnv(dockerfile); got != 3000 {
+		t.Fatalf("portFromEnv = %d, want 3000 (last ENV declaration must win)", got)
+	}
+}
+
+func TestPortFromComposeEnv(t *testing.T) {
+	cases := []struct {
+		name    string
+		compose string
+		want    int
+	}{
+		{"mapping style", "services:\n  web:\n    environment:\n      PORT: 3000\n", 3000},
+		{"mapping with fallback", "services:\n  web:\n    environment:\n      PORT: \"${PORT:-3000}\"\n", 3000},
+		{"list style", "services:\n  web:\n    environment:\n      - PORT=8080\n", 8080},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := portFromComposeEnv(tc.compose); got != tc.want {
+				t.Fatalf("portFromComposeEnv = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReconcileDockerfilePortReconcilesEnvPort(t *testing.T) {
+	dockerfile := `FROM node:22-slim
+ENV PORT=8080
+EXPOSE 8080
+CMD ["npm", "start"]
+`
+	got := reconcileDockerfilePort(dockerfile, 3000)
+	if !strings.Contains(got, "ENV PORT=3000") {
+		t.Errorf("ENV PORT was not reconciled to 3000:\n%s", got)
+	}
+	if strings.Contains(got, "ENV PORT=8080") {
+		t.Errorf("stale ENV PORT=8080 survived:\n%s", got)
+	}
+	if !strings.Contains(got, "EXPOSE 3000") {
+		t.Errorf("EXPOSE was not reconciled to 3000:\n%s", got)
+	}
+}
+
 func write(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {

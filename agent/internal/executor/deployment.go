@@ -398,12 +398,16 @@ func reconcileDockerfilePort(dockerfile string, port int) string {
 
 	lines := strings.Split(dockerfile, "\n")
 	reExpose := regexp.MustCompile(`(?i)^(\s*)EXPOSE\s+(.+?)\s*$`)
+	reEnvPort := regexp.MustCompile(`(?i)^(\s*ENV\s+PORT=)(\d{1,5})(\s*)$`)
 	found := false
 	lastInstruction := -1
 
 	for i, line := range lines {
 		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			lastInstruction = i
+		}
+		if m := reEnvPort.FindStringSubmatch(line); m != nil {
+			lines[i] = fmt.Sprintf("%s%d%s", m[1], port, m[3])
 		}
 		m := reExpose.FindStringSubmatch(line)
 		if m == nil {
@@ -524,6 +528,7 @@ func portFromStartCommand(dockerfile string) int {
 // Only the well-known names are accepted. Scanning an ENV line for ANY number would pick up a version
 // or a timeout — the same class of mistake as reading a port out of prose.
 func portFromEnv(dockerfile string) int {
+	var lastPort int
 	for _, line := range strings.Split(dockerfile, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if !strings.HasPrefix(strings.ToUpper(trimmed), "ENV ") {
@@ -533,12 +538,26 @@ func portFromEnv(dockerfile string) int {
 			re := regexp.MustCompile(`(?i)(?:^|\s)` + name + `=["']?(\d{1,5})`)
 			if m := re.FindStringSubmatch(trimmed); len(m) > 1 {
 				if p := atoiPort(m[1]); p > 0 {
-					return p
+					lastPort = p
 				}
 			}
 		}
 	}
-	return 0
+	return lastPort
+}
+
+// portFromComposeEnv reads a port configured in a compose service's environment.
+func portFromComposeEnv(compose string) int {
+	re := regexp.MustCompile(`(?i)(?:PORT|LISTEN_PORT|APP_PORT|HTTP_PORT|SERVER_PORT)\s*[:=]\s*["']?(?:\$\{[^}:]+:-)?(\d{1,5})`)
+	var lastPort int
+	for _, line := range strings.Split(compose, "\n") {
+		if m := re.FindStringSubmatch(line); len(m) > 1 {
+			if p := atoiPort(m[1]); p > 0 {
+				lastPort = p
+			}
+		}
+	}
+	return lastPort
 }
 
 // portFromExpose reads the first port out of an EXPOSE instruction.
@@ -1663,6 +1682,10 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 		cContent := string(cRaw)
 		cOriginal := cContent
 
+		if cPort := portFromComposeEnv(cContent); cPort > 0 && (boundPort <= 0 || boundPort == 3000 || boundPort == 8080) {
+			boundPort = cPort
+		}
+
 		// THE CONTAINER SIDE OF EVERY PUBLISHED PORT IS MADE TO MATCH THE LISTENER.
 		//
 		// This is the other half of the `ERR_EMPTY_RESPONSE` defect. The compose file published
@@ -2073,7 +2096,12 @@ waitLoop:
 					detail = fmt.Sprintf("container crashed: %s", row.Status)
 				} else if hasHealthCheck {
 					if isHealthy {
-						ready = true
+						if hostPort > 0 && !isPortResponding && time.Since(waitStart) < 10*time.Second {
+							ready = false
+							detail = fmt.Sprintf("healthy internally, awaiting port %d HTTP response...", hostPort)
+						} else {
+							ready = true
+						}
 					} else if isStartingHealth {
 						ready = false
 						detail = fmt.Sprintf("starting (healthcheck in progress): %s", row.Status)
