@@ -1933,12 +1933,18 @@ func applyComposeManifests(ctx context.Context, d *dispatcher, args deploymentAr
 		buildSucceeded := false
 		maxTransientRetries := 2
 		for buildAttempt := 1; buildAttempt <= maxTransientRetries+1; buildAttempt++ {
-			sink.Progress(50+buildAttempt*5, "deployment.apply_manifests",
+			sink.Progress(50, "deployment.apply_manifests",
 				fmt.Sprintf("building container images for %s (attempt %d)...", filepath.Base(abs), buildAttempt))
+			buildLines := 0
 			outcome, err = runner.RunWithStreaming(ctx, func(line string) {
 				clean := strings.TrimSpace(line)
 				if clean != "" {
-					sink.Progress(50+buildAttempt*5, "deployment.apply_manifests", fmt.Sprintf("[docker] %s", clean))
+					buildLines++
+					pct := 50 + (buildLines / 4)
+					if pct > 64 {
+						pct = 64
+					}
+					sink.Progress(pct, "deployment.apply_manifests", fmt.Sprintf("[docker] %s", clean))
 				}
 			}, "docker", "compose", "-p", projectName, "-f", abs, "build")
 

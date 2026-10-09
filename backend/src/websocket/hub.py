@@ -133,10 +133,9 @@ _COMMAND_STREAM: Final[str] = "forgeops:agentcmd:{device_id}"
 #: `hashes?` — none of which names the change set — and no column carries the pairing either.
 _COMMAND_CHANGE_SET: Final[str] = "forgeops:cmdchangeset:{command_id}"
 
-#: Comfortably longer than the longest operation timeout the agent applies (two minutes for a
-#: write), so a slow apply still finds its mapping, and short enough that the key is not a second
-#: durable record of every command ever sent.
-_COMMAND_CHANGE_SET_TTL_SECONDS: Final[int] = 900
+#: Comfortably longer than any build or apply timeout, so a long apply still finds its mapping,
+#: with durable SQL fallback if evicted.
+_COMMAND_CHANGE_SET_TTL_SECONDS: Final[int] = 86400
 _RESULT_CHANNEL: Final[str] = "forgeops:cmdresult:{command_id}"
 _PROGRESS_CHANNEL: Final[str] = "forgeops:sse:command:{command_id}"
 
@@ -725,6 +724,16 @@ class AgentHub:
         with contextlib.suppress(Exception):
             change_set_id = await self._deps.redis.get(_COMMAND_CHANGE_SET.format(command_id=command_id))
         if not change_set_id:
+            with contextlib.suppress(Exception):
+                async with self._session_scope() as session:
+                    res = await session.execute(
+                        text("SELECT id FROM change_sets WHERE command_id = :cmd_id LIMIT 1"),
+                        {"cmd_id": command_id},
+                    )
+                    row = res.first()
+                    if row:
+                        change_set_id = str(row[0])
+        if not change_set_id:
             logger.warning(
                 "an apply-rolled-back report arrived with no known change set",
                 extra={"command_id": command_id},
@@ -781,8 +790,18 @@ class AgentHub:
         with contextlib.suppress(Exception):
             change_set_id = await self._deps.redis.get(_COMMAND_CHANGE_SET.format(command_id=command_id))
         if not change_set_id:
-            logger.warning(
-                "a command result arrived with no known change set; it cannot be finalised",
+            with contextlib.suppress(Exception):
+                async with self._session_scope() as session:
+                    res = await session.execute(
+                        text("SELECT id FROM change_sets WHERE command_id = :cmd_id LIMIT 1"),
+                        {"cmd_id": command_id},
+                    )
+                    row = res.first()
+                    if row:
+                        change_set_id = str(row[0])
+        if not change_set_id:
+            logger.debug(
+                "command result carries no associated change set (e.g. read operation); skipping finalisation",
                 extra={"command_id": command_id},
             )
             return
@@ -837,6 +856,8 @@ class AgentHub:
         # the apply timeout is two minutes — losing the mapping leaves the set `applying` and
         # retryable, which is the failure mode this whole path already treats as recoverable.
         change_set_id = str((envelope.get("args") or {}).get("change_set_id") or "")
+        if not change_set_id and hasattr(command, "authority") and getattr(command, "authority", None) is not None:
+            change_set_id = str(getattr(command.authority, "change_set_id", "") or "")
         if change_set_id:
             with contextlib.suppress(Exception):
                 await self._deps.redis.set(

@@ -497,11 +497,15 @@ func (m *Manager) session(ctx context.Context, t connection.Transport, creds Cre
 		lastSeen:  m.now(),
 	}
 
+	m.setActiveSession(live)
+	defer m.clearActiveSession(live)
+
 	// The drain is gated on a successful connect and on the revocation and bundle-digest
 	// checks, in that order (§10.3, §7.4). A successful `session.connect` IS the revocation
 	// check: the hub refuses a revoked device before it issues a session id, so reaching
 	// this line means the backend considered the device live a moment ago.
 	live.drain(ctx)
+	live.flushPending(ctx)
 
 	// One `agent.status` immediately, so the measured clock skew, the bundle digest and the
 	// journal backlog are reported at the moment they are known rather than at the first
@@ -612,6 +616,11 @@ func (s *liveSession) worker(ctx context.Context) {
 }
 
 func (s *liveSession) execute(ctx context.Context, frame commandFrame) {
+	// Command execution is decoupled from transport closure so a network blip or reconnect
+	// does not abort an active container build or deployment.
+	execCtx, cancelExec := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
+	defer cancelExec()
+
 	// Clock skew is checked BEFORE verification, and the order is the point. The verifier
 	// would reject a badly skewed envelope as `envelope-expired`, which is true and useless:
 	// §7.6 wants the agent to name the clock rather than the envelope. Appendix C.2's
@@ -621,36 +630,36 @@ func (s *liveSession) execute(ctx context.Context, frame commandFrame) {
 	if skew, beyond := s.manager.skewBeyondTolerance(); beyond {
 		s.manager.logger.Warn("refusing a command: the local clock is outside tolerance",
 			zap.Duration("skew", skew))
-		s.reportError(ctx, "clock-skew",
+		s.reportError(execCtx, "clock-skew",
 			fmt.Sprintf("the agent's clock is %s from the backend's, outside the ±%s tolerance",
 				skew.Round(time.Second), clockSkewTolerance),
 			commandIDOf(frame.params))
 		return
 	}
 
-	verified, err := s.verify(ctx, frame.params)
+	verified, err := s.verify(execCtx, frame.params)
 	if err != nil {
 		s.manager.logger.Warn("command.execute refused", zap.Error(err))
-		s.reportError(ctx, envelopeErrorCode(err), err.Error(), commandIDOf(frame.params))
+		s.reportError(execCtx, envelopeErrorCode(err), err.Error(), commandIDOf(frame.params))
 		return
 	}
 	s.observeSeq(verified.Seq())
 
 	if s.manager.runner == nil {
-		s.reportError(ctx, "operation-unknown", "this agent has no dispatcher wired", verified.CommandID())
+		s.reportError(execCtx, "operation-unknown", "this agent has no dispatcher wired", verified.CommandID())
 		return
 	}
 	if !s.bundleCurrent() {
 		// §10.3 and Appendix C.2: a stale bundle refuses every mutation. The envelope's
 		// own digest check has already passed, so this is the agent's own bundle being
 		// behind rather than the envelope being wrong.
-		s.reportError(ctx, "policy-bundle-stale", "the agent's policy bundle is stale", verified.CommandID())
+		s.reportError(execCtx, "policy-bundle-stale", "the agent's policy bundle is stale", verified.CommandID())
 		return
 	}
 
 	commandID := verified.CommandID()
-	outcome, err := s.manager.runner.Execute(ctx, verified, func(p Progress) {
-		s.notify(ctx, "command.progress", map[string]any{
+	outcome, err := s.manager.runner.Execute(execCtx, verified, func(p Progress) {
+		s.notify(execCtx, "command.progress", map[string]any{
 			"command_id": commandID,
 			"percent":    p.Percent,
 			"stage":      p.Stage,
@@ -658,7 +667,7 @@ func (s *liveSession) execute(ctx context.Context, frame commandFrame) {
 		})
 	})
 	if err != nil {
-		s.reportError(ctx, "apply-rolled-back", err.Error(), commandID)
+		s.reportError(execCtx, "apply-rolled-back", err.Error(), commandID)
 		return
 	}
 	result := map[string]any{
@@ -680,7 +689,7 @@ func (s *liveSession) execute(ctx context.Context, frame commandFrame) {
 		zap.String("operation", string(verified.Operation())),
 		zap.String("status", outcome.Status),
 		zap.Int("files", len(outcome.Hashes)))
-	s.notify(ctx, "command.result", result)
+	s.notify(execCtx, "command.result", result)
 }
 
 // verify runs the envelope verifier, refusing when none is wired.
@@ -774,7 +783,14 @@ func (s *liveSession) drain(ctx context.Context) {
 		}
 		params := map[string]any{"record_id": r.RecordID, "kind": string(r.Kind)}
 		if len(r.Payload) > 0 {
-			params["payload"] = r.Payload
+			var unmarshalled map[string]any
+			if err := json.Unmarshal(r.Payload, &unmarshalled); err == nil {
+				for k, v := range unmarshalled {
+					params[k] = v
+				}
+			} else {
+				params["payload"] = string(r.Payload)
+			}
 		}
 		return sendRequest(ctx, s.transport, nil, method, params)
 	}, s.bundleCurrent())
@@ -915,8 +931,39 @@ func (s *liveSession) reportError(ctx context.Context, code, message, commandID 
 }
 
 func (s *liveSession) notify(ctx context.Context, method string, params map[string]any) {
-	if err := sendRequest(ctx, s.transport, nil, method, params); err != nil {
-		s.manager.logger.Debug("outbound frame failed", zap.String("method", method), zap.Error(err))
+	s.manager.notify(ctx, method, params)
+}
+
+func (s *liveSession) flushPending(ctx context.Context) {
+	s.manager.pendingMu.Lock()
+	if len(s.manager.pending) == 0 {
+		s.manager.pendingMu.Unlock()
+		return
+	}
+	items := make([]pendingNotification, len(s.manager.pending))
+	copy(items, s.manager.pending)
+	s.manager.pending = nil
+	s.manager.pendingMu.Unlock()
+
+	for i, item := range items {
+		if ctx.Err() != nil {
+			s.manager.pendingMu.Lock()
+			s.manager.pending = append(items[i:], s.manager.pending...)
+			s.manager.pendingMu.Unlock()
+			return
+		}
+
+		if err := sendRequest(ctx, s.transport, nil, item.method, item.params); err != nil {
+			s.manager.logger.Warn("failed to send pending notification; requeueing remaining items",
+				zap.String("method", item.method),
+				zap.Error(err))
+			s.manager.pendingMu.Lock()
+			s.manager.pending = append(items[i:], s.manager.pending...)
+			s.manager.pendingMu.Unlock()
+			return
+		}
+		s.manager.logger.Info("flushed pending notification",
+			zap.String("method", item.method))
 	}
 }
 
@@ -1061,6 +1108,70 @@ func (m *Manager) skewBeyondTolerance() (time.Duration, bool) {
 		return skew, -skew > clockSkewTolerance
 	}
 	return skew, skew > clockSkewTolerance
+}
+
+func (m *Manager) setActiveSession(s *liveSession) {
+	m.activeSessionMu.Lock()
+	m.activeSession = s
+	m.activeSessionMu.Unlock()
+}
+
+func (m *Manager) clearActiveSession(s *liveSession) {
+	m.activeSessionMu.Lock()
+	if m.activeSession == s {
+		m.activeSession = nil
+	}
+	m.activeSessionMu.Unlock()
+}
+
+func (m *Manager) getActiveSession() *liveSession {
+	m.activeSessionMu.Lock()
+	defer m.activeSessionMu.Unlock()
+	return m.activeSession
+}
+
+func (m *Manager) enqueuePending(method string, params map[string]any) {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+
+	const maxPending = 500
+	if len(m.pending) >= maxPending {
+		droppedIdx := -1
+		for i, item := range m.pending {
+			if item.method == "command.progress" {
+				droppedIdx = i
+				break
+			}
+		}
+		if droppedIdx != -1 {
+			m.pending = append(m.pending[:droppedIdx], m.pending[droppedIdx+1:]...)
+		} else {
+			m.pending = m.pending[1:]
+		}
+	}
+
+	m.pending = append(m.pending, pendingNotification{
+		method: method,
+		params: params,
+	})
+}
+
+func (m *Manager) notify(ctx context.Context, method string, params map[string]any) {
+	m.activeSessionMu.Lock()
+	active := m.activeSession
+	m.activeSessionMu.Unlock()
+
+	if active != nil {
+		if err := sendRequest(ctx, active.transport, nil, method, params); err == nil {
+			return
+		} else {
+			m.logger.Warn("active session send failed; enqueuing notification for redelivery",
+				zap.String("method", method),
+				zap.Error(err))
+		}
+	}
+
+	m.enqueuePending(method, params)
 }
 
 // sendRequest marshals one JSON-RPC frame. `id == nil` is a notification (§7.3).
