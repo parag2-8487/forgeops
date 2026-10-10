@@ -119,8 +119,6 @@ class Deployment(SQLModel, table=True):
     )
 
 
-__all__ = ["DEPLOYMENT_STATUSES", "Deployment"]
-
 
 class DeploymentCircuitBreaker(SQLModel, table=True):
     """One breaker per project and environment. 2.2, revision 0031.
@@ -165,3 +163,22 @@ class DeploymentCircuitBreaker(SQLModel, table=True):
     updated_at: datetime = Field(
         sa_column=Column("updated_at", DateTime(timezone=True), nullable=False, server_default=func.now())
     )
+
+
+from src.deployments.autonomous_models import (  # noqa: E402
+    AutonomousDeployment,
+    AutonomousDeploymentLog,
+    AutonomousDeploymentOutbox,
+    AutonomousDeploymentStage,
+)
+
+__all__ = [
+    "DEPLOYMENT_STATUSES",
+    "Deployment",
+    "DeploymentCircuitBreaker",
+    "AutonomousDeployment",
+    "AutonomousDeploymentStage",
+    "AutonomousDeploymentLog",
+    "AutonomousDeploymentOutbox",
+]
+
