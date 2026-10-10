@@ -1,6 +1,6 @@
 # ForgeOps Autonomous Deployment: GitHub Direct Push & Pull Request Publishing Specification
 
-**Document Version:** 1.5.0  
+**Document Version:** 1.6.0  
 **Date:** 2026-10-10  
 **Status:** Draft — Pending Review  
 **Target Branch:** `phase-2-implementation`
@@ -74,22 +74,26 @@ Follows standard RFC 7807 `problem(status, code, detail=...)` conventions with r
 To prevent misspelled fields in new requests while guaranteeing backward compatibility for historical stored runs, the platform defines two distinct schema models in [`backend/src/deployments/autonomous_schemas.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/autonomous_schemas.py):
 
 #### Git Branch Ref Validation Rules (`validate_git_branch_name`)
-Adheres strictly to `git check-ref-format --branch` semantics:
-1. Cannot be empty or whitespace-only.
-2. Cannot begin with a hyphen `-` (to prevent command-line option/flag injection into git invocations).
-3. UTF-8 byte length must not exceed 255 bytes.
-4. Cannot start with `/` or `.`, and cannot end with `/`, `.`, or `.lock`.
-5. Cannot contain consecutive slashes `//`.
-6. Cannot contain `..`, `@{`, `\\`, or be a single `@`.
-7. Cannot contain ASCII control characters (0x00–0x1F, 0x7F) or any of: ` `, `~`, `^`, `:`, `?`, `*`, `[`.
-8. No path component between `/` can start with `.` or end with `.lock`.
-9. Cannot contain empty path components (e.g. leading, trailing, or double slashes).
+Validates branch names against Git ref naming rules and remote Git provider constraints without silent input normalization:
+1. **No Whitespace or Silent Normalization:** Cannot be empty, whitespace-only, or contain any leading, trailing, or internal whitespace characters (` ` `\t` `\n` `\r`). The validator rejects invalid whitespace with an error rather than silently modifying requested branch names via `strip()`.
+2. **No Command-Line Option Injection:** Cannot begin with a hyphen `-` (e.g. `-main`, `-f`, `--branch`), preventing option injection into downstream Git or CLI tools.
+3. **UTF-8 Byte Length Limit:** Total UTF-8 encoded length must not exceed 255 bytes (`len(branch.encode('utf-8')) <= 255`).
+4. **Ref Boundary Constraints:** Cannot start with `/` or `.`, and cannot end with `/`, `.`, or `.lock`.
+5. **No Consecutive Slashes:** Cannot contain `//` or empty path components.
+6. **No Reserved Git Sequences:** Cannot contain `..`, `@{`, `\\`, or be a single `@`.
+7. **No Control or Reserved Characters:** Cannot contain ASCII control characters (0x00–0x1F, 0x7F) or any of: `~`, `^`, `:`, `?`, `*`, `[`.
+8. **Component Rules:** No path component separated by `/` can start with `.` or end with `.lock`.
 
-**Equivalence Guarantee:**
-Where the `git` CLI binary is installed in the runtime environment, the platform can optionally execute `git check-ref-format --branch <name>` as an external sanity check. However, the pure-Python validator below is a fully tested, zero-overhead equivalent that executes unconditionally across all API request validation and stored configuration parsing paths.
+**Authoritative Validation Hierarchy & Git Equivalence:**
+- **Authoritative Server-Side Rule:** `validate_git_branch_name()` is the authoritative server-side gate executed across all API endpoints, request schemas, and stored stage hydration.
+- **Intentional Divergence from Raw `git check-ref-format --branch`:**
+  1. **Single `@` Character:** Raw `git check-ref-format --branch @` accepts `@` as a local CLI alias for `HEAD`. ForgeOps explicitly rejects `@` because GitHub ref APIs reject `refs/heads/@`.
+  2. **Explicit Byte Boundary:** ForgeOps enforces an explicit 255 UTF-8 byte boundary limit, whereas raw `git check-ref-format` relies on host filesystem path length limits.
+  3. **Strict Rejection Over Mutation:** Raw `git check-ref-format --branch` prints normalized names; ForgeOps strictly rejects malformed input without mutating user intent.
+- **Differential Verification:** Test suites execute differential tests comparing `validate_git_branch_name()` against `git check-ref-format --branch` whenever the `git` binary is available, verifying parity across all test vectors with `@` documented as the single intentional policy divergence.
 
-**Positive Examples:** `main`, `master`, `develop`, `feature/oauth-login`, `release/v2.1.0`, `bugfix/issue-1234.v2`, `user/alice/work`, `team-alpha/job-1`  
-**Negative Examples:** `-main`, `-f`, `--branch`, `@`, `.hidden`, `feature//login`, `feature/`, `/release`, `v1.0.`, `feature.lock`, `feature/sub.lock/task`, `feat:bug`, `feat?x`, `feat*all`, `feat[1]`, `feat~1`, `feat^2`, `feat..1`, `a@{b`, `feat branch`, `feat\branch`, `   `
+**Positive Examples:** `main`, `master`, `develop`, `feature/oauth-login`, `release/v2.1.0`, `bugfix/issue-1234.v2`, `user/alice/work`, `team-alpha/job-1`, `feature/ü-login`, `'a' * 255`  
+**Negative Examples:** ` main`, `main `, `main\t`, `-main`, `-f`, `--branch`, `@`, `.hidden`, `feature//login`, `feature/`, `/release`, `v1.0.`, `feature.lock`, `feature/sub.lock/item`, `feat:bug`, `feat?x`, `feat*all`, `feat[1]`, `feat~1`, `feat^2`, `feat..1`, `a@{b`, `feat branch`, `feat\branch`, `   `, `'a' * 256`
 
 ```python
 import hashlib
@@ -102,34 +106,40 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 def validate_git_branch_name(branch: str | None) -> str | None:
-    """Validates branch name format against git ref naming rules (git check-ref-format --branch equivalent)."""
+    """Validates branch name format against git ref naming rules without silent normalization.
+
+    Rejects branch names with leading/trailing or internal whitespace rather than mutating via strip().
+    Enforces remote Git provider branch safety rules.
+    """
     if branch is None:
         return None
-    b = branch.strip()
-    if not b:
-        raise ValueError("Branch name cannot be empty or whitespace-only.")
-    if b.startswith("-"):
-        raise ValueError(f"Invalid branch name '{b}': cannot begin with a hyphen '-' (git option injection prevention).")
-    if len(b.encode("utf-8")) > 255:
-        raise ValueError("Branch name exceeds maximum length of 255 bytes.")
-    if b == "@" or b.startswith("/") or b.endswith("/") or b.endswith("."):
-        raise ValueError(f"Invalid branch name '{b}': cannot start/end with '/' or end with '.'.")
-    if "//" in b:
-        raise ValueError(f"Invalid branch name '{b}': consecutive slashes '//' are forbidden.")
-    if ".." in b or "@{" in b or "\\" in b:
-        raise ValueError(f"Invalid branch name '{b}': contains forbidden sequence ('..', '@{{', or '\\').")
-    for ch in b:
+    if not branch:
+        raise ValueError("Branch name cannot be empty.")
+    if any(ch.isspace() for ch in branch):
+        raise ValueError(f"Invalid branch name '{branch}': whitespace is forbidden.")
+    if branch.startswith("-"):
+        raise ValueError(f"Invalid branch name '{branch}': cannot begin with a hyphen '-' (git option injection prevention).")
+    encoded = branch.encode("utf-8")
+    if len(encoded) > 255:
+        raise ValueError(f"Branch name exceeds maximum length of 255 bytes (got {len(encoded)} bytes).")
+    if branch == "@" or branch.startswith("/") or branch.endswith("/") or branch.endswith("."):
+        raise ValueError(f"Invalid branch name '{branch}': cannot be '@', start/end with '/', or end with '.'.")
+    if "//" in branch:
+        raise ValueError(f"Invalid branch name '{branch}': consecutive slashes '//' are forbidden.")
+    if ".." in branch or "@{" in branch or "\\" in branch:
+        raise ValueError(f"Invalid branch name '{branch}': contains forbidden sequence ('..', '@{{', or '\\').")
+    for ch in branch:
         code = ord(ch)
-        if code < 32 or code == 127 or ch in " ~^:?*[":
-            raise ValueError(f"Invalid branch name '{b}': contains forbidden character '{ch}'.")
-    for comp in b.split("/"):
+        if code < 32 or code == 127 or ch in "~^:?*[":
+            raise ValueError(f"Invalid branch name '{branch}': contains forbidden character '{ch}'.")
+    for comp in branch.split("/"):
         if not comp:
-            raise ValueError(f"Invalid branch name '{b}': empty path component.")
+            raise ValueError(f"Invalid branch name '{branch}': empty path component.")
         if comp.startswith("."):
-            raise ValueError(f"Invalid branch name '{b}': path component '{comp}' cannot start with '.'.")
+            raise ValueError(f"Invalid branch name '{branch}': path component '{comp}' cannot start with '.'.")
         if comp.endswith(".lock"):
-            raise ValueError(f"Invalid branch name '{b}': path component '{comp}' cannot end with '.lock'.")
-    return b
+            raise ValueError(f"Invalid branch name '{branch}': path component '{comp}' cannot end with '.lock'.")
+    return branch
 
 
 class GitHubPublishingMode(str, Enum):
@@ -235,8 +245,19 @@ To ensure the exact deployment manifest bytes and payload digest are completely 
    **Concrete Illustrated Digest Example:**
    - Run ID: `835783a4-7c13-4c00-a233-90034f3a1db7`
    - Created At: `2026-10-10T14:00:00Z`
-   - Manifest Bytes: `b"ForgeOps Autonomous Deployment Run 835783a4-7c13-4c00-a233-90034f3a1db7\nCreated: 2026-10-10T14:00:00Z\n"` (length: 96 bytes)
+   - Manifest Bytes: `b"ForgeOps Autonomous Deployment Run 835783a4-7c13-4c00-a233-90034f3a1db7\nCreated: 2026-10-10T14:00:00Z\n"`
+   - Exact UTF-8 Byte Length: `102` bytes
    - Calculated SHA-256 Digest: `0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913`
+
+   **Reproducible Programmatic Fixture Definition:**
+   ```python
+   SAMPLE_RUN_ID = uuid.UUID("835783a4-7c13-4c00-a233-90034f3a1db7")
+   SAMPLE_CREATED_AT = datetime(2026, 10, 10, 14, 0, 0, tzinfo=UTC)
+   SAMPLE_MANIFEST_BYTES, SAMPLE_PAYLOAD_DIGEST = build_deployment_manifest(SAMPLE_RUN_ID, SAMPLE_CREATED_AT)
+
+   assert len(SAMPLE_MANIFEST_BYTES) == 102
+   assert SAMPLE_PAYLOAD_DIGEST == "0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913"
+   ```
 2. **Durable Operation Intent Persistence via Dedicated Session & Worker Fencing:**
    A SQLAlchemy `session.flush()` merely buffers SQL statements into the active database transaction; if the worker process crashes before a commit, the uncommitted transaction is rolled back by PostgreSQL. Furthermore, executing `await session.commit()` on the worker's primary shared application session would commit all pending/dirty ORM objects across other entities.
 
@@ -333,16 +354,13 @@ The GitHub Contents API (`PUT /repos/{owner}/{repo}/contents/{path}`) operates a
    - **On Conflict Response (`409 Conflict` or `422 Unprocessable Entity`):**
      - A concurrent write occurred on remote. ForgeOps executes **Manifest Write Conflict Reconciliation**:
        1. Refetches current file metadata: `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`.
-       2. Refetches recent commit history for the manifest path:
-          `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=5`.
-       3. Iterates candidate commits to check if our expected commit already landed (e.g. from upstream retry or race):
-          - Commit message matches `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
-          - Manifest content at that commit matches `payload_digest`.
-          - Author / committer matches authenticated integration identity.
-          - Commit is reachable from `target_branch` (Compare API reports `behind_by == 0`, `status in ("ahead", "identical")`).
-       4. **If matching commit is found:** Adopts `commit_sha`, records stage metadata, and marks `live: true`.
-       5. **If remote state belongs to another writer or is ambiguous:** Halts safely with `ConflictError: "Manifest file 'forgeops-autonomous-deploy.txt' on branch '{target_branch}' has conflicting remote state from another writer."`
-       - Never retries a blind overwrite, never force-pushes, and never destroys foreign changes.
+       2. Refetches commit history for the manifest path using bounded pagination:
+          `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=30&page={page}` (paginating up to 5 pages / 150 commits).
+       3. Evaluates candidate commits sequentially from newest to oldest against three stopping conditions:
+          - **Stopping Condition 1 (Match Found):** If candidate commit matches run provenance (message `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`, payload digest, authenticated author/committer, and branch reachability via Compare API with `behind_by == 0` and `status in ("ahead", "identical")`): adopts `commit_sha`, records stage metadata, and marks `live: true`. Search halts immediately.
+          - **Stopping Condition 2 (Base Boundary Reached):** If a commit with `sha == base_sha` is encountered or commit timestamp predates `intent_committed_at`: search halts immediately. Inspects tip manifest; if remote blob changed, halts with `ConflictError`; if untouched, updates `base_sha` in operation intent and retries.
+          - **Stopping Condition 3 (Pagination Limit Exhausted):** If 150 commits (5 pages) are examined without finding a matching run commit or reaching `base_sha`: halts safely with `ConflictError: "Target branch '{target_branch}' advanced significantly without finding run commit or reaching base boundary."`
+       4. Never retries a blind overwrite, never force-pushes, and never destroys foreign changes.
 9. Persists completed stage metadata with `commit_sha`, `payload_digest`, and marks `live: true`:
    ```json
    {
@@ -359,26 +377,26 @@ The GitHub Contents API (`PUT /repos/{owner}/{repo}/contents/{path}`) operates a
 #### Crash Recovery & Idempotent Retry (Direct Push)
 If the worker crashed after issuing the Contents API write but before persisting completed stage metadata:
 1. Worker loads durable `operation_intent` from `stage_metadata` (`payload_digest`, `base_sha`, `existing_blob_sha`, `manifest_path`).
-2. **Identifying the Exact Run Commit via Path History & Reachability:**
-   - Worker queries commit history affecting the manifest file on `target_branch`:
-     `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=5`
-   - Worker iterates candidate commits from newest to oldest and verifies commit provenance:
-     1. Commit message matches `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
-     2. Author / committer matches the authenticated ForgeOps GitHub integration identity.
-     3. Manifest content at that commit matches `payload_digest` (verified via `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={commit["sha"]}`).
-     4. Commit reachability on `target_branch`: verified via GitHub Compare API `GET /repos/{owner}/{repo}/compare/{quote(candidate["sha"], safe='')}...{quote(target_branch, safe='')}` reporting `behind_by == 0` and `status in ("ahead", "identical")`. The candidate commit does NOT need to be the branch tip if unrelated later commits were merged.
-   - **If Exact Commit is Verified:**
-     The commit was successfully created on remote prior to the crash. Worker adopts `commit_sha = candidate["sha"]`, commits stage metadata via the dedicated session, and marks `live: true`. It does NOT create a duplicate commit or invoke the Contents API again.
-3. **If No Matching Commit is Found on Target Branch:**
-   - Worker inspects current manifest file at `target_branch` tip:
-     `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`
-   - **Case A (Conflicting Manifest Changes from Another Writer):**
-     If the file exists and its blob SHA differs from `existing_blob_sha` (and does not match our `payload_digest`), foreign changes occurred. Worker halts safely with `ConflictError: "Target branch '{target_branch}' has conflicting manifest state."` Never retries a blind overwrite.
-   - **Case B (No Commit Landed & Manifest Untouched):**
-     If the current blob SHA still equals `existing_blob_sha` (or file remains absent):
-     - If `target_branch` advanced with unrelated commits (`current_tip_sha != base_sha`), worker updates `base_sha = current_tip_sha` in `operation_intent` via the dedicated session, re-validates fencing and cancellation, and re-executes the Contents API call.
-     - If `target_branch` has not moved (`current_tip_sha == base_sha`), worker re-validates fencing and cancellation, and re-executes the Contents API call using the recorded intent.
-   - Under no circumstances does ForgeOps ever force-push or overwrite unexpected commits.
+2. **Identifying the Exact Run Commit via Bounded Path History & Reachability:**
+   - Worker initiates bounded, paginated commit history retrieval affecting the manifest path on `target_branch`:
+     `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=30&page={page}` (up to 5 pages, max 150 commits).
+   - Worker evaluates candidate commits sequentially from newest to oldest against three deterministic stopping conditions:
+     1. **Stopping Condition 1 — Exact Run Commit Match:**
+        - Commit message matches `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
+        - Author / committer matches the authenticated ForgeOps GitHub integration identity.
+        - Manifest content at candidate commit matches `payload_digest` (verified via `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={commit["sha"]}`).
+        - Commit reachability on `target_branch`: verified via GitHub Compare API `GET /repos/{owner}/{repo}/compare/{quote(candidate["sha"], safe='')}...{quote(target_branch, safe='')}` reporting `behind_by == 0` and `status in ("ahead", "identical")`. Subsequent unrelated commits (`status == "ahead"`) are explicitly permitted.
+        - *Action:* The commit was successfully created on remote prior to the crash. Worker adopts `commit_sha = candidate["sha"]`, persists completed stage metadata via the dedicated session, and marks `live: true`. Search halts immediately; worker does not create a duplicate commit or invoke the Contents API again.
+     2. **Stopping Condition 2 — Base Boundary Reached:**
+        - If a commit is encountered with `sha == base_sha` or with a commit timestamp strictly earlier than `intent_committed_at`.
+        - *Action:* Any commits at or preceding `base_sha` were created before this deployment run's operation intent was committed; the run's commit cannot exist deeper in the history. Search halts immediately without fetching further pages. Worker inspects the current manifest file at `target_branch` tip:
+          - **Case A (Conflicting Manifest Changes from Another Writer):** If the file exists and its blob SHA differs from `existing_blob_sha` (and does not match `payload_digest`), foreign changes occurred. Worker halts safely with `ConflictError: "Target branch '{target_branch}' has conflicting manifest state."` Never retries a blind overwrite.
+          - **Case B (No Commit Landed & Manifest Untouched):** If the current blob SHA still equals `existing_blob_sha` (or file remains absent):
+            - If `target_branch` advanced with unrelated commits (`current_tip_sha != base_sha`), worker updates `base_sha = current_tip_sha` in `operation_intent` via the dedicated session, re-validates fencing and cancellation, and re-executes the Contents API call.
+            - If `target_branch` has not moved (`current_tip_sha == base_sha`), worker re-validates fencing and cancellation, and re-executes the Contents API call using the recorded intent.
+     3. **Stopping Condition 3 — Pagination Limit Exhausted (150 Commits / 5 Pages):**
+        - If all 5 pages (150 commits) have been inspected without finding a matching run commit and without encountering `base_sha`.
+        - *Action:* The branch has advanced extensively with rapid commit velocity beyond the bounded recovery window. To guarantee safety and prevent duplicate writes or blind overwrites, ForgeOps halts safely with `ConflictError: "Target branch '{target_branch}' advanced significantly (exceeded 150 commits / 5 pages) without finding run commit or reaching base boundary."` requiring operator review. Under no circumstances does ForgeOps ever force-push or overwrite unexpected commits.
 
 ---
 
@@ -393,12 +411,16 @@ If the worker crashed after issuing the Contents API write but before persisting
 - Queries `GET /repos/{owner}/{repo}/git/ref/heads/{quote(base_branch, safe='')}` to capture `base_sha`.
 - If base branch is missing, halts immediately with `status = "failed"` (`Base branch does not exist`).
 
-#### Source Branch Reconciliation & Provenance Verification
+#### Source Branch Reconciliation, Existing Manifest Handling & Provenance Verification
 Worker queries `GET /repos/{owner}/{repo}/git/ref/heads/{quote(source_branch, safe='')}`:
 - **Scenario 1: Branch Does Not Exist (404):**
   - Creates `refs/heads/{source_branch}` pointing to `base_sha` via `POST /repos/{owner}/{repo}/git/refs`.
   - Handles concurrent creation race: if 422 returned, refetches the branch ref.
-  - Pushes deployment payload commit to `source_branch`. Captures resulting `commit_sha`.
+  - **Handling Manifest Inherited from Base SHA:**
+    Because `source_branch` is branched from `base_sha`, it inherits any existing repository files at `base_sha`. ForgeOps queries `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(source_branch, safe='')}`:
+    - If file exists (200 OK): captures `existing_source_blob_sha = response["sha"]`, and includes `"sha": existing_source_blob_sha` in the Contents API `PUT` call targeting `source_branch`.
+    - If file does not exist (404 Not Found): sets `existing_source_blob_sha = None` and omits the `sha` parameter in the `PUT` call.
+  - Pushes deployment payload commit to `source_branch` via `PUT /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt` with `"branch": source_branch`. Captures resulting `commit_sha`.
 - **Scenario 2: Branch Already Exists (200):**
   - Inspects current remote tip SHA (`tip_sha`).
   - **Sub-case 2a (Commit Already Pushed by Previous Attempt):**
@@ -410,10 +432,17 @@ Worker queries `GET /repos/{owner}/{repo}/git/ref/heads/{quote(source_branch, sa
     - If all three match: Worker adopts `tip_sha` as `commit_sha` without pushing a duplicate commit and without force-pushing.
   - **Sub-case 2b (Branch Freshly Created at Base SHA):**
     - `tip_sha == base_sha`.
-    - Worker pushes deployment payload commit normally to `source_branch`, capturing `commit_sha`.
+    - Worker queries `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(source_branch, safe='')}`: captures `existing_source_blob_sha` if 200 OK, or `None` if 404.
+    - Worker pushes deployment payload commit to `source_branch` passing `"sha": existing_source_blob_sha` (if present) and captures `commit_sha`.
   - **Sub-case 2c (Source Branch Diverged / Unrelated Foreign Commit):**
     - `tip_sha != base_sha` and fails the rigorous provenance check.
     - Worker aborts with `ConflictError: "Source branch 'forgeops/deploy-{run.id}' diverged unexpectedly on remote."` Never force-pushes or overwrites foreign commits.
+  - **Handling Write Conflicts on Source Branch (`409 Conflict` or `422 Unprocessable Entity`):**
+    - If the Contents API write to `source_branch` returns 409 or 422:
+      1. Worker refetches the source branch tip ref: `GET /repos/{owner}/{repo}/git/ref/heads/{quote(source_branch, safe='')}`.
+      2. Executes the rigorous provenance check on the new tip commit.
+      3. If the commit matches the run's provenance and payload digest, worker adopts `tip_sha` as `commit_sha`.
+      4. If the remote state is ambiguous or foreign, worker halts with `ConflictError`. Never retries a blind overwrite and never force-pushes.
   - **Note on Base Branch Advancement:**
     - If `base_branch` on GitHub advanced to a new commit *after* `source_branch` was created, this does NOT constitute source branch divergence. The source branch remains validly based on `base_sha`, and GitHub handles base branch delta resolution in the PR.
 
@@ -510,9 +539,7 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
            - `status in ("ahead", "identical")`
            - `behind_by == 0` (meaning `target_branch` is 0 commits behind `merge_commit_sha`).
          - **If `behind_by == 0` and `status in ("ahead", "identical")`:**
-           Direct branch reachability is established. The merge commit is verified to be present in `target_branch`'s history.
-           `target_results["github"] = "verified"`
-           Stage metadata records `pr_state = "closed"`, `pr_merged = true`, `merge_commit_sha = merge_commit_sha`.
+           Direct branch reachability is established. The merge commit is verified to be present in `target_branch`'s history. Proceed to manifest content verification.
          - **If `behind_by > 0` or `status not in ("ahead", "identical")` (e.g. `"diverged"` or `"behind"`):**
            `target_branch` does NOT contain `merge_commit_sha`. The PR may have merged into an unexpected base or the target branch diverged. G7 fails verification honestly:
            `target_results["github"] = "failed"`
@@ -521,6 +548,31 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
            Reachability cannot be established. G7 fails verification honestly:
            `target_results["github"] = "failed"`
            Gate error: `"Failed to verify reachability of merge commit '{merge_commit_sha}' on branch '{target_branch}': upstream comparison failed."`
+      - **Manifest Content & Payload Digest Verification at Merge Commit:**
+        - To guarantee that the deployment manifest is present and intact in the merged commit tree across all merge strategies (`merge`, `squash`, `rebase`), G7 retrieves:
+          `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(merge_commit_sha, safe='')}`
+        - Decodes content bytes, computes SHA-256 digest, and asserts parity against `payload_digest`.
+        - **Handling Across Merge Strategies:**
+          1. **Merge Commit (`merge` strategy - 2 parents):** The merge commit inherits tree modifications from the source branch; manifest content at `merge_commit_sha` matches `payload_digest`.
+          2. **Squash Merge (`squash` strategy - 1 parent):** GitHub creates a single synthetic commit on `target_branch` containing the aggregated tree; manifest content at `merge_commit_sha` matches `payload_digest`.
+          3. **Rebase Merge (`rebase` strategy - 1 parent per PR commit):** GitHub reapplies individual commits onto `target_branch`; manifest content at `merge_commit_sha` (the tip rebased commit) matches `payload_digest`.
+        - **Evaluating Manifest Outcomes:**
+          - **If Manifest Matches `payload_digest`:**
+            Direct branch reachability and payload integrity are verified.
+            `target_results["github"] = "verified"`
+            Stage metadata records `pr_state = "closed"`, `pr_merged = true`, `merge_commit_sha = merge_commit_sha`.
+          - **If Manifest Returns 404 (Not Found):**
+            The manifest file is absent at `merge_commit_sha`. G7 fails verification honestly:
+            `target_results["github"] = "failed"`
+            Gate error: `"Manifest file 'forgeops-autonomous-deploy.txt' not found at merge commit '{merge_commit_sha}'."`
+          - **If Manifest Digest Mismatches `payload_digest`:**
+            The content at `merge_commit_sha` differs from the run's expected payload. G7 fails verification honestly:
+            `target_results["github"] = "failed"`
+            Gate error: `"Manifest content at merge commit '{merge_commit_sha}' does not match expected payload digest."`
+          - **If GitHub API Returns 403, 422, or 502:**
+            Manifest retrieval failed. G7 fails verification honestly:
+            `target_results["github"] = "failed"`
+            Gate error: `"Failed to retrieve manifest content at merge commit '{merge_commit_sha}': upstream error."`
    - **Case 3: PR Was Closed Without Merge (`observed_state == "closed"` and `observed_merged == false`):**
      - Target failed: The PR was rejected, abandoned, or closed without merging.
      - `target_results["github"] = "failed"`
@@ -569,10 +621,16 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
 ## 6. Testing & Quality Assurance Plan
 
 ### 6.1. Unit & Schema Tests
+- Deterministic Manifest Fixture:
+  - Exact UTF-8 byte length (102 bytes) and calculated SHA-256 digest (`0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913`) for reproducible test fixture (`SAMPLE_RUN_ID`, `SAMPLE_CREATED_AT`).
+- Git Branch Validation (`validate_git_branch_name`):
+  - Strict whitespace rejection without silent normalization: raises `ValueError` on leading, trailing, tab, and newline whitespace without `strip()` mutation.
+  - UTF-8 byte boundary enforcement: 255-byte branch succeeds, 256-byte branch raises `ValueError`.
+  - Command option injection prevention: `-main`, `-f`, `--branch` raise `ValueError`.
+  - Ref boundary and character constraints: `@`, `//`, `..`, `.lock`, control characters, and reserved symbols raise `ValueError`.
+  - Differential verification against `git check-ref-format --branch` asserting identical acceptance/rejection across all test vectors, documenting `@` as the single intentional policy divergence.
 - Validation of `GitHubConfigRequest`:
   - Rejection of misspelled / extra fields via `extra="forbid"`.
-  - Rejection of names beginning with a hyphen `-` (`-main`, `-f`, `--branch`) to prevent git option injection.
-  - Rejection of whitespace-only and invalid git ref characters (`..`, `~`, `^`, `:`, `?`, `*`, `[`, `\`, leading/trailing `/`, consecutive slashes `//`, single `@`).
   - Rejection of conflicting `target_branch` and `base_branch`.
   - Rejection of invalid repository format.
   - Verification that omitted `target_branch` passes schema validation as `None` for dynamic service resolution.
@@ -590,13 +648,17 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
   - Dedicated session context (`async with async_session_factory() as intent_session:`) ensuring `operation_intent` commits without committing unrelated dirty ORM entities.
   - Pre-intent and pre-mutation worker lease fencing and cancellation revalidation.
   - Crash recovery when worker crashes between intent commit and first remote mutation: verifies pristine remote repository state at base SHA and executes intended mutation without false divergence alarms.
-- Direct-push concurrency, conflict reconciliation & crash recovery:
+- Direct-push concurrency, conflict reconciliation & bounded crash recovery:
   - Unrelated commits on target branch: Contents API attaches commit to advanced branch tip; worker verifies commit reachability on `target_branch` via Compare API (`behind_by == 0`, `status == "ahead"`), allowing subsequent commits.
   - Manifest write conflict reconciliation: handles both `409 Conflict` and `422 Unprocessable Entity` (concurrent creation of previously absent file without `sha`).
-  - Conflict recovery: refetches remote file and path history; adopts commit if exact run identity, payload digest, author provenance, and ancestry match; halts safely with `ConflictError` if foreign or ambiguous state exists, never retrying blind overwrites.
-  - Crash after push: worker locates exact run commit in target branch commit history via payload digest and author check, adopting without duplicate push.
-- Pull request crash recovery:
-  - Push succeeds, worker crashes, retry adopts source-branch commit via provenance verification.
+  - Bounded recovery pagination: mocks up to 5 pages (`per_page=30`, max 150 commits) on manifest path.
+    - Stopping Condition 1: match found on page 1-5 adopts commit and terminates pagination immediately without duplicate writes.
+    - Stopping Condition 2: encountering `sha == base_sha` or timestamp earlier than `intent_committed_at` terminates pagination immediately without fetching further pages; re-attempts write if manifest untouched.
+    - Stopping Condition 3: pagination limit exhausted after 150 commits raises `ConflictError` safely without blind overwrite or duplicate write.
+- Pull request execution, existing manifest inheritance & crash recovery:
+  - Existing manifest inheritance: when `source_branch` is branched from `base_sha` where manifest exists, queries source branch manifest blob SHA and supplies `existing_source_blob_sha` in Contents API `PUT`.
+  - Source branch write conflict (409/422): verifies refetch of source branch tip and provenance reconciliation without force-pushing.
+  - Push succeeds, worker crashes: retry adopts source-branch commit via provenance verification.
   - Base branch advancing after branch creation does not falsely flag source branch divergence.
   - Source branch divergence conflict detection when foreign commits exist.
   - Partial failure recovery: push succeeds, PR creation times out, subsequent retry adopts existing branch and PR without duplicate creation.
@@ -606,7 +668,10 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
   - Open PR (`state == "open"`, `head.sha == commit_sha`) -> `verified`.
   - Open PR with head SHA mismatch -> `failed`.
   - Merged PR (`state == "closed"`, `merged == true`):
-    - Reachable merge commit verified via GitHub Compare API (`status in ("ahead", "identical")`, `behind_by == 0`) -> `verified`.
+    - Reachable merge commit verified via GitHub Compare API (`status in ("ahead", "identical")`, `behind_by == 0`).
+    - Manifest content and `payload_digest` verification at `merge_commit_sha` across `merge`, `squash`, and `rebase` strategies -> `verified`.
+    - Missing manifest file at `merge_commit_sha` (404) -> `failed`.
+    - Manifest content digest mismatch at `merge_commit_sha` -> `failed`.
     - Unreachable or diverged merge commit (`behind_by > 0` or status `"diverged"`) -> `failed`.
     - Missing `merge_commit_sha` when reported merged -> `failed`.
   - Closed unmerged PR (`state == "closed"`, `merged == false`) -> `failed`.
