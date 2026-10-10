@@ -265,6 +265,8 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "project-empty": ProblemSpec(400, "Project has no indexed files"),
     "validation-error": ProblemSpec(422, "Request validation error"),
     "vercel-deploy-failed": ProblemSpec(502, "Failed to deploy to Vercel"),
+    "idempotency-conflict": ProblemSpec(409, "Idempotency conflict"),
+    "autonomous-run-conflict": ProblemSpec(409, "Autonomous deployment run state conflict"),
 }
 
 #: The 403 body, byte-identical for every forbidden outcome (design §4.2, Appendix
