@@ -1,6 +1,6 @@
 # ForgeOps Autonomous Deployment: GitHub Direct Push & Pull Request Publishing Specification
 
-**Document Version:** 1.2.0  
+**Document Version:** 1.3.0  
 **Date:** 2026-10-10  
 **Status:** Draft — Pending Review  
 **Target Branch:** `phase-2-implementation`
@@ -18,8 +18,8 @@ ForgeOps Autonomous Deployment Orchestrator publishes release synchronization co
 - **Durable & Idempotent:** All branch, commit, and PR operations must be safe across worker retries, crash recovery, and transient provider timeouts without duplicating commits or creating multiple PRs.
 - **Strict Server-Side Validation:** The backend must independently verify repository access, branch existence, permissions, and parameters; never trusting raw client input. Incoming API requests reject unrecognized fields (`extra="forbid"`).
 - **Dynamic Branch Resolution:** `target_branch` is optional for new requests. If omitted, the backend dynamically resolves the repository's actual default branch via GitHub API, never hardcoding `main`.
-- **Ref Provenance & Commit Identity:** Recovery verifies exact payload digests and commit ancestry rather than assuming branch existence or manifest text alone proves ownership.
-- **Backward Compatible Persistence:** Legacy stored configurations parse through a permissive compatibility schema (`extra="ignore"`), defaulting missing `publishing_mode` to `direct_push`, while incoming API requests strictly reject misspelled fields.
+- **Ref Provenance & Commit Identity:** Recovery verifies exact payload digests, commit ancestry, and PR head SHA rather than assuming branch existence, ref names, or manifest text alone proves ownership.
+- **Backward Compatible Persistence:** Legacy stored configurations parse through a permissive compatibility schema (`extra="ignore"`), preserving existing target branches and defaulting missing `publishing_mode` to `direct_push`. Legacy runs with an omitted branch resolve dynamically to the repository's actual default branch, never silently assuming `main`.
 - **RFC-Compliant URL Construction:** All branch names and repository identifiers are strictly validated and URL-encoded across Git refs and PR API paths.
 - **Zero Secret Exposure:** Sealed GitHub credentials are decrypted strictly in-memory; no credentials or tokens are ever persisted into database stage metadata, error details, or client responses.
 - **Accurate G7 Verification:** Evaluates actual remote provider evidence, distinguishing open PRs, merged PRs, and rejected PRs without equating PR creation with merging.
@@ -73,15 +73,56 @@ Follows standard RFC 7807 `problem(status, code, detail=...)` conventions with r
 
 To prevent misspelled fields in new requests while guaranteeing backward compatibility for historical stored runs, the platform defines two distinct schema models in [`backend/src/deployments/autonomous_schemas.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/autonomous_schemas.py):
 
-#### A. Incoming API Request Schema: `GitHubConfigRequest`
-```python
-import re
-from urllib.parse import quote
+#### Git Branch Ref Validation Rules (`validate_git_branch_name`)
+Adheres strictly to `git-check-ref-format --branch`:
+1. Cannot be empty or whitespace-only.
+2. UTF-8 byte length must not exceed 255 bytes.
+3. Cannot start with `/` or `.`, and cannot end with `/`, `.`, or `.lock`.
+4. Cannot contain consecutive slashes `//`.
+5. Cannot contain `..`, `@{`, `\\`, or be a single `@`.
+6. Cannot contain ASCII control characters (0x00–0x1F, 0x7F) or any of: ` `, `~`, `^`, `:`, `?`, `*`, `[`.
+7. No path component between `/` can start with `.` or end with `.lock`.
 
-# Git reference validation pattern (RFC / git-check-ref-format compliant)
-GIT_BRANCH_PATTERN = re.compile(
-    r"^(?!\.)(?!.*\.\.)(?!.*@\{)(?!.*[\x00-\x1f\x7f ~^:?*\[\\])(?!.*\.lock$)[A-Za-z0-9_.\-\/]+(?<!\/)(?<!\.)$"
-)
+**Positive Examples:** `main`, `master`, `develop`, `feature/oauth-login`, `release/v2.1.0`, `bugfix/issue-1234.v2`, `user/alice/work`  
+**Negative Examples:** `.hidden`, `feature//login`, `feature/`, `/release`, `v1.0.`, `feature.lock`, `feature/sub.lock/task`, `feat:bug`, `feat?x`, `feat*all`, `feat[1]`, `feat~1`, `feat^2`, `feat..1`, `a@{b`, `feat branch`, `feat\branch`, `   `
+
+```python
+import hashlib
+import re
+import uuid
+from datetime import UTC, datetime
+from typing import Self
+from urllib.parse import quote
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def validate_git_branch_name(branch: str | None) -> str | None:
+    """Validates branch name format against git ref naming rules."""
+    if branch is None:
+        return None
+    b = branch.strip()
+    if not b:
+        raise ValueError("Branch name cannot be empty or whitespace-only.")
+    if len(b.encode("utf-8")) > 255:
+        raise ValueError("Branch name exceeds maximum length of 255 bytes.")
+    if b == "@" or b.startswith("/") or b.endswith("/") or b.endswith("."):
+        raise ValueError(f"Invalid branch name '{b}': cannot start/end with '/' or end with '.'.")
+    if "//" in b:
+        raise ValueError(f"Invalid branch name '{b}': consecutive slashes '//' are forbidden.")
+    if ".." in b or "@{" in b or "\\" in b:
+        raise ValueError(f"Invalid branch name '{b}': contains forbidden sequence ('..', '@{{', or '\\').")
+    for ch in b:
+        code = ord(ch)
+        if code < 32 or code == 127 or ch in " ~^:?*[":
+            raise ValueError(f"Invalid branch name '{b}': contains forbidden character '{ch}'.")
+    for comp in b.split("/"):
+        if not comp:
+            raise ValueError(f"Invalid branch name '{b}': empty path component.")
+        if comp.startswith("."):
+            raise ValueError(f"Invalid branch name '{b}': path component '{comp}' cannot start with '.'.")
+        if comp.endswith(".lock"):
+            raise ValueError(f"Invalid branch name '{b}': path component '{comp}' cannot end with '.lock'.")
+    return b
 
 
 class GitHubPublishingMode(str, Enum):
@@ -115,16 +156,7 @@ class GitHubConfigRequest(BaseModel):
     @field_validator("target_branch", "base_branch")
     @classmethod
     def validate_branch_format(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        trimmed = v.strip()
-        if not trimmed:
-            raise ValueError("Branch name cannot be empty or whitespace-only.")
-        if not GIT_BRANCH_PATTERN.match(trimmed):
-            raise ValueError(
-                f"Branch name '{trimmed}' contains invalid characters or violates git ref naming rules."
-            )
-        return trimmed
+        return validate_git_branch_name(v)
 
     @model_validator(mode="after")
     def reconcile_and_normalize_branches(self) -> Self:
@@ -139,19 +171,20 @@ class GitHubConfigRequest(BaseModel):
         return self
 ```
 
-#### B. Legacy Stored Deserialization Schema: `StoredGitHubConfig`
+#### Legacy Stored Deserialization Schema: `StoredGitHubConfig`
 ```python
 class StoredGitHubConfig(BaseModel):
     """Permissive configuration model for database hydration and recovery.
 
     Tolerates extra/deprecated fields from earlier runs and defaults missing publishing_mode to direct_push.
+    Never assumes 'main' when target_branch is omitted.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     repository_mode: str = "existing"
     repository_name: str
-    target_branch: str = "main"
+    target_branch: str | None = None
     base_branch: str | None = None
     publishing_mode: GitHubPublishingMode = GitHubPublishingMode.DIRECT_PUSH
     commit_message: str | None = "Automated deployment by ForgeOps"
@@ -160,27 +193,56 @@ class StoredGitHubConfig(BaseModel):
 
     @model_validator(mode="after")
     def normalize_legacy(self) -> Self:
-        if not self.base_branch:
+        if self.target_branch and not self.base_branch:
             self.base_branch = self.target_branch
+        elif self.base_branch and not self.target_branch:
+            self.target_branch = self.base_branch
         return self
 ```
 
-#### C. Dynamic Default Branch Resolution
+#### Dynamic Default Branch Resolution
 In [`AutonomousDeploymentService.create_run`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/autonomous_service.py#L110):
 - If `request.github_config.target_branch is None`:
   1. Service queries GitHub API (`GET /repos/{owner}/{repo}`) using user's unsealed token.
   2. Resolves `default_branch` directly from the provider response (e.g. `develop` or `main`).
   3. Sets `github_config.target_branch = default_branch` and `github_config.base_branch = default_branch`.
   4. If repository access fails or repository is inaccessible, rejects creation with `400 Bad Request` or `404 Not Found`.
-- Legacy runs with already persisted `target_branch` are preserved as-is without re-querying.
+- Legacy runs with an already persisted `target_branch` are preserved as-is. If a legacy run somehow has `target_branch is None`, recovery dynamically resolves the repository's default branch via GitHub API, never silently defaulting to `main`.
 
 ---
 
-## 3. Worker Execution & Commit-Level Idempotency
+## 3. Worker Execution, Stable Payload Digest & Commit Idempotency
 
-### 3.1. Stage Execution: `STAGE_GITHUB_RELEASE`
+### 3.1. Stable Manifest Payload Generation & Operation Intent
 
-When the worker enters `STAGE_GITHUB_RELEASE`, it inspects `run.configuration["github_config"]`.
+To ensure the exact deployment manifest bytes and payload digest are completely stable across crashes, worker handoffs, and retries:
+1. **Deterministic Manifest Definition:**
+   The manifest content is constructed strictly from immutable database attributes established at run creation time (`run.id` and `run.created_at` formatted in ISO 8601 UTC):
+   ```python
+   def build_deployment_manifest(run_id: uuid.UUID, created_at: datetime) -> tuple[bytes, str]:
+       ts_str = created_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+       body = f"ForgeOps Autonomous Deployment Run {run_id}\nCreated: {ts_str}\n".encode("utf-8")
+       digest = hashlib.sha256(body).hexdigest()
+       return body, digest
+   ```
+   **Concrete Illustrated Digest Example:**
+   - Run ID: `835783a4-7c13-4c00-a233-90034f3a1db7`
+   - Created At: `2026-10-10T14:00:00Z`
+   - Manifest Bytes: `b"ForgeOps Autonomous Deployment Run 835783a4-7c13-4c00-a233-90034f3a1db7\nCreated: 2026-10-10T14:00:00Z\n"` (length: 96 bytes)
+   - Calculated SHA-256 Digest: `0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913`
+2. **Durable Operation Intent Recording:**
+   Before making any remote mutating Git API calls, the worker records an `operation_intent` payload into `stage_metadata` and flushes the database session:
+   ```json
+   {
+     "operation_intent": {
+       "payload_digest": "0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913",
+       "manifest_path": "forgeops-autonomous-deploy.txt",
+       "target_branch": "main",
+       "base_sha": "def5678"
+     }
+   }
+   ```
+   This ensures that any recovery process immediately has the exact expected digest, path, and base SHA.
 
 #### URL Encoding Rules for Git Refs and PRs
 All GitHub API paths and query parameters involving branch names MUST be URL-encoded:
@@ -190,19 +252,18 @@ All GitHub API paths and query parameters involving branch names MUST be URL-enc
 
 ---
 
-### 3.2. Direct-Push Execution & Crash Recovery
+### 3.2. Direct-Push Execution, Concurrency & Crash Recovery
 
-#### Normal Execution
+#### Normal Execution with Optimistic Concurrency
 1. Resolves `target_branch`.
 2. Queries `GET /repos/{owner}/{repo}/git/ref/heads/{quote(target_branch, safe='')}` to verify existence and capture `base_sha`.
-3. Constructs deterministic deployment manifest:
-   - Manifest path: `forgeops-autonomous-deploy.txt`
-   - Manifest content: `f"ForgeOps Autonomous Deployment Run {run.id}\nDeployed at: {timestamp}\n"`
-   - Deterministic SHA-256 digest: `payload_digest = hashlib.sha256(manifest_content.encode()).hexdigest()`
-4. Pushes commit to `target_branch` via `PUT /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt`:
-   - Commit message: `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`
-   - Captures resulting `commit_sha`.
-5. Persists metadata:
+3. Checks if `forgeops-autonomous-deploy.txt` already exists on `target_branch` via `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}` to obtain `existing_blob_sha` if present.
+4. Generates deterministic manifest bytes and `payload_digest`.
+5. Calls GitHub Contents API `PUT /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt`:
+   - Passes `branch: target_branch`, `content: base64(manifest_bytes)`, `message: f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
+   - Passes `sha: existing_blob_sha` if the file existed.
+   - **Optimistic Concurrency Control:** If another writer updated `target_branch` between steps 2 and 5, GitHub rejects the request with `409 Conflict`. The worker halts with `ConflictError: "Target branch '{target_branch}' was modified concurrently on remote."` It never force-pushes or overwrites foreign changes.
+6. Captures resulting `commit_sha` and persists metadata:
    ```json
    {
      "publishing_mode": "direct_push",
@@ -210,28 +271,28 @@ All GitHub API paths and query parameters involving branch names MUST be URL-enc
      "target_branch": "main",
      "base_sha": "def5678",
      "commit_sha": "abc1234",
-     "payload_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "payload_digest": "0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913",
      "live": true
    }
    ```
 
 #### Crash Recovery & Idempotent Retry (Direct Push)
 If the worker crashed after pushing the commit but before persisting stage metadata:
-1. Worker queries recent commits on `target_branch`:
-   `GET /repos/{owner}/{repo}/commits?sha={quote(target_branch, safe='')}&per_page=10`
-2. **Commit Provenance Check:**
-   - Worker checks whether the tip commit (or a recent ancestor) has:
-     1. Commit message matching `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
-     2. Commit details modifying `forgeops-autonomous-deploy.txt` with content matching `payload_digest` for this `run.id`.
-   - **Case A (Matching Commit Found on Target Branch):**
-     - The commit was already successfully applied to `target_branch`.
-     - Worker adopts `commit.sha` as `commit_sha` and proceeds without creating a duplicate commit or force-pushing.
-   - **Case B (Matching Commit Not Found & Target Branch Unchanged):**
-     - Current tip on `target_branch` == `base_sha`.
-     - Worker executes direct push normally.
-   - **Case C (Matching Commit Not Found & Target Branch Advanced Concurrently):**
-     - Current tip on `target_branch` != `base_sha` and run's commit is NOT in the branch history.
-     - Worker halts with `ConflictError: "Target branch '{target_branch}' advanced concurrently with conflicting changes."` It never force-pushes or overwrites foreign changes.
+1. Worker queries the current manifest file at tip:
+   `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`
+2. **If Current Tip File Content Matches `payload_digest`:**
+   - Worker queries commit history specifically for this file path:
+     `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=1`
+   - Verifies that:
+     1. Commit message matches `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
+     2. Commit ancestry roots at `base_sha`.
+   - If verified: The commit was successfully pushed by this run. Worker adopts this `commit_sha` and proceeds without creating a duplicate commit.
+3. **If Current Tip File Content Does NOT Match `payload_digest`:**
+   - The file at tip was modified by a later commit or our commit never landed.
+   - Worker queries the file's commit history:
+     `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=10`
+   - If a commit matching our message and `payload_digest` exists in the branch ancestry: adopts that `commit_sha`.
+   - If NOT found in ancestry: halts with `ConflictError: "Expected deployment commit was not found on target branch."` Never force-pushes or overwrites unrelated changes.
 
 ---
 
@@ -240,8 +301,7 @@ If the worker crashed after pushing the commit but before persisting stage metad
 #### Deterministic Setup
 - Source branch: `source_branch = f"forgeops/deploy-{run.id}"`
 - Base branch: `base_branch = config.target_branch`
-- Manifest content: `f"ForgeOps Autonomous Deployment Run {run.id}\nDeployed at: {timestamp}\n"`
-- Deterministic payload digest: `payload_digest = hashlib.sha256(manifest_content.encode()).hexdigest()`
+- Generates deterministic manifest bytes and `payload_digest`.
 
 #### Base Branch Verification
 - Queries `GET /repos/{owner}/{repo}/git/ref/heads/{quote(base_branch, safe='')}` to capture `base_sha`.
@@ -276,7 +336,7 @@ Before calling `POST /repos/{owner}/{repo}/pulls`, worker executes:
 `GET /repos/{owner}/{repo}/pulls?head={quote(owner, safe='')}:{quote(source_branch, safe='')}&base={quote(base_branch, safe='')}&state=all`
 
 - **If Matching PR Exists:**
-  - Validates `pr.head.ref == source_branch` and `pr.base.ref == base_branch`.
+  - Validates `pr.head.ref == source_branch`, `pr.head.sha == commit_sha`, and `pr.base.ref == base_branch`.
   - **If `pr.state == "open"`:** Adopts `pr_number`, `pr_url`, observed `state = "open"`, and observed `merged = false`.
   - **If `pr.state == "closed"` and `pr.merged == true`:**
     - PR was already merged on GitHub.
@@ -307,7 +367,7 @@ Before calling `POST /repos/{owner}/{repo}/pulls`, worker executes:
   "source_branch": "forgeops/deploy-<run_id>",
   "base_sha": "def5678",
   "commit_sha": "abc1234",
-  "payload_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "payload_digest": "0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913",
   "pr_number": 42,
   "pr_url": "https://github.com/owner/repo/pull/42",
   "pr_state": "open",
@@ -330,20 +390,24 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
 
 ### 4.2. Verification for `pull_request` (Handling Open, Merged, and Closed PRs)
 1. **Source Commit Check:**
-   - Verifies commit exists: `GET /repos/{owner}/{repo}/commits/{commit_sha}`.
+   - Verifies commit exists on GitHub: `GET /repos/{owner}/{repo}/commits/{commit_sha}`.
 2. **PR State Inspection:**
    - Queries `GET /repos/{owner}/{repo}/pulls/{pr_number}`:
    - Asserts PR belongs to expected `repository`.
    - Asserts `head.ref == source_branch` and `base.ref == target_branch`.
-   - Captures actual observed provider fields: `observed_state = pr["state"]`, `observed_merged = pr["merged"]`, `merge_commit_sha = pr.get("merge_commit_sha")`.
+   - Captures actual observed provider fields: `observed_state = pr["state"]`, `observed_merged = pr["merged"]`, `merge_commit_sha = pr.get("merge_commit_sha")`, and `observed_head_sha = pr.get("head", {}).get("sha")`.
 3. **Outcome Evaluation:**
    - **Case 1: PR is Open (`observed_state == "open"`):**
+     - Validates that `observed_head_sha == commit_sha`. If the source branch moved to an unexpected commit, fails verification.
      - Target verified: The deployment successfully published changes and opened the PR for review.
      - `target_results["github"] = "verified"`
      - Stage metadata records `pr_state = "open"`, `pr_merged = false`.
    - **Case 2: PR Was Already Merged (`observed_state == "closed"` and `observed_merged == true`):**
      - Target verified: Changes have successfully landed on the base branch.
-     - Verifies `merge_commit_sha` exists in repository and is reachable on `target_branch`.
+     - Note: Source branch ref may have been deleted post-merge by GitHub; G7 does not fail because `refs/heads/{source_branch}` is missing.
+     - Asserts `merge_commit_sha is not None`.
+     - Verifies `merge_commit_sha` exists in repository and is reachable on `target_branch` (verified via `GET /repos/{owner}/{repo}/commits/{merge_commit_sha}`).
+     - Asserts `observed_head_sha == commit_sha` (the PR's merged head matches the run commit).
      - `target_results["github"] = "verified"`
      - Stage metadata records `pr_state = "closed"`, `pr_merged = true`, `merge_commit_sha = merge_commit_sha`.
    - **Case 3: PR Was Closed Without Merge (`observed_state == "closed"` and `observed_merged == false`):**
@@ -403,6 +467,7 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
 - Validation of `StoredGitHubConfig`:
   - Successfully parses legacy rows with extra/deprecated fields.
   - Defaults missing `publishing_mode` to `direct_push`.
+  - Retains `target_branch = None` when omitted, requiring dynamic default resolution.
 
 ### 6.2. Staging Integration Tests (Mocked Upstream)
 - Branch discovery route:
@@ -411,14 +476,15 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
   - Distinct error responses (404, 403 permission, 429 rate limit, 502 network).
 - Direct-push crash recovery:
   - Push succeeds, worker crashes before stage metadata commit, retry adopts existing commit via payload digest check without duplicating commit or force-pushing.
-  - Concurrent branch advance conflict detection.
+  - Optimistic concurrency conflict detection when target branch advances concurrently.
 - Pull request crash recovery:
   - Push succeeds, worker crashes, retry adopts source-branch commit via provenance verification.
   - Base branch advancing after branch creation does not falsely flag source branch divergence.
   - Source branch divergence conflict detection when foreign commits exist.
   - Partial failure recovery: push succeeds, PR creation times out, subsequent retry adopts existing branch and PR without duplicate creation.
 - G7 verification evaluating:
-  - Open PR (`state == "open"`, `merged == false`) -> `verified`.
+  - Open PR (`state == "open"`, `head.sha == commit_sha`) -> `verified`.
+  - Open PR with head SHA mismatch -> `failed`.
   - Merged PR (`state == "closed"`, `merged == true`, merge commit on base) -> `verified`.
   - Closed unmerged PR (`state == "closed"`, `merged == false`) -> `failed`.
 
