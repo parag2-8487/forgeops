@@ -20,10 +20,7 @@ import {
 } from "lucide-react";
 
 export type DeploymentStrategy =
-  | "docker_github_vercel"
-  | "docker_github"
-  | "github_only"
-  | "vercel_only";
+  "docker_github_vercel" | "docker_github" | "github_only" | "vercel_only";
 
 interface StrategyOption {
   id: DeploymentStrategy;
@@ -122,7 +119,9 @@ export function AutonomousDeployModal({
 
   // GitHub config state
   const [githubMode, setGithubMode] = useState<"existing" | "new_private">("new_private");
-  const [publishingMode, setPublishingMode] = useState<"direct_push" | "pull_request">("direct_push");
+  const [publishingMode, setPublishingMode] = useState<"direct_push" | "pull_request">(
+    "direct_push",
+  );
   const [githubRepoName, setGithubRepoName] = useState(() =>
     projectName.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
   );
@@ -148,6 +147,7 @@ export function AutonomousDeployModal({
   // Reset form when project changes or opened
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSubmitError(null);
       setIsSubmitting(false);
     }
@@ -183,14 +183,17 @@ export function AutonomousDeployModal({
       }>(
         `/integrations/github/repositories/${encodeURIComponent(ghOwner)}/${encodeURIComponent(ghRepo)}/branches`,
       ),
-    enabled: isOpen && (strategy !== "vercel_only") && hasValidRepoFormat,
+    enabled: isOpen && strategy !== "vercel_only" && hasValidRepoFormat,
     retry: 1,
   });
 
   // When branches data arrives, sync default_branch if branch is default main or empty
   useEffect(() => {
     if (branchesQuery.data?.default_branch) {
-      setGithubBranch((prev) => (!prev || prev === "main" ? branchesQuery.data.default_branch : prev));
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGithubBranch((prev) =>
+        !prev || prev === "main" ? branchesQuery.data.default_branch : prev,
+      );
     }
   }, [branchesQuery.data?.default_branch]);
 
@@ -202,8 +205,7 @@ export function AutonomousDeployModal({
   );
   const isAgentConnected = Boolean(activeAgent);
 
-  const selectedStrategyOption =
-    STRATEGIES.find((s) => s.id === strategy) || STRATEGIES[0];
+  const selectedStrategyOption = STRATEGIES.find((s) => s.id === strategy) || STRATEGIES[0];
 
   const handleCreateRun = async () => {
     setIsSubmitting(true);
@@ -229,8 +231,7 @@ export function AutonomousDeployModal({
         repository_name: githubRepoName.trim(),
         target_branch: githubBranch.trim() || "main",
         publishing_mode: publishingMode,
-        commit_message:
-          githubCommitMessage.trim() || "Automated deployment by ForgeOps",
+        commit_message: githubCommitMessage.trim() || "Automated deployment by ForgeOps",
       };
     }
 
@@ -263,7 +264,7 @@ export function AutonomousDeployModal({
       router.push(`/projects/${projectId}/autonomous-deploy/${data.id}`);
     } catch (err: unknown) {
       const msg =
-        err instanceof ApiProblemError
+        err instanceof ApiProblemError && err.problem.detail
           ? err.problem.detail
           : err instanceof Error
             ? err.message
@@ -286,15 +287,12 @@ export function AutonomousDeployModal({
         {/* Header */}
         <div className="flex items-start justify-between border-b border-border pb-4">
           <div>
-            <h2
-              id="autonomous-deploy-modal-title"
-              className="text-xl font-bold tracking-tight"
-            >
+            <h2 id="autonomous-deploy-modal-title" className="text-xl font-bold tracking-tight">
               Autonomous Deployment Orchestrator
             </h2>
             <p className="text-xs text-muted-foreground mt-1">
-              Select an orchestration strategy and configure automated deployment
-              for project <span className="font-semibold text-foreground">{projectName}</span>.
+              Select an orchestration strategy and configure automated deployment for project{" "}
+              <span className="font-semibold text-foreground">{projectName}</span>.
             </p>
           </div>
           <Button
@@ -374,12 +372,8 @@ export function AutonomousDeployModal({
                   }`}
                 >
                   <div className="flex items-center justify-between w-full">
-                    <span className="font-semibold text-sm text-foreground">
-                      {item.title}
-                    </span>
-                    <Badge variant={isSelected ? "default" : "secondary"}>
-                      {item.badge}
-                    </Badge>
+                    <span className="font-semibold text-sm text-foreground">{item.title}</span>
+                    <Badge variant={isSelected ? "default" : "secondary"}>{item.badge}</Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
                     {item.description}
@@ -411,19 +405,14 @@ export function AutonomousDeployModal({
             >
               <div className="flex items-center gap-2 border-b border-border/60 pb-2">
                 <GitBranch className="h-4 w-4 text-primary" />
-                <h3
-                  id="github-config-heading"
-                  className="text-sm font-semibold text-foreground"
-                >
+                <h3 id="github-config-heading" className="text-sm font-semibold text-foreground">
                   GitHub Configuration
                 </h3>
               </div>
 
               {/* Repository Mode */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-foreground">
-                  Repository Mode
-                </label>
+                <label className="text-xs font-medium text-foreground">Repository Mode</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -452,9 +441,7 @@ export function AutonomousDeployModal({
 
               {/* Publishing Mode */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-foreground">
-                  Publishing Mode
-                </label>
+                <label className="text-xs font-medium text-foreground">Publishing Mode</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -489,7 +476,12 @@ export function AutonomousDeployModal({
                 </div>
                 {publishingMode === "pull_request" && (
                   <p className="text-[11px] text-muted-foreground mt-1">
-                    Pushes to a dedicated source branch (<code className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">forgeops/deploy-&lt;run_id&gt;</code>) and opens an automated PR targeting the base branch without modifying it directly.
+                    Pushes to a dedicated source branch (
+                    <code className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">
+                      forgeops/deploy-&lt;run_id&gt;
+                    </code>
+                    ) and opens an automated PR targeting the base branch without modifying it
+                    directly.
                   </p>
                 )}
               </div>
@@ -497,10 +489,7 @@ export function AutonomousDeployModal({
               {/* Repository Name & Branch */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label
-                    htmlFor="github-repo-name"
-                    className="text-xs font-medium text-foreground"
-                  >
+                  <label htmlFor="github-repo-name" className="text-xs font-medium text-foreground">
                     Repository Name
                   </label>
                   <Input
@@ -560,7 +549,8 @@ export function AutonomousDeployModal({
                   )}
                   {branchesQuery.isError && (
                     <p className="text-[11px] text-destructive mt-1">
-                      Could not discover branches for {githubRepoName}. You can type the branch manually.
+                      Could not discover branches for {githubRepoName}. You can type the branch
+                      manually.
                     </p>
                   )}
                 </div>
@@ -595,10 +585,7 @@ export function AutonomousDeployModal({
             >
               <div className="flex items-center gap-2 border-b border-border/60 pb-2">
                 <Globe className="h-4 w-4 text-primary" />
-                <h3
-                  id="vercel-config-heading"
-                  className="text-sm font-semibold text-foreground"
-                >
+                <h3 id="vercel-config-heading" className="text-sm font-semibold text-foreground">
                   Vercel Configuration
                 </h3>
               </div>
@@ -650,10 +637,7 @@ export function AutonomousDeployModal({
             >
               <div className="flex items-center gap-2 border-b border-border/60 pb-2">
                 <Box className="h-4 w-4 text-primary" />
-                <h3
-                  id="docker-config-heading"
-                  className="text-sm font-semibold text-foreground"
-                >
+                <h3 id="docker-config-heading" className="text-sm font-semibold text-foreground">
                   Docker Configuration
                 </h3>
               </div>
@@ -664,10 +648,7 @@ export function AutonomousDeployModal({
                 </label>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <label
-                      htmlFor="docker-host-port"
-                      className="text-[11px] text-muted-foreground"
-                    >
+                    <label htmlFor="docker-host-port" className="text-[11px] text-muted-foreground">
                       Host Port
                     </label>
                     <Input

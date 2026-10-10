@@ -5,10 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { env } from "@/lib/env";
 import { readSSEResponse } from "@/lib/sse-reader";
-import type {
-  AutonomousRunPublicResponse,
-  StagePublicResponse,
-} from "./JenkinsPipelineDashboard";
+import type { AutonomousRunPublicResponse, StagePublicResponse } from "./JenkinsPipelineDashboard";
 
 export type AutonomousLogLevel = "INFO" | "WARN" | "ERROR" | string;
 
@@ -41,21 +38,13 @@ export interface UseAutonomousDeployStreamReturn {
   refetchSnapshot: () => Promise<void>;
 }
 
-export function buildWebSocketUrl(
-  projectId: string,
-  runId: string,
-  sinceEventSeq: number,
-): string {
+export function buildWebSocketUrl(projectId: string, runId: string, sinceEventSeq: number): string {
   const base = env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
   const wsBase = base.replace(/^http(s?):/, "ws$1:");
   return `${wsBase}/projects/${projectId}/autonomous-deploy/${runId}/ws?since_event_seq=${sinceEventSeq}`;
 }
 
-export function buildSseUrl(
-  projectId: string,
-  runId: string,
-  sinceEventSeq: number,
-): string {
+export function buildSseUrl(projectId: string, runId: string, sinceEventSeq: number): string {
   const base = env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1";
   return `${base}/projects/${projectId}/autonomous-deploy/${runId}/events?since_event_seq=${sinceEventSeq}`;
 }
@@ -96,21 +85,22 @@ export function useAutonomousDeployStream(
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const seenEventSeqRef = useRef<number>(0);
-  const seenLogSeqRef = useRef<number>(
-    initialLogs.reduce((max, l) => Math.max(max, l.log_seq || 0), 0),
-  );
-  const isFetchingSnapshotRef = useRef<boolean>(false);
-
-  // Synchronize when initial props change
+  // Synchronize when initial props change on rerender
   useEffect(() => {
     if (initialRun) {
-      setRun((prev) => prev ?? initialRun);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRun((prev) => (prev ? { ...prev, ...initialRun } : initialRun));
       if (initialRun.stages && initialRun.stages.length > 0) {
         setStages((prev) => (prev.length > 0 ? prev : [...initialRun.stages]));
       }
     }
   }, [initialRun]);
+
+  const seenEventSeqRef = useRef<number>(0);
+  const seenLogSeqRef = useRef<number>(
+    initialLogs.reduce((max, l) => Math.max(max, l.log_seq || 0), 0),
+  );
+  const isFetchingSnapshotRef = useRef<boolean>(false);
 
   const mergeLogs = useCallback((incoming: AutonomousLogEntry[]) => {
     if (!incoming || incoming.length === 0) return;
@@ -175,14 +165,21 @@ export function useAutonomousDeployStream(
       if (!frame || typeof frame !== "object") return;
       const f = frame as Record<string, unknown>;
 
-      const rawSeq = f.event_seq ?? f.seq ?? (f.payload as Record<string, unknown> | undefined)?.event_seq;
+      const rawSeq =
+        f.event_seq ?? f.seq ?? (f.payload as Record<string, unknown> | undefined)?.event_seq;
       const eventSeq = typeof rawSeq === "number" ? rawSeq : undefined;
 
-      const rawType = f.event_type ?? f.type ?? f.event ?? (f.payload as Record<string, unknown> | undefined)?.event_type;
+      const rawType =
+        f.event_type ??
+        f.type ??
+        f.event ??
+        (f.payload as Record<string, unknown> | undefined)?.event_type;
       const eventType = typeof rawType === "string" ? rawType.toLowerCase() : "";
 
       const rawPayload = f.payload ?? f;
-      const payload = (typeof rawPayload === "object" && rawPayload !== null ? rawPayload : {}) as Record<string, unknown>;
+      const payload = (
+        typeof rawPayload === "object" && rawPayload !== null ? rawPayload : {}
+      ) as Record<string, unknown>;
 
       // 1. Watermark deduplication check
       if (eventSeq !== undefined && eventSeq > 0) {
@@ -210,10 +207,15 @@ export function useAutonomousDeployStream(
       ) {
         const stageName = (payload.stage_name ?? payload.name) as string | undefined;
         const stageStatus = payload.status as StagePublicResponse["status"] | undefined;
-        const stageProgress = typeof payload.progress_pct === "number" ? payload.progress_pct : undefined;
-        const runProgress = typeof payload.run_progress_pct === "number" ? payload.run_progress_pct : undefined;
+        const stageProgress =
+          typeof payload.progress_pct === "number" ? payload.progress_pct : undefined;
+        const runProgress =
+          typeof payload.run_progress_pct === "number" ? payload.run_progress_pct : undefined;
         const errorMessage = (payload.error_message as string | undefined) ?? null;
-        const metadata = (payload.metadata ?? payload.stage_metadata ?? {}) as Record<string, unknown>;
+        const metadata = (payload.metadata ?? payload.stage_metadata ?? {}) as Record<
+          string,
+          unknown
+        >;
         const startedAt = payload.started_at as string | undefined;
         const completedAt = payload.completed_at as string | undefined;
 
@@ -225,8 +227,10 @@ export function useAutonomousDeployStream(
               updated[index] = {
                 ...updated[index],
                 status: stageStatus ?? updated[index].status,
-                progress_pct: stageProgress !== undefined ? stageProgress : updated[index].progress_pct,
-                error_message: errorMessage !== undefined ? errorMessage : updated[index].error_message,
+                progress_pct:
+                  stageProgress !== undefined ? stageProgress : updated[index].progress_pct,
+                error_message:
+                  errorMessage !== undefined ? errorMessage : updated[index].error_message,
                 stage_metadata: {
                   ...(updated[index].stage_metadata || {}),
                   ...metadata,
@@ -295,7 +299,9 @@ export function useAutonomousDeployStream(
         });
 
         if (Array.isArray(payload.stages)) {
-          setStages([...(payload.stages as StagePublicResponse[])].sort((a, b) => a.position - b.position));
+          setStages(
+            [...(payload.stages as StagePublicResponse[])].sort((a, b) => a.position - b.position),
+          );
         }
       }
 

@@ -1,24 +1,10 @@
 // SPDX-License-Identifier: FSL-1.1-ALv2
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import {
-  AlertTriangle,
-  ArrowDown,
-  Check,
-  Copy,
-  Lock,
-  Search,
-  Terminal,
-} from "lucide-react";
+import { AlertTriangle, ArrowDown, Check, Copy, Lock, Search, Terminal } from "lucide-react";
 import type { StagePublicResponse } from "./JenkinsPipelineDashboard";
 import type { AutonomousLogEntry } from "./useAutonomousDeployStream";
 
@@ -172,15 +158,10 @@ export function AutonomousLogConsole({
     typeof window === "undefined" ||
     (typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom"));
 
-  const startIndex = isTestingEnv
-    ? 0
-    : Math.max(0, Math.floor(scrollTop / itemHeight) - 8);
+  const startIndex = isTestingEnv ? 0 : Math.max(0, Math.floor(scrollTop / itemHeight) - 8);
   const endIndex = isTestingEnv
     ? filteredLogs.length
-    : Math.min(
-        filteredLogs.length,
-        Math.ceil((scrollTop + containerHeight) / itemHeight) + 8,
-      );
+    : Math.min(filteredLogs.length, Math.ceil((scrollTop + containerHeight) / itemHeight) + 8);
 
   const visibleLogs = filteredLogs.slice(startIndex, endIndex);
   const topSpacerHeight = isTestingEnv ? 0 : startIndex * itemHeight;
@@ -354,19 +335,13 @@ export function AutonomousLogConsole({
                   </span>
 
                   {/* Stage Tag */}
-                  <span className="shrink-0 text-indigo-400 font-medium">
-                    [{log.stage_name}]
-                  </span>
+                  <span className="shrink-0 text-indigo-400 font-medium">[{log.stage_name}]</span>
 
                   {/* Log Level */}
-                  <span className={cn("shrink-0 font-semibold", levelColor)}>
-                    [{levelNorm}]
-                  </span>
+                  <span className={cn("shrink-0 font-semibold", levelColor)}>[{levelNorm}]</span>
 
                   {/* Sanitized Message */}
-                  <span className="flex-1 break-all text-zinc-200">
-                    {log.message}
-                  </span>
+                  <span className="flex-1 break-all text-zinc-200">{log.message}</span>
                 </div>
               );
             })}

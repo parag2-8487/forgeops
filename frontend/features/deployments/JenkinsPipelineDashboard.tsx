@@ -27,16 +27,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { AutonomousLogConsole } from "./AutonomousLogConsole";
-import {
-  useAutonomousDeployStream,
-  type AutonomousLogEntry,
-} from "./useAutonomousDeployStream";
+import { useAutonomousDeployStream, type AutonomousLogEntry } from "./useAutonomousDeployStream";
 
 export type DeploymentStrategy =
-  | "docker_github_vercel"
-  | "docker_github"
-  | "github_only"
-  | "vercel_only";
+  "docker_github_vercel" | "docker_github" | "github_only" | "vercel_only";
 
 export type StageStatus =
   | "pending"
@@ -50,13 +44,7 @@ export type StageStatus =
   | "rolled_back";
 
 export type AutonomousRunStatus =
-  | "pending"
-  | "running"
-  | "cancelling"
-  | "cancelled"
-  | "succeeded"
-  | "failed"
-  | "rolled_back";
+  "pending" | "running" | "cancelling" | "cancelled" | "succeeded" | "failed" | "rolled_back";
 
 export interface StagePublicResponse {
   id: string;
@@ -160,25 +148,60 @@ export function getStageDisplayInfo(stage: StagePublicResponse): {
     return { title: "G2 Artifacts", subtitle: "Dockerfile / Compose", badge: "G2", isGate: true };
   }
   if (gateId === "G3" || normName.includes("g3") || normName.includes("consistency")) {
-    return { title: "G3 Consistency", subtitle: "Ports, Branch & Config", badge: "G3", isGate: true };
+    return {
+      title: "G3 Consistency",
+      subtitle: "Ports, Branch & Config",
+      badge: "G3",
+      isGate: true,
+    };
   }
-  if (gateId === "G4" || normName.includes("g4") || normName === "docker_build" || normName.includes("build")) {
+  if (
+    gateId === "G4" ||
+    normName.includes("g4") ||
+    normName === "docker_build" ||
+    normName.includes("build")
+  ) {
     return { title: "Docker Build", subtitle: "Container Image Build", badge: "G4", isGate: true };
   }
-  if (gateId === "G5" || normName.includes("g5") || normName === "docker_apply" || normName.includes("apply")) {
+  if (
+    gateId === "G5" ||
+    normName.includes("g5") ||
+    normName === "docker_apply" ||
+    normName.includes("apply")
+  ) {
     return { title: "Docker Apply", subtitle: "Container Startup", badge: "G5", isGate: true };
   }
-  if (gateId === "G6" || normName.includes("g6") || normName === "docker_workload" || normName.includes("workload")) {
+  if (
+    gateId === "G6" ||
+    normName.includes("g6") ||
+    normName === "docker_workload" ||
+    normName.includes("workload")
+  ) {
     return { title: "G6 Workload", subtitle: "HTTP Health Probe", badge: "G6", isGate: true };
   }
   if (normName === "github_release" || normName.includes("github")) {
-    return { title: "GitHub Release", subtitle: "Code Sync & Release", badge: "Git", isGate: false };
+    return {
+      title: "GitHub Release",
+      subtitle: "Code Sync & Release",
+      badge: "Git",
+      isGate: false,
+    };
   }
   if (normName === "vercel_deploy" || normName.includes("vercel")) {
-    return { title: "Vercel Deploy", subtitle: "Cloud Edge Deployment", badge: "Cloud", isGate: false };
+    return {
+      title: "Vercel Deploy",
+      subtitle: "Cloud Edge Deployment",
+      badge: "Cloud",
+      isGate: false,
+    };
   }
   if (gateId === "G7" || normName.includes("g7") || normName.includes("verification")) {
-    return { title: "G7 Verification", subtitle: "Multi-Target E2E Probe", badge: "G7", isGate: true };
+    return {
+      title: "G7 Verification",
+      subtitle: "Multi-Target E2E Probe",
+      badge: "G7",
+      isGate: true,
+    };
   }
 
   return {
@@ -223,8 +246,7 @@ export function getTargetVerificationStatus(
     (metadata.target_results as Record<string, string> | undefined) ||
     (metadata.targets as Record<string, string> | undefined) ||
     ((metadata.details as Record<string, unknown> | undefined)?.target_results as
-      | Record<string, string>
-      | undefined);
+      Record<string, string> | undefined);
 
   if (targetResults && target in targetResults) {
     const raw = String(targetResults[target]).toLowerCase();
@@ -285,7 +307,7 @@ export function JenkinsPipelineDashboard({
     propRun ?? initialRun ?? null,
   );
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState<number>(Date.now());
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Button loading states
@@ -293,14 +315,7 @@ export function JenkinsPipelineDashboard({
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
-  // Sync prop changes
-  useEffect(() => {
-    if (propRun) {
-      setLocalRun(propRun);
-    }
-  }, [propRun]);
-
-  const targetRunId = localRun?.id ?? runId;
+  const targetRunId = localRun?.id ?? propRun?.id ?? runId;
 
   // React Query hook fallback if run wasn't passed directly
   const runQuery = useQuery({
@@ -322,15 +337,14 @@ export function JenkinsPipelineDashboard({
     enabled: Boolean(projectId && targetRunId),
   });
 
-  // Sync streaming run updates
+  // Notify parent on streaming run updates
   useEffect(() => {
     if (stream.run) {
-      setLocalRun(stream.run);
       onRunChange?.(stream.run);
     }
   }, [stream.run, onRunChange]);
 
-  const activeRun = localRun ?? stream.run ?? runQuery.data ?? initialRun ?? null;
+  const activeRun = stream.run ?? propRun ?? localRun ?? runQuery.data ?? initialRun ?? null;
 
   // Live timer tick for running executions
   useEffect(() => {
@@ -342,40 +356,40 @@ export function JenkinsPipelineDashboard({
     }
   }, [activeRun?.status]);
 
+  const activeRunStages = activeRun?.stages;
+
   // Stage list sorted by position with live stream priority
   const stages = useMemo(() => {
     if (stream.stages && stream.stages.length > 0) {
       return [...stream.stages].sort((a, b) => a.position - b.position);
     }
-    if (!activeRun?.stages) return [];
-    return [...activeRun.stages].sort((a, b) => a.position - b.position);
-  }, [stream.stages, activeRun?.stages]);
+    if (!activeRunStages) return [];
+    return [...activeRunStages].sort((a, b) => a.position - b.position);
+  }, [stream.stages, activeRunStages]);
 
   const activeLogs = stream.logs.length > 0 ? stream.logs : (propLogs ?? initialLogs ?? []);
 
-  // Automatically select the active or failed stage if not manually selected
-  useEffect(() => {
-    if (stages.length === 0) return;
-    if (!selectedStageId || !stages.some((s) => s.id === selectedStageId)) {
-      const failed = stages.find((s) => s.status === "failed");
-      const running = stages.find((s) => s.status === "running" || s.status === "cancelling");
-      const g7 = stages.find(
-        (s) =>
-          s.gate_id === "G7" ||
-          s.stage_name === "G7_verification" ||
-          s.stage_name.toLowerCase().includes("g7"),
-      );
-      if (failed) {
-        setSelectedStageId(failed.id);
-      } else if (running) {
-        setSelectedStageId(running.id);
-      } else if (activeRun?.status === "succeeded" && g7) {
-        setSelectedStageId(g7.id);
-      } else {
-        setSelectedStageId(stages[0].id);
-      }
-    }
-  }, [stages, selectedStageId, activeRun?.status]);
+  // Determine fallback stage without mutating state in an effect
+  const defaultStageId = useMemo(() => {
+    if (stages.length === 0) return null;
+    const failed = stages.find((s) => s.status === "failed");
+    const running = stages.find((s) => s.status === "running" || s.status === "cancelling");
+    const g7 = stages.find(
+      (s) =>
+        s.gate_id === "G7" ||
+        s.stage_name === "G7_verification" ||
+        s.stage_name.toLowerCase().includes("g7"),
+    );
+    if (failed) return failed.id;
+    if (running) return running.id;
+    if (activeRun?.status === "succeeded" && g7) return g7.id;
+    return stages[0].id;
+  }, [stages, activeRun?.status]);
+
+  const currentSelectedStageId =
+    selectedStageId && stages.some((s) => s.id === selectedStageId)
+      ? selectedStageId
+      : defaultStageId;
 
   if (!activeRun) {
     return (
@@ -389,7 +403,7 @@ export function JenkinsPipelineDashboard({
     );
   }
 
-  const selectedStage = stages.find((s) => s.id === selectedStageId) || stages[0];
+  const selectedStage = stages.find((s) => s.id === currentSelectedStageId) || stages[0];
   const selectedInfo = selectedStage ? getStageDisplayInfo(selectedStage) : null;
 
   // Action state rules
@@ -462,10 +476,9 @@ export function JenkinsPipelineDashboard({
   };
 
   // Extract metadata details for active stage inspector
-  const stageMeta = ((selectedStage?.stage_metadata || selectedStage?.metadata || {}) as Record<
-    string,
-    unknown
-  >) || {};
+  const stageMeta =
+    ((selectedStage?.stage_metadata || selectedStage?.metadata || {}) as Record<string, unknown>) ||
+    {};
   const metaDetails = (stageMeta.details as Record<string, unknown> | undefined) || {};
 
   const containerId =
@@ -477,11 +490,9 @@ export function JenkinsPipelineDashboard({
     (stageMeta.deployment_url as string | undefined) ||
     (metaDetails.deployment_url as string | undefined);
   const prNumber =
-    (stageMeta.pr_number as number | undefined) ||
-    (metaDetails.pr_number as number | undefined);
+    (stageMeta.pr_number as number | undefined) || (metaDetails.pr_number as number | undefined);
   const prUrl =
-    (stageMeta.pr_url as string | undefined) ||
-    (metaDetails.pr_url as string | undefined);
+    (stageMeta.pr_url as string | undefined) || (metaDetails.pr_url as string | undefined);
   const prState =
     (stageMeta.pr_state as string | undefined) ||
     (metaDetails.pr_state as string | undefined) ||
@@ -548,19 +559,12 @@ export function JenkinsPipelineDashboard({
               {projectName}
             </Link>
             <span className="text-muted-foreground/60">/</span>
-            <span className="font-semibold text-foreground">
-              Run #{activeRun.attempt_number}
-            </span>
+            <span className="font-semibold text-foreground">Run #{activeRun.attempt_number}</span>
           </nav>
 
           {/* Action Controls */}
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              data-testid="btn-back-project"
-              variant="outline"
-              size="sm"
-              asChild
-            >
+            <Button data-testid="btn-back-project" variant="outline" size="sm" asChild>
               <Link href={`/projects/${projectId}`}>
                 <ArrowLeft className="mr-1.5 size-4" />
                 Back to project
@@ -638,11 +642,7 @@ export function JenkinsPipelineDashboard({
               {activeRun.id}
             </Badge>
 
-            <Badge
-              data-testid="strategy-badge"
-              variant="secondary"
-              className="font-medium text-xs"
-            >
+            <Badge data-testid="strategy-badge" variant="secondary" className="font-medium text-xs">
               {getStrategyLabel(activeRun.strategy)}
             </Badge>
 
@@ -748,10 +748,11 @@ export function JenkinsPipelineDashboard({
           <div className="flex items-center min-w-max gap-0 py-4">
             {stages.map((stage, idx) => {
               const info = getStageDisplayInfo(stage);
-              const isSelected = stage.id === selectedStageId;
+              const isSelected = stage.id === currentSelectedStageId;
 
               // Node visual style classes
-              let nodeCircleClasses = "border-2 bg-muted text-muted-foreground border-muted-foreground/30";
+              let nodeCircleClasses =
+                "border-2 bg-muted text-muted-foreground border-muted-foreground/30";
               let iconComponent = <Clock className="size-4" />;
 
               if (stage.status === "succeeded") {
@@ -761,10 +762,12 @@ export function JenkinsPipelineDashboard({
                 nodeCircleClasses = "border-rose-500 bg-rose-500 text-white shadow-sm";
                 iconComponent = <XCircle className="size-4" />;
               } else if (stage.status === "running" || stage.status === "cancelling") {
-                nodeCircleClasses = "border-blue-500 bg-blue-500 text-white animate-pulse shadow-sm";
+                nodeCircleClasses =
+                  "border-blue-500 bg-blue-500 text-white animate-pulse shadow-sm";
                 iconComponent = <Loader2 className="size-4 animate-spin" />;
               } else if (stage.status === "waiting") {
-                nodeCircleClasses = "border-amber-500 bg-amber-500 text-white animate-pulse shadow-sm";
+                nodeCircleClasses =
+                  "border-amber-500 bg-amber-500 text-white animate-pulse shadow-sm";
                 iconComponent = <Clock className="size-4" />;
               } else if (stage.status === "cancelled") {
                 nodeCircleClasses = "border-amber-500 bg-amber-500 text-white shadow-sm";
@@ -797,7 +800,8 @@ export function JenkinsPipelineDashboard({
                     aria-pressed={isSelected}
                     className={cn(
                       "group flex flex-col items-center gap-2 p-2 rounded-xl transition-all focus:outline-none",
-                      isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background bg-accent/40",
+                      isSelected &&
+                        "ring-2 ring-primary ring-offset-2 ring-offset-background bg-accent/40",
                       !isSelected && "hover:bg-accent/20",
                     )}
                   >
@@ -847,9 +851,7 @@ export function JenkinsPipelineDashboard({
                 <Badge variant="outline" className="font-mono text-xs">
                   {selectedInfo.badge}
                 </Badge>
-                <h3 className="text-lg font-semibold text-foreground">
-                  {selectedInfo.title}
-                </h3>
+                <h3 className="text-lg font-semibold text-foreground">{selectedInfo.title}</h3>
               </div>
               <p className="text-xs text-muted-foreground">{selectedInfo.subtitle}</p>
             </div>
@@ -863,7 +865,8 @@ export function JenkinsPipelineDashboard({
                     ? "success"
                     : selectedStage.status === "failed" || selectedStage.status === "rolled_back"
                       ? "destructive"
-                      : selectedStage.status === "cancelled" || selectedStage.status === "cancelling"
+                      : selectedStage.status === "cancelled" ||
+                          selectedStage.status === "cancelling"
                         ? "warning"
                         : selectedStage.status === "running"
                           ? "default"
@@ -950,9 +953,7 @@ export function JenkinsPipelineDashboard({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <GitBranch className="size-4 text-primary" />
-                        <span className="font-semibold text-sm">
-                          Pull Request #{prNumber}
-                        </span>
+                        <span className="font-semibold text-sm">Pull Request #{prNumber}</span>
                         <Badge
                           data-testid="pr-status-badge"
                           variant={
@@ -992,7 +993,10 @@ export function JenkinsPipelineDashboard({
                       )}
                       {commitSha && (
                         <div className="text-muted-foreground font-mono text-[11px]">
-                          Commit: <span data-testid="pr-commit-sha" className="text-foreground">{commitSha.slice(0, 8)}</span>
+                          Commit:{" "}
+                          <span data-testid="pr-commit-sha" className="text-foreground">
+                            {commitSha.slice(0, 8)}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -1004,7 +1008,10 @@ export function JenkinsPipelineDashboard({
                     <span className="text-muted-foreground flex items-center gap-1.5">
                       <Box className="size-3.5" /> Container ID
                     </span>
-                    <span data-testid="container-id" className="font-mono font-medium block truncate">
+                    <span
+                      data-testid="container-id"
+                      className="font-mono font-medium block truncate"
+                    >
                       {containerId}
                     </span>
                   </div>

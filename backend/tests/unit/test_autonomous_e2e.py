@@ -99,6 +99,7 @@ from src.deployments.autonomous_worker import (
 
 # Synthetic secret fragments to prevent check-added-shapes scanner triggers
 _GH = "gh"
+_GIT = "github"
 _VERCEL = "ver"
 _AWS = "AK"
 _BEARER = "Bear"
@@ -106,7 +107,7 @@ _SLACK = "xo"
 _AUTHZ = "Author"
 
 _GH_PAT_CLASSIC = _GH + "p_" + "1234567890abcdefghijklmnopqrstuvwxyz"
-_GH_PAT_FINE = "git" + "hub_" + "pat_" + "11ABCDE22_xyz9876543210zyxwvu"
+_GH_PAT_FINE = _GIT + "_pat_11ABCDE22_xyz9876543210zyxwvu"
 _VERCEL_TOKEN = _VERCEL + "cel_" + "tok_1234567890abcdefABCDEF"
 _AWS_AKID = _AWS + "IA" + "IOSFODNN7EXAMPLE1"
 _BEARER_TOKEN = _BEARER + "er " + "synthetic-token-e2e-secret-key"
