@@ -267,6 +267,11 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "vercel-deploy-failed": ProblemSpec(502, "Failed to deploy to Vercel"),
     "idempotency-conflict": ProblemSpec(409, "Idempotency conflict"),
     "autonomous-run-conflict": ProblemSpec(409, "Autonomous deployment run state conflict"),
+    "github-repository-not-found": ProblemSpec(404, "Repository not found or inaccessible"),
+    "github-permission-denied": ProblemSpec(403, "Linked account lacks required permissions"),
+    "github-rate-limited": ProblemSpec(429, "GitHub API rate limit exceeded"),
+    "github-upstream-unreachable": ProblemSpec(502, "Could not connect to GitHub API"),
+    "github-upstream-invalid": ProblemSpec(502, "GitHub API returned an invalid response structure"),
 }
 
 #: The 403 body, byte-identical for every forbidden outcome (design §4.2, Appendix

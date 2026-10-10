@@ -476,6 +476,28 @@ export function JenkinsPipelineDashboard({
   const deploymentUrl =
     (stageMeta.deployment_url as string | undefined) ||
     (metaDetails.deployment_url as string | undefined);
+  const prNumber =
+    (stageMeta.pr_number as number | undefined) ||
+    (metaDetails.pr_number as number | undefined);
+  const prUrl =
+    (stageMeta.pr_url as string | undefined) ||
+    (metaDetails.pr_url as string | undefined);
+  const prState =
+    (stageMeta.pr_state as string | undefined) ||
+    (metaDetails.pr_state as string | undefined) ||
+    "open";
+  const prMerged =
+    (stageMeta.pr_merged as boolean | undefined) ??
+    (metaDetails.pr_merged as boolean | undefined) ??
+    false;
+  const sourceBranch =
+    (stageMeta.source_branch as string | undefined) ||
+    (metaDetails.source_branch as string | undefined);
+  const baseBranch =
+    (stageMeta.base_branch as string | undefined) ||
+    (metaDetails.base_branch as string | undefined) ||
+    (stageMeta.target_branch as string | undefined) ||
+    (metaDetails.target_branch as string | undefined);
 
   // Strategy target statuses for G7 summary
   const dockerTargetStatus = getTargetVerificationStatus("docker", activeRun.strategy, stages);
@@ -914,12 +936,69 @@ export function JenkinsPipelineDashboard({
           </div>
 
           {/* Contextual Operational Metadata */}
-          {(containerId || commitSha || deploymentUrl) && (
+          {(containerId || commitSha || deploymentUrl || prNumber || prUrl) && (
             <div className="space-y-2 border-t border-border/60 pt-4">
               <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
                 Operational Artifacts
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                {(prNumber || prUrl) && (
+                  <div
+                    data-testid="github-pr-card"
+                    className="rounded-lg border border-border bg-background p-3.5 space-y-2 sm:col-span-2 lg:col-span-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <GitBranch className="size-4 text-primary" />
+                        <span className="font-semibold text-sm">
+                          Pull Request #{prNumber}
+                        </span>
+                        <Badge
+                          data-testid="pr-status-badge"
+                          variant={
+                            prMerged
+                              ? "default"
+                              : prState === "closed"
+                                ? "destructive"
+                                : "secondary"
+                          }
+                          className="text-[10px] uppercase font-bold"
+                        >
+                          {prMerged ? "Merged" : prState}
+                        </Badge>
+                      </div>
+                      {prUrl && (
+                        <a
+                          data-testid="github-pr-url"
+                          href={prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-primary underline font-medium hover:opacity-80"
+                        >
+                          View PR on GitHub <ExternalLink className="size-3" />
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
+                      {sourceBranch && baseBranch && (
+                        <div
+                          data-testid="branch-flow-pill"
+                          className="inline-flex items-center gap-1.5 font-mono text-[11px] bg-muted px-2.5 py-1 rounded-full border border-border"
+                        >
+                          <span>{sourceBranch}</span>
+                          <span className="text-muted-foreground">&rarr;</span>
+                          <span className="font-bold">{baseBranch}</span>
+                        </div>
+                      )}
+                      {commitSha && (
+                        <div className="text-muted-foreground font-mono text-[11px]">
+                          Commit: <span data-testid="pr-commit-sha" className="text-foreground">{commitSha.slice(0, 8)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {containerId && (
                   <div className="rounded-lg border border-border bg-background p-3 space-y-1">
                     <span className="text-muted-foreground flex items-center gap-1.5">
@@ -931,7 +1010,7 @@ export function JenkinsPipelineDashboard({
                   </div>
                 )}
 
-                {commitSha && (
+                {commitSha && !prNumber && !prUrl && (
                   <div className="rounded-lg border border-border bg-background p-3 space-y-1">
                     <span className="text-muted-foreground flex items-center gap-1.5">
                       <GitCommit className="size-3.5" /> Commit SHA

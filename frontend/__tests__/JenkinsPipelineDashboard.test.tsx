@@ -581,4 +581,50 @@ describe("JenkinsPipelineDashboard", () => {
     expect(dockerTarget).toHaveTextContent("Failed");
     expect(vercelTarget).toHaveTextContent("Not Applicable");
   });
+
+  it("renders reload-safe Pull Request card with flow pill, badge, and URL", async () => {
+    const user = userEvent.setup();
+    const prRun: AutonomousRunPublicResponse = {
+      ...mockFullStackRun,
+      stages: mockFullStackRun.stages.map((s) =>
+        s.stage_name === "github_release"
+          ? {
+              ...s,
+              status: "succeeded",
+              stage_metadata: {
+                publishing_mode: "pull_request",
+                pr_number: 42,
+                pr_url: "https://github.com/myorg/myrepo/pull/42",
+                pr_state: "open",
+                pr_merged: false,
+                source_branch: "forgeops/deploy-11111111",
+                base_branch: "main",
+                commit_sha: "commit123456789",
+              },
+            }
+          : s,
+      ),
+    };
+
+    renderWithClient(
+      <JenkinsPipelineDashboard
+        projectId={projectId}
+        projectName={projectName}
+        run={prRun}
+      />,
+    );
+
+    // Click github_release node
+    const githubNode = screen.getByTestId("stage-node-github_release");
+    await user.click(githubNode);
+
+    // Verify PR Card components
+    expect(screen.getByTestId("github-pr-card")).toBeInTheDocument();
+    expect(screen.getByText("Pull Request #42")).toBeInTheDocument();
+    expect(screen.getByTestId("pr-status-badge")).toHaveTextContent("open");
+    expect(screen.getByTestId("github-pr-url")).toHaveAttribute("href", "https://github.com/myorg/myrepo/pull/42");
+    expect(screen.getByTestId("branch-flow-pill")).toHaveTextContent("forgeops/deploy-11111111");
+    expect(screen.getByTestId("branch-flow-pill")).toHaveTextContent("main");
+    expect(screen.getByTestId("pr-commit-sha")).toHaveTextContent("commit12");
+  });
 });

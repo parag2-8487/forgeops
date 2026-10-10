@@ -122,6 +122,7 @@ export function AutonomousDeployModal({
 
   // GitHub config state
   const [githubMode, setGithubMode] = useState<"existing" | "new_private">("new_private");
+  const [publishingMode, setPublishingMode] = useState<"direct_push" | "pull_request">("direct_push");
   const [githubRepoName, setGithubRepoName] = useState(() =>
     projectName.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
   );
@@ -161,6 +162,38 @@ export function AutonomousDeployModal({
     retry: false,
   });
 
+  const repoParts = githubRepoName.trim().split("/");
+  const hasValidRepoFormat =
+    repoParts.length === 2 && repoParts[0].length > 0 && repoParts[1].length > 0;
+  const ghOwner = repoParts[0] || "";
+  const ghRepo = repoParts[1] || "";
+
+  // Query branches for existing repository
+  const branchesQuery = useQuery({
+    queryKey: ["github", "repositories", ghOwner, ghRepo, "branches"],
+    queryFn: () =>
+      api.get<{
+        owner: string;
+        repo: string;
+        default_branch: string;
+        branches: string[];
+        can_push: boolean;
+        is_private: boolean;
+        truncated: boolean;
+      }>(
+        `/integrations/github/repositories/${encodeURIComponent(ghOwner)}/${encodeURIComponent(ghRepo)}/branches`,
+      ),
+    enabled: isOpen && (strategy !== "vercel_only") && hasValidRepoFormat,
+    retry: 1,
+  });
+
+  // When branches data arrives, sync default_branch if branch is default main or empty
+  useEffect(() => {
+    if (branchesQuery.data?.default_branch) {
+      setGithubBranch((prev) => (!prev || prev === "main" ? branchesQuery.data.default_branch : prev));
+    }
+  }, [branchesQuery.data?.default_branch]);
+
   const activeAgent = devicesQuery.data?.devices?.find(
     (d) =>
       d.status === "active" &&
@@ -195,6 +228,7 @@ export function AutonomousDeployModal({
         repository_mode: githubMode,
         repository_name: githubRepoName.trim(),
         target_branch: githubBranch.trim() || "main",
+        publishing_mode: publishingMode,
         commit_message:
           githubCommitMessage.trim() || "Automated deployment by ForgeOps",
       };
@@ -416,6 +450,50 @@ export function AutonomousDeployModal({
                 </div>
               </div>
 
+              {/* Publishing Mode */}
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-foreground">
+                  Publishing Mode
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    data-testid="publishing-mode-direct-push"
+                    onClick={() => setPublishingMode("direct_push")}
+                    className={`p-2.5 rounded border text-xs font-medium text-left transition-colors ${
+                      publishingMode === "direct_push"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <div className="font-semibold">Direct Push</div>
+                    <div className="text-[11px] opacity-80 mt-0.5">
+                      Pushes directly to the target branch
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="publishing-mode-pull-request"
+                    onClick={() => setPublishingMode("pull_request")}
+                    className={`p-2.5 rounded border text-xs font-medium text-left transition-colors ${
+                      publishingMode === "pull_request"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <div className="font-semibold">Pull Request</div>
+                    <div className="text-[11px] opacity-80 mt-0.5">
+                      Creates an automated PR for review
+                    </div>
+                  </button>
+                </div>
+                {publishingMode === "pull_request" && (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Pushes to a dedicated source branch (<code className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">forgeops/deploy-&lt;run_id&gt;</code>) and opens an automated PR targeting the base branch without modifying it directly.
+                  </p>
+                )}
+              </div>
+
               {/* Repository Name & Branch */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
@@ -429,26 +507,62 @@ export function AutonomousDeployModal({
                     id="github-repo-name"
                     aria-label="Repository Name"
                     value={githubRepoName}
-                    onChange={(e) => setGithubRepoName(e.target.value)}
+                    onChange={(e) => {
+                      setGithubRepoName(e.target.value);
+                      setGithubBranch("main");
+                    }}
                     placeholder="e.g. org/repo-name"
                     className="text-sm font-mono"
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label
-                    htmlFor="github-target-branch"
-                    className="text-xs font-medium text-foreground"
-                  >
-                    Target Branch
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label
+                      htmlFor="github-target-branch"
+                      className="text-xs font-medium text-foreground"
+                    >
+                      {publishingMode === "pull_request"
+                        ? "Base Branch (Destination for PR)"
+                        : "Target Branch"}
+                    </label>
+                    {branchesQuery.data?.default_branch &&
+                      branchesQuery.data.default_branch === githubBranch && (
+                        <Badge variant="outline" className="text-[10px] py-0 px-1.5">
+                          Default Branch
+                        </Badge>
+                      )}
+                  </div>
                   <Input
                     id="github-target-branch"
                     aria-label="Target Branch"
                     value={githubBranch}
                     onChange={(e) => setGithubBranch(e.target.value)}
-                    placeholder="main"
+                    placeholder={branchesQuery.data?.default_branch || "main"}
                     className="text-sm font-mono"
+                    list={branchesQuery.data?.branches ? "github-branches-datalist" : undefined}
                   />
+                  {branchesQuery.data?.branches && (
+                    <datalist id="github-branches-datalist">
+                      {branchesQuery.data.branches.map((b) => (
+                        <option key={b} value={b} />
+                      ))}
+                    </datalist>
+                  )}
+                  {branchesQuery.isLoading && (
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-1">
+                      <Loader2 className="size-3 animate-spin" /> Discovering repository branches...
+                    </p>
+                  )}
+                  {branchesQuery.data?.truncated && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                      Repository contains &gt;1,000 branches; listing capped at 1,000.
+                    </p>
+                  )}
+                  {branchesQuery.isError && (
+                    <p className="text-[11px] text-destructive mt-1">
+                      Could not discover branches for {githubRepoName}. You can type the branch manually.
+                    </p>
+                  )}
                 </div>
               </div>
 

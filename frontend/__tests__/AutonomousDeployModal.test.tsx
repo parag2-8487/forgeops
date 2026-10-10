@@ -327,4 +327,84 @@ describe("AutonomousDeployModal", () => {
     });
     expect(screen.getByText("Database connection timed out")).toBeInTheDocument();
   });
+
+  it("submits run creation request with pull_request publishing mode", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const runId = "44444444-4444-4444-8444-444444444444";
+
+    post.mockResolvedValue({
+      id: runId,
+      project_id: projectId,
+      status: "pending",
+      strategy: "docker_github_vercel",
+      attempt_number: 1,
+    });
+
+    renderWithClient(
+      <AutonomousDeployModal
+        projectId={projectId}
+        projectName={projectName}
+        isOpen={true}
+        onClose={onClose}
+      />,
+    );
+
+    // Click Pull Request publishing mode button
+    const prModeBtn = screen.getByTestId("publishing-mode-pull-request");
+    await user.click(prModeBtn);
+
+    const submitBtn = screen.getByTestId("create-run-button");
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledTimes(1);
+    });
+
+    const [, calledPayload] = post.mock.calls[0];
+    expect(calledPayload).toMatchObject({
+      strategy: "docker_github_vercel",
+      github_config: {
+        publishing_mode: "pull_request",
+      },
+    });
+  });
+
+  it("discovers branches and highlights default branch with badge and truncation banner", async () => {
+    const user = userEvent.setup();
+    get.mockImplementation((path: string) => {
+      if (path.includes("/integrations/github/repositories/")) {
+        return Promise.resolve({
+          owner: "testorg",
+          repo: "testrepo",
+          default_branch: "production",
+          branches: ["production", "staging", "dev"],
+          can_push: true,
+          is_private: false,
+          truncated: true,
+        });
+      }
+      return Promise.resolve({ devices: [], next_cursor: null });
+    });
+
+    renderWithClient(
+      <AutonomousDeployModal
+        projectId={projectId}
+        projectName={projectName}
+        isOpen={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Switch repo to testorg/testrepo
+    const repoInput = screen.getByLabelText("Repository Name");
+    await user.clear(repoInput);
+    await user.type(repoInput, "testorg/testrepo");
+
+    await waitFor(() => {
+      expect(screen.getByText("Default Branch")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/Repository contains >1,000 branches; listing capped at 1,000/i)).toBeInTheDocument();
+  });
 });

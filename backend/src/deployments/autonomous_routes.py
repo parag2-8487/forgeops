@@ -126,6 +126,8 @@ async def create_run(
         project_id=project_id,
         requested_by=principal.user_id,
         request=body,
+        tenant_id=principal.tenant_id,
+        link_service=getattr(request.app.state, "github_link_service", None),
     )
 
     redis = getattr(request.app.state, "redis", None)

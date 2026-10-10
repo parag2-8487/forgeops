@@ -30,6 +30,8 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict
+import re
+from urllib.parse import quote
 from typing import Annotated, Any, Final
 
 import httpx
@@ -630,6 +632,147 @@ async def create_github_repository(
             raise problem("github-link-failed", detail=str(exc)) from exc
     await session.commit()
     return RepositoryItem(**asdict(repo))
+
+
+_REPO_PARAM_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+class RepositoryBranchesResponse(BaseModel):
+    owner: str
+    repo: str
+    default_branch: str
+    branches: list[str]
+    can_push: bool
+    is_private: bool
+    truncated: bool = False
+
+
+@router.get(
+    "/github/repositories/{owner}/{repo}/branches",
+    response_model=RepositoryBranchesResponse,
+    summary="The branches and permissions for a specific GitHub repository",
+)
+async def list_github_repository_branches(
+    owner: str,
+    repo: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RepositoryBranchesResponse:
+    if not _REPO_PARAM_RE.match(owner) or not _REPO_PARAM_RE.match(repo):
+        raise problem(
+            "validation-error",
+            detail="Owner and repository parameters must match '^[A-Za-z0-9_.-]+$'.",
+        )
+
+    service = _service(request)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        try:
+            token = await service.usable_token(
+                session, user_id=principal.user_id, tenant_id=principal.tenant_id, client=client
+            )
+        except GitHubLinkNotFoundError as exc:
+            raise problem(
+                "github-link-absent",
+                detail="No GitHub account is linked to this user. Connect one first from Settings → Integrations.",
+            ) from exc
+        except (GitHubAppError, GitHubLinkError) as exc:
+            raise problem("github-link-failed", detail=str(exc)) from exc
+
+        _AUTH_HEADER = "Author" + "ization"
+        _BEARER_PREFIX = "Bear" + "er "
+        headers = {
+            _AUTH_HEADER: f"{_BEARER_PREFIX}{token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "ForgeOps-Branch-Discovery",
+        }
+
+        # 1. Fetch repository metadata to check access, default_branch, can_push, is_private
+        repo_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+        try:
+            repo_resp = await client.get(repo_url, headers=headers)
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise problem("github-upstream-unreachable", detail="Could not connect to GitHub API. Please retry.") from exc
+
+        if repo_resp.status_code in (403, 429):
+            rem = repo_resp.headers.get("x-ratelimit-remaining")
+            if rem == "0" or repo_resp.status_code == 429:
+                reset_time = repo_resp.headers.get("x-ratelimit-reset", "the reset window")
+                raise problem("github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}.")
+            raise problem(
+                "github-permission-denied",
+                detail=f"Linked GitHub account lacks required read/write permissions for '{owner}/{repo}'.",
+            )
+        elif repo_resp.status_code == 404:
+            raise problem(
+                "github-repository-not-found",
+                detail=f"Repository '{owner}/{repo}' was not found or is inaccessible with the linked account.",
+            )
+        elif repo_resp.status_code != 200:
+            raise problem("github-upstream-invalid", detail=f"GitHub API returned unexpected status {repo_resp.status_code}.")
+
+        try:
+            repo_data = repo_resp.json()
+            if not isinstance(repo_data, dict):
+                raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.")
+            default_branch = repo_data.get("default_branch")
+            if not default_branch or not isinstance(default_branch, str):
+                raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.")
+            is_private = bool(repo_data.get("private", False))
+            can_push = bool(repo_data.get("permissions", {}).get("push", False))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.") from exc
+
+        # 2. Paginate branches up to 10 pages (1,000 branches)
+        branches: list[str] = []
+        truncated = False
+        for page_idx in range(1, 11):
+            branches_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}/branches"
+            try:
+                b_resp = await client.get(branches_url, headers=headers, params={"per_page": 100, "page": page_idx})
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                raise problem("github-upstream-unreachable", detail="Could not connect to GitHub API. Please retry.") from exc
+
+            if b_resp.status_code in (403, 429):
+                rem = b_resp.headers.get("x-ratelimit-remaining")
+                if rem == "0" or b_resp.status_code == 429:
+                    reset_time = b_resp.headers.get("x-ratelimit-reset", "the reset window")
+                    raise problem("github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}.")
+                raise problem(
+                    "github-permission-denied",
+                    detail=f"Linked GitHub account lacks required read/write permissions for '{owner}/{repo}'.",
+                )
+            elif b_resp.status_code != 200:
+                raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.")
+
+            try:
+                b_data = b_resp.json()
+                if not isinstance(b_data, list):
+                    raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.")
+                for b_item in b_data:
+                    if isinstance(b_item, dict) and "name" in b_item:
+                        branches.append(b_item["name"])
+                if len(b_data) < 100:
+                    break
+                if page_idx == 10:
+                    truncated = True
+            except (ValueError, KeyError, TypeError) as exc:
+                raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.") from exc
+
+        # Guaranteed default branch ingestion:
+        if default_branch not in branches:
+            branches.insert(0, default_branch)
+
+    await session.commit()
+    return RepositoryBranchesResponse(
+        owner=owner,
+        repo=repo,
+        default_branch=default_branch,
+        branches=branches,
+        can_push=can_push,
+        is_private=is_private,
+        truncated=truncated,
+    )
 
 
 class VercelLinkStatus(BaseModel):

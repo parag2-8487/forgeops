@@ -17,9 +17,51 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def validate_git_branch_name(branch: str | None) -> str | None:
+    """Validates branch name format against git ref naming rules without silent normalization.
+
+    Rejects branch names with leading/trailing or internal whitespace rather than mutating via strip().
+    Enforces remote Git provider branch safety rules.
+    """
+    if branch is None:
+        return None
+    if not branch:
+        raise ValueError("Branch name cannot be empty.")
+    if any(ch.isspace() for ch in branch):
+        raise ValueError(f"Invalid branch name '{branch}': whitespace is forbidden.")
+    if branch.startswith("-"):
+        raise ValueError(f"Invalid branch name '{branch}': cannot begin with a hyphen '-' (git option injection prevention).")
+    encoded = branch.encode("utf-8")
+    if len(encoded) > 255:
+        raise ValueError(f"Branch name exceeds maximum length of 255 bytes (got {len(encoded)} bytes).")
+    if branch == "@" or branch.startswith("/") or branch.endswith("/") or branch.endswith("."):
+        raise ValueError(f"Invalid branch name '{branch}': cannot be '@', start/end with '/', or end with '.'.")
+    if "//" in branch:
+        raise ValueError(f"Invalid branch name '{branch}': consecutive slashes '//' are forbidden.")
+    if ".." in branch or "@{" in branch or "\\" in branch:
+        raise ValueError(f"Invalid branch name '{branch}': contains forbidden sequence ('..', '@{{', or '\\').")
+    for ch in branch:
+        code = ord(ch)
+        if code < 32 or code == 127 or ch in "~^:?*[":
+            raise ValueError(f"Invalid branch name '{branch}': contains forbidden character '{ch}'.")
+    for comp in branch.split("/"):
+        if not comp:
+            raise ValueError(f"Invalid branch name '{branch}': empty path component.")
+        if comp.startswith("."):
+            raise ValueError(f"Invalid branch name '{branch}': path component '{comp}' cannot start with '.'.")
+        if comp.endswith(".lock"):
+            raise ValueError(f"Invalid branch name '{branch}': path component '{comp}' cannot end with '.lock'.")
+    return branch
+
+
+class GitHubPublishingMode(StrEnum):
+    DIRECT_PUSH = "direct_push"
+    PULL_REQUEST = "pull_request"
 
 
 class DeploymentStrategy(StrEnum):
@@ -58,14 +100,71 @@ class AutonomousRunStatus(StrEnum):
 
 
 class GitHubConfigRequest(BaseModel):
-    """Target GitHub repository configuration."""
+    """Strict configuration model for incoming API requests.
+
+    Rejects unknown or misspelled fields with 422 Unprocessable Entity.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    repository_mode: str = Field(default="existing", max_length=50)
+    repository_name: str = Field(
+        ...,
+        min_length=3,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+    )
+    # Optional on creation: dynamically resolved to repository default branch if omitted
+    target_branch: str | None = Field(default=None, max_length=255)
+    base_branch: str | None = Field(default=None, max_length=255)
+    publishing_mode: GitHubPublishingMode = Field(default=GitHubPublishingMode.DIRECT_PUSH)
+    commit_message: str | None = Field(default="Automated deployment by ForgeOps", max_length=500)
+    pr_title: str | None = Field(default=None, max_length=255)
+    pr_body: str | None = Field(default=None, max_length=10000)
+
+    @field_validator("target_branch", "base_branch")
+    @classmethod
+    def validate_branch_format(cls, v: str | None) -> str | None:
+        return validate_git_branch_name(v)
+
+    @model_validator(mode="after")
+    def reconcile_and_normalize_branches(self) -> Self:
+        if self.base_branch is not None:
+            if self.target_branch is not None and self.target_branch != self.base_branch:
+                raise ValueError(
+                    f"Contradictory branch configuration: 'target_branch' ({self.target_branch}) and "
+                    f"'base_branch' ({self.base_branch}) must match if both are specified."
+                )
+            self.target_branch = self.base_branch
+        self.base_branch = self.target_branch
+        return self
+
+
+class StoredGitHubConfig(BaseModel):
+    """Permissive configuration model for database hydration and recovery.
+
+    Tolerates extra/deprecated fields from earlier runs and defaults missing publishing_mode to direct_push.
+    Never assumes 'main' when target_branch is omitted.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     repository_mode: str = "existing"
     repository_name: str
-    target_branch: str = "main"
+    target_branch: str | None = None
+    base_branch: str | None = None
+    publishing_mode: GitHubPublishingMode = GitHubPublishingMode.DIRECT_PUSH
     commit_message: str | None = "Automated deployment by ForgeOps"
+    pr_title: str | None = None
+    pr_body: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_legacy(self) -> Self:
+        if self.target_branch and not self.base_branch:
+            self.base_branch = self.target_branch
+        elif self.base_branch and not self.target_branch:
+            self.target_branch = self.base_branch
+        return self
 
 
 class VercelConfigRequest(BaseModel):

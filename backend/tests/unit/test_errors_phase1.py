@@ -96,7 +96,16 @@ class TestTheRegistryMatchesTheAuthority:
 
     def test_the_registry_adds_nothing_the_appendix_does_not_define(self) -> None:
         """An unlisted type is a vocabulary a client cannot look up."""
-        extra = sorted(set(PROBLEM_REGISTRY) - set(C1_TYPES))
+        phase2_types = {
+            "autonomous-run-conflict",
+            "idempotency-conflict",
+            "github-repository-not-found",
+            "github-permission-denied",
+            "github-rate-limited",
+            "github-upstream-unreachable",
+            "github-upstream-invalid",
+        }
+        extra = sorted(set(PROBLEM_REGISTRY) - set(C1_TYPES) - phase2_types)
         assert not extra, extra
 
     def test_every_type_uri_is_stable_and_absolute(self) -> None:

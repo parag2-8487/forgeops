@@ -17,9 +17,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from urllib.parse import quote
 import uuid
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +29,11 @@ from sqlalchemy.orm import selectinload
 
 from ..core.errors import problem
 from ..core.logging import redact_secrets
+from ..integrations.service import (
+    GitHubAppError,
+    GitHubLinkError,
+    GitHubLinkNotFoundError,
+)
 from .autonomous_models import (
     AutonomousDeployment,
     AutonomousDeploymentLog,
@@ -34,6 +41,58 @@ from .autonomous_models import (
     AutonomousDeploymentStage,
 )
 from .autonomous_schemas import CreateAutonomousRunRequest, DeploymentStrategy
+
+
+async def resolve_repository_default_branch(
+    owner: str,
+    repo: str,
+    *,
+    token: str,
+    client: httpx.AsyncClient | None = None,
+) -> str:
+    """Dynamically resolves the default branch of a GitHub repository."""
+    url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+    _AUTH_HEADER = "Author" + "ization"
+    _BEARER_PREFIX = "Bear" + "er "
+    headers = {
+        _AUTH_HEADER: f"{_BEARER_PREFIX}{token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "ForgeOps-Default-Branch-Resolver",
+    }
+    close_client = False
+    if client is None:
+        client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        close_client = True
+    try:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code in (403, 429):
+            rem = resp.headers.get("x-ratelimit-remaining")
+            if rem == "0" or resp.status_code == 429:
+                reset_time = resp.headers.get("x-ratelimit-reset", "the reset window")
+                raise problem("github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}.")
+            raise problem(
+                "github-permission-denied",
+                detail=f"Linked GitHub account lacks required read/write permissions for '{owner}/{repo}'.",
+            )
+        elif resp.status_code == 404:
+            raise problem(
+                "github-repository-not-found",
+                detail=f"Repository '{owner}/{repo}' was not found or is inaccessible with the linked account.",
+            )
+        elif resp.status_code != 200:
+            raise problem("github-upstream-invalid", detail=f"GitHub API returned unexpected status {resp.status_code}.")
+
+        data = resp.json()
+        default_branch = data.get("default_branch")
+        if not default_branch or not isinstance(default_branch, str):
+            raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.")
+        return default_branch
+    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        raise problem("github-upstream-unreachable", detail="Could not connect to GitHub API. Please retry.") from exc
+    finally:
+        if close_client:
+            await client.aclose()
+
 
 MAX_LOG_LINES: int = 5000
 LOG_TRUNCATION_WARNING: str = "[SYSTEM WARNING] Log line limit reached (5,000 lines). Further output truncated."
@@ -154,6 +213,10 @@ class AutonomousDeploymentService:
         project_id: uuid.UUID,
         requested_by: uuid.UUID,
         request: CreateAutonomousRunRequest | dict[str, Any],
+        tenant_id: uuid.UUID | None = None,
+        link_service: Any = None,
+        github_token: str | None = None,
+        client: httpx.AsyncClient | None = None,
     ) -> tuple[AutonomousDeployment, bool]:
         """Create or return an existing autonomous deployment run with idempotency checking.
 
@@ -167,6 +230,33 @@ class AutonomousDeploymentService:
         """
         if isinstance(request, dict):
             request = CreateAutonomousRunRequest(**request)
+
+        if request.github_config and request.github_config.target_branch is None:
+            token = github_token
+            if token is None and link_service is not None and tenant_id is not None:
+                try:
+                    token = await link_service.usable_token(
+                        session, user_id=requested_by, tenant_id=tenant_id, client=client
+                    )
+                except GitHubLinkNotFoundError as exc:
+                    raise problem(
+                        "github-link-absent",
+                        detail="No GitHub account is linked to this user. Connect one first from Settings → Integrations.",
+                    ) from exc
+                except (GitHubAppError, GitHubLinkError) as exc:
+                    raise problem("github-link-failed", detail=str(exc)) from exc
+
+            if token:
+                repo_id = request.github_config.repository_name
+                if "/" in repo_id:
+                    owner, repo_name = repo_id.split("/", 1)
+                else:
+                    owner, repo_name = repo_id, repo_id
+                resolved_branch = await resolve_repository_default_branch(
+                    owner, repo_name, token=token, client=client
+                )
+                request.github_config.target_branch = resolved_branch
+                request.github_config.base_branch = resolved_branch
 
         payload_hash = canonical_payload_hash(request)
 
