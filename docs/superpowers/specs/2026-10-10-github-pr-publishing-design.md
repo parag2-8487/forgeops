@@ -1,6 +1,6 @@
 # ForgeOps Autonomous Deployment: GitHub Direct Push & Pull Request Publishing Specification
 
-**Document Version:** 1.4.0  
+**Document Version:** 1.5.0  
 **Date:** 2026-10-10  
 **Status:** Draft — Pending Review  
 **Target Branch:** `phase-2-implementation`
@@ -74,17 +74,22 @@ Follows standard RFC 7807 `problem(status, code, detail=...)` conventions with r
 To prevent misspelled fields in new requests while guaranteeing backward compatibility for historical stored runs, the platform defines two distinct schema models in [`backend/src/deployments/autonomous_schemas.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/deployments/autonomous_schemas.py):
 
 #### Git Branch Ref Validation Rules (`validate_git_branch_name`)
-Adheres strictly to `git-check-ref-format --branch`:
+Adheres strictly to `git check-ref-format --branch` semantics:
 1. Cannot be empty or whitespace-only.
-2. UTF-8 byte length must not exceed 255 bytes.
-3. Cannot start with `/` or `.`, and cannot end with `/`, `.`, or `.lock`.
-4. Cannot contain consecutive slashes `//`.
-5. Cannot contain `..`, `@{`, `\\`, or be a single `@`.
-6. Cannot contain ASCII control characters (0x00–0x1F, 0x7F) or any of: ` `, `~`, `^`, `:`, `?`, `*`, `[`.
-7. No path component between `/` can start with `.` or end with `.lock`.
+2. Cannot begin with a hyphen `-` (to prevent command-line option/flag injection into git invocations).
+3. UTF-8 byte length must not exceed 255 bytes.
+4. Cannot start with `/` or `.`, and cannot end with `/`, `.`, or `.lock`.
+5. Cannot contain consecutive slashes `//`.
+6. Cannot contain `..`, `@{`, `\\`, or be a single `@`.
+7. Cannot contain ASCII control characters (0x00–0x1F, 0x7F) or any of: ` `, `~`, `^`, `:`, `?`, `*`, `[`.
+8. No path component between `/` can start with `.` or end with `.lock`.
+9. Cannot contain empty path components (e.g. leading, trailing, or double slashes).
 
-**Positive Examples:** `main`, `master`, `develop`, `feature/oauth-login`, `release/v2.1.0`, `bugfix/issue-1234.v2`, `user/alice/work`  
-**Negative Examples:** `.hidden`, `feature//login`, `feature/`, `/release`, `v1.0.`, `feature.lock`, `feature/sub.lock/task`, `feat:bug`, `feat?x`, `feat*all`, `feat[1]`, `feat~1`, `feat^2`, `feat..1`, `a@{b`, `feat branch`, `feat\branch`, `   `
+**Equivalence Guarantee:**
+Where the `git` CLI binary is installed in the runtime environment, the platform can optionally execute `git check-ref-format --branch <name>` as an external sanity check. However, the pure-Python validator below is a fully tested, zero-overhead equivalent that executes unconditionally across all API request validation and stored configuration parsing paths.
+
+**Positive Examples:** `main`, `master`, `develop`, `feature/oauth-login`, `release/v2.1.0`, `bugfix/issue-1234.v2`, `user/alice/work`, `team-alpha/job-1`  
+**Negative Examples:** `-main`, `-f`, `--branch`, `@`, `.hidden`, `feature//login`, `feature/`, `/release`, `v1.0.`, `feature.lock`, `feature/sub.lock/task`, `feat:bug`, `feat?x`, `feat*all`, `feat[1]`, `feat~1`, `feat^2`, `feat..1`, `a@{b`, `feat branch`, `feat\branch`, `   `
 
 ```python
 import hashlib
@@ -97,12 +102,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 def validate_git_branch_name(branch: str | None) -> str | None:
-    """Validates branch name format against git ref naming rules."""
+    """Validates branch name format against git ref naming rules (git check-ref-format --branch equivalent)."""
     if branch is None:
         return None
     b = branch.strip()
     if not b:
         raise ValueError("Branch name cannot be empty or whitespace-only.")
+    if b.startswith("-"):
+        raise ValueError(f"Invalid branch name '{b}': cannot begin with a hyphen '-' (git option injection prevention).")
     if len(b.encode("utf-8")) > 255:
         raise ValueError("Branch name exceeds maximum length of 255 bytes.")
     if b == "@" or b.startswith("/") or b.endswith("/") or b.endswith("."):
@@ -230,40 +237,48 @@ To ensure the exact deployment manifest bytes and payload digest are completely 
    - Created At: `2026-10-10T14:00:00Z`
    - Manifest Bytes: `b"ForgeOps Autonomous Deployment Run 835783a4-7c13-4c00-a233-90034f3a1db7\nCreated: 2026-10-10T14:00:00Z\n"` (length: 96 bytes)
    - Calculated SHA-256 Digest: `0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913`
-2. **Durable Operation Intent Persistence & Worker Fencing:**
-   A SQLAlchemy `session.flush()` merely buffers SQL statements into the active database transaction; if the worker process crashes before a commit, the uncommitted transaction is rolled back by PostgreSQL. Therefore, before initiating any mutating GitHub API request (such as creating a Git ref or committing via Contents API), the worker MUST execute an explicit, isolated database transaction commit (`await session.commit()`) to durably persist the operation intent to disk.
+2. **Durable Operation Intent Persistence via Dedicated Session & Worker Fencing:**
+   A SQLAlchemy `session.flush()` merely buffers SQL statements into the active database transaction; if the worker process crashes before a commit, the uncommitted transaction is rolled back by PostgreSQL. Furthermore, executing `await session.commit()` on the worker's primary shared application session would commit all pending/dirty ORM objects across other entities.
+
+   **Dedicated Isolated Session Mechanism:**
+   To guarantee transactional isolation and prevent committing unrelated pending ORM modifications, ForgeOps persists `operation_intent` using a dedicated, standalone session context obtained from `async_session_factory()`:
+   ```python
+   async with async_session_factory() as intent_session:
+       target_stage = await intent_session.get(DeploymentStage, stage.id)
+       if target_stage:
+           target_stage.stage_metadata = {
+               **target_stage.stage_metadata,
+               "operation_intent": {
+                   "publishing_mode": publishing_mode.value,
+                   "payload_digest": payload_digest,
+                   "manifest_path": "forgeops-autonomous-deploy.txt",
+                   "target_branch": target_branch,
+                   "base_sha": base_sha,
+                   "existing_blob_sha": existing_blob_sha,  # None if file absent
+                   "source_branch": source_branch,          # for pull_request mode
+                   "intent_committed_at": datetime.now(UTC).isoformat(),
+               },
+           }
+           await intent_session.commit()
+   # Synchronize the in-memory stage object on the worker's primary session
+   await session.refresh(stage)
+   ```
 
    **Worker Lease, Fencing & Cancellation Guarantees:**
-   Prior to committing the operation intent:
-   - The worker verifies its lease and fencing token via the deployment heartbeat coordinator (`heartbeat_worker_lease`), ensuring another worker has not claimed the lease or fenced execution.
-   - The worker verifies the run status has not transitioned to cancelled (`run.status != "cancelled"`). If cancelled, the worker aborts immediately without mutating remote state.
-   - The worker persists the `operation_intent` payload into `stage_metadata` within an explicit transaction and executes `await session.commit()`:
-     ```python
-     stage.stage_metadata = {
-         **stage.stage_metadata,
-         "operation_intent": {
-             "publishing_mode": publishing_mode.value,
-             "payload_digest": payload_digest,
-             "manifest_path": "forgeops-autonomous-deploy.txt",
-             "target_branch": target_branch,
-             "base_sha": base_sha,
-             "existing_blob_sha": existing_blob_sha,  # None if file absent
-             "source_branch": source_branch,          # for pull_request mode
-             "intent_committed_at": datetime.now(UTC).isoformat(),
-         },
-     }
-     await session.commit()
-     ```
+   - **Pre-Intent Validation:** Prior to committing the operation intent, the worker asserts its lease and fencing token via the deployment heartbeat coordinator (`heartbeat_worker_lease`), ensuring another worker has not claimed the lease or fenced execution. It also verifies `run.status != "cancelled"`.
+   - **Pre-Mutation Revalidation:** Immediately before dispatching the first mutating remote GitHub API call (after the intent transaction has committed), the worker performs a second mandatory check:
+     1. Re-verifies worker fencing token and lease validity.
+     2. Re-verifies `run.status != "cancelled"`. If cancelled while the intent was being written, the worker halts immediately without performing any remote mutation.
 
    **Crash Recovery Between Intent Commit and First Remote Mutation:**
-   If the worker crashes after the durable transaction commit but before the first mutating GitHub API request is received or processed by GitHub:
+   If the worker crashes after the dedicated transaction commit but before the first mutating GitHub API request is received or processed by GitHub:
    - The database contains the committed `operation_intent`, but remote GitHub state has not been modified.
    - When a recovering worker assumes the lease, it loads `operation_intent` from stage metadata.
    - Before attempting commit adoption or raising false divergence alarms, recovery queries remote GitHub state:
      - For `direct_push`: inspects `GET /repos/{owner}/{repo}/git/ref/heads/{quote(target_branch, safe='')}` and `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`.
      - For `pull_request`: inspects `GET /repos/{owner}/{repo}/git/ref/heads/{quote(source_branch, safe='')}`.
    - If remote GitHub state remains in its pre-mutation state (`source_branch` does not exist for PR mode, or no commit matching this run ID exists on `target_branch` and the manifest blob SHA matches `existing_blob_sha`), recovery recognizes that the crash occurred prior to remote mutation.
-   - Recovery re-validates worker fencing and cancellation, updates `intent_committed_at`, and proceeds with the initial remote mutation cleanly without false divergence alarms.
+   - Recovery re-validates worker fencing and cancellation, updates `intent_committed_at` via the dedicated session, and proceeds with the initial remote mutation cleanly without false divergence alarms.
 
 #### URL Encoding Rules for Git Refs and PRs
 All GitHub API paths and query parameters involving branch names MUST be URL-encoded:
@@ -279,18 +294,20 @@ All GitHub API paths and query parameters involving branch names MUST be URL-enc
 The GitHub Contents API (`PUT /repos/{owner}/{repo}/contents/{path}`) operates at the file blob level rather than taking an optimistic lock on the entire branch ref:
 - **`sha` Parameter Role:** The `sha` parameter identifies the Git blob SHA of the file being overwritten (or is omitted if creating a new file). It does NOT reference or enforce the branch head commit SHA.
 - **Concurrent Commits to Unrelated Files:** If another writer pushes commits to `target_branch` that do not modify `forgeops-autonomous-deploy.txt`, the file blob SHA remains unchanged. In this situation, GitHub's Contents API does NOT return a 409 conflict; instead, GitHub attaches the new commit to the latest remote branch tip, automatically advancing `target_branch`.
-- **Concurrent Modifications to the Manifest File:** If another writer updates or creates `forgeops-autonomous-deploy.txt` on `target_branch` between ForgeOps reading `existing_blob_sha` and issuing the `PUT` request, the remote blob SHA changes. GitHub detects this mismatch and rejects the request with `409 Conflict`.
+- **Concurrent Modifications to the Manifest File:** If another writer updates or creates `forgeops-autonomous-deploy.txt` on `target_branch` between ForgeOps reading `existing_blob_sha` and issuing the `PUT` request, the remote blob SHA changes. GitHub detects this mismatch and rejects the request with a conflict response (`409 Conflict` or `422 Unprocessable Entity`).
+- **Concurrent Creation of Previously Absent File:** If ForgeOps attempts to create `forgeops-autonomous-deploy.txt` without a `sha` parameter, but another writer creates the file concurrently on `target_branch`, GitHub may return either `409 Conflict` or `422 Unprocessable Entity` (e.g. indicating missing `sha` for an existing path).
 - **Concurrent Branch Deletion:** If `target_branch` was removed on remote, GitHub responds with `404 Not Found`.
 
-#### Normal Execution & Concurrency Verification
+#### Normal Execution & Reachability Verification After Concurrent Commits
 1. Resolves `target_branch`.
 2. Queries `GET /repos/{owner}/{repo}/git/ref/heads/{quote(target_branch, safe='')}` to capture initial `base_sha`.
 3. Checks if `forgeops-autonomous-deploy.txt` already exists on `target_branch` via `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`:
    - If file exists (200 OK): captures `existing_blob_sha = response["sha"]`.
    - If file does not exist (404 Not Found): sets `existing_blob_sha = None`.
 4. Generates deterministic manifest bytes and `payload_digest`.
-5. Durably commits `operation_intent` into PostgreSQL via an isolated transaction commit (`await session.commit()`) with `base_sha`, `existing_blob_sha`, and `payload_digest`.
-6. Issues `PUT /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt`:
+5. Durably commits `operation_intent` into PostgreSQL via the dedicated isolated session context (`async with async_session_factory() as intent_session:`) with `base_sha`, `existing_blob_sha`, and `payload_digest`.
+6. Re-verifies worker fencing and cancellation status immediately prior to dispatching the remote request.
+7. Issues `PUT /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt`:
    - Payload:
      ```json
      {
@@ -300,18 +317,33 @@ The GitHub Contents API (`PUT /repos/{owner}/{repo}/contents/{path}`) operates a
        "sha": "<existing_blob_sha>" // omitted if existing_blob_sha is None
      }
      ```
-7. Evaluates response and verifies branch state:
+8. Evaluates response and verifies commit reachability:
    - **On Success (`201 Created` or `200 OK`):**
      - Extracts `commit_sha = response["commit"]["sha"]` and `parent_shas = [p["sha"] for p in response["commit"]["parents"]]`.
-     - **Branch Advancement Verification:**
-       - If `base_sha in parent_shas`: `target_branch` did not advance concurrently before our commit was written.
-       - If `base_sha not in parent_shas`: `target_branch` advanced with unrelated commits concurrently, and GitHub attached our commit to the newer branch tip. ForgeOps queries `GET /repos/{owner}/{repo}/git/ref/heads/{quote(target_branch, safe='')}` to confirm that `commit_sha` is now the current remote tip of `target_branch`, records both `base_sha` and `commit_sha`, and proceeds.
-   - **On `409 Conflict`:**
-     - The manifest file was concurrently modified or created on remote.
-     - ForgeOps refetches `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`:
-       - If the remote file content differs from our `payload_digest`, worker halts immediately with `ConflictError: "Manifest file 'forgeops-autonomous-deploy.txt' on branch '{target_branch}' was modified concurrently by another process."`
-       - Never force-pushes, never retries blind overwrites, and never destroys foreign changes.
-8. Persists completed stage metadata with `commit_sha`, `payload_digest`, and marks `live: true`:
+     - **Branch Reachability Verification (Allowing Subsequent Commits):**
+       - Rather than requiring `commit_sha` to remain the immediate tip of `target_branch` (which would falsely fail if unrelated commits land immediately afterward), ForgeOps verifies reachability directly via the GitHub Compare API:
+         `GET /repos/{owner}/{repo}/compare/{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}`
+       - If `behind_by == 0` and `status in ("ahead", "identical")`:
+         - If `status == "identical"`: `commit_sha` is the current tip of `target_branch`.
+         - If `status == "ahead"`: subsequent unrelated commits landed on `target_branch`, but our run's commit remains fully reachable in the branch ancestry.
+         - Reachability is verified. ForgeOps records `base_sha` and `commit_sha` and proceeds.
+       - If `behind_by > 0` or `status not in ("ahead", "identical")` (e.g. branch diverged or was reset), or if `target_branch` was deleted (404):
+         - Halts with `ConflictError: "Commit '{commit_sha}' is not reachable on target branch '{target_branch}' (compare status: '{status}', behind_by: {behind_by})."`
+         - Never force-pushes or overwrites unrelated changes.
+   - **On Conflict Response (`409 Conflict` or `422 Unprocessable Entity`):**
+     - A concurrent write occurred on remote. ForgeOps executes **Manifest Write Conflict Reconciliation**:
+       1. Refetches current file metadata: `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`.
+       2. Refetches recent commit history for the manifest path:
+          `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=5`.
+       3. Iterates candidate commits to check if our expected commit already landed (e.g. from upstream retry or race):
+          - Commit message matches `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
+          - Manifest content at that commit matches `payload_digest`.
+          - Author / committer matches authenticated integration identity.
+          - Commit is reachable from `target_branch` (Compare API reports `behind_by == 0`, `status in ("ahead", "identical")`).
+       4. **If matching commit is found:** Adopts `commit_sha`, records stage metadata, and marks `live: true`.
+       5. **If remote state belongs to another writer or is ambiguous:** Halts safely with `ConflictError: "Manifest file 'forgeops-autonomous-deploy.txt' on branch '{target_branch}' has conflicting remote state from another writer."`
+       - Never retries a blind overwrite, never force-pushes, and never destroys foreign changes.
+9. Persists completed stage metadata with `commit_sha`, `payload_digest`, and marks `live: true`:
    ```json
    {
      "publishing_mode": "direct_push",
@@ -325,27 +357,27 @@ The GitHub Contents API (`PUT /repos/{owner}/{repo}/contents/{path}`) operates a
    ```
 
 #### Crash Recovery & Idempotent Retry (Direct Push)
-If the worker crashed after issuing the Contents API write but before persisting stage metadata:
+If the worker crashed after issuing the Contents API write but before persisting completed stage metadata:
 1. Worker loads durable `operation_intent` from `stage_metadata` (`payload_digest`, `base_sha`, `existing_blob_sha`, `manifest_path`).
-2. **Identifying the Exact Run Commit via Path History:**
+2. **Identifying the Exact Run Commit via Path History & Reachability:**
    - Worker queries commit history affecting the manifest file on `target_branch`:
      `GET /repos/{owner}/{repo}/commits?path=forgeops-autonomous-deploy.txt&sha={quote(target_branch, safe='')}&per_page=5`
    - Worker iterates candidate commits from newest to oldest and verifies commit provenance:
      1. Commit message matches `f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"`.
      2. Author / committer matches the authenticated ForgeOps GitHub integration identity.
      3. Manifest content at that commit matches `payload_digest` (verified via `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={commit["sha"]}`).
-     4. Commit is reachable from the current `target_branch` tip.
+     4. Commit reachability on `target_branch`: verified via GitHub Compare API `GET /repos/{owner}/{repo}/compare/{quote(candidate["sha"], safe='')}...{quote(target_branch, safe='')}` reporting `behind_by == 0` and `status in ("ahead", "identical")`. The candidate commit does NOT need to be the branch tip if unrelated later commits were merged.
    - **If Exact Commit is Verified:**
-     The commit was already created on remote prior to the crash. Worker adopts `commit_sha = candidate["sha"]`, commits stage metadata, and marks `live: true`. It does NOT create a duplicate commit or invoke the Contents API again.
+     The commit was successfully created on remote prior to the crash. Worker adopts `commit_sha = candidate["sha"]`, commits stage metadata via the dedicated session, and marks `live: true`. It does NOT create a duplicate commit or invoke the Contents API again.
 3. **If No Matching Commit is Found on Target Branch:**
    - Worker inspects current manifest file at `target_branch` tip:
      `GET /repos/{owner}/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(target_branch, safe='')}`
-   - **Case A (Conflicting Manifest Changes):**
-     If the file exists and its blob SHA differs from `existing_blob_sha` (and does not match our `payload_digest`), foreign changes occurred. Worker halts with `ConflictError: "Target branch '{target_branch}' has conflicting manifest state."`
+   - **Case A (Conflicting Manifest Changes from Another Writer):**
+     If the file exists and its blob SHA differs from `existing_blob_sha` (and does not match our `payload_digest`), foreign changes occurred. Worker halts safely with `ConflictError: "Target branch '{target_branch}' has conflicting manifest state."` Never retries a blind overwrite.
    - **Case B (No Commit Landed & Manifest Untouched):**
      If the current blob SHA still equals `existing_blob_sha` (or file remains absent):
-     - If `target_branch` advanced with unrelated commits (`current_tip_sha != base_sha`), worker updates `base_sha = current_tip_sha` in `operation_intent`, durably commits the updated intent to PostgreSQL, and re-executes the Contents API call.
-     - If `target_branch` has not moved (`current_tip_sha == base_sha`), worker re-executes the Contents API call using the recorded intent.
+     - If `target_branch` advanced with unrelated commits (`current_tip_sha != base_sha`), worker updates `base_sha = current_tip_sha` in `operation_intent` via the dedicated session, re-validates fencing and cancellation, and re-executes the Contents API call.
+     - If `target_branch` has not moved (`current_tip_sha == base_sha`), worker re-validates fencing and cancellation, and re-executes the Contents API call using the recorded intent.
    - Under no circumstances does ForgeOps ever force-push or overwrite unexpected commits.
 
 ---
@@ -439,8 +471,12 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
 
 ### 4.1. Verification for `direct_push`
 1. Verifies commit exists on GitHub: `GET /repos/{owner}/{repo}/commits/{commit_sha}`.
-2. Verifies branch head or commit ancestry includes `commit_sha` on `target_branch`.
-3. If commit exists on a different branch or is unverified, marks `target_results["github"] = "failed"`.
+2. Verifies branch reachability via GitHub Compare API:
+   `GET /repos/{owner}/{repo}/compare/{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}`
+   - **If `behind_by == 0` and `status in ("ahead", "identical")`:** Direct reachability on `target_branch` is established. Subsequent unrelated commits (`status == "ahead"`) are explicitly permitted because the run's commit remains safely in the branch history.
+   - **If `behind_by > 0` or `status not in ("ahead", "identical")` (e.g. diverged or behind) or branch 404:** Marks `target_results["github"] = "failed"` with gate error `"Commit '{commit_sha}' is not reachable on target branch '{target_branch}'."`
+3. Validates manifest file at `commit_sha` matches recorded `payload_digest`.
+4. If all checks pass, marks `target_results["github"] = "verified"`.
 
 ### 4.2. Verification for `pull_request` (Handling Open, Merged, and Closed PRs)
 1. **Source Commit Check:**
@@ -535,7 +571,8 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
 ### 6.1. Unit & Schema Tests
 - Validation of `GitHubConfigRequest`:
   - Rejection of misspelled / extra fields via `extra="forbid"`.
-  - Rejection of whitespace-only and invalid git ref characters (`..`, `~`, `^`, `:`, `?`, `*`, `[`, `\`, leading/trailing `/`).
+  - Rejection of names beginning with a hyphen `-` (`-main`, `-f`, `--branch`) to prevent git option injection.
+  - Rejection of whitespace-only and invalid git ref characters (`..`, `~`, `^`, `:`, `?`, `*`, `[`, `\`, leading/trailing `/`, consecutive slashes `//`, single `@`).
   - Rejection of conflicting `target_branch` and `base_branch`.
   - Rejection of invalid repository format.
   - Verification that omitted `target_branch` passes schema validation as `None` for dynamic service resolution.
@@ -549,12 +586,14 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
   - 1,000 branch pagination and `truncated: true` flag.
   - Ensuring repository `default_branch` is included in `branches` even when outside first 1,000 branches.
   - Distinct error responses (404, 403 permission, 429 rate limit, 502 network).
-- Durable operation intent & worker fencing:
-  - Explicit database transaction commit (`await session.commit()`) before remote mutations; verifying worker lease fencing and cancellation status.
+- Isolated durable operation intent & worker fencing:
+  - Dedicated session context (`async with async_session_factory() as intent_session:`) ensuring `operation_intent` commits without committing unrelated dirty ORM entities.
+  - Pre-intent and pre-mutation worker lease fencing and cancellation revalidation.
   - Crash recovery when worker crashes between intent commit and first remote mutation: verifies pristine remote repository state at base SHA and executes intended mutation without false divergence alarms.
-- Direct-push concurrency & crash recovery:
-  - Unrelated commits on target branch: Contents API attaches commit to advanced branch tip; worker verifies commit is at branch tip and adopts.
-  - Concurrent modification to manifest file: Contents API returns 409 Conflict; worker halts with ConflictError without force-pushing or overwriting foreign changes.
+- Direct-push concurrency, conflict reconciliation & crash recovery:
+  - Unrelated commits on target branch: Contents API attaches commit to advanced branch tip; worker verifies commit reachability on `target_branch` via Compare API (`behind_by == 0`, `status == "ahead"`), allowing subsequent commits.
+  - Manifest write conflict reconciliation: handles both `409 Conflict` and `422 Unprocessable Entity` (concurrent creation of previously absent file without `sha`).
+  - Conflict recovery: refetches remote file and path history; adopts commit if exact run identity, payload digest, author provenance, and ancestry match; halts safely with `ConflictError` if foreign or ambiguous state exists, never retrying blind overwrites.
   - Crash after push: worker locates exact run commit in target branch commit history via payload digest and author check, adopting without duplicate push.
 - Pull request crash recovery:
   - Push succeeds, worker crashes, retry adopts source-branch commit via provenance verification.
@@ -562,6 +601,8 @@ In [`backend/src/deployments/autonomous_gates.py`](file:///C:/IMP/antigravity-cl
   - Source branch divergence conflict detection when foreign commits exist.
   - Partial failure recovery: push succeeds, PR creation times out, subsequent retry adopts existing branch and PR without duplicate creation.
 - G7 verification evaluating:
+  - Direct push: commit reachable on `target_branch` via Compare API (`behind_by == 0`, `status in ("ahead", "identical")`), matching `payload_digest` -> `verified`.
+  - Direct push: commit not reachable (`behind_by > 0` or status diverged) -> `failed`.
   - Open PR (`state == "open"`, `head.sha == commit_sha`) -> `verified`.
   - Open PR with head SHA mismatch -> `failed`.
   - Merged PR (`state == "closed"`, `merged == true`):
