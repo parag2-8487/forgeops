@@ -404,6 +404,70 @@ class TestLiveGitHubAndVercelBoundaries:
         assert v_stage.stage_metadata.get("live") is True
         assert v_stage.stage_metadata.get("deployment_id", "").startswith("dpl_")
 
+    async def test_live_docker_github_combined_deployment(
+        self,
+        db_session_factory,
+        test_project_id: uuid.UUID,
+        unsealed_github_token: tuple[uuid.UUID, str],
+    ) -> None:
+        """Executes a complete combined deployment across real Docker and live GitHub."""
+        user_id, gh_token = unsealed_github_token
+        gh_repo = "parag8487/test-forgeops"
+
+        service = AutonomousDeploymentService()
+        req = CreateAutonomousRunRequest(
+            strategy=DeploymentStrategy.DOCKER_GITHUB,
+            docker_config=DockerConfigRequest(
+                dockerfile_path="./Dockerfile",
+            ),
+            github_config=GitHubConfigRequest(
+                repository_name=gh_repo,
+                target_branch="main",
+            ),
+        )
+
+        async with db_session_factory() as session:
+            async with session.begin():
+                run, created = await service.create_run(
+                    session,
+                    project_id=test_project_id,
+                    requested_by=user_id,
+                    request=req,
+                )
+                assert created is True
+                run_id = run.id
+
+        # Execute full combined pipeline with real Docker and live GitHub enabled
+        async with db_session_factory() as session:
+            final_run = await run_pipeline(
+                session,
+                run_id=run_id,
+                worker_id="live-docker-github-validator",
+                context={
+                    "github_token": gh_token,
+                    "verify_live_github": True,
+                },
+            )
+            await session.commit()
+
+        # Verify full pipeline success across all 8 stages
+        assert final_run.status == "succeeded"
+        assert len(final_run.stages) == 8
+
+        # Verify G7 multi-target verification verified docker and github, vercel not applicable
+        g7_stage = next(s for s in final_run.stages if s.stage_name == STAGE_G7_VERIFICATION)
+        assert g7_stage.status == "succeeded"
+        g7_meta = g7_stage.stage_metadata or {}
+        targets = g7_meta.get("targets") or g7_meta.get("target_results") or {}
+        assert targets.get("docker") == "verified"
+        assert targets.get("github") == "verified"
+        assert targets.get("vercel") == "not_applicable"
+
+        # Verify GitHub stage recorded live commit
+        gh_stage = next(s for s in final_run.stages if s.stage_name == STAGE_GITHUB_RELEASE)
+        assert gh_stage.status == "succeeded"
+        assert gh_stage.stage_metadata.get("live") is True
+
     async def test_vercel_unconfigured_credentials_boundary(
         self,
         db_session_factory,
