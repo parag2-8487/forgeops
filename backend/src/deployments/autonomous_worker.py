@@ -24,6 +24,8 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.core.logging import redact_secrets
+
 from .autonomous_gates import (
     GATE_EVALUATORS,
     STAGE_EVALUATORS,
@@ -576,7 +578,7 @@ class AutonomousWorker:
         if metadata is not None:
             stage.stage_metadata = {**stage.stage_metadata, **metadata}
         if error_message is not None:
-            stage.error_message = error_message
+            stage.error_message = redact_secrets(error_message) if isinstance(error_message, str) else error_message
 
         # 5. Recompute monotonic run progress using strategy weights
         new_run_progress = self.calculate_progress(run.stages, run.strategy)
@@ -587,7 +589,7 @@ class AutonomousWorker:
             run.started_at = run.started_at or now
         elif status == "failed":
             run.status = "failed"
-            run.error_summary = error_message or f"Stage '{stage_name}' failed."
+            run.error_summary = stage.error_message or f"Stage '{stage_name}' failed."
             run.completed_at = now
         elif stage_name == STAGE_G7_VERIFICATION and status == "succeeded":
             run.status = "succeeded"
@@ -1006,11 +1008,12 @@ async def run_pipeline(
             # Mark run failed and record primary error
             fail_now = datetime.now(timezone.utc)
             run.status = "failed"
-            run.error_summary = message or f"Stage '{stage.stage_name}' failed."
+            redacted_msg = redact_secrets(message) if isinstance(message, str) else message
+            run.error_summary = redacted_msg or f"Stage '{stage.stage_name}' failed."
             run.primary_error = {
                 "stage_name": stage.stage_name,
                 "gate_id": stage.gate_id,
-                "message": message,
+                "message": redacted_msg or "",
                 "details": details,
             }
             run.completed_at = fail_now
