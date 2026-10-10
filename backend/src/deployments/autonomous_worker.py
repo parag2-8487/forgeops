@@ -35,6 +35,11 @@ from .autonomous_models import (
     AutonomousDeploymentOutbox,
     AutonomousDeploymentStage,
 )
+from .autonomous_recovery import (
+    AutonomousRecoverySweeper,
+    CancellationSettlement,
+    CompensationRollback,
+)
 from .autonomous_schemas import DeploymentStrategy
 from .autonomous_service import (
     STAGE_G1_BLUEPRINT,
@@ -118,6 +123,15 @@ def _normalize_datetime(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _get_ctx(context: Any, key: str, default: Any = None) -> Any:
+    """Safely retrieves a configuration or hook from the execution context."""
+    if context is None:
+        return default
+    if isinstance(context, dict):
+        return context.get(key, default)
+    return getattr(context, key, default)
+
+
 def calculate_progress(
     stages: Sequence[AutonomousDeploymentStage | dict[str, Any]],
     strategy: str | DeploymentStrategy,
@@ -184,9 +198,13 @@ class AutonomousWorker:
         self,
         worker_id: str | None = None,
         session: AsyncSession | None = None,
+        cancellation_settlement: CancellationSettlement | None = None,
+        rollback_handler: CompensationRollback | None = None,
     ) -> None:
         self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
         self.session = session
+        self.cancellation_settlement = cancellation_settlement or CancellationSettlement()
+        self.rollback_handler = rollback_handler or CompensationRollback()
 
     calculate_progress = staticmethod(calculate_progress)
 
@@ -660,12 +678,73 @@ class AutonomousWorker:
 
         return run.status in ("cancelling", "cancelled")
 
+    async def settle_cancellation(
+        self,
+        *args: Any,
+        run_id: uuid.UUID | str | None = None,
+        run: AutonomousDeployment | None = None,
+        current_stage: str | AutonomousDeploymentStage | None = None,
+        fence_token: int | None = None,
+        reason: str | None = None,
+        **kwargs: Any,
+    ) -> AutonomousDeployment:
+        """Settles cancellation cooperatively using CancellationSettlement."""
+        session: AsyncSession
+        if args:
+            session, consumed = self._resolve_session(args[0])
+            if consumed and len(args) > 1 and run_id is None:
+                run_id = args[1]
+        elif self.session is not None:
+            session = self.session
+        else:
+            raise ValueError("AsyncSession must be provided.")
+
+        return await self.cancellation_settlement.settle_cancellation(
+            session,
+            run=run,
+            run_id=run_id,
+            current_stage=current_stage,
+            fence_token=fence_token,
+            reason=reason,
+            **kwargs,
+        )
+
+    async def execute_rollback(
+        self,
+        *args: Any,
+        run: AutonomousDeployment | None = None,
+        run_id: uuid.UUID | str | None = None,
+        primary_error: dict[str, Any] | None = None,
+        context: Any = None,
+        **kwargs: Any,
+    ) -> AutonomousDeployment:
+        """Executes compensation rollback using CompensationRollback."""
+        session: AsyncSession
+        if args:
+            session, consumed = self._resolve_session(args[0])
+            if consumed and len(args) > 1 and run_id is None:
+                run_id = args[1]
+        elif self.session is not None:
+            session = self.session
+        else:
+            raise ValueError("AsyncSession must be provided.")
+
+        return await self.rollback_handler.execute_rollback(
+            session,
+            run=run,
+            run_id=run_id,
+            primary_error=primary_error,
+            context=context,
+            **kwargs,
+        )
+
     async def run_pipeline(
         self,
         *args: Any,
         run_id: uuid.UUID | str | None = None,
         worker_id: str | None = None,
         context: Any = None,
+        rollback_on_failure: bool = False,
         **kwargs: Any,
     ) -> AutonomousDeployment:
         """Executes the strategy-aware gate and stage pipeline for an autonomous deployment."""
@@ -691,6 +770,9 @@ class AutonomousWorker:
             run_id=run_id,
             worker_id=worker_id or self.worker_id,
             context=context if context is not None else kwargs.get("context"),
+            rollback_on_failure=rollback_on_failure or kwargs.get("rollback_on_failure", False),
+            rollback_handler=self.rollback_handler,
+            cancellation_settlement=self.cancellation_settlement,
         )
 
     async def execute_run(
@@ -710,6 +792,9 @@ async def run_pipeline(
     run_id: uuid.UUID | str,
     worker_id: str | None = None,
     context: Any = None,
+    rollback_on_failure: bool = False,
+    rollback_handler: CompensationRollback | None = None,
+    cancellation_settlement: CancellationSettlement | None = None,
 ) -> AutonomousDeployment:
     """Sequentially executes canonical gates and operational stages for an autonomous deployment run.
 
@@ -726,7 +811,13 @@ async def run_pipeline(
     """
     target_run_id = uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
     effective_worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
-    worker = AutonomousWorker(worker_id=effective_worker_id)
+    cancel_settler = cancellation_settlement or CancellationSettlement()
+    comp_rollback = rollback_handler or CompensationRollback()
+    worker = AutonomousWorker(
+        worker_id=effective_worker_id,
+        cancellation_settlement=cancel_settler,
+        rollback_handler=comp_rollback,
+    )
     service = AutonomousDeploymentService()
 
     # 1. Fetch authoritative run with eager-loaded stages
@@ -741,10 +832,11 @@ async def run_pipeline(
         raise ValueError(f"Autonomous deployment '{target_run_id}' not found.")
 
     if run.status == "cancelling":
-        run.status = "cancelled"
-        run.completed_at = datetime.now(timezone.utc)
-        await session.flush()
-        return run
+        return await cancel_settler.settle_cancellation(
+            session,
+            run=run,
+            reason="Pipeline run status is cancelling",
+        )
 
     if run.status in NON_CLAIMABLE_STATUSES:
         return run
@@ -775,10 +867,12 @@ async def run_pipeline(
 
     # 3. Initial cancellation check
     if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
-        run.status = "cancelled"
-        run.completed_at = datetime.now(timezone.utc)
-        await session.flush()
-        return run
+        return await cancel_settler.settle_cancellation(
+            session,
+            run=run,
+            fence_token=fence_token,
+            reason="Pipeline cancelled cooperatively by worker",
+        )
 
     # 4. Mark run running if currently pending
     if run.status == "pending":
@@ -802,12 +896,13 @@ async def run_pipeline(
 
         # Cancellation check before stage start
         if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
-            stage.status = "cancelled"
-            stage.completed_at = datetime.now(timezone.utc)
-            run.status = "cancelled"
-            run.completed_at = datetime.now(timezone.utc)
-            await session.flush()
-            return run
+            return await cancel_settler.settle_cancellation(
+                session,
+                run=run,
+                current_stage=stage,
+                fence_token=fence_token,
+                reason="Pipeline cancelled cooperatively by worker",
+            )
 
         # Routine heartbeat before stage
         await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
@@ -833,12 +928,13 @@ async def run_pipeline(
 
         # Check cancellation right before evaluator execution
         if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
-            stage.status = "cancelled"
-            stage.completed_at = datetime.now(timezone.utc)
-            run.status = "cancelled"
-            run.completed_at = datetime.now(timezone.utc)
-            await session.flush()
-            return run
+            return await cancel_settler.settle_cancellation(
+                session,
+                run=run,
+                current_stage=stage,
+                fence_token=fence_token,
+                reason="Pipeline cancelled cooperatively by worker",
+            )
 
         # Locate stage or gate evaluator
         evaluator = STAGE_EVALUATORS.get(stage.stage_name)
@@ -918,6 +1014,21 @@ async def run_pipeline(
                 "details": details,
             }
             run.completed_at = fail_now
+
+            should_rollback = (
+                rollback_on_failure
+                or _get_ctx(context, "rollback_on_failure", False)
+                or _get_ctx(context, "enable_rollback", False)
+                or bool((run.configuration or {}).get("auto_rollback", False))
+            )
+            if should_rollback:
+                return await comp_rollback.execute_rollback(
+                    session,
+                    run=run,
+                    primary_error=run.primary_error,
+                    context=context,
+                )
+
             await session.flush()
             # Pipeline stops immediately; subsequent stages remain pending
             return run
