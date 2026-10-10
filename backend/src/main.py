@@ -1049,6 +1049,11 @@ def create_app() -> FastAPI:
 
     app.include_router(pipeline_router)
 
+    # Phase 7: Autonomous Deployment Orchestrator REST, SSE and WebSocket streaming surface.
+    from .deployments.autonomous_routes import router as autonomous_deployments_router
+
+    app.include_router(autonomous_deployments_router)
+
     # 2.7. ArgoCD manifest rendering, the governed sync, and the webhook that RECORDS rather than
     # syncing -- an unauthenticated request causing a production deployment would be a hole straight
     # through the chokepoint.

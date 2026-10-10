@@ -178,6 +178,23 @@ class StagePublicResponse(BaseModel):
                 data["stage_metadata"] = data["metadata"]
             elif "stage_metadata" in data and "metadata" not in data:
                 data["metadata"] = data["stage_metadata"]
+            return data
+        if hasattr(data, "stage_metadata"):
+            return {
+                "id": getattr(data, "id", None),
+                "run_id": getattr(data, "run_id", None),
+                "stage_name": getattr(data, "stage_name", None),
+                "gate_id": getattr(data, "gate_id", None),
+                "position": getattr(data, "position", None),
+                "status": getattr(data, "status", None),
+                "progress_pct": getattr(data, "progress_pct", 0),
+                "started_at": getattr(data, "started_at", None),
+                "completed_at": getattr(data, "completed_at", None),
+                "error_message": getattr(data, "error_message", None),
+                "metadata": getattr(data, "stage_metadata", {}) or {},
+                "stage_metadata": getattr(data, "stage_metadata", {}) or {},
+                "created_at": getattr(data, "created_at", None),
+            }
         return data
 
     @property
