@@ -158,7 +158,7 @@ class TestExecuteGitHubReleaseDirectPush:
         assert result.details["payload_digest"] is not None
 
     @pytest.mark.asyncio
-    async def test_live_direct_push_happy_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_mocked_direct_push_happy_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="direct_push")
         fake_commit_sha = "abc123456789"
@@ -188,7 +188,7 @@ class TestExecuteGitHubReleaseDirectPush:
         assert result.details["live"] is True
 
     @pytest.mark.asyncio
-    async def test_live_direct_push_unreachable_commit_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_mocked_direct_push_unreachable_commit_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="direct_push")
         fake_commit_sha = "unreachable123"
@@ -236,7 +236,7 @@ class TestExecuteGitHubReleasePullRequest:
         assert result.details["source_branch"] == f"forgeops/deploy-{run.id}"
 
     @pytest.mark.asyncio
-    async def test_live_pull_request_happy_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_mocked_pull_request_happy_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         source_branch = f"forgeops/deploy-{run.id}"
@@ -278,7 +278,7 @@ class TestExecuteGitHubReleasePullRequest:
         assert result.details["commit_sha"] == fake_commit_sha
 
     @pytest.mark.asyncio
-    async def test_live_pull_request_adopts_existing_open_pr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_mocked_pull_request_adopts_existing_open_pr(self, monkeypatch: pytest.MonkeyPatch) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         source_branch = f"forgeops/deploy-{run.id}"
@@ -315,7 +315,7 @@ class TestExecuteGitHubReleasePullRequest:
         assert result.details["pr_state"] == "open"
 
     @pytest.mark.asyncio
-    async def test_live_pull_request_closed_unmerged_halts_with_conflict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_mocked_pull_request_closed_unmerged_halts_with_conflict(self, monkeypatch: pytest.MonkeyPatch) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         source_branch = f"forgeops/deploy-{run.id}"
@@ -619,6 +619,7 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         run = _create_run(publishing_mode="direct_push")
         m_bytes, m_digest = build_deployment_manifest(run.id, run.created_at)
         existing_commit_sha = "c_existing_run_commit"
+        put_requests: list[httpx.Request] = []
 
         async def fake_handler(req: httpx.Request) -> httpx.Response:
             url = str(req.url)
@@ -630,6 +631,7 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                         return httpx.Response(200, json={"content": base64.b64encode(m_bytes).decode("ascii")})
                     return httpx.Response(200, json={"sha": "oldblob123"})
                 if req.method == "PUT":
+                    put_requests.append(req)
                     # GitHub returns 409 conflict because commit already pushed
                     return httpx.Response(409, json={"message": "Conflict"})
             if "/commits" in url:
@@ -652,6 +654,13 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         assert result.passed is True
         assert result.status == "succeeded"
         assert result.details["commit_sha"] == existing_commit_sha
+        # Assert no duplicate PUTs were attempted after conflict reconciliation
+        assert len(put_requests) == 1
+        # Assert persisted metadata
+        stage = run.stages[0]
+        assert stage.stage_metadata["commit_sha"] == existing_commit_sha
+        assert stage.stage_metadata["publishing_mode"] == "direct_push"
+        assert stage.stage_metadata["payload_digest"] == m_digest
 
     @pytest.mark.asyncio
     async def test_boundary_2_pr_worker_crashed_after_push_recovers_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -660,6 +669,8 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         source_branch = f"forgeops/deploy-{run.id}"
         m_bytes, m_digest = build_deployment_manifest(run.id, run.created_at)
         pushed_tip_sha = "tip_pushed_commit"
+        put_requests: list[httpx.Request] = []
+        post_pulls_requests: list[httpx.Request] = []
 
         async def fake_handler(req: httpx.Request) -> httpx.Response:
             url = str(req.url)
@@ -674,6 +685,8 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                     "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
                 })
             if "/contents/forgeops-autonomous-deploy.txt" in url:
+                if req.method == "PUT":
+                    put_requests.append(req)
                 if f"ref={pushed_tip_sha}" in url:
                     return httpx.Response(200, json={"content": base64.b64encode(m_bytes).decode("ascii")})
                 return httpx.Response(404)
@@ -681,6 +694,7 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                 if req.method == "GET":
                     return httpx.Response(200, json=[])
                 if req.method == "POST":
+                    post_pulls_requests.append(req)
                     return httpx.Response(201, json={"number": 424, "html_url": "https://github.com/testowner/testrepo/pull/424"})
             return httpx.Response(404)
 
@@ -693,6 +707,15 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         assert result.status == "succeeded"
         assert result.details["commit_sha"] == pushed_tip_sha
         assert result.details["pr_number"] == 424
+        # Assert no duplicate commit was pushed to source branch
+        assert len(put_requests) == 0
+        assert len(post_pulls_requests) == 1
+        # Assert persisted metadata
+        stage = run.stages[0]
+        assert stage.stage_metadata["commit_sha"] == pushed_tip_sha
+        assert stage.stage_metadata["pr_number"] == 424
+        assert stage.stage_metadata["source_branch"] == source_branch
+        assert stage.stage_metadata["payload_digest"] == m_digest
 
     @pytest.mark.asyncio
     async def test_boundary_3_put_timeout_recovers_on_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1202,5 +1225,61 @@ class TestG7IndependentVerificationRejections:
         assert gh_stage.stage_metadata["pr_state"] == "closed"
         assert gh_stage.stage_metadata["pr_merged"] is True
         assert gh_stage.stage_metadata["merge_commit_sha"] == "merge_sha_104"
+
+    @pytest.mark.asyncio
+    async def test_g7_rejects_reversed_comparison_direction_or_behind_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        session = MockAsyncSession()
+        run = _create_run(publishing_mode="direct_push")
+        commit_sha = "valid_c1"
+        gh_stage = run.stages[0]
+        gh_stage.stage_metadata = {
+            "publishing_mode": "direct_push",
+            "commit_sha": commit_sha,
+            "target_branch": "main",
+        }
+
+        # Case 1: Reversed comparison direction or branch not containing commit (status='behind', behind_by=1)
+        async def fake_handler_behind(req: httpx.Request) -> httpx.Response:
+            url = str(req.url)
+            if f"/commits/{commit_sha}" in url:
+                return httpx.Response(200, json={})
+            if f"/compare/{commit_sha}...main" in url:
+                # If reversed or target_branch lacks commit, status is behind / behind_by > 0
+                return httpx.Response(200, json={"behind_by": 1, "status": "behind"})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(fake_handler_behind)
+        monkeypatch.setattr(httpx, "AsyncClient", _mock_client_factory(transport))
+
+        result = await evaluate_g7_verification(
+            session, run, context={"verify_live_github": True, "github_token": "dummy_token"}
+        )
+        assert result.overall_passed is False
+        assert result.target_results["github"] == "failed"
+
+        # Case 2: Correct direction with target_branch containing commit (status='ahead' or 'identical', behind_by=0)
+        m_bytes, m_digest = build_deployment_manifest(run.id, run.created_at)
+        gh_stage.stage_metadata["payload_digest"] = m_digest
+
+        async def fake_handler_ahead(req: httpx.Request) -> httpx.Response:
+            url = str(req.url)
+            if f"/commits/{commit_sha}" in url:
+                return httpx.Response(200, json={})
+            if f"/compare/{commit_sha}...main" in url:
+                # main is ahead of commit_sha by 2 commits, but behind_by is 0 (commit_sha is reachable ancestor)
+                return httpx.Response(200, json={"behind_by": 0, "ahead_by": 2, "status": "ahead"})
+            if f"/contents/forgeops-autonomous-deploy.txt?ref={commit_sha}" in url:
+                return httpx.Response(200, json={"content": base64.b64encode(m_bytes).decode("ascii")})
+            return httpx.Response(404)
+
+        transport2 = httpx.MockTransport(fake_handler_ahead)
+        monkeypatch.setattr(httpx, "AsyncClient", _mock_client_factory(transport2))
+
+        result2 = await evaluate_g7_verification(
+            session, run, context={"verify_live_github": True, "github_token": "dummy_token"}
+        )
+        assert result2.overall_passed is True
+        assert result2.target_results["github"] == "verified"
+
 
 
