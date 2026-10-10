@@ -230,7 +230,7 @@ async def start_run(
     now = datetime.now(UTC)
     run.status = "running"
     run.started_at = now
-    run.dispatch_status = "enqueued"
+    run.dispatch_status = "dispatching"
     run.dispatch_requested_at = now
 
     run.outbox_sequence_counter += 1
@@ -252,11 +252,15 @@ async def start_run(
 
     dispatcher = getattr(request.app.state, "task_dispatcher", None)
     if dispatcher is not None:
-        with contextlib.suppress(Exception):
+        try:
             await dispatcher.enqueue(
                 "autonomous_deploy_run",
                 {"run_id": str(run.id), "project_id": str(project_id)},
             )
+            run.dispatch_status = "enqueued"
+            await session.flush()
+        except Exception:
+            logger.warning("Failed to enqueue autonomous_deploy_run for run %s", run.id, exc_info=True)
 
     redis = getattr(request.app.state, "redis", None)
     if redis is not None:

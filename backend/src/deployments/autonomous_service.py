@@ -21,6 +21,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -248,9 +249,33 @@ class AutonomousDeploymentService:
         )
         run.outbox_events = [outbox]
         session.add(outbox)
-
-        await session.flush()
-        return run, True
+        try:
+            await session.flush()
+            return run, True
+        except IntegrityError as exc:
+            if request.idempotency_key and "uq_proj_idempotency" in str(exc).lower():
+                await session.rollback()
+                stmt = (
+                    select(AutonomousDeployment)
+                    .options(selectinload(AutonomousDeployment.stages))
+                    .where(
+                        AutonomousDeployment.project_id == project_id,
+                        AutonomousDeployment.idempotency_key == request.idempotency_key,
+                    )
+                )
+                result = await session.execute(stmt)
+                existing = result.scalars().first()
+                if existing is not None:
+                    if existing.payload_hash == payload_hash:
+                        return existing, False
+                    raise problem(
+                        "idempotency-conflict",
+                        detail=(
+                            f"Idempotency key '{request.idempotency_key}' was previously used "
+                            "with a different payload configuration."
+                        ),
+                    ) from None
+            raise
 
     async def get_run(
         self,

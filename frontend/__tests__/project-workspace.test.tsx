@@ -48,6 +48,7 @@ vi.mock("@/lib/api", async () => {
 vi.mock("next/navigation", () => ({
   usePathname: () => "/projects",
   useParams: () => ({ projectId: "p-1" }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }));
 
 vi.mock("next/link", () => ({
