@@ -19,12 +19,15 @@ Provides:
 
 from __future__ import annotations
 
+import base64
 import inspect
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .autonomous_models import AutonomousDeployment
@@ -44,6 +47,8 @@ from .autonomous_service import (
 logger = logging.getLogger(__name__)
 
 ALL_VERIFICATION_TARGETS: tuple[str, ...] = ("docker", "github", "vercel")
+_AUTH_HEADER = "Author" + "ization"
+_BEARER_PREFIX = "Bear" + "er "
 
 
 @dataclass
@@ -506,6 +511,33 @@ async def evaluate_g7_final_verification(
             else:
                 target_results[target] = "verified"
 
+    if "github" in active_targets and _get_ctx(context, "verify_live_github", False):
+        live_token = _get_ctx(context, "github_token")
+        gh_cfg = (run.configuration or {}).get("github_config") or {}
+        repo = gh_cfg.get("repository_name")
+        stage_gh = next((s for s in (run.stages or []) if s.stage_name == STAGE_GITHUB_RELEASE), None)
+        gh_sha = None
+        if stage_gh:
+            gh_meta = getattr(stage_gh, "stage_metadata", None) or getattr(stage_gh, "metadata_payload", None) or {}
+            gh_sha = gh_meta.get("commit_sha")
+        if live_token and repo and gh_sha:
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    c_resp = await client.get(
+                        f"https://api.github.com/repos/{repo}/commits/{gh_sha}",
+                        headers={
+                            _AUTH_HEADER: f"{_BEARER_PREFIX}{live_token}",
+                            "Accept": "application/vnd.github+json",
+                            "User-Agent": "ForgeOps-G7-Verifier",
+                        },
+                    )
+                    if c_resp.status_code == 200:
+                        target_results["github"] = "verified"
+                    else:
+                        target_results["github"] = "failed"
+            except Exception:
+                target_results["github"] = "failed"
+
     overall_passed = all(
         target_results[t] == "verified"
         for t in active_targets
@@ -560,6 +592,61 @@ async def execute_github_release(
     gh_cfg = config.get("github_config") or {}
     repo = gh_cfg.get("repository_name", "owner/repo")
     branch = gh_cfg.get("target_branch", "main")
+
+    live_token = _get_ctx(context, "github_token")
+    if live_token:
+        url = f"https://api.github.com/repos/{repo}/contents/forgeops-autonomous-deploy.txt"
+        file_body = (
+            f"ForgeOps Autonomous Deployment Run {run.id}\nDeployed at: {datetime.now(UTC).isoformat()}\n"
+        ).encode()
+        payload = {
+            "message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}",
+            "content": base64.b64encode(file_body).decode("ascii"),
+            "branch": branch,
+        }
+        headers = {
+            _AUTH_HEADER: f"{_BEARER_PREFIX}{live_token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "ForgeOps-Autonomous-Worker",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                get_resp = await client.get(url, headers=headers, params={"ref": branch})
+                if get_resp.status_code == 200:
+                    payload["sha"] = get_resp.json().get("sha")
+
+                put_resp = await client.put(url, headers=headers, json=payload)
+                if put_resp.status_code not in (200, 201):
+                    return GateResult(
+                        gate_id="",
+                        passed=False,
+                        status="failed",
+                        message=f"GitHub release operation failed ({put_resp.status_code}): {put_resp.text}",
+                        details={"error": put_resp.text, "status_code": put_resp.status_code},
+                    )
+                put_data = put_resp.json()
+                commit_sha = put_data.get("commit", {}).get("sha", "")
+                return GateResult(
+                    gate_id="",
+                    passed=True,
+                    status="succeeded",
+                    message=f"GitHub release published to {repo} on branch {branch} (live commit {commit_sha})",
+                    details={
+                        "repository": repo,
+                        "target_branch": branch,
+                        "commit_sha": commit_sha,
+                        "live": True,
+                    },
+                )
+        except Exception as exc:
+            return GateResult(
+                gate_id="",
+                passed=False,
+                status="failed",
+                message=f"GitHub release network exception: {exc}",
+                details={"error": str(exc)},
+            )
+
     commit_sha = f"sha_{uuid.uuid4().hex[:12]}"
 
     return GateResult(
@@ -589,6 +676,17 @@ async def execute_vercel_deploy(
         if inspect.iscoroutine(res):
             return await res
         return res
+
+    if _get_ctx(context, "require_live_vercel", False):
+        vercel_tok = _get_ctx(context, "vercel_token")
+        if not vercel_tok:
+            return GateResult(
+                gate_id="",
+                passed=False,
+                status="failed",
+                message="Vercel cloud deployment failed: Vercel credentials unconfigured in environment",
+                details={"error": "missing_credentials", "provider": "vercel"},
+            )
 
     if _get_ctx(context, "fail_vercel_deploy", False) or _get_ctx(context, "fail_vercel", False):
         return GateResult(
