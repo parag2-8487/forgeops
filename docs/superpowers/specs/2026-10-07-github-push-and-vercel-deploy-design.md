@@ -1,8 +1,8 @@
 # System Specification: GitHub Repository Synchronization & Vercel Cloud Deployment
 
-**Document ID**: SPEC-2026-10-07-CLOUD-DEPLOY  
-**Status**: APPROVED  
-**Author**: Antigravity Platform Engineering  
+**Document ID**: SPEC-2026-10-07-CLOUD-DEPLOY
+**Status**: APPROVED
+**Author**: Antigravity Platform Engineering
 **Scope**: GitHub Repository Management (List, Create Public/Private, Push) and Direct Vercel Cloud Deployment
 
 ---
