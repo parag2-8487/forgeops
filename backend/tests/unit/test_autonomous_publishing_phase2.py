@@ -12,21 +12,15 @@ Covers:
 from __future__ import annotations
 
 import base64
-import hashlib
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import pytest
-
-from urllib.parse import quote
-
 from src.core.errors import ProblemException
 from src.deployments.autonomous_gates import (
-    ConflictError,
-    G7VerificationResult,
-    GateResult,
     build_deployment_manifest,
     evaluate_g7_verification,
     execute_github_release,
@@ -44,7 +38,6 @@ from src.deployments.autonomous_schemas import (
 from src.deployments.autonomous_service import (
     STAGE_G7_VERIFICATION,
     STAGE_GITHUB_RELEASE,
-    AutonomousDeploymentService,
     build_stage_graph,
     resolve_repository_default_branch,
 )
@@ -135,8 +128,7 @@ class TestDeploymentManifestFixture:
         assert len(manifest_bytes) == 102
         assert payload_digest == "0ff6b151b520e538ddd7fa41f169cacf74012de54f84540581e9a450bc8a3913"
         assert manifest_bytes == (
-            b"ForgeOps Autonomous Deployment Run 835783a4-7c13-4c00-a233-90034f3a1db7\n"
-            b"Created: 2026-10-10T14:00:00Z\n"
+            b"ForgeOps Autonomous Deployment Run 835783a4-7c13-4c00-a233-90034f3a1db7\nCreated: 2026-10-10T14:00:00Z\n"
         )
 
 
@@ -260,10 +252,13 @@ class TestExecuteGitHubReleasePullRequest:
                 if req.method == "GET":
                     return httpx.Response(200, json=[])
                 if req.method == "POST":
-                    return httpx.Response(201, json={
-                        "number": 101,
-                        "html_url": "https://github.com/testowner/testrepo/pull/101",
-                    })
+                    return httpx.Response(
+                        201,
+                        json={
+                            "number": 101,
+                            "html_url": "https://github.com/testowner/testrepo/pull/101",
+                        },
+                    )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -297,12 +292,17 @@ class TestExecuteGitHubReleasePullRequest:
                 if req.method == "PUT":
                     return httpx.Response(201, json={"commit": {"sha": "commit1"}})
             if "/pulls" in url and req.method == "GET":
-                return httpx.Response(200, json=[{
-                    "number": 55,
-                    "html_url": "https://github.com/testowner/testrepo/pull/55",
-                    "state": "open",
-                    "merged": False,
-                }])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "number": 55,
+                            "html_url": "https://github.com/testowner/testrepo/pull/55",
+                            "state": "open",
+                            "merged": False,
+                        }
+                    ],
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -315,7 +315,9 @@ class TestExecuteGitHubReleasePullRequest:
         assert result.details["pr_state"] == "open"
 
     @pytest.mark.asyncio
-    async def test_mocked_pull_request_closed_unmerged_halts_with_conflict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_mocked_pull_request_closed_unmerged_halts_with_conflict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         source_branch = f"forgeops/deploy-{run.id}"
@@ -334,12 +336,17 @@ class TestExecuteGitHubReleasePullRequest:
                 if req.method == "PUT":
                     return httpx.Response(201, json={"commit": {"sha": "commit1"}})
             if "/pulls" in url and req.method == "GET":
-                return httpx.Response(200, json=[{
-                    "number": 77,
-                    "html_url": "https://github.com/testowner/testrepo/pull/77",
-                    "state": "closed",
-                    "merged": False,
-                }])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "number": 77,
+                            "html_url": "https://github.com/testowner/testrepo/pull/77",
+                            "state": "closed",
+                            "merged": False,
+                        }
+                    ],
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -413,13 +420,16 @@ class TestG7VerificationPhase2:
             if f"/commits/{commit_sha}" in url:
                 return httpx.Response(200, json={})
             if f"/pulls/{pr_number}" in url:
-                return httpx.Response(200, json={
-                    "number": pr_number,
-                    "state": "open",
-                    "merged": False,
-                    "head": {"sha": commit_sha, "ref": f"forgeops/deploy-{run.id}"},
-                    "base": {"ref": "main"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": pr_number,
+                        "state": "open",
+                        "merged": False,
+                        "head": {"sha": commit_sha, "ref": f"forgeops/deploy-{run.id}"},
+                        "base": {"ref": "main"},
+                    },
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -435,7 +445,9 @@ class TestG7VerificationPhase2:
         assert result.target_results["github"] == "verified"
 
     @pytest.mark.asyncio
-    async def test_g7_pull_request_merged_pr_verified_across_merge_strategies(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_g7_pull_request_merged_pr_verified_across_merge_strategies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         commit_sha = "head_commit_1"
@@ -458,14 +470,17 @@ class TestG7VerificationPhase2:
             if f"/commits/{commit_sha}" in url:
                 return httpx.Response(200, json={})
             if f"/pulls/{pr_number}" in url:
-                return httpx.Response(200, json={
-                    "number": pr_number,
-                    "state": "closed",
-                    "merged": True,
-                    "merge_commit_sha": merge_commit_sha,
-                    "head": {"sha": commit_sha, "ref": f"forgeops/deploy-{run.id}"},
-                    "base": {"ref": "main"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": pr_number,
+                        "state": "closed",
+                        "merged": True,
+                        "merge_commit_sha": merge_commit_sha,
+                        "head": {"sha": commit_sha, "ref": f"forgeops/deploy-{run.id}"},
+                        "base": {"ref": "main"},
+                    },
+                )
             if f"/compare/{merge_commit_sha}...main" in url:
                 # Reachable in history
                 return httpx.Response(200, json={"behind_by": 0, "status": "identical"})
@@ -496,9 +511,7 @@ class TestDefaultBranchResolutionAndErrorMapping:
 
         transport = httpx.MockTransport(fake_handler)
         async with httpx.AsyncClient(transport=transport) as client:
-            branch = await resolve_repository_default_branch(
-                "owner", "repo", token="fake_token", client=client
-            )
+            branch = await resolve_repository_default_branch("owner", "repo", token="fake_token", client=client)
             assert branch == "develop"
 
     @pytest.mark.asyncio
@@ -509,9 +522,7 @@ class TestDefaultBranchResolutionAndErrorMapping:
         transport = httpx.MockTransport(fake_handler)
         async with httpx.AsyncClient(transport=transport) as client:
             with pytest.raises(ProblemException) as exc_info:
-                await resolve_repository_default_branch(
-                    "owner", "repo", token="fake_token", client=client
-                )
+                await resolve_repository_default_branch("owner", "repo", token="fake_token", client=client)
             assert "github-repository-not-found" in exc_info.value.problem.type
             assert exc_info.value.problem.status == 404
 
@@ -523,9 +534,7 @@ class TestDefaultBranchResolutionAndErrorMapping:
         transport = httpx.MockTransport(fake_handler)
         async with httpx.AsyncClient(transport=transport) as client:
             with pytest.raises(ProblemException) as exc_info:
-                await resolve_repository_default_branch(
-                    "owner", "repo", token="fake_token", client=client
-                )
+                await resolve_repository_default_branch("owner", "repo", token="fake_token", client=client)
             assert "github-rate-limited" in exc_info.value.problem.type
             assert exc_info.value.problem.status == 429
 
@@ -585,7 +594,9 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
     """Tests the 9 failure boundaries specified in Section 2."""
 
     @pytest.mark.asyncio
-    async def test_boundary_1_intent_persisted_no_mutation_occurred_recovers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_boundary_1_intent_persisted_no_mutation_occurred_recovers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="direct_push")
         fake_commit_sha = "c_boundary_1"
@@ -614,7 +625,9 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         assert stage.stage_metadata["commit_sha"] == fake_commit_sha
 
     @pytest.mark.asyncio
-    async def test_boundary_2_direct_push_worker_crashed_after_push_recovers_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_boundary_2_direct_push_worker_crashed_after_push_recovers_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="direct_push")
         m_bytes, m_digest = build_deployment_manifest(run.id, run.created_at)
@@ -635,13 +648,16 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                     # GitHub returns 409 conflict because commit already pushed
                     return httpx.Response(409, json={"message": "Conflict"})
             if "/commits" in url:
-                return httpx.Response(200, json=[
-                    {
-                        "sha": existing_commit_sha,
-                        "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
-                    },
-                    {"sha": "base0", "commit": {"message": "initial commit"}},
-                ])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "sha": existing_commit_sha,
+                            "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
+                        },
+                        {"sha": "base0", "commit": {"message": "initial commit"}},
+                    ],
+                )
             if f"/compare/{existing_commit_sha}...main" in url:
                 return httpx.Response(200, json={"behind_by": 0, "status": "identical"})
             return httpx.Response(404)
@@ -663,7 +679,9 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         assert stage.stage_metadata["payload_digest"] == m_digest
 
     @pytest.mark.asyncio
-    async def test_boundary_2_direct_push_pre_put_recovery_adopts_commit_zero_puts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_boundary_2_direct_push_pre_put_recovery_adopts_commit_zero_puts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="direct_push")
         m_bytes, m_digest = build_deployment_manifest(run.id, run.created_at)
@@ -677,21 +695,27 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
             if "/contents/forgeops-autonomous-deploy.txt" in url:
                 if req.method == "GET":
                     # Manifest already on branch with matching content and digest
-                    return httpx.Response(200, json={
-                        "sha": "blob_sha_123",
-                        "content": base64.b64encode(m_bytes).decode("ascii"),
-                    })
+                    return httpx.Response(
+                        200,
+                        json={
+                            "sha": "blob_sha_123",
+                            "content": base64.b64encode(m_bytes).decode("ascii"),
+                        },
+                    )
                 if req.method == "PUT":
                     put_requests.append(req)
                     return httpx.Response(201, json={"commit": {"sha": "duplicate_sha"}})
             if "/commits" in url:
-                return httpx.Response(200, json=[
-                    {
-                        "sha": existing_commit_sha,
-                        "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
-                    },
-                    {"sha": "base0", "commit": {"message": "initial commit"}},
-                ])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "sha": existing_commit_sha,
+                            "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
+                        },
+                        {"sha": "base0", "commit": {"message": "initial commit"}},
+                    ],
+                )
             if f"/compare/{existing_commit_sha}...main" in url:
                 return httpx.Response(200, json={"behind_by": 0, "status": "identical"})
             return httpx.Response(404)
@@ -712,7 +736,9 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         assert stage.stage_metadata["payload_digest"] == m_digest
 
     @pytest.mark.asyncio
-    async def test_boundary_2_pr_worker_crashed_after_push_recovers_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_boundary_2_pr_worker_crashed_after_push_recovers_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         source_branch = f"forgeops/deploy-{run.id}"
@@ -729,10 +755,13 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                 # Source branch exists with tip at pushed_tip_sha
                 return httpx.Response(200, json={"object": {"sha": pushed_tip_sha}})
             if f"/commits/{pushed_tip_sha}" in url:
-                return httpx.Response(200, json={
-                    "sha": pushed_tip_sha,
-                    "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "sha": pushed_tip_sha,
+                        "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
+                    },
+                )
             if "/contents/forgeops-autonomous-deploy.txt" in url:
                 if req.method == "PUT":
                     put_requests.append(req)
@@ -744,7 +773,9 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                     return httpx.Response(200, json=[])
                 if req.method == "POST":
                     post_pulls_requests.append(req)
-                    return httpx.Response(201, json={"number": 424, "html_url": "https://github.com/testowner/testrepo/pull/424"})
+                    return httpx.Response(
+                        201, json={"number": 424, "html_url": "https://github.com/testowner/testrepo/pull/424"}
+                    )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -787,13 +818,16 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                 if req.method == "PUT":
                     return httpx.Response(409)
             if "/commits" in url:
-                return httpx.Response(200, json=[
-                    {
-                        "sha": recovered_sha,
-                        "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
-                    },
-                    {"sha": "base0", "commit": {"message": "init"}},
-                ])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "sha": recovered_sha,
+                            "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
+                        },
+                        {"sha": "base0", "commit": {"message": "init"}},
+                    ],
+                )
             if f"/compare/{recovered_sha}...main" in url:
                 return httpx.Response(200, json={"behind_by": 0, "status": "identical"})
             return httpx.Response(404)
@@ -827,11 +861,14 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
             # Fencing check assertion helper in worker pipeline
             if run.fence_token != 1:
                 raise WorkerFencingLostError(
-                    f"Worker {worker1.worker_id} lost ownership of run {run.id}: fence token 1 superseded by {run.fence_token}"
+                    f"Worker {worker1.worker_id} lost ownership of run {run.id}: "
+                    f"fence token 1 superseded by {run.fence_token}"
                 )
 
     @pytest.mark.asyncio
-    async def test_boundary_5_direct_push_branch_conflict_search_exhausted_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_boundary_5_direct_push_branch_conflict_search_exhausted_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="direct_push")
 
@@ -846,11 +883,14 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                     return httpx.Response(409)
             if "/commits" in url:
                 # Returns commits belonging to another writer until base0 is reached
-                return httpx.Response(200, json=[
-                    {"sha": "foreign1", "commit": {"message": "unrelated commit 1"}},
-                    {"sha": "foreign2", "commit": {"message": "unrelated commit 2"}},
-                    {"sha": "base0", "commit": {"message": "init"}},
-                ])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {"sha": "foreign1", "commit": {"message": "unrelated commit 1"}},
+                        {"sha": "foreign2", "commit": {"message": "unrelated commit 2"}},
+                        {"sha": "base0", "commit": {"message": "init"}},
+                    ],
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -864,7 +904,9 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         assert "write conflict" in result.message
 
     @pytest.mark.asyncio
-    async def test_boundary_5_pr_source_branch_diverged_foreign_commit_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_boundary_5_pr_source_branch_diverged_foreign_commit_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         source_branch = f"forgeops/deploy-{run.id}"
@@ -876,10 +918,13 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
             if f"/git/ref/heads/{quote(source_branch, safe='')}" in url or f"/git/ref/heads/{source_branch}" in url:
                 return httpx.Response(200, json={"object": {"sha": "foreign_tip_sha"}})
             if "/commits/foreign_tip_sha" in url:
-                return httpx.Response(200, json={
-                    "sha": "foreign_tip_sha",
-                    "commit": {"message": "unrelated foreign commit"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "sha": "foreign_tip_sha",
+                        "commit": {"message": "unrelated foreign commit"},
+                    },
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -915,12 +960,17 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
             if "/pulls" in url:
                 if req.method == "GET":
                     # Refetch query after 422 adopts PR 777
-                    return httpx.Response(200, json=[{
-                        "number": 777,
-                        "html_url": "https://github.com/testowner/testrepo/pull/777",
-                        "state": "open",
-                        "merged": False,
-                    }])
+                    return httpx.Response(
+                        200,
+                        json=[
+                            {
+                                "number": 777,
+                                "html_url": "https://github.com/testowner/testrepo/pull/777",
+                                "state": "open",
+                                "merged": False,
+                            }
+                        ],
+                    )
                 if req.method == "POST":
                     # 422 Unprocessable Entity e.g. A pull request already exists
                     return httpx.Response(422, json={"message": "A pull request already exists for this branch."})
@@ -955,13 +1005,18 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
                 if req.method == "PUT":
                     return httpx.Response(201, json={"commit": {"sha": "c1"}})
             if "/pulls" in url and req.method == "GET":
-                return httpx.Response(200, json=[{
-                    "number": 999,
-                    "html_url": "https://github.com/testowner/testrepo/pull/999",
-                    "state": "closed",
-                    "merged": True,
-                    "merge_commit_sha": "merged_sha_999",
-                }])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "number": 999,
+                            "html_url": "https://github.com/testowner/testrepo/pull/999",
+                            "state": "closed",
+                            "merged": True,
+                            "merge_commit_sha": "merged_sha_999",
+                        }
+                    ],
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -1090,13 +1145,16 @@ class TestG7IndependentVerificationRejections:
             if "/commits/expected_head_sha" in url:
                 return httpx.Response(200, json={})
             if "/pulls/100" in url:
-                return httpx.Response(200, json={
-                    "number": 100,
-                    "state": "open",
-                    "merged": False,
-                    "head": {"sha": "different_head_sha"},
-                    "base": {"ref": "main"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": 100,
+                        "state": "open",
+                        "merged": False,
+                        "head": {"sha": "different_head_sha"},
+                        "base": {"ref": "main"},
+                    },
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -1125,13 +1183,16 @@ class TestG7IndependentVerificationRejections:
             if "/commits/head_sha" in url:
                 return httpx.Response(200, json={})
             if "/pulls/101" in url:
-                return httpx.Response(200, json={
-                    "number": 101,
-                    "state": "closed",
-                    "merged": False,
-                    "head": {"sha": "head_sha"},
-                    "base": {"ref": "main"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": 101,
+                        "state": "closed",
+                        "merged": False,
+                        "head": {"sha": "head_sha"},
+                        "base": {"ref": "main"},
+                    },
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -1162,14 +1223,17 @@ class TestG7IndependentVerificationRejections:
             if "/commits/head_sha" in url:
                 return httpx.Response(200, json={})
             if "/pulls/102" in url:
-                return httpx.Response(200, json={
-                    "number": 102,
-                    "state": "closed",
-                    "merged": True,
-                    "merge_commit_sha": "diverged_merge_sha",
-                    "head": {"sha": "head_sha"},
-                    "base": {"ref": "main"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": 102,
+                        "state": "closed",
+                        "merged": True,
+                        "merge_commit_sha": "diverged_merge_sha",
+                        "head": {"sha": "head_sha"},
+                        "base": {"ref": "main"},
+                    },
+                )
             if "/compare/diverged_merge_sha...main" in url:
                 return httpx.Response(200, json={"behind_by": 3, "status": "diverged"})
             return httpx.Response(404)
@@ -1184,7 +1248,9 @@ class TestG7IndependentVerificationRejections:
         assert result.target_results["github"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_g7_rejects_merged_pr_manifest_digest_mismatch_at_merge_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_g7_rejects_merged_pr_manifest_digest_mismatch_at_merge_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
         gh_stage = run.stages[0]
@@ -1201,18 +1267,23 @@ class TestG7IndependentVerificationRejections:
             if "/commits/head_sha" in url:
                 return httpx.Response(200, json={})
             if "/pulls/103" in url:
-                return httpx.Response(200, json={
-                    "number": 103,
-                    "state": "closed",
-                    "merged": True,
-                    "merge_commit_sha": "merge_commit_103",
-                    "head": {"sha": "head_sha"},
-                    "base": {"ref": "main"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": 103,
+                        "state": "closed",
+                        "merged": True,
+                        "merge_commit_sha": "merge_commit_103",
+                        "head": {"sha": "head_sha"},
+                        "base": {"ref": "main"},
+                    },
+                )
             if "/compare/merge_commit_103...main" in url:
                 return httpx.Response(200, json={"behind_by": 0, "status": "identical"})
             if "/contents/forgeops-autonomous-deploy.txt?ref=merge_commit_103" in url:
-                return httpx.Response(200, json={"content": base64.b64encode(b"corrupted manifest content").decode("ascii")})
+                return httpx.Response(
+                    200, json={"content": base64.b64encode(b"corrupted manifest content").decode("ascii")}
+                )
             return httpx.Response(404)
 
         transport = httpx.MockTransport(fake_handler)
@@ -1249,14 +1320,17 @@ class TestG7IndependentVerificationRejections:
             if "/commits/head_sha_104" in url:
                 return httpx.Response(200, json={})
             if "/pulls/104" in url:
-                return httpx.Response(200, json={
-                    "number": 104,
-                    "state": "closed",
-                    "merged": True,
-                    "merge_commit_sha": "merge_sha_104",
-                    "head": {"sha": "head_sha_104", "ref": source_branch},
-                    "base": {"ref": "main"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": 104,
+                        "state": "closed",
+                        "merged": True,
+                        "merge_commit_sha": "merge_sha_104",
+                        "head": {"sha": "head_sha_104", "ref": source_branch},
+                        "base": {"ref": "main"},
+                    },
+                )
             if "/compare/merge_sha_104...main" in url:
                 return httpx.Response(200, json={"behind_by": 0, "status": "identical"})
             if "/contents/forgeops-autonomous-deploy.txt?ref=merge_sha_104" in url:
@@ -1276,7 +1350,9 @@ class TestG7IndependentVerificationRejections:
         assert gh_stage.stage_metadata["merge_commit_sha"] == "merge_sha_104"
 
     @pytest.mark.asyncio
-    async def test_g7_rejects_reversed_comparison_direction_or_behind_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_g7_rejects_reversed_comparison_direction_or_behind_status(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="direct_push")
         commit_sha = "valid_c1"
@@ -1329,6 +1405,3 @@ class TestG7IndependentVerificationRejections:
         )
         assert result2.overall_passed is True
         assert result2.target_results["github"] == "verified"
-
-
-

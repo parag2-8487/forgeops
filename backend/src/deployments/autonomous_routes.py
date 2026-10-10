@@ -472,9 +472,8 @@ async def stream_events(
         await pubsub.subscribe(channel)
 
         # 1. Determine PostgreSQL high-water mark
-        hwm_stmt = (
-            select(func.max(AutonomousDeploymentOutbox.event_seq))
-            .where(AutonomousDeploymentOutbox.run_id == run_id)
+        hwm_stmt = select(func.max(AutonomousDeploymentOutbox.event_seq)).where(
+            AutonomousDeploymentOutbox.run_id == run_id
         )
         hwm_result = await session.execute(hwm_stmt)
         high_water_mark = hwm_result.scalar() or 0
@@ -596,10 +595,7 @@ async def websocket_events(
     await pubsub.subscribe(channel)
 
     # 1. High-water mark query
-    hwm_stmt = (
-        select(func.max(AutonomousDeploymentOutbox.event_seq))
-        .where(AutonomousDeploymentOutbox.run_id == run_id)
-    )
+    hwm_stmt = select(func.max(AutonomousDeploymentOutbox.event_seq)).where(AutonomousDeploymentOutbox.run_id == run_id)
     hwm_result = await session.execute(hwm_stmt)
     high_water_mark = hwm_result.scalar() or 0
 

@@ -672,9 +672,7 @@ class AutonomousWorker:
         if run.lease_expires_at is not None:
             lease = _normalize_datetime(run.lease_expires_at)
             if lease is not None and lease < now:
-                raise WorkerFencingLostError(
-                    f"Worker lease expired for run {target_run_id} at {run.lease_expires_at}."
-                )
+                raise WorkerFencingLostError(f"Worker lease expired for run {target_run_id} at {run.lease_expires_at}.")
 
         return run.status in ("cancelling", "cancelled")
 
@@ -845,10 +843,7 @@ async def run_pipeline(
     now = datetime.now(UTC)
     lease_norm = _normalize_datetime(run.lease_expires_at)
     lease_active = (
-        run.worker_id == effective_worker_id
-        and lease_norm is not None
-        and lease_norm > now
-        and run.fence_token > 0
+        run.worker_id == effective_worker_id and lease_norm is not None and lease_norm > now and run.fence_token > 0
     )
 
     if lease_active:

@@ -28,11 +28,11 @@ and sending them to a settings page to come back afterwards loses the form.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import asdict
-import re
-from urllib.parse import quote
 from typing import Annotated, Any, Final
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
@@ -679,10 +679,10 @@ async def list_github_repository_branches(
         except (GitHubAppError, GitHubLinkError) as exc:
             raise problem("github-link-failed", detail=str(exc)) from exc
 
-        _AUTH_HEADER = "Author" + "ization"
-        _BEARER_PREFIX = "Bear" + "er "
+        auth_header = "Author" + "ization"
+        bearer_prefix = "Bear" + "er "
         headers = {
-            _AUTH_HEADER: f"{_BEARER_PREFIX}{token}",
+            auth_header: f"{bearer_prefix}{token}",
             "Accept": "application/vnd.github+json",
             "User-Agent": "ForgeOps-Branch-Discovery",
         }
@@ -692,13 +692,17 @@ async def list_github_repository_branches(
         try:
             repo_resp = await client.get(repo_url, headers=headers)
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise problem("github-upstream-unreachable", detail="Could not connect to GitHub API. Please retry.") from exc
+            raise problem(
+                "github-upstream-unreachable", detail="Could not connect to GitHub API. Please retry."
+            ) from exc
 
         if repo_resp.status_code in (403, 429):
             rem = repo_resp.headers.get("x-ratelimit-remaining")
             if rem == "0" or repo_resp.status_code == 429:
                 reset_time = repo_resp.headers.get("x-ratelimit-reset", "the reset window")
-                raise problem("github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}.")
+                raise problem(
+                    "github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}."
+                )
             raise problem(
                 "github-permission-denied",
                 detail=f"Linked GitHub account lacks required read/write permissions for '{owner}/{repo}'.",
@@ -709,7 +713,9 @@ async def list_github_repository_branches(
                 detail=f"Repository '{owner}/{repo}' was not found or is inaccessible with the linked account.",
             )
         elif repo_resp.status_code != 200:
-            raise problem("github-upstream-invalid", detail=f"GitHub API returned unexpected status {repo_resp.status_code}.")
+            raise problem(
+                "github-upstream-invalid", detail=f"GitHub API returned unexpected status {repo_resp.status_code}."
+            )
 
         try:
             repo_data = repo_resp.json()
@@ -721,7 +727,9 @@ async def list_github_repository_branches(
             is_private = bool(repo_data.get("private", False))
             can_push = bool(repo_data.get("permissions", {}).get("push", False))
         except (ValueError, KeyError, TypeError) as exc:
-            raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.") from exc
+            raise problem(
+                "github-upstream-invalid", detail="GitHub API returned an invalid response structure."
+            ) from exc
 
         # 2. Paginate branches up to 10 pages (1,000 branches)
         branches: list[str] = []
@@ -731,13 +739,17 @@ async def list_github_repository_branches(
             try:
                 b_resp = await client.get(branches_url, headers=headers, params={"per_page": 100, "page": page_idx})
             except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                raise problem("github-upstream-unreachable", detail="Could not connect to GitHub API. Please retry.") from exc
+                raise problem(
+                    "github-upstream-unreachable", detail="Could not connect to GitHub API. Please retry."
+                ) from exc
 
             if b_resp.status_code in (403, 429):
                 rem = b_resp.headers.get("x-ratelimit-remaining")
                 if rem == "0" or b_resp.status_code == 429:
                     reset_time = b_resp.headers.get("x-ratelimit-reset", "the reset window")
-                    raise problem("github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}.")
+                    raise problem(
+                        "github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}."
+                    )
                 raise problem(
                     "github-permission-denied",
                     detail=f"Linked GitHub account lacks required read/write permissions for '{owner}/{repo}'.",
@@ -748,7 +760,9 @@ async def list_github_repository_branches(
             try:
                 b_data = b_resp.json()
                 if not isinstance(b_data, list):
-                    raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.")
+                    raise problem(
+                        "github-upstream-invalid", detail="GitHub API returned an invalid response structure."
+                    )
                 for b_item in b_data:
                     if isinstance(b_item, dict) and "name" in b_item:
                         branches.append(b_item["name"])
@@ -757,7 +771,9 @@ async def list_github_repository_branches(
                 if page_idx == 10:
                     truncated = True
             except (ValueError, KeyError, TypeError) as exc:
-                raise problem("github-upstream-invalid", detail="GitHub API returned an invalid response structure.") from exc
+                raise problem(
+                    "github-upstream-invalid", detail="GitHub API returned an invalid response structure."
+                ) from exc
 
         # Guaranteed default branch ingestion:
         if default_branch not in branches:

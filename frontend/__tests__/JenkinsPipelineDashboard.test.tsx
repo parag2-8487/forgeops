@@ -455,9 +455,7 @@ describe("JenkinsPipelineDashboard", () => {
     });
 
     await user.click(enabledStartBtn);
-    expect(post).toHaveBeenCalledWith(
-      `/projects/${projectId}/autonomous-deploy/${runId}/start`,
-    );
+    expect(post).toHaveBeenCalledWith(`/projects/${projectId}/autonomous-deploy/${runId}/start`);
   });
 
   it("handles Cancel button interactions correctly", async () => {
@@ -473,11 +471,7 @@ describe("JenkinsPipelineDashboard", () => {
     });
 
     renderWithClient(
-      <JenkinsPipelineDashboard
-        projectId={projectId}
-        projectName={projectName}
-        run={runningRun}
-      />,
+      <JenkinsPipelineDashboard projectId={projectId} projectName={projectName} run={runningRun} />,
     );
 
     const cancelBtn = screen.getByTestId("btn-cancel");
@@ -485,9 +479,7 @@ describe("JenkinsPipelineDashboard", () => {
     expect(cancelBtn).not.toBeDisabled();
 
     await user.click(cancelBtn);
-    expect(post).toHaveBeenCalledWith(
-      `/projects/${projectId}/autonomous-deploy/${runId}/cancel`,
-    );
+    expect(post).toHaveBeenCalledWith(`/projects/${projectId}/autonomous-deploy/${runId}/cancel`);
   });
 
   it("shows Cancelling... when status is cancelling", () => {
@@ -607,11 +599,7 @@ describe("JenkinsPipelineDashboard", () => {
     };
 
     renderWithClient(
-      <JenkinsPipelineDashboard
-        projectId={projectId}
-        projectName={projectName}
-        run={prRun}
-      />,
+      <JenkinsPipelineDashboard projectId={projectId} projectName={projectName} run={prRun} />,
     );
 
     // Click github_release node
@@ -622,7 +610,10 @@ describe("JenkinsPipelineDashboard", () => {
     expect(screen.getByTestId("github-pr-card")).toBeInTheDocument();
     expect(screen.getByText("Pull Request #42")).toBeInTheDocument();
     expect(screen.getByTestId("pr-status-badge")).toHaveTextContent("open");
-    expect(screen.getByTestId("github-pr-url")).toHaveAttribute("href", "https://github.com/myorg/myrepo/pull/42");
+    expect(screen.getByTestId("github-pr-url")).toHaveAttribute(
+      "href",
+      "https://github.com/myorg/myrepo/pull/42",
+    );
     expect(screen.getByTestId("branch-flow-pill")).toHaveTextContent("forgeops/deploy-11111111");
     expect(screen.getByTestId("branch-flow-pill")).toHaveTextContent("main");
     expect(screen.getByTestId("pr-commit-sha")).toHaveTextContent("commit12");

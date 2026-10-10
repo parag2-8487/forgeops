@@ -119,7 +119,6 @@ class Deployment(SQLModel, table=True):
     )
 
 
-
 class DeploymentCircuitBreaker(SQLModel, table=True):
     """One breaker per project and environment. 2.2, revision 0031.
 
@@ -181,4 +180,3 @@ __all__ = [
     "AutonomousDeploymentLog",
     "AutonomousDeploymentOutbox",
 ]
-

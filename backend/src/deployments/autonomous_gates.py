@@ -24,11 +24,11 @@ import contextlib
 import hashlib
 import inspect
 import logging
-from urllib.parse import quote
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -56,13 +56,14 @@ _BEARER_PREFIX = "Bear" + "er "
 
 class ConflictError(RuntimeError):
     """Raised when remote git repository or branch state has conflicted or diverged unexpectedly."""
+
     pass
 
 
 def build_deployment_manifest(run_id: uuid.UUID, created_at: datetime) -> tuple[bytes, str]:
     """Builds the canonical UTF-8 deployment manifest bytes and SHA-256 digest."""
     ts_str = created_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    body = f"ForgeOps Autonomous Deployment Run {run_id}\nCreated: {ts_str}\n".encode("utf-8")
+    body = f"ForgeOps Autonomous Deployment Run {run_id}\nCreated: {ts_str}\n".encode()
     digest = hashlib.sha256(body).hexdigest()
     return body, digest
 
@@ -553,7 +554,7 @@ async def evaluate_g7_verification(
 
     fail_g7 = _get_ctx(context, "fail_g7", False)
     fail_targets = _get_ctx(context, "fail_targets", set())
-    if isinstance(fail_targets, (list, tuple)):
+    if isinstance(fail_targets, list | tuple):
         fail_targets = set(fail_targets)
 
     target_overrides = _get_ctx(context, "target_results_override", {})
@@ -595,17 +596,29 @@ async def evaluate_g7_verification(
                             target_results["github"] = "failed"
                         else:
                             # 1. Verify commit exists
-                            c_resp = await client.get(f"https://api.github.com/repos/{repo}/commits/{commit_sha}", headers=headers)
+                            c_resp = await client.get(
+                                f"https://api.github.com/repos/{repo}/commits/{commit_sha}", headers=headers
+                            )
                             if c_resp.status_code != 200:
                                 target_results["github"] = "failed"
                             else:
                                 # 2. Verify reachability via Compare API
-                                comp_url = f"https://api.github.com/repos/{repo}/compare/{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}"
+                                comp_url = (
+                                    f"https://api.github.com/repos/{repo}/compare/"
+                                    f"{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}"
+                                )
                                 comp_resp = await client.get(comp_url, headers=headers)
                                 comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
-                                if comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical"):
+                                if (
+                                    comp_resp.status_code == 200
+                                    and comp_data.get("behind_by") == 0
+                                    and comp_data.get("status") in ("ahead", "identical")
+                                ):
                                     # 3. Verify manifest at commit_sha
-                                    mf_url = f"https://api.github.com/repos/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(commit_sha, safe='')}"
+                                    mf_url = (
+                                        f"https://api.github.com/repos/{repo}/contents/forgeops-autonomous-deploy.txt"
+                                        f"?ref={quote(commit_sha, safe='')}"
+                                    )
                                     mf_resp = await client.get(mf_url, headers=headers)
                                     if mf_resp.status_code == 200:
                                         content_bytes = base64.b64decode(mf_resp.json().get("content", ""))
@@ -621,12 +634,13 @@ async def evaluate_g7_verification(
 
                     elif publishing_mode == "pull_request":
                         pr_number = gh_meta.get("pr_number")
-                        source_branch = gh_meta.get("source_branch")
                         if not commit_sha or not pr_number:
                             target_results["github"] = "failed"
                         else:
                             # 1. Source commit exists
-                            c_resp = await client.get(f"https://api.github.com/repos/{repo}/commits/{commit_sha}", headers=headers)
+                            c_resp = await client.get(
+                                f"https://api.github.com/repos/{repo}/commits/{commit_sha}", headers=headers
+                            )
                             if c_resp.status_code != 200:
                                 target_results["github"] = "failed"
                             else:
@@ -656,12 +670,22 @@ async def evaluate_g7_verification(
                                             target_results["github"] = "failed"
                                         else:
                                             # Compare API reachability for merge_commit_sha
-                                            comp_url = f"https://api.github.com/repos/{repo}/compare/{quote(merge_commit_sha, safe='')}...{quote(target_branch, safe='')}"
+                                            comp_url = (
+                                                f"https://api.github.com/repos/{repo}/compare/"
+                                                f"{quote(merge_commit_sha, safe='')}...{quote(target_branch, safe='')}"
+                                            )
                                             comp_resp = await client.get(comp_url, headers=headers)
                                             comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
-                                            if comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical"):
+                                            if (
+                                                comp_resp.status_code == 200
+                                                and comp_data.get("behind_by") == 0
+                                                and comp_data.get("status") in ("ahead", "identical")
+                                            ):
                                                 # Manifest content & digest check at merge_commit_sha
-                                                mf_url = f"https://api.github.com/repos/{repo}/contents/forgeops-autonomous-deploy.txt?ref={quote(merge_commit_sha, safe='')}"
+                                                mf_url = (
+                                                    f"https://api.github.com/repos/{repo}/contents/forgeops-autonomous-deploy.txt"
+                                                    f"?ref={quote(merge_commit_sha, safe='')}"
+                                                )
                                                 mf_resp = await client.get(mf_url, headers=headers)
                                                 if mf_resp.status_code == 200:
                                                     content_bytes = base64.b64decode(mf_resp.json().get("content", ""))
@@ -691,7 +715,9 @@ async def evaluate_g7_verification(
         stage_vercel = next((s for s in (run.stages or []) if s.stage_name == STAGE_VERCEL_DEPLOY), None)
         dep_id = None
         if stage_vercel:
-            v_meta = getattr(stage_vercel, "stage_metadata", None) or getattr(stage_vercel, "metadata_payload", None) or {}
+            v_meta = (
+                getattr(stage_vercel, "stage_metadata", None) or getattr(stage_vercel, "metadata_payload", None) or {}
+            )
             dep_id = v_meta.get("deployment_id")
         if live_vercel_token and dep_id:
             try:
@@ -809,11 +835,11 @@ async def execute_github_release(
             "Accept": "application/vnd.github+json",
             "User-Agent": "ForgeOps-Autonomous-Worker",
         }
+        repo_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}"
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Dynamically resolve default branch if omitted
             if not target_branch:
                 try:
-                    repo_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}"
                     repo_resp = await client.get(repo_url, headers=headers)
                     if repo_resp.status_code == 200:
                         target_branch = repo_resp.json().get("default_branch", "main")
@@ -824,7 +850,7 @@ async def execute_github_release(
 
             if publishing_mode == "direct_push":
                 # 1. Capture base_sha
-                ref_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/git/ref/heads/{quote(target_branch, safe='')}"
+                ref_url = f"{repo_url}/git/ref/heads/{quote(target_branch, safe='')}"
                 try:
                     ref_resp = await client.get(ref_url, headers=headers)
                 except Exception as exc:
@@ -856,7 +882,7 @@ async def execute_github_release(
                 base_sha = ref_resp.json()["object"]["sha"]
 
                 # 2. Check if manifest exists on target_branch
-                contents_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/contents/forgeops-autonomous-deploy.txt"
+                contents_url = f"{repo_url}/contents/forgeops-autonomous-deploy.txt"
                 existing_blob_sha: str | None = None
                 try:
                     c_resp = await client.get(contents_url, headers=headers, params={"ref": target_branch})
@@ -896,7 +922,7 @@ async def execute_github_release(
                         c_data = c_resp.json()
                         existing_content_bytes = base64.b64decode(c_data.get("content", ""))
                         if hashlib.sha256(existing_content_bytes).hexdigest() == payload_digest:
-                            commits_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/commits"
+                            commits_url = f"{repo_url}/commits"
                             c_hist_resp = await client.get(
                                 commits_url,
                                 headers=headers,
@@ -908,10 +934,17 @@ async def execute_github_release(
                                     cand_msg = candidate.get("commit", {}).get("message", "")
                                     expected_msg = f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"
                                     if expected_msg in cand_msg:
-                                        comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(cand_sha, safe='')}...{quote(target_branch, safe='')}"
+                                        comp_url = (
+                                            f"{repo_url}/compare/{quote(cand_sha, safe='')}..."
+                                            f"{quote(target_branch, safe='')}"
+                                        )
                                         comp_resp = await client.get(comp_url, headers=headers)
                                         comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
-                                        if comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical"):
+                                        if (
+                                            comp_resp.status_code == 200
+                                            and comp_data.get("behind_by") == 0
+                                            and comp_data.get("status") in ("ahead", "identical")
+                                        ):
                                             commit_sha = cand_sha
                                             break
                     except Exception:
@@ -932,22 +965,41 @@ async def execute_github_release(
                     if put_resp.status_code in (200, 201):
                         commit_sha = put_resp.json().get("commit", {}).get("sha", "")
                         # Verify reachability via Compare API
-                        comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}"
+                        comp_url = f"{repo_url}/compare/{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}"
                         comp_resp = await client.get(comp_url, headers=headers)
                         comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
-                        if not (comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical")):
-                            msg = f"Commit '{commit_sha}' is not reachable on target branch '{target_branch}' (compare status: '{comp_data.get('status')}', behind_by: {comp_data.get('behind_by')})."
-                            return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
+                        if not (
+                            comp_resp.status_code == 200
+                            and comp_data.get("behind_by") == 0
+                            and comp_data.get("status") in ("ahead", "identical")
+                        ):
+                            msg = (
+                                f"Commit '{commit_sha}' is not reachable on target branch '{target_branch}' "
+                                f"(compare status: '{comp_data.get('status')}', "
+                                f"behind_by: {comp_data.get('behind_by')})."
+                            )
+                            return GateResult(
+                                gate_id="",
+                                passed=False,
+                                status="failed",
+                                message=msg,
+                                details={"error": msg, "conflict": True},
+                            )
 
                     elif put_resp.status_code in (409, 422):
                         # Bounded manifest conflict reconciliation up to 5 pages / 150 commits
                         match_found = False
                         for page in range(1, 6):
-                            commits_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/commits"
+                            commits_url = f"{repo_url}/commits"
                             commits_resp = await client.get(
                                 commits_url,
                                 headers=headers,
-                                params={"path": "forgeops-autonomous-deploy.txt", "sha": target_branch, "per_page": 30, "page": page},
+                                params={
+                                    "path": "forgeops-autonomous-deploy.txt",
+                                    "sha": target_branch,
+                                    "per_page": 30,
+                                    "page": page,
+                                },
                             )
                             if commits_resp.status_code != 200:
                                 break
@@ -968,10 +1020,17 @@ async def execute_github_release(
                                         c_bytes = base64.b64decode(c_mf_resp.json().get("content", ""))
                                         if hashlib.sha256(c_bytes).hexdigest() == payload_digest:
                                             # Verify reachability
-                                            comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(c_sha, safe='')}...{quote(target_branch, safe='')}"
+                                            comp_url = (
+                                                f"{repo_url}/compare/{quote(c_sha, safe='')}..."
+                                                f"{quote(target_branch, safe='')}"
+                                            )
                                             comp_resp = await client.get(comp_url, headers=headers)
                                             comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
-                                            if comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical"):
+                                            if (
+                                                comp_resp.status_code == 200
+                                                and comp_data.get("behind_by") == 0
+                                                and comp_data.get("status") in ("ahead", "identical")
+                                            ):
                                                 commit_sha = c_sha
                                                 match_found = True
                                                 break
@@ -982,14 +1041,25 @@ async def execute_github_release(
                                 break
 
                         if not commit_sha:
-                            msg = f"Target branch '{target_branch}' write conflict: could not reconcile run commit or branch diverged."
-                            return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
+                            msg = (
+                                f"Target branch '{target_branch}' write conflict: "
+                                "could not reconcile run commit or branch diverged."
+                            )
+                            return GateResult(
+                                gate_id="",
+                                passed=False,
+                                status="failed",
+                                message=msg,
+                                details={"error": msg, "conflict": True},
+                            )
                     else:
                         return GateResult(
                             gate_id="",
                             passed=False,
                             status="failed",
-                            message=f"GitHub release Contents API write failed ({put_resp.status_code}): {put_resp.text}",
+                            message=(
+                                f"GitHub release Contents API write failed ({put_resp.status_code}): {put_resp.text}"
+                            ),
                             details={"error": put_resp.text, "status_code": put_resp.status_code},
                         )
 
@@ -1018,7 +1088,7 @@ async def execute_github_release(
                 base_branch = target_branch
 
                 # 1. Verify base branch exists and capture base_sha
-                base_ref_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/git/ref/heads/{quote(base_branch, safe='')}"
+                base_ref_url = f"{repo_url}/git/ref/heads/{quote(base_branch, safe='')}"
                 base_resp = await client.get(base_ref_url, headers=headers)
                 if base_resp.status_code == 404:
                     return GateResult(
@@ -1039,7 +1109,7 @@ async def execute_github_release(
                 base_sha = base_resp.json()["object"]["sha"]
 
                 # 2. Check if manifest inherited from base_sha
-                contents_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/contents/forgeops-autonomous-deploy.txt"
+                contents_url = f"{repo_url}/contents/forgeops-autonomous-deploy.txt"
                 existing_blob_sha = None
                 try:
                     c_resp = await client.get(contents_url, headers=headers, params={"ref": base_branch})
@@ -1072,13 +1142,13 @@ async def execute_github_release(
                     )
 
                 # 5. Check if source branch exists
-                source_ref_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/git/ref/heads/{quote(source_branch, safe='')}"
+                source_ref_url = f"{repo_url}/git/ref/heads/{quote(source_branch, safe='')}"
                 src_resp = await client.get(source_ref_url, headers=headers)
                 commit_sha: str = ""
 
                 if src_resp.status_code == 404:
                     # Create source branch pointing to base_sha
-                    create_ref_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/git/refs"
+                    create_ref_url = f"{repo_url}/git/refs"
                     create_resp = await client.post(
                         create_ref_url,
                         headers=headers,
@@ -1154,7 +1224,10 @@ async def execute_github_release(
                             )
                     else:
                         # Inspect provenance of tip_sha
-                        c_resp = await client.get(f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/commits/{tip_sha}", headers=headers)
+                        c_resp = await client.get(
+                            f"{repo_url}/commits/{tip_sha}",
+                            headers=headers,
+                        )
                         if c_resp.status_code == 200:
                             c_data = c_resp.json()
                             c_msg = c_data.get("commit", {}).get("message", "")
@@ -1168,10 +1241,16 @@ async def execute_github_release(
                                         commit_sha = tip_sha
                         if not commit_sha:
                             msg = f"Source branch '{source_branch}' diverged unexpectedly on remote."
-                            return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
+                            return GateResult(
+                                gate_id="",
+                                passed=False,
+                                status="failed",
+                                message=msg,
+                                details={"error": msg, "conflict": True},
+                            )
 
                 # 6. Idempotent PR lookup & creation
-                pulls_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/pulls"
+                pulls_url = f"{repo_url}/pulls"
                 pulls_resp = await client.get(
                     pulls_url,
                     headers=headers,
@@ -1195,11 +1274,20 @@ async def execute_github_release(
                     merge_commit_sha = matching_pr.get("merge_commit_sha")
                     if pr_state == "closed" and not pr_merged:
                         msg = f"Existing pull request #{pr_number} was closed without merging."
-                        return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
+                        return GateResult(
+                            gate_id="",
+                            passed=False,
+                            status="failed",
+                            message=msg,
+                            details={"error": msg, "conflict": True},
+                        )
                 else:
                     # Create PR
                     pr_title = gh_cfg.get("pr_title") or f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"
-                    pr_body = gh_cfg.get("pr_body") or f"Automated deployment pull request generated by ForgeOps Autonomous Deployment Orchestrator.\nRun ID: {run.id}"
+                    pr_body = gh_cfg.get("pr_body") or (
+                        "Automated deployment pull request generated by "
+                        f"ForgeOps Autonomous Deployment Orchestrator.\nRun ID: {run.id}"
+                    )
                     post_pr_resp = await client.post(
                         pulls_url,
                         headers=headers,
@@ -1230,7 +1318,9 @@ async def execute_github_release(
                                 gate_id="",
                                 passed=False,
                                 status="failed",
-                                message=f"Failed to create pull request ({post_pr_resp.status_code}): {post_pr_resp.text}",
+                                message=(
+                                    f"Failed to create pull request ({post_pr_resp.status_code}): {post_pr_resp.text}"
+                                ),
                                 details={"error": post_pr_resp.text},
                             )
                     else:
@@ -1238,7 +1328,9 @@ async def execute_github_release(
                             gate_id="",
                             passed=False,
                             status="failed",
-                            message=f"Failed to create pull request ({post_pr_resp.status_code}): {post_pr_resp.text}",
+                            message=(
+                                f"Failed to create pull request ({post_pr_resp.status_code}): {post_pr_resp.text}"
+                            ),
                             details={"error": post_pr_resp.text},
                         )
 

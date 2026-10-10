@@ -4,11 +4,10 @@
 from __future__ import annotations
 
 import importlib
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 
 @pytest.fixture
@@ -48,15 +47,13 @@ def test_migration_upgrade_and_downgrade_recording(migration_0038, monkeypatch):
 
     def fake_create_table(name: str, *elements, **kwargs):
         cols = [e for e in elements if isinstance(e, sa.Column)]
-        cons = [e for e in elements if isinstance(e, (sa.Constraint, sa.Index))]
+        cons = [e for e in elements if isinstance(e, sa.Constraint | sa.Index)]
         created_tables[name] = cols
         table_constraints[name] = cons
         return None
 
     def fake_create_index(name: str, table_name: str, columns: list[str], **kwargs):
-        created_indexes.append(
-            {"name": name, "table_name": table_name, "columns": columns, **kwargs}
-        )
+        created_indexes.append({"name": name, "table_name": table_name, "columns": columns, **kwargs})
         return None
 
     def fake_drop_table(name: str, **kwargs):
@@ -113,9 +110,7 @@ def test_migration_upgrade_and_downgrade_recording(migration_0038, monkeypatch):
     assert "started_at" in deploy_cols and deploy_cols["started_at"].nullable
     assert "completed_at" in deploy_cols and deploy_cols["completed_at"].nullable
 
-    deploy_constraints = {
-        c.name: c for c in table_constraints["autonomous_deployments"]
-    }
+    deploy_constraints = {c.name: c for c in table_constraints["autonomous_deployments"]}
     assert "uq_proj_idempotency" in deploy_constraints
     assert "chk_run_status" in deploy_constraints
     assert "chk_progress_range" in deploy_constraints
@@ -135,9 +130,7 @@ def test_migration_upgrade_and_downgrade_recording(migration_0038, monkeypatch):
     assert "metadata" in stage_cols and not stage_cols["metadata"].nullable
     assert "created_at" in stage_cols and not stage_cols["created_at"].nullable
 
-    stage_constraints = {
-        c.name: c for c in table_constraints["autonomous_deployment_stages"]
-    }
+    stage_constraints = {c.name: c for c in table_constraints["autonomous_deployment_stages"]}
     assert "uq_run_stage" in stage_constraints
     assert "chk_stage_status" in stage_constraints
 
@@ -151,9 +144,7 @@ def test_migration_upgrade_and_downgrade_recording(migration_0038, monkeypatch):
     assert "message" in log_cols and not log_cols["message"].nullable
     assert "created_at" in log_cols and not log_cols["created_at"].nullable
 
-    log_constraints = {
-        c.name: c for c in table_constraints["autonomous_deployment_logs"]
-    }
+    log_constraints = {c.name: c for c in table_constraints["autonomous_deployment_logs"]}
     assert "uq_run_log_seq" in log_constraints
     assert "chk_log_level" in log_constraints
 
@@ -167,9 +158,7 @@ def test_migration_upgrade_and_downgrade_recording(migration_0038, monkeypatch):
     assert "status" in outbox_cols and not outbox_cols["status"].nullable
     assert "created_at" in outbox_cols and not outbox_cols["created_at"].nullable
 
-    outbox_constraints = {
-        c.name: c for c in table_constraints["autonomous_deployment_outbox"]
-    }
+    outbox_constraints = {c.name: c for c in table_constraints["autonomous_deployment_outbox"]}
     assert "uq_run_outbox_seq" in outbox_constraints
     assert "chk_outbox_status" in outbox_constraints
 

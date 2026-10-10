@@ -14,13 +14,11 @@ Tests:
 
 from __future__ import annotations
 
-import operator
 import uuid
 from typing import Any
 
 import pytest
 from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList
-
 from src.core.errors import ProblemException
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
@@ -37,7 +35,6 @@ from src.deployments.autonomous_schemas import (
 )
 from src.deployments.autonomous_service import (
     LOG_TRUNCATION_WARNING,
-    MAX_LOG_LINES,
     STAGE_G1_BLUEPRINT,
     STAGE_G2_ARTIFACT,
     STAGE_G3_CONSISTENCY,
@@ -49,7 +46,6 @@ from src.deployments.autonomous_service import (
     STAGE_VERCEL_DEPLOY,
     AutonomousDeploymentService,
     build_stage_graph,
-    canonical_payload_hash,
 )
 
 # Synthetic secret fragments to prevent check-added-shapes scanner false positives
@@ -133,31 +129,22 @@ class MockAsyncSession:
                     r.stages.sort(key=lambda s: s.position)
 
             conds = list(_extract_conditions(stmt.whereclause))
-            matched = [
-                r for r in candidates
-                if all(op(getattr(r, col, None), val) for col, op, val in conds)
-            ]
+            matched = [r for r in candidates if all(op(getattr(r, col, None), val) for col, op, val in conds)]
             return MockResult(matched)
 
         elif entity_cls is AutonomousDeploymentLog:
             candidates = list(self.logs)
             conds = list(_extract_conditions(stmt.whereclause))
-            matched = [
-                log for log in candidates
-                if all(op(getattr(log, col, None), val) for col, op, val in conds)
-            ]
-            matched.sort(key=lambda l: l.log_seq)
+            matched = [log for log in candidates if all(op(getattr(log, col, None), val) for col, op, val in conds)]
+            matched.sort(key=lambda entry: entry.log_seq)
             if stmt._limit is not None:
-                matched = matched[:stmt._limit]
+                matched = matched[: stmt._limit]
             return MockResult(matched)
 
         elif entity_cls is AutonomousDeploymentStage:
             candidates = list(self.stages)
             conds = list(_extract_conditions(stmt.whereclause))
-            matched = [
-                s for s in candidates
-                if all(op(getattr(s, col, None), val) for col, op, val in conds)
-            ]
+            matched = [s for s in candidates if all(op(getattr(s, col, None), val) for col, op, val in conds)]
             matched.sort(key=lambda s: s.position)
             return MockResult(matched)
 
@@ -215,9 +202,7 @@ class TestRunCreationAndIdempotency:
             idempotency_key="fresh-key-1",
         )
 
-        run, is_created = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, is_created = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         assert is_created is True
         assert run.project_id == project_id
@@ -250,15 +235,11 @@ class TestRunCreationAndIdempotency:
             idempotency_key="same-key-100",
         )
 
-        run1, is_created1 = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run1, is_created1 = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         assert is_created1 is True
 
         # Second identical request
-        run2, is_created2 = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run2, is_created2 = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         assert is_created2 is False
         assert run2.id == run1.id
         assert len(session.runs) == 1
@@ -312,12 +293,8 @@ class TestRunCreationAndIdempotency:
             idempotency_key=None,
         )
 
-        run1, is_created1 = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
-        run2, is_created2 = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run1, is_created1 = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
+        run2, is_created2 = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         assert is_created1 is True
         assert is_created2 is True
@@ -420,9 +397,7 @@ class TestGetRunSnapshot:
             strategy=DeploymentStrategy.VERCEL_ONLY,
             vercel_config=_vercel_config(),
         )
-        created_run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        created_run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         fetched = await service.get_run(session, project_id=project_id, run_id=created_run.id)
         assert fetched is not None
@@ -475,9 +450,7 @@ class TestImmutableRetryChaining:
             github_config=_gh_config(),
             idempotency_key="orig-key",
         )
-        orig_run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        orig_run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Simulate original run failing
         orig_run.status = "failed"
@@ -485,9 +458,7 @@ class TestImmutableRetryChaining:
         orig_run.stages[0].error_message = "Network timeout"
 
         # Trigger retry
-        retry_run = await service.retry_run(
-            session, project_id=project_id, run_id=orig_run.id, requested_by=user_id
-        )
+        retry_run = await service.retry_run(session, project_id=project_id, run_id=orig_run.id, requested_by=user_id)
 
         assert retry_run.id != orig_run.id
         assert retry_run.parent_run_id == orig_run.id
@@ -520,14 +491,10 @@ class TestImmutableRetryChaining:
             strategy=DeploymentStrategy.VERCEL_ONLY,
             vercel_config=_vercel_config(),
         )
-        orig_run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        orig_run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         orig_run.status = "rolled_back"
 
-        retry_run = await service.retry_run(
-            session, project_id=project_id, run_id=orig_run.id, requested_by=user_id
-        )
+        retry_run = await service.retry_run(session, project_id=project_id, run_id=orig_run.id, requested_by=user_id)
         assert retry_run.attempt_number == 2
         assert retry_run.parent_run_id == orig_run.id
 
@@ -542,9 +509,7 @@ class TestImmutableRetryChaining:
             strategy=DeploymentStrategy.VERCEL_ONLY,
             vercel_config=_vercel_config(),
         )
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Status: pending
         with pytest.raises(ProblemException) as exc1:
@@ -568,9 +533,7 @@ class TestImmutableRetryChaining:
         session = MockAsyncSession()
         service = AutonomousDeploymentService()
         with pytest.raises(ProblemException) as exc:
-            await service.retry_run(
-                session, project_id=uuid.uuid4(), run_id=uuid.uuid4(), requested_by=uuid.uuid4()
-            )
+            await service.retry_run(session, project_id=uuid.uuid4(), run_id=uuid.uuid4(), requested_by=uuid.uuid4())
         assert exc.value.problem.status == 404
 
 
@@ -600,31 +563,25 @@ class TestLogCursorPagination:
             )
 
         # Page 1: limit 4, since 0
-        logs1, has_more1, next_seq1 = await service.get_logs(
-            session, run_id=run_id, since_log_seq=0, limit=4
-        )
+        logs1, has_more1, next_seq1 = await service.get_logs(session, run_id=run_id, since_log_seq=0, limit=4)
         assert len(logs1) == 4
         assert has_more1 is True
         assert next_seq1 == 4
-        assert [l.log_seq for l in logs1] == [1, 2, 3, 4]
+        assert [entry.log_seq for entry in logs1] == [1, 2, 3, 4]
 
         # Page 2: limit 4, since 4
-        logs2, has_more2, next_seq2 = await service.get_logs(
-            session, run_id=run_id, since_log_seq=next_seq1, limit=4
-        )
+        logs2, has_more2, next_seq2 = await service.get_logs(session, run_id=run_id, since_log_seq=next_seq1, limit=4)
         assert len(logs2) == 4
         assert has_more2 is True
         assert next_seq2 == 8
-        assert [l.log_seq for l in logs2] == [5, 6, 7, 8]
+        assert [entry.log_seq for entry in logs2] == [5, 6, 7, 8]
 
         # Page 3: limit 4, since 8 (remaining 2)
-        logs3, has_more3, next_seq3 = await service.get_logs(
-            session, run_id=run_id, since_log_seq=next_seq2, limit=4
-        )
+        logs3, has_more3, next_seq3 = await service.get_logs(session, run_id=run_id, since_log_seq=next_seq2, limit=4)
         assert len(logs3) == 2
         assert has_more3 is False
         assert next_seq3 == 10
-        assert [l.log_seq for l in logs3] == [9, 10]
+        assert [entry.log_seq for entry in logs3] == [9, 10]
 
     @pytest.mark.asyncio
     async def test_get_logs_filter_by_stage_name(self) -> None:
@@ -632,20 +589,10 @@ class TestLogCursorPagination:
         service = AutonomousDeploymentService()
         run_id = uuid.uuid4()
 
-        session.add(
-            AutonomousDeploymentLog(
-                run_id=run_id, stage_name=STAGE_G1_BLUEPRINT, log_seq=1, message="G1 line"
-            )
-        )
-        session.add(
-            AutonomousDeploymentLog(
-                run_id=run_id, stage_name=STAGE_G4_BUILD, log_seq=2, message="G4 line"
-            )
-        )
+        session.add(AutonomousDeploymentLog(run_id=run_id, stage_name=STAGE_G1_BLUEPRINT, log_seq=1, message="G1 line"))
+        session.add(AutonomousDeploymentLog(run_id=run_id, stage_name=STAGE_G4_BUILD, log_seq=2, message="G4 line"))
 
-        logs_g1, _, _ = await service.get_logs(
-            session, run_id=run_id, stage_name=STAGE_G1_BLUEPRINT
-        )
+        logs_g1, _, _ = await service.get_logs(session, run_id=run_id, stage_name=STAGE_G1_BLUEPRINT)
         assert len(logs_g1) == 1
         assert logs_g1[0].stage_name == STAGE_G1_BLUEPRINT
 
@@ -669,9 +616,7 @@ class TestLogCapAndTruncation:
             strategy=DeploymentStrategy.GITHUB_ONLY,
             github_config=_gh_config(),
         )
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Emit 6,000 log lines in a single batch
         raw_lines = [f"Output step {i}" for i in range(1, 6001)]
@@ -721,9 +666,7 @@ class TestLogCapAndTruncation:
             strategy=DeploymentStrategy.GITHUB_ONLY,
             github_config=_gh_config(),
         )
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Batch 1: 4,990 lines
         batch1 = [f"Line {i}" for i in range(1, 4991)]
@@ -764,9 +707,7 @@ class TestWorkerFenceTokenCustody:
             strategy=DeploymentStrategy.GITHUB_ONLY,
             github_config=_gh_config(),
         )
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         run.fence_token = 3  # Current epoch is 3
 
         # Worker claiming stale epoch 2 must fail
@@ -801,9 +742,7 @@ class TestSecretRedactionBeforePersistence:
             strategy=DeploymentStrategy.GITHUB_ONLY,
             github_config=_gh_config(),
         )
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         sensitive_logs = [
             f"Cloning repo with auth token: {_GH_P}sec1234567890abcdef123",

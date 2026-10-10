@@ -35,7 +35,9 @@ def validate_git_branch_name(branch: str | None) -> str | None:
     if any(ch.isspace() for ch in branch):
         raise ValueError(f"Invalid branch name '{branch}': whitespace is forbidden.")
     if branch.startswith("-"):
-        raise ValueError(f"Invalid branch name '{branch}': cannot begin with a hyphen '-' (git option injection prevention).")
+        raise ValueError(
+            f"Invalid branch name '{branch}': cannot begin with a hyphen '-' (git option injection prevention)."
+        )
     encoded = branch.encode("utf-8")
     if len(encoded) > 255:
         raise ValueError(f"Branch name exceeds maximum length of 255 bytes (got {len(encoded)} bytes).")

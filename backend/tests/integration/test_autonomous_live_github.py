@@ -81,10 +81,7 @@ async def unsealed_github_token() -> tuple[uuid.UUID, str]:
 
     async with async_session() as session:
         res = await session.execute(
-            text(
-                "SELECT user_id, access_token_sealed FROM github_account_links "
-                "WHERE github_login = 'parag8487'"
-            )
+            text("SELECT user_id, access_token_sealed FROM github_account_links WHERE github_login = 'parag8487'")
         )
         row = res.fetchone()
 
@@ -112,10 +109,7 @@ async def unsealed_vercel_token() -> str:
     user_id = uuid.UUID("fe5aa283-2f7e-43cc-a440-259e09a53dae")
     async with async_session() as session:
         res = await session.execute(
-            text(
-                "SELECT encrypted_value FROM provider_credentials "
-                "WHERE key_ref = :ref"
-            ),
+            text("SELECT encrypted_value FROM provider_credentials WHERE key_ref = :ref"),
             {"ref": f"vercel:{user_id}"},
         )
         row = res.fetchone()

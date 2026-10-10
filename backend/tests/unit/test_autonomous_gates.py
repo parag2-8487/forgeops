@@ -24,15 +24,13 @@ from __future__ import annotations
 
 import operator
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from sqlalchemy import Update
 from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList, UnaryExpression
-
 from src.deployments.autonomous_gates import (
-    ALL_VERIFICATION_TARGETS,
     G7VerificationResult,
     GateResult,
     evaluate_g1_blueprint,
@@ -52,11 +50,7 @@ from src.deployments.autonomous_models import (
     AutonomousDeploymentStage,
 )
 from src.deployments.autonomous_schemas import (
-    CreateAutonomousRunRequest,
     DeploymentStrategy,
-    DockerConfigRequest,
-    GitHubConfigRequest,
-    VercelConfigRequest,
 )
 from src.deployments.autonomous_service import (
     STAGE_G1_BLUEPRINT,
@@ -68,7 +62,6 @@ from src.deployments.autonomous_service import (
     STAGE_G7_VERIFICATION,
     STAGE_GITHUB_RELEASE,
     STAGE_VERCEL_DEPLOY,
-    AutonomousDeploymentService,
     build_stage_graph,
 )
 from src.deployments.autonomous_worker import (
@@ -110,9 +103,9 @@ def _eval_clause(clause: Any, run: AutonomousDeployment) -> bool:
 
         if isinstance(run_val, datetime) and isinstance(val, datetime):
             if run_val.tzinfo is None and val.tzinfo is not None:
-                run_val = run_val.replace(tzinfo=timezone.utc)
+                run_val = run_val.replace(tzinfo=UTC)
             elif run_val.tzinfo is not None and val.tzinfo is None:
-                val = val.replace(tzinfo=timezone.utc)
+                val = val.replace(tzinfo=UTC)
 
         try:
             return bool(clause.operator(run_val, val))
@@ -237,9 +230,7 @@ class MockAsyncSession:
                 s
                 for s in self.stages
                 if (
-                    not hasattr(stmt, "whereclause")
-                    or stmt.whereclause is None
-                    or _eval_clause(stmt.whereclause, s)  # type: ignore[arg-type]
+                    not hasattr(stmt, "whereclause") or stmt.whereclause is None or _eval_clause(stmt.whereclause, s)  # type: ignore[arg-type]
                 )
             ]
             matched_stages.sort(key=lambda s: s.position)
@@ -248,8 +239,8 @@ class MockAsyncSession:
         elif entity_cls is AutonomousDeploymentLog:
             matched_logs = list(self.logs)
             if hasattr(stmt, "whereclause") and stmt.whereclause is not None:
-                matched_logs = [l for l in matched_logs if _eval_clause(stmt.whereclause, l)]  # type: ignore[arg-type]
-            matched_logs.sort(key=lambda l: l.log_seq)
+                matched_logs = [log for log in matched_logs if _eval_clause(stmt.whereclause, log)]  # type: ignore[arg-type]
+            matched_logs.sort(key=lambda entry: entry.log_seq)
             return MockResult(matched_logs)
 
         return MockResult([])
@@ -266,7 +257,11 @@ async def _create_test_run(
     run_id = uuid.uuid4()
 
     default_config: dict[str, Any] = {"strategy": strategy.value}
-    if strategy in (DeploymentStrategy.DOCKER_GITHUB_VERCEL, DeploymentStrategy.DOCKER_GITHUB, DeploymentStrategy.GITHUB_ONLY):
+    if strategy in (
+        DeploymentStrategy.DOCKER_GITHUB_VERCEL,
+        DeploymentStrategy.DOCKER_GITHUB,
+        DeploymentStrategy.GITHUB_ONLY,
+    ):
         default_config["github_config"] = {
             "repository_name": "forgeops/test-repo",
             "target_branch": "main",
@@ -631,7 +626,7 @@ class TestStrategyPipelineExecution:
 
         # Verify logs were appended
         assert len(session.logs) > 0
-        assert any(l.stage_name == STAGE_G7_VERIFICATION for l in session.logs)
+        assert any(log.stage_name == STAGE_G7_VERIFICATION for log in session.logs)
 
     @pytest.mark.asyncio
     async def test_pipeline_docker_github_success_omits_vercel(self) -> None:

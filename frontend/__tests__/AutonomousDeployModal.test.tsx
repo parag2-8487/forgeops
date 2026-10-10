@@ -405,6 +405,8 @@ describe("AutonomousDeployModal", () => {
       expect(screen.getByText("Default Branch")).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Repository contains >1,000 branches; listing capped at 1,000/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Repository contains >1,000 branches; listing capped at 1,000/i),
+    ).toBeInTheDocument();
   });
 });

@@ -17,9 +17,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from urllib.parse import quote
 import uuid
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select
@@ -52,10 +52,10 @@ async def resolve_repository_default_branch(
 ) -> str:
     """Dynamically resolves the default branch of a GitHub repository."""
     url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
-    _AUTH_HEADER = "Author" + "ization"
-    _BEARER_PREFIX = "Bear" + "er "
+    auth_header = "Author" + "ization"
+    bearer_prefix = "Bear" + "er "
     headers = {
-        _AUTH_HEADER: f"{_BEARER_PREFIX}{token}",
+        auth_header: f"{bearer_prefix}{token}",
         "Accept": "application/vnd.github+json",
         "User-Agent": "ForgeOps-Default-Branch-Resolver",
     }
@@ -69,7 +69,9 @@ async def resolve_repository_default_branch(
             rem = resp.headers.get("x-ratelimit-remaining")
             if rem == "0" or resp.status_code == 429:
                 reset_time = resp.headers.get("x-ratelimit-reset", "the reset window")
-                raise problem("github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}.")
+                raise problem(
+                    "github-rate-limited", detail=f"GitHub API rate limit exceeded. Retry after {reset_time}."
+                )
             raise problem(
                 "github-permission-denied",
                 detail=f"Linked GitHub account lacks required read/write permissions for '{owner}/{repo}'.",
@@ -80,7 +82,9 @@ async def resolve_repository_default_branch(
                 detail=f"Repository '{owner}/{repo}' was not found or is inaccessible with the linked account.",
             )
         elif resp.status_code != 200:
-            raise problem("github-upstream-invalid", detail=f"GitHub API returned unexpected status {resp.status_code}.")
+            raise problem(
+                "github-upstream-invalid", detail=f"GitHub API returned unexpected status {resp.status_code}."
+            )
 
         data = resp.json()
         default_branch = data.get("default_branch")
@@ -163,11 +167,13 @@ def build_stage_graph(strategy: str | DeploymentStrategy) -> list[tuple[str, str
 
     # Docker strategy evaluates G4-G6
     if strat in (DeploymentStrategy.DOCKER_GITHUB_VERCEL.value, DeploymentStrategy.DOCKER_GITHUB.value):
-        stages.extend([
-            (STAGE_G4_BUILD, "G4"),
-            (STAGE_G5_APPLY, "G5"),
-            (STAGE_G6_WORKLOAD, "G6"),
-        ])
+        stages.extend(
+            [
+                (STAGE_G4_BUILD, "G4"),
+                (STAGE_G5_APPLY, "G5"),
+                (STAGE_G6_WORKLOAD, "G6"),
+            ]
+        )
 
     # GitHub release operational stage
     if strat in (
@@ -241,7 +247,9 @@ class AutonomousDeploymentService:
                 except GitHubLinkNotFoundError as exc:
                     raise problem(
                         "github-link-absent",
-                        detail="No GitHub account is linked to this user. Connect one first from Settings → Integrations.",
+                        detail=(
+                            "No GitHub account is linked to this user. Connect one first from Settings → Integrations."
+                        ),
                     ) from exc
                 except (GitHubAppError, GitHubLinkError) as exc:
                     raise problem("github-link-failed", detail=str(exc)) from exc
@@ -252,9 +260,7 @@ class AutonomousDeploymentService:
                     owner, repo_name = repo_id.split("/", 1)
                 else:
                     owner, repo_name = repo_id, repo_id
-                resolved_branch = await resolve_repository_default_branch(
-                    owner, repo_name, token=token, client=client
-                )
+                resolved_branch = await resolve_repository_default_branch(owner, repo_name, token=token, client=client)
                 request.github_config.target_branch = resolved_branch
                 request.github_config.base_branch = resolved_branch
 

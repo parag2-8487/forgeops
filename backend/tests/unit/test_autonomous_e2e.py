@@ -29,16 +29,15 @@ import json
 import operator
 import signal
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Update, func
+from sqlalchemy import Update
 from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList, UnaryExpression
 from sqlalchemy.sql.functions import FunctionElement
-
 from src.auth.dependencies import require_principal
 from src.auth.device_models import AgentDevice, DeviceStatus
 from src.auth.models import UserRole
@@ -46,24 +45,13 @@ from src.auth.principal import Principal
 from src.core.db import get_session
 from src.core.errors import ProblemException, install_problem_handlers
 from src.core.tasks import TaskHandle
-from src.deployments.autonomous_gates import (
-    ALL_VERIFICATION_TARGETS,
-    G7VerificationResult,
-    GateResult,
-    evaluate_g7_final_verification,
-)
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
     AutonomousDeploymentLog,
     AutonomousDeploymentOutbox,
     AutonomousDeploymentStage,
 )
-from src.deployments.autonomous_outbox import (
-    AutonomousOutboxPublisher,
-    get_autonomous_event_channel,
-)
 from src.deployments.autonomous_recovery import (
-    AutonomousRecoverySweeper,
     CancellationSettlement,
     CompensationRollback,
 )
@@ -88,12 +76,10 @@ from src.deployments.autonomous_service import (
     STAGE_GITHUB_RELEASE,
     STAGE_VERCEL_DEPLOY,
     AutonomousDeploymentService,
-    build_stage_graph,
 )
 from src.deployments.autonomous_worker import (
     AutonomousWorker,
     WorkerFencingLostError,
-    calculate_progress,
     run_pipeline,
 )
 
@@ -152,9 +138,9 @@ def _eval_clause(clause: Any, entity: Any) -> bool:
 
         if isinstance(entity_val, datetime) and isinstance(val, datetime):
             if entity_val.tzinfo is None and val.tzinfo is not None:
-                entity_val = entity_val.replace(tzinfo=timezone.utc)
+                entity_val = entity_val.replace(tzinfo=UTC)
             elif entity_val.tzinfo is not None and val.tzinfo is None:
-                val = val.replace(tzinfo=timezone.utc)
+                val = val.replace(tzinfo=UTC)
 
         try:
             return bool(clause.operator(entity_val, val))
@@ -245,7 +231,7 @@ class MockAsyncSession:
             if entity.id is None:
                 entity.id = self._id_counter
                 self._id_counter += 1
-            if not any(l.id == entity.id for l in self.logs):
+            if not any(log.id == entity.id for log in self.logs):
                 self.logs.append(entity)
         elif isinstance(entity, AutonomousDeploymentOutbox):
             if entity.id is None:
@@ -311,7 +297,7 @@ class MockAsyncSession:
             if isinstance(type_or_expr, FunctionElement) or (
                 hasattr(type_or_expr, "name") and type_or_expr.name.lower() == "count"
             ):
-                matched_logs = [l for l in self.logs if _eval_clause(stmt.whereclause, l)]
+                matched_logs = [log for log in self.logs if _eval_clause(stmt.whereclause, log)]
                 return MockResult([], scalar_val=len(matched_logs))
 
             if type_or_expr is AutonomousDeployment:
@@ -331,10 +317,10 @@ class MockAsyncSession:
 
             if type_or_expr is AutonomousDeploymentLog:
                 candidates = list(self.logs)
-                matched = [l for l in candidates if _eval_clause(stmt.whereclause, l)]
-                matched.sort(key=lambda l: l.log_seq)
+                matched = [log for log in candidates if _eval_clause(stmt.whereclause, log)]
+                matched.sort(key=lambda entry: entry.log_seq)
                 if stmt._limit is not None:
-                    matched = matched[:stmt._limit]
+                    matched = matched[: stmt._limit]
                 return MockResult(matched)
 
             if type_or_expr is AutonomousDeploymentOutbox:
@@ -342,7 +328,7 @@ class MockAsyncSession:
                 matched = [o for o in candidates if _eval_clause(stmt.whereclause, o)]
                 matched.sort(key=lambda o: o.event_seq)
                 if stmt._limit is not None:
-                    matched = matched[:stmt._limit]
+                    matched = matched[: stmt._limit]
                 return MockResult(matched)
 
             if type_or_expr is AgentDevice:
@@ -392,7 +378,7 @@ class MockPubSub:
             if timeout is not None and timeout > 0:
                 return await asyncio.wait_for(self.queue.get(), timeout=min(timeout, 0.1))
             return self.queue.get_nowait()
-        except (asyncio.TimeoutError, asyncio.QueueEmpty):
+        except (TimeoutError, asyncio.QueueEmpty):
             return None
 
 
@@ -438,9 +424,7 @@ class MockTaskDispatcher:
     def __init__(self) -> None:
         self.enqueued: list[tuple[str, dict[str, Any]]] = []
 
-    async def enqueue(
-        self, name: str, payload: dict[str, Any], *, idempotency_key: str | None = None
-    ) -> TaskHandle:
+    async def enqueue(self, name: str, payload: dict[str, Any], *, idempotency_key: str | None = None) -> TaskHandle:
         self.enqueued.append((name, payload))
         return TaskHandle(id=idempotency_key or str(uuid.uuid4()), dispatcher="mock")
 
@@ -612,9 +596,7 @@ class TestE2EDeploymentLifecycles:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB_VERCEL)
-        run, created = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, created = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         assert created is True
         assert run.status == "pending"
         assert len(run.stages) == 9
@@ -667,9 +649,7 @@ class TestE2EDeploymentLifecycles:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB)
-        run, created = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, created = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         assert created is True
         assert len(run.stages) == 8
         assert STAGE_VERCEL_DEPLOY not in [s.stage_name for s in run.stages]
@@ -700,9 +680,7 @@ class TestE2EDeploymentLifecycles:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.GITHUB_ONLY)
-        run, created = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, created = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         assert created is True
         assert len(run.stages) == 5
 
@@ -744,9 +722,7 @@ class TestE2EDeploymentLifecycles:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.VERCEL_ONLY)
-        run, created = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, created = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         assert created is True
         assert len(run.stages) == 5
 
@@ -794,14 +770,12 @@ class TestE2ECancellationSettlement:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Worker starts pipeline and marks current stage running
         run.status = "running"
         run.stages[3].status = "running"  # STAGE_G4_BUILD
-        run.stages[3].started_at = datetime.now(timezone.utc)
+        run.stages[3].started_at = datetime.now(UTC)
 
         # Register active mock child subprocess
         proc = MockSubprocess(pid=9901)
@@ -827,9 +801,7 @@ class TestE2ECancellationSettlement:
         assert run.stages[3].completed_at is not None
 
         # Outbox event assertion
-        outbox_cancelled = next(
-            (o for o in session.outbox if o.event_type == "run_cancelled"), None
-        )
+        outbox_cancelled = next((o for o in session.outbox if o.event_type == "run_cancelled"), None)
         assert outbox_cancelled is not None
         assert outbox_cancelled.payload["status"] == "cancelled"
         assert outbox_cancelled.payload["run_id"] == str(run.id)
@@ -845,9 +817,7 @@ class TestE2ECancellationSettlement:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.GITHUB_ONLY)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Simulate user cancelling right as worker picks up run
         run.status = "cancelling"
@@ -884,9 +854,7 @@ class TestE2ECompensationRollback:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         cleaned_containers: list[str] = []
 
@@ -928,9 +896,7 @@ class TestE2ECompensationRollback:
         assert stages_by_name[STAGE_G7_VERIFICATION].status == "pending"
 
         # Outbox event
-        outbox_event = next(
-            (o for o in session.outbox if o.event_type == "run_rolled_back"), None
-        )
+        outbox_event = next((o for o in session.outbox if o.event_type == "run_rolled_back"), None)
         assert outbox_event is not None
         assert outbox_event.payload["status"] == "rolled_back"
 
@@ -946,9 +912,7 @@ class TestE2ECompensationRollback:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB_VERCEL)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         async def failing_cleanup(rid: Any) -> list[str]:
             raise RuntimeError("Docker daemon unreachable during container cleanup")
@@ -999,9 +963,7 @@ class TestE2EWorkerFencingAndPreemption:
         project_id = uuid.uuid4()
         user_id = uuid.uuid4()
         req = _build_test_request(DeploymentStrategy.GITHUB_ONLY)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Worker 1 claims run -> receives fence_token = 1
         token1 = await worker1.claim_run(session, run_id=run.id, worker_id="worker-alpha")
@@ -1010,7 +972,7 @@ class TestE2EWorkerFencingAndPreemption:
         assert run.worker_id == "worker-alpha"
 
         # Simulate Worker 1 lease expiration
-        run.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+        run.lease_expires_at = datetime.now(UTC) - timedelta(seconds=10)
 
         # Worker 2 takes over expired lease -> receives fence_token = 2
         token2 = await worker2.claim_run(session, run_id=run.id, worker_id="worker-bravo")
@@ -1075,9 +1037,7 @@ class TestE2EWorkerFencingAndPreemption:
         project_id = uuid.uuid4()
         user_id = uuid.uuid4()
         req = _build_test_request(DeploymentStrategy.VERCEL_ONLY)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         token = await worker.claim_run(session, run_id=run.id)
         assert token == 1
@@ -1211,9 +1171,7 @@ class TestE2ELogCapAndTruncationNotice:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Batch 1: 3,000 lines
         lines_batch_1 = [f"Output log line #{i}" for i in range(1, 3001)]
@@ -1262,9 +1220,7 @@ class TestE2ELogCapAndTruncationNotice:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.GITHUB_ONLY)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Fill to 5,000
         full_batch = [f"Log {i}" for i in range(5500)]
@@ -1310,9 +1266,7 @@ class TestE2ESecretRedaction:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB_VERCEL)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         raw_logs = [
             f"GitHub PAT classic: {_GH_PAT_CLASSIC}",
@@ -1352,9 +1306,7 @@ class TestE2ESecretRedaction:
 
         service = AutonomousDeploymentService()
         req = _build_test_request(DeploymentStrategy.GITHUB_ONLY)
-        run, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         token = await worker.claim_run(session, run_id=run.id)
 
@@ -1396,9 +1348,7 @@ class TestE2EImmutableRetryChaining:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.DOCKER_GITHUB)
-        run1, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run1, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
 
         # Execute run 1 and force failure at G4
         await run_pipeline(
@@ -1449,9 +1399,7 @@ class TestE2EImmutableRetryChaining:
         user_id = uuid.uuid4()
 
         req = _build_test_request(DeploymentStrategy.GITHUB_ONLY)
-        run1, _ = await service.create_run(
-            session, project_id=project_id, requested_by=user_id, request=req
-        )
+        run1, _ = await service.create_run(session, project_id=project_id, requested_by=user_id, request=req)
         run1.status = "failed"
 
         run2 = await service.retry_run(session, project_id=project_id, run_id=run1.id, requested_by=user_id)
@@ -1525,9 +1473,7 @@ class TestE2EVerificationMatrixEndToEnd:
 
         # 1. No paired agent -> 412 Precondition Failed
         test_app.state.device_service = MockDeviceService(None)
-        fail_resp = client.post(
-            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start"
-        )
+        fail_resp = client.post(f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start")
         assert fail_resp.status_code == 412
         assert fail_resp.json()["type"] == "https://errors.forgeops.dev/agent-disconnected"
 
@@ -1538,12 +1484,10 @@ class TestE2EVerificationMatrixEndToEnd:
             status=DeviceStatus.ACTIVE,
             agent_version="1.2.0",
             platform="linux",
-            last_seen=datetime.now(timezone.utc) - timedelta(seconds=5),
+            last_seen=datetime.now(UTC) - timedelta(seconds=5),
         )
         test_app.state.device_service = MockDeviceService(active_device)
-        ok_resp = client.post(
-            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start"
-        )
+        ok_resp = client.post(f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start")
         assert ok_resp.status_code == 200
         assert ok_resp.json()["status"] == "running"
 
@@ -1570,7 +1514,7 @@ class TestE2EVerificationMatrixEndToEnd:
             status=DeviceStatus.ACTIVE,
             agent_version="1.2.0",
             platform="linux",
-            last_seen=datetime.now(timezone.utc),
+            last_seen=datetime.now(UTC),
         )
         test_app.state.device_service = MockDeviceService(active_device)
 

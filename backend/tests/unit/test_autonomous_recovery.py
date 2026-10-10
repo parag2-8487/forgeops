@@ -29,14 +29,12 @@ from __future__ import annotations
 import asyncio
 import operator
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from sqlalchemy import Update
 from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList, UnaryExpression
-
-from src.deployments.autonomous_gates import GateResult
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
     AutonomousDeploymentLog,
@@ -47,35 +45,22 @@ from src.deployments.autonomous_recovery import (
     AutonomousRecoverySweeper,
     CancellationSettlement,
     CompensationRollback,
-    ReconciliationResult,
-    cleanup_docker_containers,
 )
 from src.deployments.autonomous_schemas import (
-    CreateAutonomousRunRequest,
     DeploymentStrategy,
-    DockerConfigRequest,
-    GitHubConfigRequest,
-    VercelConfigRequest,
 )
 from src.deployments.autonomous_service import (
     STAGE_G1_BLUEPRINT,
-    STAGE_G2_ARTIFACT,
-    STAGE_G3_CONSISTENCY,
     STAGE_G4_BUILD,
     STAGE_G5_APPLY,
     STAGE_G6_WORKLOAD,
-    STAGE_G7_VERIFICATION,
     STAGE_GITHUB_RELEASE,
-    STAGE_VERCEL_DEPLOY,
-    AutonomousDeploymentService,
     build_stage_graph,
 )
 from src.deployments.autonomous_worker import (
     AutonomousWorker,
-    WorkerFencingLostError,
     run_pipeline,
 )
-
 
 # ===========================================================================
 # In-Memory SQLAlchemy Test Harness
@@ -115,9 +100,9 @@ def _eval_clause(clause: Any, run: Any) -> bool:
 
         if isinstance(run_val, datetime) and isinstance(val, datetime):
             if run_val.tzinfo is None and val.tzinfo is not None:
-                run_val = run_val.replace(tzinfo=timezone.utc)
+                run_val = run_val.replace(tzinfo=UTC)
             elif run_val.tzinfo is not None and val.tzinfo is None:
-                val = val.replace(tzinfo=timezone.utc)
+                val = val.replace(tzinfo=UTC)
 
         try:
             return bool(clause.operator(run_val, val))
@@ -241,11 +226,7 @@ class MockAsyncSession:
             matched_stages = [
                 s
                 for s in self.stages
-                if (
-                    not hasattr(stmt, "whereclause")
-                    or stmt.whereclause is None
-                    or _eval_clause(stmt.whereclause, s)
-                )
+                if (not hasattr(stmt, "whereclause") or stmt.whereclause is None or _eval_clause(stmt.whereclause, s))
             ]
             matched_stages.sort(key=lambda s: s.position)
             return MockResult(matched_stages)
@@ -253,19 +234,15 @@ class MockAsyncSession:
         elif entity_cls is AutonomousDeploymentLog:
             matched_logs = list(self.logs)
             if hasattr(stmt, "whereclause") and stmt.whereclause is not None:
-                matched_logs = [l for l in matched_logs if _eval_clause(stmt.whereclause, l)]
-            matched_logs.sort(key=lambda l: l.log_seq)
+                matched_logs = [log for log in matched_logs if _eval_clause(stmt.whereclause, log)]
+            matched_logs.sort(key=lambda entry: entry.log_seq)
             return MockResult(matched_logs)
 
         elif entity_cls is AutonomousDeploymentOutbox:
             matched_outbox = [
                 o
                 for o in self.outbox
-                if (
-                    not hasattr(stmt, "whereclause")
-                    or stmt.whereclause is None
-                    or _eval_clause(stmt.whereclause, o)
-                )
+                if (not hasattr(stmt, "whereclause") or stmt.whereclause is None or _eval_clause(stmt.whereclause, o))
             ]
             return MockResult(matched_outbox)
 
@@ -286,7 +263,11 @@ async def _create_test_run(
     run_id = uuid.uuid4()
 
     default_config: dict[str, Any] = {"strategy": strategy.value}
-    if strategy in (DeploymentStrategy.DOCKER_GITHUB_VERCEL, DeploymentStrategy.DOCKER_GITHUB, DeploymentStrategy.GITHUB_ONLY):
+    if strategy in (
+        DeploymentStrategy.DOCKER_GITHUB_VERCEL,
+        DeploymentStrategy.DOCKER_GITHUB,
+        DeploymentStrategy.GITHUB_ONLY,
+    ):
         default_config["github_config"] = {
             "repository_name": "forgeops/test-repo",
             "target_branch": "main",
@@ -489,7 +470,7 @@ class TestCancellationSettlement:
 
         g1_stage = next(s for s in run.stages if s.stage_name == STAGE_G1_BLUEPRINT)
         g1_stage.status = "running"
-        g1_stage.started_at = datetime.now(timezone.utc)
+        g1_stage.started_at = datetime.now(UTC)
 
         await settler.settle_cancellation(
             session,
@@ -679,7 +660,7 @@ class TestAutonomousRecoverySweeper:
         claims them with incremented fence_token, and reconciles state.
         """
         session = MockAsyncSession()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Run with lease expired 90 seconds ago (> 60s threshold)
         expired_run = await _create_test_run(
@@ -709,7 +690,7 @@ class TestAutonomousRecoverySweeper:
     async def test_sweeper_ignores_active_leases(self) -> None:
         """Runs with active leases or leases expired less than 60s ago are ignored."""
         session = MockAsyncSession()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 1. Run with active lease in the future
         active_run = await _create_test_run(
@@ -740,7 +721,7 @@ class TestAutonomousRecoverySweeper:
     async def test_sweeper_ignores_terminal_runs(self) -> None:
         """Terminal runs ('succeeded', 'failed', 'cancelled', 'rolled_back') with expired leases are ignored."""
         session = MockAsyncSession()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         terminal_statuses = ["succeeded", "failed", "cancelled", "rolled_back"]
         for st in terminal_statuses:
@@ -760,7 +741,7 @@ class TestAutonomousRecoverySweeper:
     async def test_sweeper_reconciles_exact_operation_identities(self) -> None:
         """Reconciliation verifies Docker container labels, GitHub commit SHA, and Vercel deployment ID."""
         session = MockAsyncSession()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = await _create_test_run(
             session,
@@ -813,9 +794,9 @@ class TestAutonomousRecoverySweeper:
     async def test_sweeper_reconciliation_failure_marks_run_failed(self) -> None:
         """When external reconciliation reveals missing or failed resources, run is marked failed."""
         session = MockAsyncSession()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
-        run = await _create_test_run(
+        await _create_test_run(
             session,
             strategy=DeploymentStrategy.DOCKER_GITHUB,
             status="running",
@@ -851,7 +832,7 @@ class TestAutonomousRecoverySweeper:
            re-enqueues execution to task dispatcher, and emits run_recovered event.
         """
         session = MockAsyncSession()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 1. Run committed to DB but process crashed before worker claim/enqueue
         run = await _create_test_run(

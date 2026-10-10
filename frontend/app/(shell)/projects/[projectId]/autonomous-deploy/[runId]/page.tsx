@@ -35,9 +35,7 @@ export default function AutonomousDeployRunPage() {
   const runQuery = useQuery({
     queryKey: ["projects", projectId, "autonomous-deploy", runId],
     queryFn: () =>
-      api.get<AutonomousRunPublicResponse>(
-        `/projects/${projectId}/autonomous-deploy/${runId}`,
-      ),
+      api.get<AutonomousRunPublicResponse>(`/projects/${projectId}/autonomous-deploy/${runId}`),
     enabled: Boolean(projectId && runId),
     refetchInterval: (query) => {
       const status = query.state.data?.status;

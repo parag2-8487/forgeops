@@ -10,15 +10,18 @@ Tests:
 1. REST API:
    - POST /: 201 Created for new run, 200 OK for idempotent repeat, 409 for payload conflict.
    - GET /{run_id}: 200 OK snapshot with active agent pairing detection.
-   - POST /{run_id}/start: 412 Precondition Failed when agent is disconnected/stale, 200 OK when paired, idempotent 200 when already running.
+   - POST /{run_id}/start: 412 Precondition Failed when agent is disconnected/stale,
+     200 OK when paired, idempotent 200 when already running.
    - POST /{run_id}/cancel: 202 Accepted (settles pending to cancelled, running to cancelling).
    - POST /{run_id}/retry: 201 Created immutable attempt 2 with parent_run_id.
    - GET /{run_id}/logs: cursor pagination strictly ordered by log_seq ASC.
 2. Transactional Outbox:
-   - AutonomousOutboxPublisher drains pending outbox events to Redis Pub/Sub channel forgeops:events:autonomous-deploy:{run_id}.
+   - AutonomousOutboxPublisher drains pending outbox events to Redis Pub/Sub channel
+     forgeops:events:autonomous-deploy:{run_id}.
    - Updates outbox status to 'published'.
 3. Streaming Bridge:
-   - SSE GET /{run_id}/events: subscribe-before-replay protocol (replays outbox events event_seq > since_event_seq up to high_water_mark, relays live events).
+   - SSE GET /{run_id}/events: subscribe-before-replay protocol (replays outbox events
+     event_seq > since_event_seq up to high_water_mark, relays live events).
    - WebSocket /{run_id}/ws: replaying missed outbox events and relaying live Redis events.
 """
 
@@ -26,20 +29,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-import operator
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import func
 from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList
 from sqlalchemy.sql.functions import FunctionElement
-
 from src.auth.dependencies import require_principal
 from src.auth.device_models import AgentDevice, DeviceStatus
+from src.auth.models import UserRole
 from src.auth.principal import Principal
 from src.core.db import get_session
 from src.core.errors import install_problem_handlers
@@ -57,10 +58,8 @@ from src.deployments.autonomous_outbox import (
 from src.deployments.autonomous_routes import router as autonomous_router
 from src.deployments.autonomous_schemas import (
     DeploymentStrategy,
-    GitHubConfigRequest,
-    VercelConfigRequest,
 )
-from src.deployments.autonomous_service import STAGE_G1_BLUEPRINT, AutonomousDeploymentService
+from src.deployments.autonomous_service import STAGE_G1_BLUEPRINT
 
 # Synthetic secret fragments avoiding check-added-shapes rule triggers
 _BEARER_PFX = "Bear" + "er "
@@ -125,7 +124,7 @@ class MockAsyncSession:
             if entity.id is None:
                 entity.id = self._id_counter
                 self._id_counter += 1
-            if not any(l.id == entity.id for l in self.logs):
+            if not any(log.id == entity.id for log in self.logs):
                 self.logs.append(entity)
         elif isinstance(entity, AutonomousDeploymentOutbox):
             if entity.id is None:
@@ -153,10 +152,7 @@ class MockAsyncSession:
                 hasattr(type_or_expr, "name") and type_or_expr.name.lower() == "max"
             ):
                 conds = list(_extract_conditions(stmt.whereclause))
-                matched = [
-                    o for o in self.outbox
-                    if all(op(getattr(o, col, None), val) for col, op, val in conds)
-                ]
+                matched = [o for o in self.outbox if all(op(getattr(o, col, None), val) for col, op, val in conds)]
                 max_val = max([o.event_seq for o in matched], default=0)
                 return MockResult([], scalar_val=max_val)
 
@@ -167,44 +163,32 @@ class MockAsyncSession:
                         r.stages = [s for s in self.stages if s.run_id == r.id]
                         r.stages.sort(key=lambda s: s.position)
                 conds = list(_extract_conditions(stmt.whereclause))
-                matched = [
-                    r for r in candidates
-                    if all(op(getattr(r, col, None), val) for col, op, val in conds)
-                ]
+                matched = [r for r in candidates if all(op(getattr(r, col, None), val) for col, op, val in conds)]
                 return MockResult(matched)
 
             if type_or_expr is AutonomousDeploymentLog:
                 candidates = list(self.logs)
                 conds = list(_extract_conditions(stmt.whereclause))
-                matched = [
-                    log for log in candidates
-                    if all(op(getattr(log, col, None), val) for col, op, val in conds)
-                ]
-                matched.sort(key=lambda l: l.log_seq)
+                matched = [log for log in candidates if all(op(getattr(log, col, None), val) for col, op, val in conds)]
+                matched.sort(key=lambda entry: entry.log_seq)
                 if stmt._limit is not None:
-                    matched = matched[:stmt._limit]
+                    matched = matched[: stmt._limit]
                 return MockResult(matched)
 
             if type_or_expr is AutonomousDeploymentStage:
                 candidates = list(self.stages)
                 conds = list(_extract_conditions(stmt.whereclause))
-                matched = [
-                    s for s in candidates
-                    if all(op(getattr(s, col, None), val) for col, op, val in conds)
-                ]
+                matched = [s for s in candidates if all(op(getattr(s, col, None), val) for col, op, val in conds)]
                 matched.sort(key=lambda s: s.position)
                 return MockResult(matched)
 
             if type_or_expr is AutonomousDeploymentOutbox:
                 candidates = list(self.outbox)
                 conds = list(_extract_conditions(stmt.whereclause))
-                matched = [
-                    o for o in candidates
-                    if all(op(getattr(o, col, None), val) for col, op, val in conds)
-                ]
+                matched = [o for o in candidates if all(op(getattr(o, col, None), val) for col, op, val in conds)]
                 matched.sort(key=lambda o: o.event_seq)
                 if stmt._limit is not None:
-                    matched = matched[:stmt._limit]
+                    matched = matched[: stmt._limit]
                 return MockResult(matched)
 
         # Fallback check for func.max without column description type match
@@ -212,10 +196,7 @@ class MockAsyncSession:
             cols = list(stmt.selected_columns)
             if cols and isinstance(cols[0], FunctionElement) and cols[0].name.lower() == "max":
                 conds = list(_extract_conditions(stmt.whereclause))
-                matched = [
-                    o for o in self.outbox
-                    if all(op(getattr(o, col, None), val) for col, op, val in conds)
-                ]
+                matched = [o for o in self.outbox if all(op(getattr(o, col, None), val) for col, op, val in conds)]
                 max_val = max([o.event_seq for o in matched], default=0)
                 return MockResult([], scalar_val=max_val)
 
@@ -244,12 +225,14 @@ class MockPubSub:
     async def close(self) -> None:
         await self.unsubscribe()
 
-    async def get_message(self, ignore_subscribe_messages: bool = True, timeout: float | None = None) -> dict[str, Any] | None:
+    async def get_message(
+        self, ignore_subscribe_messages: bool = True, timeout: float | None = None
+    ) -> dict[str, Any] | None:
         try:
             if timeout is not None and timeout > 0:
                 return await asyncio.wait_for(self.queue.get(), timeout=min(timeout, 0.1))
             return self.queue.get_nowait()
-        except (asyncio.TimeoutError, asyncio.QueueEmpty):
+        except (TimeoutError, asyncio.QueueEmpty):
             return None
 
 
@@ -307,9 +290,6 @@ def project_id() -> uuid.UUID:
 @pytest.fixture()
 def user_id() -> uuid.UUID:
     return uuid.uuid4()
-
-
-from src.auth.models import UserRole
 
 
 @pytest.fixture()
@@ -473,7 +453,7 @@ class TestGetRunAndAgentPairing:
             status=DeviceStatus.ACTIVE,
             agent_version="1.0.0",
             platform="linux",
-            last_seen=datetime.now(timezone.utc) - timedelta(seconds=10),
+            last_seen=datetime.now(UTC) - timedelta(seconds=10),
         )
         test_app.state.device_service = MockDeviceService(active_device)
 
@@ -505,7 +485,7 @@ class TestGetRunAndAgentPairing:
             status=DeviceStatus.ACTIVE,
             agent_version="1.0.0",
             platform="linux",
-            last_seen=datetime.now(timezone.utc) - timedelta(seconds=45),
+            last_seen=datetime.now(UTC) - timedelta(seconds=45),
         )
         test_app.state.device_service = MockDeviceService(active_device)
 
@@ -569,7 +549,7 @@ class TestStartRunExecution:
             status=DeviceStatus.ACTIVE,
             agent_version="1.0.0",
             platform="linux",
-            last_seen=datetime.now(timezone.utc) - timedelta(seconds=5),
+            last_seen=datetime.now(UTC) - timedelta(seconds=5),
         )
         test_app.state.device_service = MockDeviceService(active_device)
 
@@ -603,7 +583,7 @@ class TestStartRunExecution:
             status=DeviceStatus.ACTIVE,
             agent_version="1.0.0",
             platform="linux",
-            last_seen=datetime.now(timezone.utc) - timedelta(seconds=5),
+            last_seen=datetime.now(UTC) - timedelta(seconds=5),
         )
         test_app.state.device_service = MockDeviceService(active_device)
 
@@ -733,9 +713,7 @@ class TestLogCursorPaginationEndpoint:
         mock_session.runs[run_id].log_sequence_counter = 5
 
         # Page 1: since_log_seq=0, limit=2
-        resp_p1 = client.get(
-            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs?since_log_seq=0&limit=2"
-        )
+        resp_p1 = client.get(f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs?since_log_seq=0&limit=2")
         assert resp_p1.status_code == 200
         data_p1 = resp_p1.json()
         assert len(data_p1["logs"]) == 2
@@ -744,9 +722,7 @@ class TestLogCursorPaginationEndpoint:
         assert data_p1["total_lines"] == 5
 
         # Page 2: since_log_seq=2, limit=2
-        resp_p2 = client.get(
-            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs?since_log_seq=2&limit=2"
-        )
+        resp_p2 = client.get(f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs?since_log_seq=2&limit=2")
         assert resp_p2.status_code == 200
         data_p2 = resp_p2.json()
         assert len(data_p2["logs"]) == 2
@@ -755,9 +731,7 @@ class TestLogCursorPaginationEndpoint:
         assert data_p2["has_more"] is True
 
         # Page 3: since_log_seq=4, limit=2
-        resp_p3 = client.get(
-            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs?since_log_seq=4&limit=2"
-        )
+        resp_p3 = client.get(f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs?since_log_seq=4&limit=2")
         assert resp_p3.status_code == 200
         data_p3 = resp_p3.json()
         assert len(data_p3["logs"]) == 1

@@ -4,12 +4,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
-import pytest
 from sqlalchemy import BigInteger, DateTime, Integer, String, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
-
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
     AutonomousDeploymentLog,
@@ -18,8 +15,14 @@ from src.deployments.autonomous_models import (
 )
 from src.deployments.models import (
     AutonomousDeployment as ReexportedDeployment,
+)
+from src.deployments.models import (
     AutonomousDeploymentLog as ReexportedLog,
+)
+from src.deployments.models import (
     AutonomousDeploymentOutbox as ReexportedOutbox,
+)
+from src.deployments.models import (
     AutonomousDeploymentStage as ReexportedStage,
 )
 

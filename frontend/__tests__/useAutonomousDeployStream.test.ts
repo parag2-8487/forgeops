@@ -280,9 +280,7 @@ describe("useAutonomousDeployStream", () => {
     });
 
     // Authoritative snapshot must have been triggered
-    expect(mockApiGet).toHaveBeenCalledWith(
-      `/projects/${projectId}/autonomous-deploy/${runId}`,
-    );
+    expect(mockApiGet).toHaveBeenCalledWith(`/projects/${projectId}/autonomous-deploy/${runId}`);
 
     // Wait for snapshot reconciliation to resolve
     await act(async () => {
@@ -426,9 +424,7 @@ describe("useAutonomousDeployStream", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
 
-    expect(mockApiGet).toHaveBeenCalledWith(
-      `/projects/${projectId}/autonomous-deploy/${runId}`,
-    );
+    expect(mockApiGet).toHaveBeenCalledWith(`/projects/${projectId}/autonomous-deploy/${runId}`);
 
     await act(async () => {
       await Promise.resolve();

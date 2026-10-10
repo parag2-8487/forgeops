@@ -339,9 +339,7 @@ class AutonomousDeployment(SQLModel, table=True):
         sa_column=Column("outbox_sequence_counter", Integer, nullable=False, server_default=text("0")),
     )
 
-    created_by: uuid.UUID = Field(
-        sa_column=Column("created_by", Uuid(), ForeignKey("users.id"), nullable=False)
-    )
+    created_by: uuid.UUID = Field(sa_column=Column("created_by", Uuid(), ForeignKey("users.id"), nullable=False))
     created_at: datetime | None = Field(
         default=None,
         sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),

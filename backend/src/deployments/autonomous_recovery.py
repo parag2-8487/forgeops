@@ -370,7 +370,11 @@ async def cleanup_docker_containers(
     # 4. Process execution fallback
     try:
         proc = await asyncio.create_subprocess_exec(
-            "docker", "ps", "-aq", "--filter", f"label=forgeops.run_id={target_rid}",
+            "docker",
+            "ps",
+            "-aq",
+            "--filter",
+            f"label=forgeops.run_id={target_rid}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -378,7 +382,10 @@ async def cleanup_docker_containers(
         container_ids = [line.strip().decode() for line in stdout.splitlines() if line.strip()]
         if container_ids:
             rm_proc = await asyncio.create_subprocess_exec(
-                "docker", "rm", "-f", *container_ids,
+                "docker",
+                "rm",
+                "-f",
+                *container_ids,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

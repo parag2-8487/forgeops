@@ -19,13 +19,12 @@ from __future__ import annotations
 
 import operator
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from sqlalchemy import Update
 from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList, UnaryExpression
-
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
     AutonomousDeploymentLog,
@@ -33,10 +32,7 @@ from src.deployments.autonomous_models import (
     AutonomousDeploymentStage,
 )
 from src.deployments.autonomous_schemas import (
-    CreateAutonomousRunRequest,
     DeploymentStrategy,
-    GitHubConfigRequest,
-    VercelConfigRequest,
 )
 from src.deployments.autonomous_service import (
     STAGE_G1_BLUEPRINT,
@@ -48,7 +44,6 @@ from src.deployments.autonomous_service import (
     STAGE_G7_VERIFICATION,
     STAGE_GITHUB_RELEASE,
     STAGE_VERCEL_DEPLOY,
-    AutonomousDeploymentService,
     build_stage_graph,
 )
 from src.deployments.autonomous_worker import (
@@ -91,9 +86,9 @@ def _eval_clause(clause: Any, run: AutonomousDeployment) -> bool:
 
         if isinstance(run_val, datetime) and isinstance(val, datetime):
             if run_val.tzinfo is None and val.tzinfo is not None:
-                run_val = run_val.replace(tzinfo=timezone.utc)
+                run_val = run_val.replace(tzinfo=UTC)
             elif run_val.tzinfo is not None and val.tzinfo is None:
-                val = val.replace(tzinfo=timezone.utc)
+                val = val.replace(tzinfo=UTC)
 
         try:
             return bool(clause.operator(run_val, val))
@@ -223,9 +218,7 @@ class MockAsyncSession:
                 s
                 for s in self.stages
                 if (
-                    not hasattr(stmt, "whereclause")
-                    or stmt.whereclause is None
-                    or _eval_clause(stmt.whereclause, s)  # type: ignore[arg-type]
+                    not hasattr(stmt, "whereclause") or stmt.whereclause is None or _eval_clause(stmt.whereclause, s)  # type: ignore[arg-type]
                 )
             ]
             matched_stages.sort(key=lambda s: s.position)
@@ -234,8 +227,8 @@ class MockAsyncSession:
         elif entity_cls is AutonomousDeploymentLog:
             matched_logs = list(self.logs)
             if hasattr(stmt, "whereclause") and stmt.whereclause is not None:
-                matched_logs = [l for l in matched_logs if _eval_clause(stmt.whereclause, l)]  # type: ignore[arg-type]
-            matched_logs.sort(key=lambda l: l.log_seq)
+                matched_logs = [log for log in matched_logs if _eval_clause(stmt.whereclause, log)]  # type: ignore[arg-type]
+            matched_logs.sort(key=lambda entry: entry.log_seq)
             return MockResult(matched_logs)
 
         return MockResult([])
@@ -322,7 +315,7 @@ class TestWorkerClaimProtocol:
         assert run.lease_expires_at is not None
 
         # Verify lease duration is approximately 30 seconds
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         assert run.lease_expires_at > now
         assert run.lease_expires_at <= now + timedelta(seconds=31)
 
@@ -346,9 +339,8 @@ class TestWorkerClaimProtocol:
     @pytest.mark.asyncio
     async def test_claim_takeover_after_lease_expiration(self) -> None:
         session = MockAsyncSession()
-        worker1 = AutonomousWorker(worker_id="worker-1")
         worker2 = AutonomousWorker(worker_id="worker-2")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Run was claimed by worker 1, but its lease expired 5 seconds ago
         run = _create_test_run(
@@ -375,7 +367,7 @@ class TestWorkerClaimProtocol:
     async def test_terminal_and_cancelling_runs_cannot_be_claimed(self, terminal_status: str) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Even with expired lease or no lease, terminal runs cannot be claimed
         run = _create_test_run(
@@ -398,9 +390,7 @@ class TestWorkerClaimProtocol:
         run = _create_test_run(session, status="pending")
 
         foreign_project_id = uuid.uuid4()
-        token = await worker.claim_run(
-            session, run_id=run.id, project_id=foreign_project_id, worker_id="worker-1"
-        )
+        token = await worker.claim_run(session, run_id=run.id, project_id=foreign_project_id, worker_id="worker-1")
         assert token is None
         assert run.fence_token == 0
 
@@ -417,7 +407,7 @@ class TestWorkerHeartbeat:
     async def test_routine_heartbeat_extends_lease_without_incrementing_fence_token(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -439,7 +429,7 @@ class TestWorkerHeartbeat:
     async def test_heartbeat_fails_with_stale_fence_token(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Run fence token has moved to 2 (Worker 2 superseded)
         run = _create_test_run(
@@ -459,7 +449,7 @@ class TestWorkerHeartbeat:
     async def test_heartbeat_fails_when_lease_already_expired(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -485,7 +475,7 @@ class TestGuardedUpdateAndFencingLost:
     async def test_guarded_update_succeeds_with_valid_token_and_lease(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -508,7 +498,7 @@ class TestGuardedUpdateAndFencingLost:
     async def test_guarded_update_raises_fencing_lost_error_on_stale_token(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -532,7 +522,7 @@ class TestGuardedUpdateAndFencingLost:
     async def test_guarded_update_raises_fencing_lost_error_on_expired_lease(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -554,7 +544,7 @@ class TestGuardedUpdateAndFencingLost:
     async def test_check_cancellation_lifecycle(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -597,7 +587,7 @@ class TestStageTransitionsAndOutbox:
     async def test_transition_stage_running_sets_timestamps_and_outbox(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -643,7 +633,7 @@ class TestStageTransitionsAndOutbox:
     async def test_transition_stage_succeeded_completes_stage(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,
@@ -672,7 +662,7 @@ class TestStageTransitionsAndOutbox:
     async def test_transition_stage_fails_on_stale_token(self) -> None:
         session = MockAsyncSession()
         worker = AutonomousWorker(worker_id="worker-1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         run = _create_test_run(
             session,

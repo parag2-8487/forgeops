@@ -143,9 +143,7 @@ class MockQueueDispatcher:
 class TestConcurrentRecoverySweeps:
     """Verifies that multiple sweeper workers concurrently scanning the same expired run cannot double-claim."""
 
-    async def test_concurrent_sweepers_single_winner(
-        self, db_session_factory, test_project_id, test_user_id
-    ) -> None:
+    async def test_concurrent_sweepers_single_winner(self, db_session_factory, test_project_id, test_user_id) -> None:
         service = AutonomousDeploymentService()
         user_id = test_user_id
 
@@ -183,9 +181,9 @@ class TestConcurrentRecoverySweeps:
         claimed_a = [r for r in res_a if r.id == run.id]
         claimed_b = [r for r in res_b if r.id == run.id]
         total_claimed = len(claimed_a) + len(claimed_b)
-        assert (
-            total_claimed == 1
-        ), f"Expected exactly 1 claim on target run, got {total_claimed} (A={len(claimed_a)}, B={len(claimed_b)})"
+        assert total_claimed == 1, (
+            f"Expected exactly 1 claim on target run, got {total_claimed} (A={len(claimed_a)}, B={len(claimed_b)})"
+        )
 
         winner_sweeper = "sweeper-alpha" if len(claimed_a) == 1 else "sweeper-beta"
 
@@ -349,9 +347,7 @@ class TestDuplicateQueueDeliveryAndSideEffectPrevention:
 class TestRecoveryRacingLiveDispatcher:
     """Verifies that an active live dispatcher is shielded from premature sweeper preemption."""
 
-    async def test_active_run_shielded_from_sweeper(
-        self, db_session_factory, test_project_id, test_user_id
-    ) -> None:
+    async def test_active_run_shielded_from_sweeper(self, db_session_factory, test_project_id, test_user_id) -> None:
         service = AutonomousDeploymentService()
         user_id = test_user_id
 
