@@ -26,6 +26,11 @@ import {
   Server,
   XCircle,
 } from "lucide-react";
+import { AutonomousLogConsole } from "./AutonomousLogConsole";
+import {
+  useAutonomousDeployStream,
+  type AutonomousLogEntry,
+} from "./useAutonomousDeployStream";
 
 export type DeploymentStrategy =
   | "docker_github_vercel"
@@ -101,6 +106,8 @@ export interface JenkinsPipelineDashboardProps {
   projectName?: string;
   initialRun?: AutonomousRunPublicResponse;
   run?: AutonomousRunPublicResponse;
+  initialLogs?: AutonomousLogEntry[];
+  logs?: AutonomousLogEntry[];
   onRefresh?: () => void;
   onRunChange?: (run: AutonomousRunPublicResponse) => void;
 }
@@ -266,6 +273,8 @@ export function JenkinsPipelineDashboard({
   projectName = "Project",
   initialRun,
   run: propRun,
+  initialLogs,
+  logs: propLogs,
   onRefresh,
   onRunChange,
 }: JenkinsPipelineDashboardProps) {
@@ -304,7 +313,24 @@ export function JenkinsPipelineDashboard({
     initialData: initialRun,
   });
 
-  const activeRun = localRun ?? runQuery.data ?? initialRun ?? null;
+  // Live real-time stream hook
+  const stream = useAutonomousDeployStream({
+    projectId,
+    runId: targetRunId ?? "",
+    initialRun: propRun ?? initialRun ?? undefined,
+    initialLogs: propLogs ?? initialLogs ?? undefined,
+    enabled: Boolean(projectId && targetRunId),
+  });
+
+  // Sync streaming run updates
+  useEffect(() => {
+    if (stream.run) {
+      setLocalRun(stream.run);
+      onRunChange?.(stream.run);
+    }
+  }, [stream.run, onRunChange]);
+
+  const activeRun = localRun ?? stream.run ?? runQuery.data ?? initialRun ?? null;
 
   // Live timer tick for running executions
   useEffect(() => {
@@ -316,11 +342,16 @@ export function JenkinsPipelineDashboard({
     }
   }, [activeRun?.status]);
 
-  // Stage list sorted by position
+  // Stage list sorted by position with live stream priority
   const stages = useMemo(() => {
+    if (stream.stages && stream.stages.length > 0) {
+      return [...stream.stages].sort((a, b) => a.position - b.position);
+    }
     if (!activeRun?.stages) return [];
     return [...activeRun.stages].sort((a, b) => a.position - b.position);
-  }, [activeRun?.stages]);
+  }, [stream.stages, activeRun?.stages]);
+
+  const activeLogs = stream.logs.length > 0 ? stream.logs : (propLogs ?? initialLogs ?? []);
 
   // Automatically select the active or failed stage if not manually selected
   useEffect(() => {
@@ -991,6 +1022,19 @@ export function JenkinsPipelineDashboard({
           </div>
         </div>
       )}
+
+      {/* Live Autonomous Log Terminal Console */}
+      <div className="space-y-2">
+        <AutonomousLogConsole
+          logs={activeLogs}
+          stages={stages}
+          activeStageName={selectedStage?.stage_name}
+          onSelectStage={(stageName) => {
+            const found = stages.find((s) => s.stage_name === stageName);
+            if (found) setSelectedStageId(found.id);
+          }}
+        />
+      </div>
     </div>
   );
 }
