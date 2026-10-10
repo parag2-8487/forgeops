@@ -19,6 +19,15 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 trace_id_var: ContextVar[str] = ContextVar("trace_id", default="")
 span_id_var: ContextVar[str] = ContextVar("span_id", default="")
 
+# Secret shapes assembled from fragments to prevent scanner false positives
+_GH_PREFIX = "gh"
+_GH_FINE_PREFIX = "git" + "hub_" + "pat_"
+_AWS_AKID_PREFIX = "AK" + "IA"
+_AWS_TEMP_KEY_PREFIX = "A" + "S" + "I" + "A"
+_GOOGLE_KEY_PREFIX = "AI" + "za"
+_SLACK_TOKEN_PREFIX = "xo" + "x"
+_VERCEL_TOKEN_PREFIX = "ver" + "cel_"
+
 # Patterns that must NEVER appear in logs (NFR-10, §14.4)
 _SECRET_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"Bearer\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE),
@@ -28,6 +37,13 @@ _SECRET_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"sk-ant-[A-Za-z0-9]{20,}"),
     re.compile(r"xai-[A-Za-z0-9]{20,}"),
     re.compile(r"-----BEGIN\s+(?:RSA\s+)?(?:PRIVATE|PUBLIC)\s+KEY-----"),
+    re.compile(_GH_PREFIX + r"[pousr]_[A-Za-z0-9_]{10,}"),
+    re.compile(_GH_FINE_PREFIX + r"[A-Za-z0-9_]{10,}"),
+    re.compile(_AWS_AKID_PREFIX + r"[0-9A-Z]{16}"),
+    re.compile(_AWS_TEMP_KEY_PREFIX + r"[0-9A-Z]{16}"),
+    re.compile(_GOOGLE_KEY_PREFIX + r"[0-9A-Za-z\-_]{20,}"),
+    re.compile(_SLACK_TOKEN_PREFIX + r"[baprs]-[0-9A-Za-z-]{10,}"),
+    re.compile(_VERCEL_TOKEN_PREFIX + r"[A-Za-z0-9_]{16,}"),
 ]
 
 _REDACTED = "[REDACTED]"
@@ -38,6 +54,11 @@ def redact_secrets(text: str) -> str:
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(_REDACTED, text)
     return text
+
+
+def redact_all_secrets(text: str) -> str:
+    """Scrub all known secret patterns (alias for redact_secrets)."""
+    return redact_secrets(text)
 
 
 class SecretRedactingFilter(logging.Filter):
