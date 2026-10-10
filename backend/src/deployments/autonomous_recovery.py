@@ -20,13 +20,14 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import logging
 import signal
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,7 +52,7 @@ def _normalize_datetime(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -205,7 +206,7 @@ class CancellationSettlement:
                     await asyncio.sleep(0.05)
                     if hasattr(proc, "poll") and proc.poll() is not None:
                         terminated = True
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 terminated = False
 
             # If not terminated, escalate to SIGKILL
@@ -264,7 +265,7 @@ class CancellationSettlement:
         # 1. Terminate active child processes / tasks
         await self.terminate_processes(target_run_id, grace_period_seconds=grace_period_seconds)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 2. Update active stages to cancelled
         stage_obj: AutonomousDeploymentStage | None = None
@@ -342,7 +343,7 @@ async def cleanup_docker_containers(
             res = custom_cleanup(target_rid)
             if inspect.iscoroutine(res):
                 res = await res
-        return list(res) if isinstance(res, (list, tuple)) else [str(res)]
+        return list(res) if isinstance(res, list | tuple) else [str(res)]
 
     # 3. Docker client abstraction in context
     docker_client = _get_ctx(context, "docker_client")
@@ -427,7 +428,7 @@ class CompensationRollback:
         else:
             target_run_id = run.id
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 1. Preserve primary error
         if primary_error is not None:
@@ -472,7 +473,7 @@ class CompensationRollback:
                         if inspect.iscoroutine(res):
                             cleaned_containers = await res
                         else:
-                            cleaned_containers = list(res) if isinstance(res, (list, tuple)) else []
+                            cleaned_containers = list(res) if isinstance(res, list | tuple) else []
                 else:
                     cleaned_containers = await cleanup_docker_containers(target_run_id, context)
             except Exception as exc:
@@ -567,7 +568,7 @@ class AutonomousRecoverySweeper:
         - Runs without lease_expires_at.
         """
         threshold = grace_period_seconds if grace_period_seconds is not None else self.lease_expiry_threshold_seconds
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(seconds=threshold)
 
         stmt = (
@@ -575,8 +576,21 @@ class AutonomousRecoverySweeper:
             .options(selectinload(AutonomousDeployment.stages))
             .where(
                 AutonomousDeployment.status.in_(["pending", "running"]),
-                AutonomousDeployment.lease_expires_at.is_not(None),
-                AutonomousDeployment.lease_expires_at < cutoff,
+                or_(
+                    and_(
+                        AutonomousDeployment.lease_expires_at.is_not(None),
+                        AutonomousDeployment.lease_expires_at < cutoff,
+                    ),
+                    and_(
+                        AutonomousDeployment.status == "running",
+                        AutonomousDeployment.lease_expires_at.is_(None),
+                        or_(
+                            AutonomousDeployment.dispatch_requested_at < cutoff,
+                            AutonomousDeployment.started_at < cutoff,
+                            AutonomousDeployment.created_at < cutoff,
+                        ),
+                    ),
+                ),
             )
             .order_by(AutonomousDeployment.created_at.asc())
         )
@@ -589,7 +603,7 @@ class AutonomousRecoverySweeper:
         run: AutonomousDeployment,
     ) -> int | None:
         """Atomically claims an expired run with incremented fence_token and custody."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         new_lease = now + timedelta(seconds=self.lease_claim_seconds)
 
         stmt = (
@@ -765,9 +779,32 @@ class AutonomousRecoverySweeper:
             recon = await self.reconcile_run(session, run, context=context)
 
             # 3. Handle reconciliation outcome
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if recon.reconciled:
                 run.dispatch_status = "recovered"
+                dispatcher = _get_ctx(context, "task_dispatcher")
+                if dispatcher is not None:
+                    with contextlib.suppress(Exception):
+                        await dispatcher.enqueue(
+                            "autonomous_deploy_run",
+                            {"run_id": str(run.id), "project_id": str(run.project_id)},
+                        )
+                run.outbox_sequence_counter += 1
+                outbox = AutonomousDeploymentOutbox(
+                    run_id=run.id,
+                    event_seq=run.outbox_sequence_counter,
+                    event_type="run_recovered",
+                    payload={
+                        "run_id": str(run.id),
+                        "project_id": str(run.project_id),
+                        "status": run.status,
+                        "fence_token": run.fence_token,
+                        "worker_id": run.worker_id,
+                        "dispatch_status": run.dispatch_status,
+                    },
+                    status="pending",
+                )
+                session.add(outbox)
                 session.add(run)
                 await session.flush()
                 processed.append(run)

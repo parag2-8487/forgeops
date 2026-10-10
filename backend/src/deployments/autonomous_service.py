@@ -443,7 +443,7 @@ class AutonomousDeploymentService:
                 normalized_entries.append((entry, "INFO"))
             elif isinstance(entry, dict):
                 normalized_entries.append((entry.get("message", ""), entry.get("level", "INFO")))
-            elif isinstance(entry, (list, tuple)):
+            elif isinstance(entry, list | tuple):
                 msg = entry[0] if len(entry) > 0 else ""
                 lvl = entry[1] if len(entry) > 1 else "INFO"
                 normalized_entries.append((msg, lvl))

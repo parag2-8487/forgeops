@@ -1584,3 +1584,51 @@ class TestE2EVerificationMatrixEndToEnd:
 
         # Exactly 1 background task enqueued
         assert len(mock_dispatcher.enqueued) == 1
+
+    def test_e2e_cross_project_isolation_rejects_mismatched_project_id(
+        self,
+        client: TestClient,
+        project_id: uuid.UUID,
+    ) -> None:
+        """Accessing a run with a mismatched project_id returns 404 deployment-absent on all routes."""
+        create_resp = client.post(
+            f"/api/v1/projects/{project_id}/autonomous-deploy",
+            json={
+                "strategy": DeploymentStrategy.GITHUB_ONLY.value,
+                "github_config": {"repository_name": "acme/web-app"},
+            },
+        )
+        assert create_resp.status_code == 201
+        run_id = create_resp.json()["id"]
+
+        other_project_id = uuid.uuid4()
+
+        # 1. GET /{run_id}
+        res_get = client.get(f"/api/v1/projects/{other_project_id}/autonomous-deploy/{run_id}")
+        assert res_get.status_code == 404
+        assert res_get.json()["type"] == "https://errors.forgeops.dev/deployment-absent"
+
+        # 2. POST /{run_id}/start
+        res_start = client.post(f"/api/v1/projects/{other_project_id}/autonomous-deploy/{run_id}/start")
+        assert res_start.status_code == 404
+        assert res_start.json()["type"] == "https://errors.forgeops.dev/deployment-absent"
+
+        # 3. POST /{run_id}/cancel
+        res_cancel = client.post(f"/api/v1/projects/{other_project_id}/autonomous-deploy/{run_id}/cancel")
+        assert res_cancel.status_code == 404
+        assert res_cancel.json()["type"] == "https://errors.forgeops.dev/deployment-absent"
+
+        # 4. POST /{run_id}/retry
+        res_retry = client.post(f"/api/v1/projects/{other_project_id}/autonomous-deploy/{run_id}/retry")
+        assert res_retry.status_code == 404
+        assert res_retry.json()["type"] == "https://errors.forgeops.dev/deployment-absent"
+
+        # 5. GET /{run_id}/logs
+        res_logs = client.get(f"/api/v1/projects/{other_project_id}/autonomous-deploy/{run_id}/logs")
+        assert res_logs.status_code == 404
+        assert res_logs.json()["type"] == "https://errors.forgeops.dev/deployment-absent"
+
+        # 6. GET /{run_id}/events
+        res_events = client.get(f"/api/v1/projects/{other_project_id}/autonomous-deploy/{run_id}/events")
+        assert res_events.status_code == 404
+        assert res_events.json()["type"] == "https://errors.forgeops.dev/deployment-absent"

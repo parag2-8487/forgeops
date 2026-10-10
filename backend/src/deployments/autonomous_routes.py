@@ -8,11 +8,15 @@ Reference:
 Provides REST endpoints, Server-Sent Events (SSE) streaming, and WebSocket streaming:
 1. `POST /api/v1/projects/{project_id}/autonomous-deploy`: Create run (201 new, 200 idempotent repeat, 409 conflict).
 2. `GET /api/v1/projects/{project_id}/autonomous-deploy/{run_id}`: Authoritative snapshot with agent pairing status.
-3. `POST /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start`: Initiate execution (requires paired agent heartbeat <= 30s).
-4. `POST /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/cancel`: Request cancellation (settles pending/running).
-5. `POST /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/retry`: Create immutable attempt for failed/rolled-back run.
+3. `POST /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start`:
+   Initiate execution (requires paired agent heartbeat <= 30s).
+4. `POST /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/cancel`:
+   Request cancellation (settles pending/running).
+5. `POST /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/retry`:
+   Create immutable attempt for failed/rolled-back run.
 6. `GET /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs`: Cursor-paginated logs.
-7. `GET /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events`: SSE stream with outbox replay and live Redis events.
+7. `GET /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events`:
+   SSE stream with outbox replay and live Redis events.
 8. `WebSocket /api/v1/projects/{project_id}/autonomous-deploy/{run_id}/ws`: WebSocket stream with cookie/header auth.
 """
 
@@ -23,11 +27,12 @@ import contextlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Annotated, Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
@@ -39,7 +44,6 @@ from ..core.db import get_session
 from ..core.errors import ProblemException, problem
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from .autonomous_models import (
-    AutonomousDeployment,
     AutonomousDeploymentOutbox,
 )
 from .autonomous_outbox import AutonomousOutboxPublisher, get_autonomous_event_channel
@@ -78,10 +82,10 @@ async def _check_agent_connected(
     if active_device is None or active_device.last_seen is None:
         return False
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     last_seen = active_device.last_seen
     if last_seen.tzinfo is None:
-        last_seen = last_seen.replace(tzinfo=timezone.utc)
+        last_seen = last_seen.replace(tzinfo=UTC)
 
     delta = (now - last_seen).total_seconds()
     return delta <= 30.0
@@ -223,7 +227,7 @@ async def start_run(
             ),
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     run.status = "running"
     run.started_at = now
     run.dispatch_status = "enqueued"
@@ -291,7 +295,7 @@ async def cancel_run(
             detail=f"Autonomous deployment run '{run_id}' not found in project '{project_id}'.",
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if run.status == "pending":
         run.status = "cancelled"
         run.completed_at = now
@@ -456,7 +460,7 @@ async def stream_events(
             detail="Redis client is not configured; real-time event streaming is unavailable.",
         )
 
-    async def sse_generator() -> AsyncGenerator[bytes, None]:
+    async def sse_generator() -> AsyncGenerator[bytes]:
         channel = get_autonomous_event_channel(run_id)
         pubsub = redis.pubsub()
         await pubsub.subscribe(channel)
@@ -627,7 +631,7 @@ async def websocket_events(
                 timeout=_IDLE_KEEP_ALIVE_SECONDS,
             )
             if message is None:
-                await websocket.send_json({"event_type": "ping", "timestamp": datetime.now(timezone.utc).isoformat()})
+                await websocket.send_json({"event_type": "ping", "timestamp": datetime.now(UTC).isoformat()})
                 continue
 
             raw_data = message.get("data")

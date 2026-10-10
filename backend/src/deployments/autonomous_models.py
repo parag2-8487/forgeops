@@ -10,7 +10,7 @@ Four tables declared here matching Alembic migration `0038_autonomous_deployment
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -85,7 +85,7 @@ class AutonomousDeploymentStage(SQLModel, table=True):
     stage_name: str = Field(
         sa_column=Column("stage_name", String(length=64), nullable=False),
     )
-    gate_id: Optional[str] = Field(
+    gate_id: str | None = Field(
         default=None,
         sa_column=Column("gate_id", String(length=16), nullable=True),
     )
@@ -100,23 +100,23 @@ class AutonomousDeploymentStage(SQLModel, table=True):
         default=0,
         sa_column=Column("progress_pct", Integer, nullable=False, server_default=text("0")),
     )
-    started_at: Optional[datetime] = Field(
+    started_at: datetime | None = Field(
         default=None,
         sa_column=Column("started_at", DateTime(timezone=True), nullable=True),
     )
-    completed_at: Optional[datetime] = Field(
+    completed_at: datetime | None = Field(
         default=None,
         sa_column=Column("completed_at", DateTime(timezone=True), nullable=True),
     )
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None,
         sa_column=Column("error_message", Text, nullable=True),
     )
-    stage_metadata: Dict[str, Any] = Field(
+    stage_metadata: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     )
-    created_at: Optional[datetime] = Field(
+    created_at: datetime | None = Field(
         default=None,
         sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
@@ -144,7 +144,7 @@ class AutonomousDeploymentLog(SQLModel, table=True):
         Index("idx_auto_deploy_logs_query", "run_id", "log_seq"),
     )
 
-    id: Optional[int] = Field(
+    id: int | None = Field(
         default=None,
         sa_column=Column("id", BigInteger, primary_key=True, autoincrement=True),
     )
@@ -169,7 +169,7 @@ class AutonomousDeploymentLog(SQLModel, table=True):
     message: str = Field(
         sa_column=Column("message", Text, nullable=False),
     )
-    created_at: Optional[datetime] = Field(
+    created_at: datetime | None = Field(
         default=None,
         sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
@@ -192,7 +192,7 @@ class AutonomousDeploymentOutbox(SQLModel, table=True):
         Index("idx_auto_deploy_outbox_pending", "status", "id"),
     )
 
-    id: Optional[int] = Field(
+    id: int | None = Field(
         default=None,
         sa_column=Column("id", BigInteger, primary_key=True, autoincrement=True),
     )
@@ -210,7 +210,7 @@ class AutonomousDeploymentOutbox(SQLModel, table=True):
     event_type: str = Field(
         sa_column=Column("event_type", String(length=32), nullable=False),
     )
-    payload: Dict[str, Any] = Field(
+    payload: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column("payload", JSONB, nullable=False),
     )
@@ -218,7 +218,7 @@ class AutonomousDeploymentOutbox(SQLModel, table=True):
         default="pending",
         sa_column=Column("status", String(length=16), nullable=False, server_default=text("'pending'")),
     )
-    created_at: Optional[datetime] = Field(
+    created_at: datetime | None = Field(
         default=None,
         sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
@@ -253,7 +253,7 @@ class AutonomousDeployment(SQLModel, table=True):
     project_id: uuid.UUID = Field(
         sa_column=Column("project_id", Uuid(), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     )
-    parent_run_id: Optional[uuid.UUID] = Field(
+    parent_run_id: uuid.UUID | None = Field(
         default=None,
         sa_column=Column(
             "parent_run_id",
@@ -273,7 +273,7 @@ class AutonomousDeployment(SQLModel, table=True):
     strategy: str = Field(
         sa_column=Column("strategy", String(length=32), nullable=False),
     )
-    configuration: Dict[str, Any] = Field(
+    configuration: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column("configuration", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     )
@@ -281,25 +281,25 @@ class AutonomousDeployment(SQLModel, table=True):
         default=0,
         sa_column=Column("progress_pct", Integer, nullable=False, server_default=text("0")),
     )
-    current_stage: Optional[str] = Field(
+    current_stage: str | None = Field(
         default=None,
         sa_column=Column("current_stage", String(length=64), nullable=True),
     )
-    error_summary: Optional[str] = Field(
+    error_summary: str | None = Field(
         default=None,
         sa_column=Column("error_summary", Text, nullable=True),
     )
-    primary_error: Optional[Dict[str, Any]] = Field(
+    primary_error: dict[str, Any] | None = Field(
         default=None,
         sa_column=Column("primary_error", JSONB, nullable=True),
     )
-    compensation_error: Optional[Dict[str, Any]] = Field(
+    compensation_error: dict[str, Any] | None = Field(
         default=None,
         sa_column=Column("compensation_error", JSONB, nullable=True),
     )
 
     # Worker Fencing and Lease Custody
-    worker_id: Optional[str] = Field(
+    worker_id: str | None = Field(
         default=None,
         sa_column=Column("worker_id", String(length=128), nullable=True),
     )
@@ -307,7 +307,7 @@ class AutonomousDeployment(SQLModel, table=True):
         default=0,
         sa_column=Column("fence_token", BigInteger, nullable=False, server_default=text("0")),
     )
-    lease_expires_at: Optional[datetime] = Field(
+    lease_expires_at: datetime | None = Field(
         default=None,
         sa_column=Column("lease_expires_at", DateTime(timezone=True), nullable=True),
     )
@@ -317,11 +317,11 @@ class AutonomousDeployment(SQLModel, table=True):
         default="pending",
         sa_column=Column("dispatch_status", String(length=32), nullable=False, server_default=text("'pending'")),
     )
-    dispatch_requested_at: Optional[datetime] = Field(
+    dispatch_requested_at: datetime | None = Field(
         default=None,
         sa_column=Column("dispatch_requested_at", DateTime(timezone=True), nullable=True),
     )
-    idempotency_key: Optional[str] = Field(
+    idempotency_key: str | None = Field(
         default=None,
         sa_column=Column("idempotency_key", String(length=128), nullable=True),
     )
@@ -342,21 +342,21 @@ class AutonomousDeployment(SQLModel, table=True):
     created_by: uuid.UUID = Field(
         sa_column=Column("created_by", Uuid(), ForeignKey("users.id"), nullable=False)
     )
-    created_at: Optional[datetime] = Field(
+    created_at: datetime | None = Field(
         default=None,
         sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     )
-    started_at: Optional[datetime] = Field(
+    started_at: datetime | None = Field(
         default=None,
         sa_column=Column("started_at", DateTime(timezone=True), nullable=True),
     )
-    completed_at: Optional[datetime] = Field(
+    completed_at: datetime | None = Field(
         default=None,
         sa_column=Column("completed_at", DateTime(timezone=True), nullable=True),
     )
 
     # Relationships
-    stages: List[AutonomousDeploymentStage] = Relationship(
+    stages: list[AutonomousDeploymentStage] = Relationship(
         sa_relationship=relationship(
             "AutonomousDeploymentStage",
             back_populates="run",
@@ -364,7 +364,7 @@ class AutonomousDeployment(SQLModel, table=True):
             order_by="AutonomousDeploymentStage.position",
         )
     )
-    logs: List[AutonomousDeploymentLog] = Relationship(
+    logs: list[AutonomousDeploymentLog] = Relationship(
         sa_relationship=relationship(
             "AutonomousDeploymentLog",
             back_populates="run",
@@ -372,7 +372,7 @@ class AutonomousDeployment(SQLModel, table=True):
             order_by="AutonomousDeploymentLog.log_seq",
         )
     )
-    outbox_events: List[AutonomousDeploymentOutbox] = Relationship(
+    outbox_events: list[AutonomousDeploymentOutbox] = Relationship(
         sa_relationship=relationship(
             "AutonomousDeploymentOutbox",
             back_populates="run",

@@ -17,19 +17,18 @@ from __future__ import annotations
 import inspect
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
 from src.core.logging import redact_secrets
 
 from .autonomous_gates import (
     GATE_EVALUATORS,
     STAGE_EVALUATORS,
-    G7VerificationResult,
     GateResult,
 )
 from .autonomous_models import (
@@ -38,7 +37,6 @@ from .autonomous_models import (
     AutonomousDeploymentStage,
 )
 from .autonomous_recovery import (
-    AutonomousRecoverySweeper,
     CancellationSettlement,
     CompensationRollback,
 )
@@ -121,7 +119,7 @@ def _normalize_datetime(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
+        return dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -277,7 +275,7 @@ class AutonomousWorker:
         target_proj_id = uuid.UUID(str(project_id)) if isinstance(project_id, str) and project_id else project_id
         target_worker_id = worker_id or self.worker_id
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         new_lease = now + timedelta(seconds=LEASE_DURATION_SECONDS)
 
         conds = [
@@ -359,7 +357,7 @@ class AutonomousWorker:
             raise ValueError("run_id and fence_token are required for heartbeat.")
 
         target_run_id = uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         new_lease = now + timedelta(seconds=LEASE_DURATION_SECONDS)
 
         stmt = (
@@ -437,7 +435,7 @@ class AutonomousWorker:
             raise ValueError("run_id and fence_token are required for guarded_update.")
 
         target_run_id = uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         update_values = dict(values or {})
 
         stmt = (
@@ -561,7 +559,7 @@ class AutonomousWorker:
                 raise ValueError(f"Stage '{stage_name}' not found for run {target_run_id}")
 
         # 4. Update stage state, progress, and timestamps
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stage.status = status
         stage.progress_pct = max(0, min(progress_pct, 100))
 
@@ -657,7 +655,7 @@ class AutonomousWorker:
             raise ValueError("run_id and fence_token are required for check_cancellation.")
 
         target_run_id = uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         stmt = select(AutonomousDeployment).where(AutonomousDeployment.id == target_run_id)
         result = await session.execute(stmt)
@@ -844,7 +842,7 @@ async def run_pipeline(
         return run
 
     # 2. Worker fencing claim / custody verification
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     lease_norm = _normalize_datetime(run.lease_expires_at)
     lease_active = (
         run.worker_id == effective_worker_id
@@ -879,7 +877,7 @@ async def run_pipeline(
     # 4. Mark run running if currently pending
     if run.status == "pending":
         run.status = "running"
-        run.started_at = run.started_at or datetime.now(timezone.utc)
+        run.started_at = run.started_at or datetime.now(UTC)
         await session.flush()
 
     # 5. Ensure stages are loaded and sorted by position
@@ -1006,7 +1004,7 @@ async def run_pipeline(
                 error_message=message,
             )
             # Mark run failed and record primary error
-            fail_now = datetime.now(timezone.utc)
+            fail_now = datetime.now(UTC)
             run.status = "failed"
             redacted_msg = redact_secrets(message) if isinstance(message, str) else message
             run.error_summary = redacted_msg or f"Stage '{stage.stage_name}' failed."
@@ -1037,7 +1035,7 @@ async def run_pipeline(
             return run
 
     # 7. Full completion: mark run succeeded, progress_pct=100, completed_at=now()
-    finish_now = datetime.now(timezone.utc)
+    finish_now = datetime.now(UTC)
     run.status = "succeeded"
     run.progress_pct = 100
     if run.completed_at is None:

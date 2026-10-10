@@ -838,3 +838,73 @@ class TestAutonomousRecoverySweeper:
         assert "reconciliation failed" in failed_run.error_summary.lower()
         assert failed_run.primary_error is not None
         assert failed_run.completed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_sweeper_recovers_crashed_run_before_task_enqueueing(self) -> None:
+        """Regression test for crash window between start commit and task enqueue.
+
+        Simulates:
+        1. Run transitioned to 'running' with dispatch_status='enqueued'.
+        2. Backend crashes before task enqueueing completes (lease_expires_at IS NULL, fence_token=0).
+        3. Sweeper discovers orphaned run (dispatch_requested_at > 60s ago).
+        4. Sweeper claims custody, increments fence_token (0 -> 1), reconciles state,
+           re-enqueues execution to task dispatcher, and emits run_recovered event.
+        """
+        session = MockAsyncSession()
+        now = datetime.now(timezone.utc)
+
+        # 1. Run committed to DB but process crashed before worker claim/enqueue
+        run = await _create_test_run(
+            session,
+            strategy=DeploymentStrategy.DOCKER_GITHUB,
+            status="running",
+            fence_token=0,
+            lease_expires_at=None,
+            worker_id=None,
+        )
+        run.dispatch_status = "enqueued"
+        run.dispatch_requested_at = now - timedelta(seconds=90)
+        run.started_at = now - timedelta(seconds=90)
+
+        # 2. Mock task dispatcher to capture re-enqueue
+        dispatched_tasks: list[tuple[str, dict[str, Any]]] = []
+
+        class MockDispatcher:
+            async def enqueue(self, task_name: str, payload: dict[str, Any]) -> None:
+                dispatched_tasks.append((task_name, payload))
+
+        mock_dispatcher = MockDispatcher()
+        sweeper = AutonomousRecoverySweeper(sweeper_id="recovery-sweeper-crash-window")
+
+        # 3. Find expired/orphaned runs
+        expired_runs = await sweeper.find_expired_runs(session)
+        assert len(expired_runs) == 1
+        assert expired_runs[0].id == run.id
+
+        # 4. Execute sweep
+        swept = await sweeper.sweep(
+            session,
+            context={"task_dispatcher": mock_dispatcher},
+        )
+
+        assert len(swept) == 1
+        recovered_run = swept[0]
+        assert recovered_run.id == run.id
+        assert recovered_run.fence_token == 1
+        assert recovered_run.worker_id == "recovery-sweeper-crash-window"
+        assert recovered_run.dispatch_status == "recovered"
+        assert recovered_run.lease_expires_at is not None
+        assert recovered_run.lease_expires_at > now
+
+        # Verify task was re-enqueued to dispatcher
+        assert len(dispatched_tasks) == 1
+        task_name, payload = dispatched_tasks[0]
+        assert task_name == "autonomous_deploy_run"
+        assert payload["run_id"] == str(run.id)
+        assert payload["project_id"] == str(run.project_id)
+
+        # Verify run_recovered outbox event emitted
+        outbox_events = [o for o in session.outbox if o.run_id == run.id and o.event_type == "run_recovered"]
+        assert len(outbox_events) == 1
+        assert outbox_events[0].payload["fence_token"] == 1
+        assert outbox_events[0].payload["dispatch_status"] == "recovered"
