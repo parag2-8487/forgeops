@@ -1,4 +1,4 @@
-# ForgeOps API — Phase 0
+# ForgeOps API â€” Phase 0
 
 > **Stale as of 2026-08-21, and kept rather than deleted so the gap stays visible.** This
 > document describes the **Phase 0** API surface. Phase 1 has since shipped and this file was not
@@ -10,11 +10,11 @@
 >
 > It also **documents none of the Phase 1 surfaces**. `projects`, `policies`, `audit` and
 > `approvals` are not mentioned once, and twelve routers are registered in `create_app`. Until this
-> file is rewritten, the accurate and self-updating source is the generated schema — Swagger UI at
-> <http://localhost:8000/api/v1/docs> and `openapi.json` beside it — because it is produced from the
+> file is rewritten, the accurate and self-updating source is the generated schema â€” Swagger UI at
+> <http://localhost:8000/api/v1/docs> and `openapi.json` beside it â€” because it is produced from the
 > routers themselves and cannot drift from them.
 
-Authority: `.antigravity/specs/phase-0-foundation/design.md` §4.2, §4.3, §4.4, §11, §14.2, §15.2.
+Authority: `.antigravity/specs/phase-0-foundation/design.md` Â§4.2, Â§4.3, Â§4.4, Â§11, Â§14.2, Â§15.2.
 Only the surfaces listed here exist in Phase 0.
 
 ## Versioning
@@ -27,21 +27,21 @@ not move when the API version bumps.
 ## Authentication
 
 Phase 0 has **no general user authentication**. There is no login flow, no session or
-refresh-token lifecycle, no user records, and no RBAC; those arrive in Phase 1 §1.11.
+refresh-token lifecycle, no user records, and no RBAC; those arrive in Phase 1 Â§1.11.
 
 Two surfaces verify an OAuth 2.1/OIDC bearer token:
 
-- `/api/v1/mcp*` — the MCP Gateway. Verification runs before routing.
-- `POST /api/v1/ai/complete` — verification supplies the `sub` that keys the per-caller
+- `/api/v1/mcp*` â€” the MCP Gateway. Verification runs before routing.
+- `POST /api/v1/ai/complete` â€” verification supplies the `sub` that keys the per-caller
   rate-limit bucket.
 
 Verification enforces the JWT signature against JWKS fetched from the token issuer, an
 `iss` value inside an explicit allowlist (required to be non-empty when
 `APP_ENV=production`), the required `aud`, and `exp`/`nbf`/`iat`. Failures return `401`
 problem documents. Every other route is unauthenticated in Phase 0, which is why the
-Phase 0 topology is local-development-only — see `docs/deployment.md`.
+Phase 0 topology is local-development-only â€” see `docs/deployment.md`.
 
-## Error contract — RFC 9457
+## Error contract â€” RFC 9457
 
 Every non-2xx response carries `Content-Type: application/problem+json` and this shape:
 
@@ -74,7 +74,7 @@ not RFC 9457 conforming.
 
 | Route                | Purpose                 | Dependency I/O                                         | Success                                                                                | Failure                                                           |
 | :------------------- | :---------------------- | :----------------------------------------------------- | :------------------------------------------------------------------------------------- | :---------------------------------------------------------------- |
-| `GET /health`        | Liveness                | none                                                   | `200 {"status":"ok","version":"…","commit":"…"}`, including during a dependency outage | only when the process is dead or wedged                           |
+| `GET /health`        | Liveness                | none                                                   | `200 {"status":"ok","version":"â€¦","commit":"â€¦"}`, including during a dependency outage | only when the process is dead or wedged                           |
 | `GET /health/ready`  | Readiness               | PostgreSQL `SELECT 1` + Redis `PING`, 2 s timeout each | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}`                       | RFC 9457 `503`, one `errors[]` item per failed or timed-out check |
 | `GET /api/v1/health` | Versioned liveness echo | none                                                   | `200`                                                                                  | process-level failure only                                        |
 
@@ -89,26 +89,26 @@ not RFC 9457 conforming.
 | `/api/v1/mcp/servers`     | `GET`  | Registered MCP servers, OPA-filtered                                                                                                                  |
 | `/api/v1/mcp/apps/{name}` | `GET`  | MCP Apps descriptor `{name, title, entry_url, capabilities, csp}`                                                                                     |
 
-`tools/list` order: verify bearer/OIDC → route from headers → Redis TTL cache or upstream
-list → OPA filter on every response (cache hit or miss) → return. Only the unfiltered
+`tools/list` order: verify bearer/OIDC â†’ route from headers â†’ Redis TTL cache or upstream
+list â†’ OPA filter on every response (cache hit or miss) â†’ return. Only the unfiltered
 upstream list is cached. A Redis failure is treated as a cache miss; an OPA failure returns
 an empty allowed set.
 
-`tools/call` order: verify bearer/OIDC → route from headers → parse the called tool →
-resolve tool metadata locally or from an already-valid cache entry with no upstream I/O →
-OPA authorise → invoke upstream only on allow. Invalid bearer, malformed call, unresolved
+`tools/call` order: verify bearer/OIDC â†’ route from headers â†’ parse the called tool â†’
+resolve tool metadata locally or from an already-valid cache entry with no upstream I/O â†’
+OPA authorise â†’ invoke upstream only on allow. Invalid bearer, malformed call, unresolved
 metadata, unknown tool, policy denial, and policy error all return before any upstream
 operation.
 
 Status codes: `400` for missing routing headers, `401` for token failures, `403` for policy
-denial, `404` for an unknown server or task, `504` for an upstream timeout — all as RFC 9457
+denial, `404` for an unknown server or task, `504` for an upstream timeout â€” all as RFC 9457
 problems.
 
 ### Tasks Extension
 
 Task states are `submitted`, `working`, `input_required`, `completed`, `failed`,
 `cancelled`. Terminal states absorb further transitions, and `tasks/cancel` on a terminal
-task returns that state with `200` — cancellation is idempotent. Records live in Redis so
+task returns that state with `200` â€” cancellation is idempotent. Records live in Redis so
 any replica can serve `tasks/get`; concurrent updates use compare-and-set so only one
 writer wins.
 
@@ -117,7 +117,7 @@ writer wins.
 The host page sets
 `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'`
 and the iframe carries `sandbox="allow-scripts allow-forms"` without `allow-same-origin`.
-The parent↔app channel is `postMessage` with the envelope `{v: 1, type, requestId, payload}`
+The parentâ†”app channel is `postMessage` with the envelope `{v: 1, type, requestId, payload}`
 and the parent drops messages whose origin does not match the descriptor origin. Phase 0
 ships one descriptor, for the agent's `agent.health` tool.
 
@@ -126,7 +126,7 @@ ships one descriptor, for the agent's `agent.health` tool.
 | Route                 | Method | Notes                                                                                                                    |
 | :-------------------- | :----- | :----------------------------------------------------------------------------------------------------------------------- |
 | `/api/v1/ai/tiers`    | `GET`  | The six tiers with protocol, availability reason, and circuit-breaker state                                              |
-| `/api/v1/ai/complete` | `POST` | Fixed order: OIDC verify → require `claims.sub` → Redis token-bucket limiter → semantic cache → registry/router/provider |
+| `/api/v1/ai/complete` | `POST` | Fixed order: OIDC verify â†’ require `claims.sub` â†’ Redis token-bucket limiter â†’ semantic cache â†’ registry/router/provider |
 
 Before admission completes, no semantic-cache or provider operation runs. Invalid bearer
 returns `401`; a Redis or limiter script failure fails closed with `503`; an exhausted
@@ -144,7 +144,7 @@ Malformed plan documents return RFC 9457 `422` with JSON-pointer field detail.
 ## Streaming
 
 Server-to-browser streaming uses SSE through FastAPI's native support with a fixed
-six-value event vocabulary; `sse-starlette` is not a dependency. The agent↔backend protocol
+six-value event vocabulary; `sse-starlette` is not a dependency. The agentâ†”backend protocol
 is JSON-RPC 2.0 over WSS, outbound-only, and in Phase 0 only the transport mechanics exist.
 
 <!-- BEGIN GENERATED ENDPOINTS -->
@@ -152,7 +152,7 @@ is JSON-RPC 2.0 over WSS, outbound-only, and in Phase 0 only the transport mecha
 <!-- Generated by scripts/dump-openapi.py from the live app. Do not edit by hand:
      `python scripts/dump-openapi.py --check` fails the build when this drifts. -->
 
-The application publishes **145 operations across 123 paths**.
+The application publishes **155 operations across 131 paths**.
 
 ### `agents`
 
@@ -245,6 +245,7 @@ The application publishes **145 operations across 123 paths**.
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/projects/{project_id}/deployments` | List Deployments | principal |
 | `POST` | `/api/v1/projects/{project_id}/deployments` | Request Deployment | principal |
+| `GET` | `/api/v1/projects/{project_id}/deployments/detected-manifests` | Get Detected Manifests | principal |
 | `GET` | `/api/v1/projects/{project_id}/deployments/rollback-target` | Rollback Target | principal |
 | `GET` | `/api/v1/projects/{project_id}/deployments/{deployment_id}` | Read Deployment | principal |
 | `GET` | `/api/v1/projects/{project_id}/deployments/{deployment_id}/logs` | Live deployment output as SSE `log` events | principal |
@@ -303,7 +304,12 @@ The application publishes **145 operations across 123 paths**.
 | `GET` | `/api/v1/integrations/github/callback` | Finish linking a GitHub account (browser redirect target) | public |
 | `POST` | `/api/v1/integrations/github/connect` | Begin linking a GitHub account | principal |
 | `GET` | `/api/v1/integrations/github/repositories` | The repositories this user's linked account can reach | principal |
+| `POST` | `/api/v1/integrations/github/repositories` | Create a new GitHub repository for this user | principal |
 | `PUT` | `/api/v1/integrations/github/token` | Link a GitHub account with a token, without leaving ForgeOps | principal |
+| `GET` | `/api/v1/integrations/vercel` | Get current user's Vercel integration status | principal |
+| `DELETE` | `/api/v1/integrations/vercel` | Disconnect Vercel account | principal |
+| `POST` | `/api/v1/integrations/vercel/test` | Test current Vercel connection | principal |
+| `PUT` | `/api/v1/integrations/vercel/token` | Link a Vercel account with a personal access token | principal |
 
 ### `knowledge`
 
@@ -382,10 +388,14 @@ The application publishes **145 operations across 123 paths**.
 | `POST` | `/api/v1/projects/{project_id}/clone` | Clone the project's GitHub repository onto the paired agent's machine | principal |
 | `PUT` | `/api/v1/projects/{project_id}/favourite` | Mark as this caller's favourite | principal |
 | `DELETE` | `/api/v1/projects/{project_id}/favourite` | Unstar | principal |
+| `POST` | `/api/v1/projects/{project_id}/github/push` | Push project codebase to GitHub | principal |
 | `GET` | `/api/v1/projects/{project_id}/readiness` | Readiness score | principal |
+| `POST` | `/api/v1/projects/{project_id}/scan` | Trigger an agent codebase scan for this project | principal |
 | `PUT` | `/api/v1/projects/{project_id}/tags` | Add a tag to a project | principal |
 | `DELETE` | `/api/v1/projects/{project_id}/tags/{tag}` | Remove a tag | principal |
 | `POST` | `/api/v1/projects/{project_id}/unarchive` | Restore an archived project | principal |
+| `GET` | `/api/v1/projects/{project_id}/vercel/config-check` | Check project Vercel deployment configuration | principal |
+| `POST` | `/api/v1/projects/{project_id}/vercel/deploy` | Deploy project to Vercel | principal |
 
 ### `releases`
 

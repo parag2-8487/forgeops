@@ -640,6 +640,11 @@
             "title": "Items",
             "type": "array"
           },
+          "operation": {
+            "default": "changeset.apply",
+            "title": "Operation",
+            "type": "string"
+          },
           "origin": {
             "title": "Origin",
             "type": "string"
@@ -764,6 +769,11 @@
           "id": {
             "format": "uuid",
             "title": "Id",
+            "type": "string"
+          },
+          "operation": {
+            "default": "changeset.apply",
+            "title": "Operation",
             "type": "string"
           },
           "origin": {
@@ -1209,6 +1219,37 @@
         "title": "ContainerActionRequest",
         "type": "object"
       },
+      "CreateRepositoryRequest": {
+        "properties": {
+          "auto_init": {
+            "default": false,
+            "title": "Auto Init",
+            "type": "boolean"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "private": {
+            "default": true,
+            "title": "Private",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateRepositoryRequest",
+        "type": "object"
+      },
       "CustomEndpointRequest": {
         "description": "An endpoint an operator is defining.\n\nONLY `openai_compatible` IS ACCEPTED, because it is the only protocol with a client. Accepting a\nprotocol name we cannot speak would let an operator configure something that can never work and then\nwonder why \u2014 which is the defect this whole area is correcting, in a new place.\n\nNO `id` FIELD: it comes from the path. See `normalise_endpoint_id`.",
         "properties": {
@@ -1350,6 +1391,11 @@
       "DeploymentRequest": {
         "description": "What an operator asks for.",
         "properties": {
+          "auto_approve": {
+            "default": false,
+            "title": "Auto Approve",
+            "type": "boolean"
+          },
           "cluster_context": {
             "anyOf": [
               {
@@ -1377,7 +1423,6 @@
             "items": {
               "type": "string"
             },
-            "minItems": 1,
             "title": "Manifests",
             "type": "array"
           },
@@ -1400,8 +1445,7 @@
           }
         },
         "required": [
-          "environment_id",
-          "manifests"
+          "environment_id"
         ],
         "title": "DeploymentRequest",
         "type": "object"
@@ -2093,7 +2137,7 @@
             "type": "string"
           },
           "prompt": {
-            "maxLength": 4000,
+            "maxLength": 16000,
             "minLength": 1,
             "title": "Prompt",
             "type": "string"
@@ -2426,6 +2470,107 @@
           "repo_full_name"
         ],
         "title": "GitHubProjectRequest",
+        "type": "object"
+      },
+      "GitHubPushRequest": {
+        "properties": {
+          "branch": {
+            "default": "main",
+            "maxLength": 100,
+            "title": "Branch",
+            "type": "string"
+          },
+          "commit_message": {
+            "default": "Deploy from ForgeOps",
+            "maxLength": 200,
+            "title": "Commit Message",
+            "type": "string"
+          },
+          "mode": {
+            "default": "existing",
+            "enum": [
+              "existing",
+              "new"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "new_repo_description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "New Repo Description",
+            "type": "string"
+          },
+          "new_repo_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Repository name when mode is new",
+            "title": "New Repo Name"
+          },
+          "new_repo_private": {
+            "default": true,
+            "title": "New Repo Private",
+            "type": "boolean"
+          },
+          "repo_full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "e.g. 'owner/repo' when mode is existing",
+            "title": "Repo Full Name"
+          }
+        },
+        "title": "GitHubPushRequest",
+        "type": "object"
+      },
+      "GitHubPushResponse": {
+        "properties": {
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "files_count": {
+            "title": "Files Count",
+            "type": "integer"
+          },
+          "repo_full_name": {
+            "title": "Repo Full Name",
+            "type": "string"
+          },
+          "repo_url": {
+            "title": "Repo Url",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "repo_full_name",
+          "repo_url",
+          "branch",
+          "commit_sha",
+          "files_count"
+        ],
+        "title": "GitHubPushResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -4968,6 +5113,243 @@
           "value"
         ],
         "title": "VariableWrite",
+        "type": "object"
+      },
+      "VercelConfigCheckResponse": {
+        "properties": {
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "framework_display": {
+            "title": "Framework Display",
+            "type": "string"
+          },
+          "has_vercel_json": {
+            "title": "Has Vercel Json",
+            "type": "boolean"
+          },
+          "needs_vercel_json": {
+            "title": "Needs Vercel Json",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "suggested_vercel_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Vercel Json"
+          }
+        },
+        "required": [
+          "framework",
+          "framework_display",
+          "has_vercel_json",
+          "needs_vercel_json",
+          "reason"
+        ],
+        "title": "VercelConfigCheckResponse",
+        "type": "object"
+      },
+      "VercelDeployRequest": {
+        "properties": {
+          "auto_configure_spa": {
+            "default": true,
+            "description": "Automatically supply vercel.json SPA rewrites if needed",
+            "title": "Auto Configure Spa",
+            "type": "boolean"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Custom Vercel project name",
+            "title": "Project Name"
+          },
+          "vercel_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Vercel Access Token (optional if linked in Settings \u2192 Integrations)",
+            "title": "Vercel Token"
+          }
+        },
+        "title": "VercelDeployRequest",
+        "type": "object"
+      },
+      "VercelDeployResponse": {
+        "properties": {
+          "configured_vercel_json": {
+            "title": "Configured Vercel Json",
+            "type": "boolean"
+          },
+          "deployment_id": {
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "inspector_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inspector Url"
+          },
+          "ready_state": {
+            "title": "Ready State",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "deployment_id",
+          "url",
+          "inspector_url",
+          "ready_state",
+          "framework",
+          "configured_vercel_json"
+        ],
+        "title": "VercelDeployResponse",
+        "type": "object"
+      },
+      "VercelLinkStatus": {
+        "properties": {
+          "configured": {
+            "default": true,
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "connected": {
+            "default": false,
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "last_test_detail": {
+            "default": "",
+            "title": "Last Test Detail",
+            "type": "string"
+          },
+          "last_test_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Test Ok"
+          },
+          "last_tested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Tested At"
+          },
+          "token_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Hint"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "title": "VercelLinkStatus",
+        "type": "object"
+      },
+      "VercelTokenLinkRequest": {
+        "properties": {
+          "token": {
+            "maxLength": 200,
+            "minLength": 10,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "VercelTokenLinkRequest",
         "type": "object"
       },
       "WebhookAccepted": {
@@ -7878,6 +8260,46 @@
         "tags": [
           "integrations"
         ]
+      },
+      "post": {
+        "description": "Create a new GitHub repository (public or private) under the user's linked account.",
+        "operationId": "create_github_repository_api_v1_integrations_github_repositories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRepositoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a new GitHub repository for this user",
+        "tags": [
+          "integrations"
+        ]
       }
     },
     "/api/v1/integrations/github/token": {
@@ -7917,6 +8339,112 @@
           }
         },
         "summary": "Link a GitHub account with a token, without leaving ForgeOps",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/v1/integrations/vercel": {
+      "delete": {
+        "description": "Disconnect and delete the user's stored Vercel token.",
+        "operationId": "disconnect_vercel_api_v1_integrations_vercel_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VercelLinkStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Disconnect Vercel account",
+        "tags": [
+          "integrations"
+        ]
+      },
+      "get": {
+        "description": "Check if the current user has linked a Vercel account.",
+        "operationId": "get_vercel_status_api_v1_integrations_vercel_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VercelLinkStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get current user's Vercel integration status",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/v1/integrations/vercel/test": {
+      "post": {
+        "description": "Test the stored Vercel token live against api.vercel.com.",
+        "operationId": "test_vercel_connection_api_v1_integrations_vercel_test_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VercelLinkStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Test current Vercel connection",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/v1/integrations/vercel/token": {
+      "put": {
+        "description": "Validate a Vercel Access Token and store it sealed for the user.",
+        "operationId": "link_vercel_token_api_v1_integrations_vercel_token_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VercelTokenLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VercelLinkStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Link a Vercel account with a personal access token",
         "tags": [
           "integrations"
         ]
@@ -9460,6 +9988,52 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/deployments/detected-manifests": {
+      "get": {
+        "description": "Auto-detect Kubernetes manifests from the project's indexed file tree.",
+        "operationId": "get_detected_manifests_api_v1_projects__project_id__deployments_detected_manifests_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Detected Manifests Api V1 Projects  Project Id  Deployments Detected Manifests Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Detected Manifests",
+        "tags": [
+          "deployments"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/deployments/rollback-target": {
       "get": {
         "description": "The newest STABLE deployment of an environment \u2014 what a rollback would restore.\n\nReturns `{\"target\": null}` with a reason rather than a 404 when there is not one. An environment whose\nonly deployment was degraded genuinely has nothing to roll back to, and that is an answer; a 404 would\nread as \"this endpoint is wrong\".\n\n`stable` is set on HEALTH, not on apply, which is what makes this trustworthy: a deployment whose\nworkloads never converged is not a state to return to.",
@@ -9883,7 +10457,7 @@
             "name": "stats",
             "required": false,
             "schema": {
-              "default": false,
+              "default": true,
               "description": "Sample CPU, memory and network per running container. Costs about a second of wall time, so a list view can omit it; every measured field is null when it is omitted, never zero.",
               "title": "Stats",
               "type": "boolean"
@@ -10393,6 +10967,60 @@
           }
         },
         "summary": "Mark as this caller's favourite",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/github/push": {
+      "post": {
+        "description": "Push the project's codebase directly to a new or existing GitHub repository.",
+        "operationId": "push_project_github_api_v1_projects__project_id__github_push_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubPushRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubPushResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push project codebase to GitHub",
         "tags": [
           "projects"
         ]
@@ -11694,6 +12322,66 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/scan": {
+      "post": {
+        "description": "Trigger an agent codebase scan for this project and wait for the result.",
+        "operationId": "scan_project_codebase_api_v1_projects__project_id__scan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum time in seconds to wait for the agent scan. Defaults to 900s (15 minutes).",
+            "in": "query",
+            "name": "timeout_seconds",
+            "required": false,
+            "schema": {
+              "default": 900.0,
+              "description": "Maximum time in seconds to wait for the agent scan. Defaults to 900s (15 minutes).",
+              "maximum": 1800.0,
+              "minimum": 10.0,
+              "title": "Timeout Seconds",
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Scan Project Codebase Api V1 Projects  Project Id  Scan Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger an agent codebase scan for this project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/tags": {
       "put": {
         "description": "Add one tag. Idempotent, and bounded.\n\nPUT rather than POST because adding a tag that is already there is not a second tag \u2014\n`ON CONFLICT DO NOTHING` against `uq_project_tags_project_id_tag` makes the operation\nidempotent, which is what PUT promises and POST does not.",
@@ -11850,6 +12538,104 @@
           }
         },
         "summary": "Restore an archived project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/vercel/config-check": {
+      "get": {
+        "description": "Inspect project files and framework to determine if vercel.json is needed.",
+        "operationId": "check_project_vercel_api_v1_projects__project_id__vercel_config_check_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VercelConfigCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check project Vercel deployment configuration",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/vercel/deploy": {
+      "post": {
+        "description": "Deploy the project's codebase to Vercel and return the live deployment URL.",
+        "operationId": "deploy_project_vercel_api_v1_projects__project_id__vercel_deploy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VercelDeployRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VercelDeployResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Deploy project to Vercel",
         "tags": [
           "projects"
         ]
