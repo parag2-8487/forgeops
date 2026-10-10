@@ -38,7 +38,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from ..auth.dependencies import require_principal
-from ..auth.devices import DeviceService
 from ..auth.principal import Principal
 from ..core.db import get_session
 from ..core.errors import ProblemException, problem
@@ -75,18 +74,40 @@ async def _check_agent_connected(
 ) -> bool:
     """Inspects active agent device status and ensures heartbeat was recorded within 30 seconds."""
     device_service = getattr(request_or_app_state, "device_service", None)
-    if device_service is None:
-        device_service = DeviceService()
+    if device_service is None and hasattr(request_or_app_state, "app"):
+        device_service = getattr(request_or_app_state.app.state, "device_service", None)
+    if device_service is None and hasattr(request_or_app_state, "state"):
+        device_service = getattr(request_or_app_state.state, "device_service", None)
 
-    active_device = await device_service.active_device_for(session, project_id)
-    if active_device is None or active_device.last_seen is None:
+    if device_service is not None and hasattr(device_service, "active_device_for"):
+        active_device = await device_service.active_device_for(session, project_id)
+        if active_device is None or getattr(active_device, "last_seen", None) is None:
+            return False
+        now = datetime.now(UTC)
+        last_seen = active_device.last_seen
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=UTC)
+        delta = (now - last_seen).total_seconds()
+        return delta <= 30.0
+
+    from sqlalchemy import text
+
+    result = await session.execute(
+        text(
+            "SELECT last_seen FROM agent_devices WHERE project_id = :project AND status = 'active' "
+            "ORDER BY last_seen DESC NULLS LAST, created_at DESC LIMIT 1"
+        ),
+        {"project": project_id},
+    )
+    row = result.first()
+    if row is None or row[0] is None:
         return False
-
     now = datetime.now(UTC)
-    last_seen = active_device.last_seen
+    last_seen = row[0]
+    if isinstance(last_seen, str):
+        last_seen = datetime.fromisoformat(last_seen)
     if last_seen.tzinfo is None:
         last_seen = last_seen.replace(tzinfo=UTC)
-
     delta = (now - last_seen).total_seconds()
     return delta <= 30.0
 
