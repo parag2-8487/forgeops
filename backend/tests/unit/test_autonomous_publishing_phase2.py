@@ -663,6 +663,55 @@ class TestCrashRecoveryAndIdempotencyBoundaries:
         assert stage.stage_metadata["payload_digest"] == m_digest
 
     @pytest.mark.asyncio
+    async def test_boundary_2_direct_push_pre_put_recovery_adopts_commit_zero_puts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        session = MockAsyncSession()
+        run = _create_run(publishing_mode="direct_push")
+        m_bytes, m_digest = build_deployment_manifest(run.id, run.created_at)
+        existing_commit_sha = "c_recovered_before_put"
+        put_requests: list[httpx.Request] = []
+
+        async def fake_handler(req: httpx.Request) -> httpx.Response:
+            url = str(req.url)
+            if "/git/ref/heads/main" in url:
+                return httpx.Response(200, json={"object": {"sha": "base0"}})
+            if "/contents/forgeops-autonomous-deploy.txt" in url:
+                if req.method == "GET":
+                    # Manifest already on branch with matching content and digest
+                    return httpx.Response(200, json={
+                        "sha": "blob_sha_123",
+                        "content": base64.b64encode(m_bytes).decode("ascii"),
+                    })
+                if req.method == "PUT":
+                    put_requests.append(req)
+                    return httpx.Response(201, json={"commit": {"sha": "duplicate_sha"}})
+            if "/commits" in url:
+                return httpx.Response(200, json=[
+                    {
+                        "sha": existing_commit_sha,
+                        "commit": {"message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"},
+                    },
+                    {"sha": "base0", "commit": {"message": "initial commit"}},
+                ])
+            if f"/compare/{existing_commit_sha}...main" in url:
+                return httpx.Response(200, json={"behind_by": 0, "status": "identical"})
+            return httpx.Response(404)
+
+        transport = httpx.MockTransport(fake_handler)
+        monkeypatch.setattr(httpx, "AsyncClient", _mock_client_factory(transport))
+
+        result = await execute_github_release(session, run, context={"github_token": "dummy_token"})
+
+        assert result.passed is True
+        assert result.status == "succeeded"
+        assert result.details["commit_sha"] == existing_commit_sha
+        # Crucial regression check: zero PUT requests made because commit was adopted before write
+        assert len(put_requests) == 0
+        stage = run.stages[0]
+        assert stage.stage_metadata["commit_sha"] == existing_commit_sha
+        assert stage.stage_metadata["publishing_mode"] == "direct_push"
+        assert stage.stage_metadata["payload_digest"] == m_digest
+
+    @pytest.mark.asyncio
     async def test_boundary_2_pr_worker_crashed_after_push_recovers_commit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         session = MockAsyncSession()
         run = _create_run(publishing_mode="pull_request")
