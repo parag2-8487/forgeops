@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Live integration tests for GitHub release execution and Vercel credential boundary.
+"""Live integration tests for GitHub and Vercel execution and boundary verification.
 
 Verifies:
-1. Live GitHub push against disposable test repository `parag8487/test-forgeops`.
-2. Remote commit SHA verification via GitHub REST API.
-3. Persisted G7 gate verification of active GitHub target.
+1. Live GitHub push against disposable test repository parag8487/test-forgeops.
+2. Live Vercel preview deployment to disposable project forgeops-preview-test.
+3. Live combined Docker, GitHub, and Vercel pipeline execution and G7 verification.
 4. Clean stop at Vercel missing-credential boundary without inventing cloud deployment.
 """
 
@@ -23,10 +23,12 @@ from src.auth.models import User  # noqa: F401
 from src.deployments.autonomous_gates import (
     STAGE_G7_VERIFICATION,
     STAGE_GITHUB_RELEASE,
+    STAGE_VERCEL_DEPLOY,
 )
 from src.deployments.autonomous_schemas import (
     CreateAutonomousRunRequest,
     DeploymentStrategy,
+    DockerConfigRequest,
     GitHubConfigRequest,
     VercelConfigRequest,
 )
@@ -97,6 +99,36 @@ async def unsealed_github_token() -> tuple[uuid.UUID, str]:
 
 
 @pytest_asyncio.fixture()
+async def unsealed_vercel_token() -> str:
+    """Retrieves and unseals active Vercel token for user parag8487 from primary database."""
+    pepper = _load_envelope_pepper()
+    if not pepper:
+        pytest.skip("ENVELOPE_PEPPER not configured in .env")
+
+    key = derive_link_key(pepper)
+    engine = create_async_engine(_PRIMARY_URL, echo=False, poolclass=NullPool)
+    async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    user_id = uuid.UUID("fe5aa283-2f7e-43cc-a440-259e09a53dae")
+    async with async_session() as session:
+        res = await session.execute(
+            text(
+                "SELECT encrypted_value FROM provider_credentials "
+                "WHERE key_ref = :ref"
+            ),
+            {"ref": f"vercel:{user_id}"},
+        )
+        row = res.fetchone()
+
+    await engine.dispose()
+
+    if not row or not row[0]:
+        pytest.skip("No linked Vercel credential found for user parag8487")
+
+    return unseal_token(bytes(row[0]), user_id=user_id, key=key)
+
+
+@pytest_asyncio.fixture()
 async def db_session_factory():
     """Provides sessionmaker bound to disposable PostgreSQL staging database."""
     engine = create_async_engine(_DISPOSABLE_URL, echo=False, poolclass=NullPool)
@@ -123,7 +155,7 @@ async def test_project_id(db_session_factory) -> uuid.UUID:
 
 
 class TestLiveGitHubAndVercelBoundaries:
-    """Verifies live GitHub remote commit execution and Vercel unconfigured boundary."""
+    """Verifies live GitHub remote commit execution and Vercel preview deployment."""
 
     async def test_live_github_push_and_g7_verification(
         self,
@@ -216,6 +248,161 @@ class TestLiveGitHubAndVercelBoundaries:
             assert resp.status_code == 200, f"GitHub API rejected commit lookup: {resp.text}"
             commit_data = resp.json()
             assert commit_data.get("sha") == commit_sha
+
+    async def test_live_vercel_only_preview_deployment(
+        self,
+        db_session_factory,
+        test_project_id: uuid.UUID,
+        unsealed_github_token: tuple[uuid.UUID, str],
+        unsealed_vercel_token: str,
+    ) -> None:
+        """Executes a real Vercel preview deployment pipeline for vercel_only strategy."""
+        user_id, _ = unsealed_github_token
+        target_project = "forgeops-preview-test"
+
+        # 1. Create Autonomous Run for VERCEL_ONLY
+        service = AutonomousDeploymentService()
+        req = CreateAutonomousRunRequest(
+            strategy=DeploymentStrategy.VERCEL_ONLY,
+            vercel_config=VercelConfigRequest(
+                project_name=target_project,
+            ),
+        )
+
+        async with db_session_factory() as session:
+            async with session.begin():
+                run, created = await service.create_run(
+                    session,
+                    project_id=test_project_id,
+                    requested_by=user_id,
+                    request=req,
+                )
+                assert created is True
+                run_id = run.id
+
+        # 2. Worker executes the pipeline with live Vercel execution enabled
+        async with db_session_factory() as session:
+            final_run = await run_pipeline(
+                session,
+                run_id=run_id,
+                worker_id="live-vercel-validator",
+                context={
+                    "vercel_token": unsealed_vercel_token,
+                    "verify_live_vercel": True,
+                },
+            )
+            await session.commit()
+
+        # 3. Verify run status settled to succeeded
+        assert final_run.status == "succeeded"
+
+        # 4. Verify Vercel Deploy Stage output
+        v_stage = next(s for s in final_run.stages if s.stage_name == STAGE_VERCEL_DEPLOY)
+        assert v_stage.status == "succeeded"
+        v_meta = v_stage.stage_metadata or {}
+        dep_id = v_meta.get("deployment_id")
+        dep_url = v_meta.get("deployment_url")
+        assert dep_id is not None and dep_id.startswith("dpl_")
+        assert dep_url is not None and "vercel.app" in dep_url
+        assert v_meta.get("live") is True
+
+        # 5. Verify G7 Gate Output
+        g7_stage = next(s for s in final_run.stages if s.stage_name == STAGE_G7_VERIFICATION)
+        assert g7_stage.status == "succeeded"
+        g7_meta = g7_stage.stage_metadata or {}
+        targets = g7_meta.get("targets") or g7_meta.get("target_results") or {}
+        assert targets.get("vercel") == "verified"
+        assert targets.get("github") == "not_applicable"
+        assert targets.get("docker") == "not_applicable"
+
+        # 6. Independent live probe to Vercel API verifying deployment status
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(
+                f"https://api.vercel.com/v13/deployments/{dep_id}",
+                headers={
+                    _AUTH_HEADER: f"{_BEARER_PREFIX}{unsealed_vercel_token}",
+                },
+            )
+            assert resp.status_code == 200, f"Vercel API rejected deployment lookup: {resp.text}"
+            dep_data = resp.json()
+            assert dep_data.get("readyState") in ("READY", "BUILDING", "INITIALIZING")
+
+    async def test_live_docker_github_vercel_combined_deployment(
+        self,
+        db_session_factory,
+        test_project_id: uuid.UUID,
+        unsealed_github_token: tuple[uuid.UUID, str],
+        unsealed_vercel_token: str,
+    ) -> None:
+        """Executes a complete combined deployment across real Docker, live GitHub, and live Vercel."""
+        user_id, gh_token = unsealed_github_token
+        gh_repo = "parag8487/test-forgeops"
+        vercel_proj = "forgeops-preview-test"
+
+        service = AutonomousDeploymentService()
+        req = CreateAutonomousRunRequest(
+            strategy=DeploymentStrategy.DOCKER_GITHUB_VERCEL,
+            docker_config=DockerConfigRequest(
+                dockerfile_path="./Dockerfile",
+            ),
+            github_config=GitHubConfigRequest(
+                repository_name=gh_repo,
+                target_branch="main",
+            ),
+            vercel_config=VercelConfigRequest(
+                project_name=vercel_proj,
+            ),
+        )
+
+        async with db_session_factory() as session:
+            async with session.begin():
+                run, created = await service.create_run(
+                    session,
+                    project_id=test_project_id,
+                    requested_by=user_id,
+                    request=req,
+                )
+                assert created is True
+                run_id = run.id
+
+        # Execute full combined pipeline with all 3 live targets enabled
+        async with db_session_factory() as session:
+            final_run = await run_pipeline(
+                session,
+                run_id=run_id,
+                worker_id="live-combined-validator",
+                context={
+                    "github_token": gh_token,
+                    "verify_live_github": True,
+                    "vercel_token": unsealed_vercel_token,
+                    "verify_live_vercel": True,
+                },
+            )
+            await session.commit()
+
+        # Verify full pipeline success across all 9 stages
+        assert final_run.status == "succeeded"
+        assert len(final_run.stages) == 9
+
+        # Verify G7 multi-target verification verified all 3 active targets
+        g7_stage = next(s for s in final_run.stages if s.stage_name == STAGE_G7_VERIFICATION)
+        assert g7_stage.status == "succeeded"
+        g7_meta = g7_stage.stage_metadata or {}
+        targets = g7_meta.get("targets") or g7_meta.get("target_results") or {}
+        assert targets.get("docker") == "verified"
+        assert targets.get("github") == "verified"
+        assert targets.get("vercel") == "verified"
+
+        # Verify GitHub stage recorded live commit
+        gh_stage = next(s for s in final_run.stages if s.stage_name == STAGE_GITHUB_RELEASE)
+        assert gh_stage.status == "succeeded"
+        assert gh_stage.stage_metadata.get("live") is True
+
+        # Verify Vercel stage recorded live preview deployment
+        v_stage = next(s for s in final_run.stages if s.stage_name == STAGE_VERCEL_DEPLOY)
+        assert v_stage.status == "succeeded"
+        assert v_stage.stage_metadata.get("live") is True
+        assert v_stage.stage_metadata.get("deployment_id", "").startswith("dpl_")
 
     async def test_vercel_unconfigured_credentials_boundary(
         self,

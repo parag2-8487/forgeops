@@ -538,6 +538,38 @@ async def evaluate_g7_final_verification(
             except Exception:
                 target_results["github"] = "failed"
 
+    if "vercel" in active_targets and _get_ctx(context, "verify_live_vercel", False):
+        live_vercel_token = _get_ctx(context, "vercel_token")
+        stage_vercel = next((s for s in (run.stages or []) if s.stage_name == STAGE_VERCEL_DEPLOY), None)
+        dep_id = None
+        if stage_vercel:
+            v_meta = (
+                getattr(stage_vercel, "stage_metadata", None)
+                or getattr(stage_vercel, "metadata_payload", None)
+                or {}
+            )
+            dep_id = v_meta.get("deployment_id")
+        if live_vercel_token and dep_id:
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    v_resp = await client.get(
+                        f"https://api.vercel.com/v13/deployments/{dep_id}",
+                        headers={
+                            _AUTH_HEADER: f"{_BEARER_PREFIX}{live_vercel_token}",
+                        },
+                    )
+                    if v_resp.status_code == 200:
+                        v_data = v_resp.json()
+                        ready_state = v_data.get("readyState")
+                        if ready_state in ("READY", "BUILDING", "INITIALIZING"):
+                            target_results["vercel"] = "verified"
+                        else:
+                            target_results["vercel"] = "failed"
+                    else:
+                        target_results["vercel"] = "failed"
+            except Exception:
+                target_results["vercel"] = "failed"
+
     overall_passed = all(
         target_results[t] == "verified"
         for t in active_targets
@@ -700,6 +732,72 @@ async def execute_vercel_deploy(
     config = run.configuration or {}
     v_cfg = config.get("vercel_config") or {}
     proj = v_cfg.get("project_name", "app")
+
+    live_token = _get_ctx(context, "vercel_token")
+    if live_token:
+        html_doc = (
+            f"<!DOCTYPE html><html><body><h1>ForgeOps Autonomous Deployment Run {run.id}</h1>"
+            f"<p>Deployed: {datetime.now(UTC).isoformat()}</p></body></html>"
+        ).encode()
+        payload = {
+            "name": proj,
+            "files": [
+                {
+                    "file": "index.html",
+                    "data": base64.b64encode(html_doc).decode("ascii"),
+                    "encoding": "base64",
+                }
+            ],
+            "projectSettings": {},
+        }
+        headers = {
+            _AUTH_HEADER: f"{_BEARER_PREFIX}{live_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    "https://api.vercel.com/v13/deployments",
+                    headers=headers,
+                    json=payload,
+                )
+                if resp.status_code not in (200, 201):
+                    return GateResult(
+                        gate_id="",
+                        passed=False,
+                        status="failed",
+                        message=f"Vercel cloud deployment failed ({resp.status_code}): {resp.text}",
+                        details={"error": resp.text, "status_code": resp.status_code},
+                    )
+                data = resp.json()
+                dep_id = data.get("id", "")
+                raw_url = data.get("url", "")
+                deployment_url = f"https://{raw_url}" if raw_url and not raw_url.startswith("http") else raw_url
+                ready_state = data.get("readyState", "INITIALIZING")
+                inspector_url = data.get("inspectorUrl")
+                return GateResult(
+                    gate_id="",
+                    passed=True,
+                    status="succeeded",
+                    message=f"Vercel deployment created successfully at {deployment_url}",
+                    details={
+                        "project_name": proj,
+                        "deployment_id": dep_id,
+                        "deployment_url": deployment_url,
+                        "ready_state": ready_state,
+                        "inspector_url": inspector_url,
+                        "live": True,
+                    },
+                )
+        except Exception as exc:
+            return GateResult(
+                gate_id="",
+                passed=False,
+                status="failed",
+                message=f"Vercel deployment network exception: {exc}",
+                details={"error": str(exc)},
+            )
+
     deployment_id = f"dpl_{uuid.uuid4().hex[:12]}"
     deployment_url = f"https://{proj}.vercel.app"
 
