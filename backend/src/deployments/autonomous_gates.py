@@ -888,81 +888,110 @@ async def execute_github_release(
                         details={"error": "cancelled"},
                     )
 
-                # 5. Issue PUT to Contents API
-                put_payload: dict[str, Any] = {
-                    "message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}",
-                    "content": base64.b64encode(manifest_bytes).decode("ascii"),
-                    "branch": target_branch,
-                }
-                if existing_blob_sha is not None:
-                    put_payload["sha"] = existing_blob_sha
-
-                put_resp = await client.put(contents_url, headers=headers, json=put_payload)
                 commit_sha: str = ""
 
-                if put_resp.status_code in (200, 201):
-                    commit_sha = put_resp.json().get("commit", {}).get("sha", "")
-                    # Verify reachability via Compare API
-                    comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}"
-                    comp_resp = await client.get(comp_url, headers=headers)
-                    comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
-                    if not (comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical")):
-                        msg = f"Commit '{commit_sha}' is not reachable on target branch '{target_branch}' (compare status: '{comp_data.get('status')}', behind_by: {comp_data.get('behind_by')})."
-                        return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
-
-                elif put_resp.status_code in (409, 422):
-                    # Bounded manifest conflict reconciliation up to 5 pages / 150 commits
-                    match_found = False
-                    for page in range(1, 6):
-                        commits_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/commits"
-                        commits_resp = await client.get(
-                            commits_url,
-                            headers=headers,
-                            params={"path": "forgeops-autonomous-deploy.txt", "sha": target_branch, "per_page": 30, "page": page},
-                        )
-                        if commits_resp.status_code != 200:
-                            break
-                        c_list = commits_resp.json()
-                        if not isinstance(c_list, list) or not c_list:
-                            break
-
-                        for candidate in c_list:
-                            c_sha = candidate.get("sha")
-                            c_msg = candidate.get("commit", {}).get("message", "")
-                            expected_msg = f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"
-
-                            # Stopping condition 1: Exact run commit match
-                            if expected_msg in c_msg:
-                                # Verify payload digest
-                                c_mf_resp = await client.get(contents_url, headers=headers, params={"ref": c_sha})
-                                if c_mf_resp.status_code == 200:
-                                    c_bytes = base64.b64decode(c_mf_resp.json().get("content", ""))
-                                    if hashlib.sha256(c_bytes).hexdigest() == payload_digest:
-                                        # Verify reachability
-                                        comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(c_sha, safe='')}...{quote(target_branch, safe='')}"
+                # Check if target branch already has our run's manifest commit (recovery before duplicate write)
+                if existing_blob_sha is not None:
+                    try:
+                        c_data = c_resp.json()
+                        existing_content_bytes = base64.b64decode(c_data.get("content", ""))
+                        if hashlib.sha256(existing_content_bytes).hexdigest() == payload_digest:
+                            commits_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/commits"
+                            c_hist_resp = await client.get(
+                                commits_url,
+                                headers=headers,
+                                params={"path": "forgeops-autonomous-deploy.txt", "sha": target_branch, "per_page": 5},
+                            )
+                            if c_hist_resp.status_code == 200:
+                                for candidate in c_hist_resp.json():
+                                    cand_sha = candidate.get("sha")
+                                    cand_msg = candidate.get("commit", {}).get("message", "")
+                                    expected_msg = f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"
+                                    if expected_msg in cand_msg:
+                                        comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(cand_sha, safe='')}...{quote(target_branch, safe='')}"
                                         comp_resp = await client.get(comp_url, headers=headers)
                                         comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
                                         if comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical"):
-                                            commit_sha = c_sha
-                                            match_found = True
+                                            commit_sha = cand_sha
                                             break
-                            # Stopping condition 2: Base boundary reached
-                            if c_sha == base_sha:
-                                break
-                        if match_found or (c_list and any(c.get("sha") == base_sha for c in c_list)):
-                            break
+                    except Exception:
+                        pass
 
-                    if not commit_sha:
-                        msg = f"Target branch '{target_branch}' write conflict: could not reconcile run commit or branch diverged."
-                        return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
-                else:
-                    return GateResult(
-                        gate_id="",
-                        passed=False,
-                        status="failed",
-                        message=f"GitHub release Contents API write failed ({put_resp.status_code}): {put_resp.text}",
-                        details={"error": put_resp.text, "status_code": put_resp.status_code},
-                    )
+                # 5. Issue PUT to Contents API if commit not already present
+                if not commit_sha:
+                    put_payload: dict[str, Any] = {
+                        "message": f"feat(deploy): autonomous deployment run {str(run.id)[:8]}",
+                        "content": base64.b64encode(manifest_bytes).decode("ascii"),
+                        "branch": target_branch,
+                    }
+                    if existing_blob_sha is not None:
+                        put_payload["sha"] = existing_blob_sha
+
+                    put_resp = await client.put(contents_url, headers=headers, json=put_payload)
+
+                    if put_resp.status_code in (200, 201):
+                        commit_sha = put_resp.json().get("commit", {}).get("sha", "")
+                        # Verify reachability via Compare API
+                        comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(commit_sha, safe='')}...{quote(target_branch, safe='')}"
+                        comp_resp = await client.get(comp_url, headers=headers)
+                        comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
+                        if not (comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical")):
+                            msg = f"Commit '{commit_sha}' is not reachable on target branch '{target_branch}' (compare status: '{comp_data.get('status')}', behind_by: {comp_data.get('behind_by')})."
+                            return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
+
+                    elif put_resp.status_code in (409, 422):
+                        # Bounded manifest conflict reconciliation up to 5 pages / 150 commits
+                        match_found = False
+                        for page in range(1, 6):
+                            commits_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/commits"
+                            commits_resp = await client.get(
+                                commits_url,
+                                headers=headers,
+                                params={"path": "forgeops-autonomous-deploy.txt", "sha": target_branch, "per_page": 30, "page": page},
+                            )
+                            if commits_resp.status_code != 200:
+                                break
+                            c_list = commits_resp.json()
+                            if not isinstance(c_list, list) or not c_list:
+                                break
+
+                            for candidate in c_list:
+                                c_sha = candidate.get("sha")
+                                c_msg = candidate.get("commit", {}).get("message", "")
+                                expected_msg = f"feat(deploy): autonomous deployment run {str(run.id)[:8]}"
+
+                                # Stopping condition 1: Exact run commit match
+                                if expected_msg in c_msg:
+                                    # Verify payload digest
+                                    c_mf_resp = await client.get(contents_url, headers=headers, params={"ref": c_sha})
+                                    if c_mf_resp.status_code == 200:
+                                        c_bytes = base64.b64decode(c_mf_resp.json().get("content", ""))
+                                        if hashlib.sha256(c_bytes).hexdigest() == payload_digest:
+                                            # Verify reachability
+                                            comp_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}/compare/{quote(c_sha, safe='')}...{quote(target_branch, safe='')}"
+                                            comp_resp = await client.get(comp_url, headers=headers)
+                                            comp_data = comp_resp.json() if comp_resp.status_code == 200 else {}
+                                            if comp_resp.status_code == 200 and comp_data.get("behind_by") == 0 and comp_data.get("status") in ("ahead", "identical"):
+                                                commit_sha = c_sha
+                                                match_found = True
+                                                break
+                                # Stopping condition 2: Base boundary reached
+                                if c_sha == base_sha:
+                                    break
+                            if match_found or (c_list and any(c.get("sha") == base_sha for c in c_list)):
+                                break
+
+                        if not commit_sha:
+                            msg = f"Target branch '{target_branch}' write conflict: could not reconcile run commit or branch diverged."
+                            return GateResult(gate_id="", passed=False, status="failed", message=msg, details={"error": msg, "conflict": True})
+                    else:
+                        return GateResult(
+                            gate_id="",
+                            passed=False,
+                            status="failed",
+                            message=f"GitHub release Contents API write failed ({put_resp.status_code}): {put_resp.text}",
+                            details={"error": put_resp.text, "status_code": put_resp.status_code},
+                        )
 
                 meta = {
                     "publishing_mode": "direct_push",
