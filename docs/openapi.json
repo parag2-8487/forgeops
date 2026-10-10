@@ -422,6 +422,210 @@
         "title": "AuditPage",
         "type": "object"
       },
+      "AutonomousRunPublicResponse": {
+        "description": "Authoritative public run response. Strictly excludes internal fencing and lease fields.",
+        "properties": {
+          "agent_connected": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Connected"
+          },
+          "attempt_number": {
+            "default": 1,
+            "title": "Attempt Number",
+            "type": "integer"
+          },
+          "compensation_error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compensation Error"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "configuration": {
+            "additionalProperties": true,
+            "title": "Configuration",
+            "type": "object"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "format": "uuid",
+            "title": "Created By",
+            "type": "string"
+          },
+          "current_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Stage"
+          },
+          "dispatch_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch Requested At"
+          },
+          "dispatch_status": {
+            "default": "pending",
+            "title": "Dispatch Status",
+            "type": "string"
+          },
+          "error_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Summary"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "parent_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Run Id"
+          },
+          "primary_error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Error"
+          },
+          "progress_pct": {
+            "default": 0,
+            "title": "Progress Pct",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StagePublicResponse"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AutonomousRunStatus"
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/DeploymentStrategy"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "status",
+          "strategy",
+          "created_by"
+        ],
+        "title": "AutonomousRunPublicResponse",
+        "type": "object"
+      },
+      "AutonomousRunStatus": {
+        "description": "Authoritative autonomous deployment run lifecycle statuses.",
+        "enum": [
+          "pending",
+          "running",
+          "cancelling",
+          "cancelled",
+          "succeeded",
+          "failed",
+          "rolled_back"
+        ],
+        "title": "AutonomousRunStatus",
+        "type": "string"
+      },
       "BlastRadiusResponse": {
         "properties": {
           "affected_resources": {
@@ -1219,6 +1423,60 @@
         "title": "ContainerActionRequest",
         "type": "object"
       },
+      "CreateAutonomousRunRequest": {
+        "description": "Request payload to initiate or register an autonomous deployment run.",
+        "properties": {
+          "docker_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DockerConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "github_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GitHubConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/DeploymentStrategy"
+          },
+          "vercel_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VercelConfigRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "strategy"
+        ],
+        "title": "CreateAutonomousRunRequest",
+        "type": "object"
+      },
       "CreateRepositoryRequest": {
         "properties": {
           "auto_init": {
@@ -1449,6 +1707,17 @@
         ],
         "title": "DeploymentRequest",
         "type": "object"
+      },
+      "DeploymentStrategy": {
+        "description": "Supported orchestration deployment strategies.",
+        "enum": [
+          "docker_github_vercel",
+          "docker_github",
+          "github_only",
+          "vercel_only"
+        ],
+        "title": "DeploymentStrategy",
+        "type": "string"
       },
       "DevToolRequest": {
         "description": "Run one of the project's own tools, named by KIND.\n\nA `Literal`, so an unknown kind is a 422 from the schema. There is deliberately no command, argument or\nflag field: the agent chooses the vector from the kind and the workspace's own manifests, which is what\nkeeps this from being an arbitrary-execution route.",
@@ -1721,6 +1990,49 @@
           "stored_hash"
         ],
         "title": "DivergenceOut",
+        "type": "object"
+      },
+      "DockerConfigRequest": {
+        "description": "Target Docker container configuration.",
+        "properties": {
+          "container_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Name"
+          },
+          "environment_overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Environment Overrides",
+            "type": "object"
+          },
+          "image_tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Tag"
+          },
+          "port_bindings": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Port Bindings",
+            "type": "object"
+          }
+        },
+        "title": "DockerConfigRequest",
         "type": "object"
       },
       "DryRunInput": {
@@ -2286,6 +2598,95 @@
         "title": "GenerationRunResponse",
         "type": "object"
       },
+      "GitHubConfigRequest": {
+        "additionalProperties": false,
+        "description": "Strict configuration model for incoming API requests.\n\nRejects unknown or misspelled fields with 422 Unprocessable Entity.",
+        "properties": {
+          "base_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Branch"
+          },
+          "commit_message": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "Automated deployment by ForgeOps",
+            "title": "Commit Message"
+          },
+          "pr_body": {
+            "anyOf": [
+              {
+                "maxLength": 10000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Body"
+          },
+          "pr_title": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Title"
+          },
+          "publishing_mode": {
+            "$ref": "#/components/schemas/GitHubPublishingMode",
+            "default": "direct_push"
+          },
+          "repository_mode": {
+            "default": "existing",
+            "maxLength": 50,
+            "title": "Repository Mode",
+            "type": "string"
+          },
+          "repository_name": {
+            "maxLength": 200,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "title": "Repository Name",
+            "type": "string"
+          },
+          "target_branch": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Branch"
+          }
+        },
+        "required": [
+          "repository_name"
+        ],
+        "title": "GitHubConfigRequest",
+        "type": "object"
+      },
       "GitHubImportRequest": {
         "additionalProperties": false,
         "description": "The three things an import needs. `extra=\"forbid\"` so a misspelled field is a 422, not a default.",
@@ -2471,6 +2872,14 @@
         ],
         "title": "GitHubProjectRequest",
         "type": "object"
+      },
+      "GitHubPublishingMode": {
+        "enum": [
+          "direct_push",
+          "pull_request"
+        ],
+        "title": "GitHubPublishingMode",
+        "type": "string"
       },
       "GitHubPushRequest": {
         "properties": {
@@ -2788,6 +3197,64 @@
         "title": "InterpretRequest",
         "type": "object"
       },
+      "LogEntryPublicResponse": {
+        "description": "Individual public log line entry.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "level": {
+            "default": "INFO",
+            "title": "Level",
+            "type": "string"
+          },
+          "log_seq": {
+            "title": "Log Seq",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "stage_name",
+          "log_seq",
+          "message"
+        ],
+        "title": "LogEntryPublicResponse",
+        "type": "object"
+      },
       "ManifestRendered": {
         "properties": {
           "content": {
@@ -2938,6 +3405,55 @@
           "name"
         ],
         "title": "MetricsQueryRequest",
+        "type": "object"
+      },
+      "PaginatedLogsResponse": {
+        "description": "Cursor-paginated collection of execution logs.",
+        "properties": {
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/LogEntryPublicResponse"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "next_log_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Log Seq"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "total_lines": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Lines"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "PaginatedLogsResponse",
         "type": "object"
       },
       "PairingCodeRequest": {
@@ -3857,6 +4373,52 @@
         "title": "ReleasePipelineRequest",
         "type": "object"
       },
+      "RepositoryBranchesResponse": {
+        "properties": {
+          "branches": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Branches",
+            "type": "array"
+          },
+          "can_push": {
+            "title": "Can Push",
+            "type": "boolean"
+          },
+          "default_branch": {
+            "title": "Default Branch",
+            "type": "string"
+          },
+          "is_private": {
+            "title": "Is Private",
+            "type": "boolean"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "default_branch",
+          "branches",
+          "can_push",
+          "is_private"
+        ],
+        "title": "RepositoryBranchesResponse",
+        "type": "object"
+      },
       "RepositoryItem": {
         "properties": {
           "archived": {
@@ -4618,6 +5180,125 @@
         "title": "SecretUpdate",
         "type": "object"
       },
+      "StagePublicResponse": {
+        "description": "Public representation of an operational stage or canonical gate.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "gate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "progress_pct": {
+            "default": 0,
+            "title": "Progress Pct",
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "stage_name",
+          "position",
+          "status"
+        ],
+        "title": "StagePublicResponse",
+        "type": "object"
+      },
+      "StageStatus": {
+        "description": "Canonical stage and gate execution statuses.",
+        "enum": [
+          "pending",
+          "waiting",
+          "running",
+          "cancelling",
+          "cancelled",
+          "succeeded",
+          "failed",
+          "skipped",
+          "rolled_back"
+        ],
+        "title": "StageStatus",
+        "type": "string"
+      },
       "StartPipelineRequest": {
         "description": "What a durable deployment run needs to know.",
         "properties": {
@@ -5165,6 +5846,32 @@
           "reason"
         ],
         "title": "VercelConfigCheckResponse",
+        "type": "object"
+      },
+      "VercelConfigRequest": {
+        "description": "Target Vercel cloud deployment configuration.",
+        "properties": {
+          "environment_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Environment Variables",
+            "type": "object"
+          },
+          "production_deploy": {
+            "default": true,
+            "title": "Production Deploy",
+            "type": "boolean"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_name"
+        ],
+        "title": "VercelConfigRequest",
         "type": "object"
       },
       "VercelDeployRequest": {
@@ -8302,6 +9009,57 @@
         ]
       }
     },
+    "/api/v1/integrations/github/repositories/{owner}/{repo}/branches": {
+      "get": {
+        "operationId": "list_github_repository_branches_api_v1_integrations_github_repositories__owner___repo__branches_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "owner",
+            "required": true,
+            "schema": {
+              "title": "Owner",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "repo",
+            "required": true,
+            "schema": {
+              "title": "Repo",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryBranchesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The branches and permissions for a specific GitHub repository",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
     "/api/v1/integrations/github/token": {
       "put": {
         "description": "Verify the token against GitHub, then store it sealed. NO REDIRECT AND NO GITHUB UI.\n\nWHY THIS ROUTE EXISTS BESIDE `/connect`. The authorization-code flow must send the person to\ngithub.com, because that is where consent is given \u2014 so they meet GitHub's account chooser and\nauthorize screen. That is unwanted in two real situations: a workstation signed into several GitHub\naccounts, where the chooser is a way to link the wrong one by accident, and a deployment with no\nregistered GitHub App, where `/connect` cannot work at all. This path needs neither.\n\n`PUT` rather than `POST`, because the effect is idempotent: one link per user, and pasting a token\ntwice leaves the same single row. The upsert underneath makes that true rather than the verb\nimplying it.\n\nIT VERIFIES BEFORE IT STORES. `GET /user` is called with the token and the login and account id on\nthe row are GitHub's answer, so a typo'd or expired token is refused here rather than stored and\ndiscovered later as a repository list that fails. A 401 from GitHub becomes a 502 whose detail says\nGitHub refused the credential \u2014 the caller's remedy is a new token, and naming the upstream status\nis what tells them that.\n\nTHE TOKEN IS NOT IN THE AUDIT ROW, the response, or any log line. The audit row is built from the\n`LinkRecord`, which has no credential field, and the request body is never echoed.",
@@ -9841,6 +10599,445 @@
         "summary": "Sync one ArgoCD Application",
         "tags": [
           "argocd"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy": {
+      "post": {
+        "description": "Create a new autonomous deployment run or return an existing run if idempotent.",
+        "operationId": "create_run_api_v1_projects__project_id__autonomous_deploy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAutonomousRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousRunPublicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create or retrieve an autonomous deployment run (idempotent)",
+        "tags": [
+          "autonomous-deploy"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy/{run_id}": {
+      "get": {
+        "description": "Fetch authoritative autonomous run record, stages, and agent connectivity.",
+        "operationId": "get_run_api_v1_projects__project_id__autonomous_deploy__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousRunPublicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get authoritative run snapshot and stages",
+        "tags": [
+          "autonomous-deploy"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/cancel": {
+      "post": {
+        "description": "Request cancellation.\n\nIf pending: settles immediately to 'cancelled'.\nIf running: marks 'cancelling' and signals worker settlement.\nReturns 202 Accepted.",
+        "operationId": "cancel_run_api_v1_projects__project_id__autonomous_deploy__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request cooperative cancellation of an autonomous deployment run",
+        "tags": [
+          "autonomous-deploy"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events": {
+      "get": {
+        "description": "Stream outbox events over SSE using the subscribe-before-replay protocol.",
+        "operationId": "stream_events_api_v1_projects__project_id__autonomous_deploy__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since_event_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Since Event Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_events",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Events"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Real-time Server-Sent Events (SSE) streaming with outbox replay and live Redis relay",
+        "tags": [
+          "autonomous-deploy"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs": {
+      "get": {
+        "description": "Fetch logs starting after `since_log_seq` up to `limit` entries.",
+        "operationId": "get_logs_api_v1_projects__project_id__autonomous_deploy__run_id__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since_log_seq",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Since Log Seq",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stage_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedLogsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cursor-paginated log retrieval strictly ordered by monotonic log_seq ASC",
+        "tags": [
+          "autonomous-deploy"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/retry": {
+      "post": {
+        "description": "Create an immutable retry run chaining with parent_run_id and incremented attempt_number.",
+        "operationId": "retry_run_api_v1_projects__project_id__autonomous_deploy__run_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousRunPublicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a new immutable attempt for a failed or rolled-back run",
+        "tags": [
+          "autonomous-deploy"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start": {
+      "post": {
+        "description": "Initiate execution of a pending run.\n\nEnforces:\n- Active agent is connected with heartbeat <= 30s (412 Precondition Failed if not).\n- Status must be 'pending' (or returns idempotent 200 OK if already 'running').\n- Dispatches execution task to background task dispatcher.",
+        "operationId": "start_run_api_v1_projects__project_id__autonomous_deploy__run_id__start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousRunPublicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Initiate execution of a pending autonomous deployment run",
+        "tags": [
+          "autonomous-deploy"
         ]
       }
     },
