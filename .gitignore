@@ -57,6 +57,7 @@ out/
 playwright-report/
 test-results/
 blob-report/
+.auth/
 # `pnpm-lock.yaml` is committed (design §16.3) — never ignored.
 !frontend/pnpm-lock.yaml
 

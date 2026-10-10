@@ -56,11 +56,11 @@ export const OPERATOR = {
 /**
  * Where step 1 saves the session it genuinely obtained, for the later steps to carry forward.
  *
- * Under `test-results/`, which Playwright already treats as run output and which is gitignored, so
- * nothing resembling a credential lands in the tree. It holds the cookies of a synthetic, e2e-only
- * account against a local IdP.
+ * Under `.auth/`, which is gitignored, so nothing resembling a credential lands in the tree.
+ * It holds the cookies of a synthetic, e2e-only account against a local IdP.
+ * Kept outside `test-results/` because Playwright cleans its output directory between project runs.
  */
-export const SESSION_STATE_PATH = path.join("test-results", "journey-session.json");
+export const SESSION_STATE_PATH = path.join(".auth", "journey-session.json");
 
 /**
  * Signs in against the real IdP with real credentials. No session injection: step 1 is the real flow.
@@ -88,7 +88,7 @@ export const SESSION_STATE_PATH = path.join("test-results", "journey-session.jso
  * What it does NOT do is inject a session or mint a token out of band, which is the thing that would
  * make step 1 worthless.
  */
-export async function signIn(page: Page) {
+export async function signIn(page: Page, targetPath?: string) {
   const frontend = new URL(process.env.E2E_FRONTEND_URL ?? "http://localhost:3000");
   // The PUBLIC origin, never the issuer. `OIDC_ISSUER` is how the BACKEND reaches the IdP -- inside
   // Compose that is a service name a browser cannot resolve -- and driving the browser at it is
@@ -156,11 +156,16 @@ export async function signIn(page: Page) {
   // The browser is now authenticated AT THE IdP. Starting the application's login therefore takes
   // the real authorization-code path: /auth/login builds PKCE, the IdP returns a code without
   // prompting again, and the callback exchanges it server-side and sets the session cookie.
-  await page.goto("/login");
+  const loginUrl = targetPath ? `/login?next=${encodeURIComponent(targetPath)}` : "/login";
+  await page.goto(loginUrl);
   await page.getByRole("button", { name: /single sign-on/i }).click();
   await page.waitForURL((url) => url.host === frontend.host && !url.pathname.startsWith("/login"), {
     timeout: 60_000,
   });
+
+  // Persist session immediately so subsequent specs in separate test projects carry it forward.
+  fs.mkdirSync(path.dirname(SESSION_STATE_PATH), { recursive: true });
+  await page.context().storageState({ path: SESSION_STATE_PATH });
 }
 
 /**
@@ -181,7 +186,7 @@ export async function signIn(page: Page) {
  * Nothing is weakened by the retry: the assertions in each step are unchanged, and if the route never
  * renders the error carries the text the screen was actually showing rather than a locator timeout.
  */
-export async function gotoAsOperator(page: Page, path: string): Promise<void> {
+export async function gotoAsOperator(page: Page, targetPath: string): Promise<void> {
   // REUSE THE SESSION STEP 1 OBTAINED rather than authenticating again per test.
   //
   // Playwright gives each test a fresh context, so nothing step 1 obtained is here. Signing in again
@@ -203,17 +208,24 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
       if (saved.cookies?.length) await page.context().addCookies(saved.cookies);
     } else {
       // No saved state means step 1 did not run in this invocation (a single step was selected), so
-      // the full login is the only option.
-      await signIn(page);
+      // the full login is the only option. Passing targetPath lands directly on the requested route.
+      await signIn(page, targetPath);
     }
   }
 
-  // Collected across attempts so the final error can say WHY each recovery failed. Two blind repairs of
-  // this function were made because these strings were being discarded by `.catch(() => {})`.
+  // Collected across attempts so the final error can say WHY each recovery failed.
   const recoveryFailures: string[] = [];
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    await page.goto(path);
+    let currentPath = "";
+    try {
+      currentPath = new URL(page.url()).pathname;
+    } catch {
+      currentPath = "";
+    }
+    if (currentPath !== targetPath) {
+      await page.goto(targetPath);
+    }
 
     const deadline = Date.now() + 30_000;
     let heading = "";
@@ -232,6 +244,7 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
         // used -- which is why restoring the same snapshot worked for one step and then failed on the
         // next with the sign-in screen. Writing back the cookies this context now holds keeps the
         // chain moving forward instead of replaying a spent token.
+        fs.mkdirSync(path.dirname(SESSION_STATE_PATH), { recursive: true });
         await page.context().storageState({ path: SESSION_STATE_PATH });
         return;
       }
@@ -245,43 +258,17 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
           .innerText()
           .catch(() => "")
       ).slice(0, 600);
-      // WHY THE RECOVERIES FAILED, not just that the page shows a sign-in screen.
-      //
-      // The first two repairs of this function were made blind and both were wrong, because the
-      // recovery errors were swallowed with `.catch(() => {})` and the thrown message said only what the
-      // screen displayed. Two CI runs produced no information about the cause. A diagnostic that cannot
-      // distinguish "the IdP refused these credentials" from "the flow executor found no identification
-      // stage" from "the callback returned no cookie" is not worth the run it costs.
       throw new Error(
-        `${path} never rendered for a signed-in operator.\n` +
+        `${targetPath} never rendered for a signed-in operator.\n` +
           `What the page showed:\n${shown}\n` +
           `What each recovery attempt reported:\n${recoveryFailures.join("\n") || "(nothing — every recovery returned without error, so the session was accepted and the route still did not render)"}`,
       );
     }
 
-    // TWO RECOVERIES, AND EVERY FAILURE IS RECORDED RATHER THAN SWALLOWED.
-    //
-    // Resuming via `/login` assumes the browser holds AUTHENTIK'S OWN cookie, so the sign-on button
-    // round-trips without a prompt. True inside a spec that signed in; FALSE in a spec that only
-    // restored this application's cookies from the state file, because a fresh Playwright context has
-    // no IdP session.
-    //
-    // Two repairs have been attempted here and both failed in CI, which is why the third change is a
-    // DIAGNOSTIC and not another guess. What is known: `sse-paint.spec.ts` runs in its own Playwright
-    // invocation after the journey, `test-results/` is cleared between invocations so the saved state
-    // file may not even exist, and the `signIn` that then runs does not produce a session the
-    // application accepts — while the SAME `signIn` succeeds for the journey's step 1 in the same CI
-    // run, minutes earlier. Until the recovery's own error is visible, any further reordering is
-    // guessing, so both branches now append what went wrong to `recoveryFailures` and the thrown error
-    // carries it.
-    //
-    // No assertion is weakened and no session is injected: these are real logins with the operator's
-    // real credentials, and the criterion that a first-time IdP login works is the journey's step 1,
-    // which still does it unaided.
     if (attempt === 1) {
       await page.context().clearCookies();
       try {
-        await signIn(page);
+        await signIn(page, targetPath);
       } catch (error) {
         recoveryFailures.push(
           `attempt ${attempt}: signIn from a cleared context failed: ${String(error)}`,
@@ -289,7 +276,7 @@ export async function gotoAsOperator(page: Page, path: string): Promise<void> {
       }
     } else {
       try {
-        await page.goto("/login");
+        await page.goto(`/login?next=${encodeURIComponent(targetPath)}`);
         await page.getByRole("button", { name: /single sign-on/i }).click();
         await page.waitForURL((url) => !url.pathname.startsWith("/login"), { timeout: 60_000 });
       } catch (error) {
