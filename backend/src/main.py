@@ -1049,7 +1049,7 @@ def create_app() -> FastAPI:
 
     app.include_router(pipeline_router)
 
-    # Phase 7: Autonomous Deployment Orchestrator REST, SSE and WebSocket streaming surface.
+    # Stage 7: Autonomous Deployment Orchestrator REST, SSE and WebSocket streaming surface.
     from .deployments.autonomous_routes import router as autonomous_deployments_router
 
     app.include_router(autonomous_deployments_router)

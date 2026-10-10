@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Unit tests for Canonical Gate Evaluators G1-G7 & Strategy Execution Graph (Phase 5).
+"""Unit tests for Canonical Gate Evaluators G1-G7 & Strategy Execution Graph (Stage 5).
 
 Tests:
 1. Individual canonical gate evaluations (G1-G7) and operational stages.

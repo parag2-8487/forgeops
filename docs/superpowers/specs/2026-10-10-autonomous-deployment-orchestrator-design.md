@@ -1,8 +1,8 @@
 # ForgeOps Autonomous Deployment Orchestrator: Complete Technical Specification
 
-**Document Version:** 1.0.0  
-**Date:** 2026-10-10  
-**Status:** Approved Architecture Specification  
+**Document Version:** 1.0.0
+**Date:** 2026-10-10
+**Status:** Approved Architecture Specification
 **Specification File:** `docs/superpowers/specs/2026-10-10-autonomous-deployment-orchestrator-design.md`
 
 ---
@@ -10,9 +10,11 @@
 ## 1. Executive Summary & Goals
 
 ### 1.1 Purpose
+
 The Autonomous Deployment Orchestrator introduces a production-grade CI/CD and deployment engine into ForgeOps. It enables operators to select a deployment strategy, configure project-specific parameters, pair their local ForgeOps agent once, and initiate an automated deployment. The system executes asynchronously in the backend, orchestrating validation gates, container operations, version control releases, and cloud deployments, while providing real-time, Jenkins Blue Ocean-style observability with live logs and gate metrics.
 
 ### 1.2 Core Architectural Principles
+
 1. **Authoritative Backend State Machine:** The backend database (PostgreSQL) is the single source of truth for all run states, stage transitions, gate results, and logs. State is never synthesized by the frontend or simulated via local timers.
 2. **Strategy-Aware Stage Graph:** The orchestrator executes only the stages required for the chosen strategy. Inapplicable operational stages (e.g., Docker for cloud-only strategies) are omitted from execution and UI visualization.
 3. **Canonical G1–G7 Verification Pipeline:** All seven canonical gates from the ForgeOps verification engine are executed and rendered as distinct, inspectable nodes. Gates are never collapsed or conflated with operational tasks.
@@ -26,43 +28,47 @@ The Autonomous Deployment Orchestrator introduces a production-grade CI/CD and d
 ## 2. Supported Deployment Strategies & Stage Graph
 
 ### 2.1 Strategy Matrix
+
 The orchestrator supports four deployment strategies:
 
-| Strategy Key | Operational Targets | Required Configuration | Gates Evaluated |
-| :--- | :--- | :--- | :--- |
-| `docker_github_vercel` | Local Docker Container + Remote GitHub Repo + Vercel Deployment | `github_config`, `vercel_config`, optional `docker_config` | G1, G2, G3, G4, G5, G6, G7 (all targets) |
-| `docker_github` | Local Docker Container + Remote GitHub Repo | `github_config`, optional `docker_config` | G1, G2, G3, G4, G5, G6, G7 (Docker + GitHub) |
-| `github_only` | Remote GitHub Repo | `github_config` | G1, G2, G3, G7 (GitHub only) |
-| `vercel_only` | Vercel Deployment | `vercel_config` | G1, G2, G3, G7 (Vercel only) |
+| Strategy Key           | Operational Targets                                             | Required Configuration                                     | Gates Evaluated                              |
+| :--------------------- | :-------------------------------------------------------------- | :--------------------------------------------------------- | :------------------------------------------- |
+| `docker_github_vercel` | Local Docker Container + Remote GitHub Repo + Vercel Deployment | `github_config`, `vercel_config`, optional `docker_config` | G1, G2, G3, G4, G5, G6, G7 (all targets)     |
+| `docker_github`        | Local Docker Container + Remote GitHub Repo                     | `github_config`, optional `docker_config`                  | G1, G2, G3, G4, G5, G6, G7 (Docker + GitHub) |
+| `github_only`          | Remote GitHub Repo                                              | `github_config`                                            | G1, G2, G3, G7 (GitHub only)                 |
+| `vercel_only`          | Vercel Deployment                                               | `vercel_config`                                            | G1, G2, G3, G7 (Vercel only)                 |
 
 ### 2.2 Canonical Gate Definitions (G1–G7)
+
 Each gate represents a formal checkpoint in the deployment pipeline:
+
 - **G1: Blueprint Gate:** Validates project structure, detected frameworks, required manifests, and environment baseline.
 - **G2: Existing Artifact Gate:** Inspects whether existing Dockerfile or Docker Compose definitions are valid, reusable, and secure without requiring synthetic regeneration.
 - **G3: Pre-Execution Consistency Gate:** Checks port allocations, volume bindings, environment variables, base image pinning, and target branch configurations before executing side effects.
-- **G4: Build / Compile Gate:** Validates that the container build succeeds without errors and passes syntax checks. *(Docker strategies only)*
-- **G5: Apply / Startup Gate:** Validates container startup, healthcheck convergence, and process boot. *(Docker strategies only)*
-- **G6: Workload Verification Gate:** Probes internal HTTP endpoints, API readiness, and service ports. *(Docker strategies only)*
+- **G4: Build / Compile Gate:** Validates that the container build succeeds without errors and passes syntax checks. _(Docker strategies only)_
+- **G5: Apply / Startup Gate:** Validates container startup, healthcheck convergence, and process boot. _(Docker strategies only)_
+- **G6: Workload Verification Gate:** Probes internal HTTP endpoints, API readiness, and service ports. _(Docker strategies only)_
 - **G7: Final Deployment Gate:** Strategy-aware end-to-end verification of all deployed targets (probes Docker endpoints, verifies Git branch commit SHA, and checks live Vercel domain responses).
 
 ### 2.3 Stage Graph Workflow
+
 ```mermaid
 flowchart LR
     A[Start Run] --> B[G1: Blueprint Gate]
     B --> C[G2: Existing Artifact Gate]
     C --> D[G3: Consistency Gate]
-    
+
     D -->|Docker Active| E[G4: Build Gate]
     E --> F[G5: Apply Gate]
     F --> G[G6: Workload Gate]
-    
+
     D -->|Cloud Only| H{Strategy Branch}
     G --> H
-    
+
     H -->|GitHub Active| I[GitHub Release]
     H -->|Vercel Active| J[Vercel Deploy]
     I -->|Both Active| J
-    
+
     I --> K[G7: Final Verification Gate]
     J --> K
     K --> L[Run Complete]
@@ -75,6 +81,7 @@ flowchart LR
 The database migration (`0038_autonomous_deployments.py`) introduces three core tables into PostgreSQL.
 
 ### 3.1 `autonomous_deployments`
+
 Maintains the authoritative state of deployment runs and attempt chains.
 
 ```sql
@@ -91,27 +98,27 @@ CREATE TABLE autonomous_deployments (
     error_summary TEXT,
     primary_error JSONB,
     compensation_error JSONB,
-    
+
     -- Worker Fencing and Lease Custody
     worker_id VARCHAR(128),
     fence_token BIGINT NOT NULL DEFAULT 0,
     lease_expires_at TIMESTAMPTZ,
-    
+
     -- Dispatch and Lifecycle Tracking
     dispatch_status VARCHAR(32) NOT NULL DEFAULT 'pending',
     dispatch_requested_at TIMESTAMPTZ,
     idempotency_key VARCHAR(128),
     payload_hash VARCHAR(64) NOT NULL,
-    
+
     -- Atomic Sequence Allocators
     log_sequence_counter INT NOT NULL DEFAULT 0,
     outbox_sequence_counter INT NOT NULL DEFAULT 0,
-    
+
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
-    
+
     CONSTRAINT uq_proj_idempotency UNIQUE (project_id, idempotency_key),
     CONSTRAINT chk_run_status CHECK (status IN (
         'pending', 'running', 'cancelling', 'cancelled', 'succeeded', 'failed', 'rolled_back'
@@ -124,6 +131,7 @@ CREATE INDEX idx_auto_deploy_lease ON autonomous_deployments(status, lease_expir
 ```
 
 ### 3.2 `autonomous_deployment_stages`
+
 Records individual operational stages and gates.
 
 ```sql
@@ -140,7 +148,7 @@ CREATE TABLE autonomous_deployment_stages (
     error_message TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    
+
     CONSTRAINT uq_run_stage UNIQUE (run_id, stage_name),
     CONSTRAINT chk_stage_status CHECK (status IN (
         'pending', 'waiting', 'running', 'cancelling', 'cancelled', 'succeeded', 'failed', 'skipped', 'rolled_back'
@@ -151,6 +159,7 @@ CREATE INDEX idx_auto_deploy_stages_run ON autonomous_deployment_stages(run_id, 
 ```
 
 ### 3.3 `autonomous_deployment_logs`
+
 Stores line-by-line formatted stdout/stderr logs.
 
 ```sql
@@ -162,7 +171,7 @@ CREATE TABLE autonomous_deployment_logs (
     level VARCHAR(16) NOT NULL DEFAULT 'INFO',
     message TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    
+
     CONSTRAINT uq_run_log_seq UNIQUE (run_id, log_seq),
     CONSTRAINT chk_log_level CHECK (level IN ('INFO', 'WARN', 'ERROR'))
 );
@@ -171,6 +180,7 @@ CREATE INDEX idx_auto_deploy_logs_query ON autonomous_deployment_logs(run_id, lo
 ```
 
 ### 3.4 `autonomous_deployment_outbox`
+
 Guarantees transactional event delivery for streaming.
 
 ```sql
@@ -182,7 +192,7 @@ CREATE TABLE autonomous_deployment_outbox (
     payload JSONB NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    
+
     CONSTRAINT uq_run_outbox_seq UNIQUE (run_id, event_seq),
     CONSTRAINT chk_outbox_status CHECK (status IN ('pending', 'published'))
 );
@@ -195,7 +205,9 @@ CREATE INDEX idx_auto_deploy_outbox_pending ON autonomous_deployment_outbox(stat
 ## 4. Execution Worker & Orchestration Lifecycle
 
 ### 4.1 Worker Claim & Fencing Protocol
+
 To prevent duplicate workers and protect against split-brain scenarios:
+
 1. **Atomic Ownership Claim:**
    When a worker attempts to claim a run:
    ```sql
@@ -222,18 +234,23 @@ To prevent duplicate workers and protect against split-brain scenarios:
    All updates to run state, stages, logs, or outbox require `WHERE id = :run_id AND fence_token = :current_fence_token AND lease_expires_at > now()`. If 0 rows are updated, the worker immediately recognizes lease loss, terminates local child processes, and exits.
 
 ### 4.2 Crash Recovery Reconciliation
+
 Before resuming or completing an external operation after worker crash:
+
 - **GitHub:** Verifies whether the exact target commit SHA exists on the remote branch in the linked repository.
 - **Docker:** Verifies running containers labeled with `forgeops.run_id = :run_id` and checks port mappings.
 - **Vercel:** Queries the Vercel Deployments API for the specific `vercel_deployment_id` stored in stage metadata.
 
 ### 4.3 Monotonic Progress Calculation
+
 Progress strictly increases and is defined by the formula:
 $$\text{Progress} = \sum_{i=1}^{N} W_i \times \frac{\text{StageProgress}_i}{100}$$
 where weights $W_i$ are assigned dynamically based on the active strategy graph. Progress cannot move backward during retries or compensation. $100\%$ is achievable only when G7 final verification succeeds.
 
 ### 4.4 Cooperative Cancellation Settlement
+
 When cancellation is requested:
+
 1. Run status transitions to `cancelling`.
 2. Worker intercepts `cancelling` during execution or heartbeat checks.
 3. Sends `SIGTERM` followed by `SIGKILL` after 5 seconds to active Docker subprocesses.
@@ -249,6 +266,7 @@ When cancellation is requested:
 All endpoints are mounted on `/api/v1/projects/{project_id}/autonomous-deploy` and require `require_principal`.
 
 #### `POST /` — Create Run (Idempotent)
+
 - **Request Body:**
   ```json
   {
@@ -276,9 +294,11 @@ All endpoints are mounted on `/api/v1/projects/{project_id}/autonomous-deploy` a
   - `409 Conflict`: `idempotency_key` reused with differing payload.
 
 #### `GET /{run_id}` — Authoritative Snapshot
+
 - Returns public run state, sanitized stage list, monotonic progress, and live agent pairing status. Internal fields (`fence_token`, `worker_id`, `lease_expires_at`) are excluded.
 
 #### `POST /{run_id}/start` — Initiate Execution
+
 - **Preconditions:**
   - Run status must be `pending`.
   - Local agent must be paired (`DeviceService.active_device_for`) with a heartbeat within 30 seconds.
@@ -288,20 +308,24 @@ All endpoints are mounted on `/api/v1/projects/{project_id}/autonomous-deploy` a
   - Returns `200 OK`.
 
 #### `POST /{run_id}/cancel` — Request Cancellation
+
 - If `pending`: Immediately marks `cancelled`.
 - If `running`: Marks `cancelling` and triggers worker shutdown settlement.
 - Returns `202 Accepted`.
 
 #### `POST /{run_id}/retry` — Create Immutable Attempt
+
 - Validates target run is `failed` or `rolled_back`.
 - Creates a new run record with `parent_run_id = target_run.id` and `attempt_number = target_run.attempt_number + 1`. Prior runs remain 100% immutable.
 - Returns `201 Created` with the new run details.
 
 #### `GET /{run_id}/logs` — Cursor-Based Log Pagination
+
 - Query Parameters: `since_log_seq` (int, default 0), `limit` (int, default 500, max 1000), `stage_name` (optional).
 - Returns logs strictly ordered by `log_seq ASC`, with `has_more` and `next_log_seq`.
 
 ### 5.2 Streaming Replay & Synchronization Protocol
+
 - **Sequence Domains:**
   - `log_seq`: Per-run monotonic integer for log lines (1 to 5,000 cap).
   - `event_seq`: Per-run monotonic integer for outbox events.
@@ -318,7 +342,9 @@ All endpoints are mounted on `/api/v1/projects/{project_id}/autonomous-deploy` a
 ## 6. Frontend User Interface & Pipeline Visualization
 
 ### 6.1 Project Interface Integration
-In [`frontend/app/(shell)/projects/[projectId]/page.tsx`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/frontend/app/(shell)/projects/[projectId]/page.tsx), add the primary action button to the project header:
+
+In [`frontend/app/(shell)/projects/[projectId]/page.tsx`](<file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/frontend/app/(shell)/projects/[projectId]/page.tsx>), add the primary action button to the project header:
+
 ```tsx
 <div className="flex items-center gap-3">
   <Button
@@ -339,12 +365,14 @@ In [`frontend/app/(shell)/projects/[projectId]/page.tsx`](file:///C:/IMP/antigra
 ```
 
 ### 6.2 Autonomous Deploy Modal (`AutonomousDeployModal.tsx`)
+
 - **Strategy Selection Cards:** Four interactive strategy cards.
 - **Inline Expansion Form:** Contextual fields for GitHub, Vercel, and Docker based on selection.
 - **Agent Pairing Prerequisite:** Displays live agent pairing status. Explains that the agent is required to access project files.
 - **Submission:** "Create Run & Open Pipeline" creates the run via `POST /autonomous-deploy` and redirects to the route. It does **not** start execution.
 
 ### 6.3 Dedicated Pipeline Route (`/projects/[projectId]/autonomous-deploy/[runId]/page.tsx`)
+
 - **Header Bar:** Breadcrumb, Run ID, Attempt number, Strategy badge, Status badge, Monotonic progress bar, Duration timer.
 - **Control Actions:**
   - "Start Pipeline" button: Enabled only when run is `pending` and agent is healthy.
@@ -353,20 +381,22 @@ In [`frontend/app/(shell)/projects/[projectId]/page.tsx`](file:///C:/IMP/antigra
   - "Back to Project" button: Safe navigation back to project dashboard.
 
 ### 6.4 Jenkins Blue Ocean Pipeline Graph (`JenkinsPipelineDashboard.tsx`)
+
 - **Visual Node Layout:**
   - Distinct inspectable nodes for G1, G2, G3, strategy operational stages, and G7.
   - Inapplicable stages are omitted from the graph.
   - Visual status styles:
-    - *Pending:* Gray hollow circle, "Queued".
-    - *Waiting:* Amber circle, pulsing ring.
-    - *Running:* Blue circle, spinning border, live duration.
-    - *Succeeded:* Emerald green circle, checkmark, final duration.
-    - *Failed:* Crimson red circle, exclamation mark.
-    - *Cancelled:* Amber circle, strike mark.
-    - *Skipped:* Dashed gray circle.
+    - _Pending:_ Gray hollow circle, "Queued".
+    - _Waiting:_ Amber circle, pulsing ring.
+    - _Running:_ Blue circle, spinning border, live duration.
+    - _Succeeded:_ Emerald green circle, checkmark, final duration.
+    - _Failed:_ Crimson red circle, exclamation mark.
+    - _Cancelled:_ Amber circle, strike mark.
+    - _Skipped:_ Dashed gray circle.
   - Responsive horizontal scrolling with snap points for mobile and narrow viewports.
 
 ### 6.5 Real-Time Terminal & Stage Inspector
+
 - **Active Stage Summary:** Shows stage description, associated gate verdicts, container IDs, commit SHAs, and live URLs.
 - **Virtualized Console:**
   - Formatted stdout/stderr stream with `log_seq`, timestamps, and log level colors.
@@ -389,21 +419,21 @@ In [`frontend/app/(shell)/projects/[projectId]/page.tsx`](file:///C:/IMP/antigra
 
 The implementation will be verified through the following mandatory automated tests:
 
-| Test Identifier | Category | Scenario Verified | Pass Criterion |
-| :--- | :--- | :--- | :--- |
-| `test_create_run_idempotency` | API | Repeated `POST` with identical key and payload | Returns `200 OK` with existing run; exactly one run created |
-| `test_idempotency_payload_mismatch` | API | Repeated `POST` with same key but different strategy | Returns `409 Conflict` |
-| `test_start_requires_agent` | Orchestrator | `POST /start` called when agent is disconnected or heartbeat > 30s | Returns `412 Precondition Failed` |
-| `test_concurrent_start_requests` | Worker | Two simultaneous `POST /start` calls | Exactly one dispatches worker; second returns idempotent `200 OK` |
-| `test_worker_fence_preemption` | Worker | Worker with stale `fence_token` attempts to write state | Write updates 0 rows; worker halts immediately |
-| `test_worker_crash_recovery` | Worker | Worker dies during Docker build; lease expires | Recovery sweeper detects expired lease, increments fence token, reconciles containers |
-| `test_immutable_retry` | Data Model | `POST /retry` on failed run | Prior run, stages, and logs remain unchanged; new attempt created with `parent_run_id` |
-| `test_stream_replay_gap_free` | Streaming | Client connects with `since_event_seq=10` while server is at 25 | Server streams events 11 to 25 before live stream; client deduplicates |
-| `test_secret_redaction` | Security | Build log outputs synthetic GitHub PAT or authorization token | Database log and streaming outbox both store `[REDACTED]` |
-| `test_cancellation_settlement` | Orchestrator | `POST /cancel` invoked during container build | Worker terminates child process, releases locks, settles run to `cancelled` |
-| `test_strategy_graph_omission` | Frontend/API | Run created with `github_only` | Docker stages and G4-G6 are completely omitted from DB and UI graph |
-| `test_strategy_aware_g7` | Gates | G7 executed on `vercel_only` run | Probes Vercel URL; marks Docker and GitHub checks as "Not Applicable" |
-| `test_log_truncation_cap` | Logs | Worker emits 6,000 log lines | Exactly 5,000 lines stored; line 5,000 is truncation notice; lines > 5,000 dropped |
+| Test Identifier                     | Category     | Scenario Verified                                                  | Pass Criterion                                                                         |
+| :---------------------------------- | :----------- | :----------------------------------------------------------------- | :------------------------------------------------------------------------------------- |
+| `test_create_run_idempotency`       | API          | Repeated `POST` with identical key and payload                     | Returns `200 OK` with existing run; exactly one run created                            |
+| `test_idempotency_payload_mismatch` | API          | Repeated `POST` with same key but different strategy               | Returns `409 Conflict`                                                                 |
+| `test_start_requires_agent`         | Orchestrator | `POST /start` called when agent is disconnected or heartbeat > 30s | Returns `412 Precondition Failed`                                                      |
+| `test_concurrent_start_requests`    | Worker       | Two simultaneous `POST /start` calls                               | Exactly one dispatches worker; second returns idempotent `200 OK`                      |
+| `test_worker_fence_preemption`      | Worker       | Worker with stale `fence_token` attempts to write state            | Write updates 0 rows; worker halts immediately                                         |
+| `test_worker_crash_recovery`        | Worker       | Worker dies during Docker build; lease expires                     | Recovery sweeper detects expired lease, increments fence token, reconciles containers  |
+| `test_immutable_retry`              | Data Model   | `POST /retry` on failed run                                        | Prior run, stages, and logs remain unchanged; new attempt created with `parent_run_id` |
+| `test_stream_replay_gap_free`       | Streaming    | Client connects with `since_event_seq=10` while server is at 25    | Server streams events 11 to 25 before live stream; client deduplicates                 |
+| `test_secret_redaction`             | Security     | Build log outputs synthetic GitHub PAT or authorization token      | Database log and streaming outbox both store `[REDACTED]`                              |
+| `test_cancellation_settlement`      | Orchestrator | `POST /cancel` invoked during container build                      | Worker terminates child process, releases locks, settles run to `cancelled`            |
+| `test_strategy_graph_omission`      | Frontend/API | Run created with `github_only`                                     | Docker stages and G4-G6 are completely omitted from DB and UI graph                    |
+| `test_strategy_aware_g7`            | Gates        | G7 executed on `vercel_only` run                                   | Probes Vercel URL; marks Docker and GitHub checks as "Not Applicable"                  |
+| `test_log_truncation_cap`           | Logs         | Worker emits 6,000 log lines                                       | Exactly 5,000 lines stored; line 5,000 is truncation notice; lines > 5,000 dropped     |
 
 ---
 

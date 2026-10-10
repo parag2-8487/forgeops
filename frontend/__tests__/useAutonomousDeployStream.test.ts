@@ -433,4 +433,74 @@ describe("useAutonomousDeployStream", () => {
     expect(result.current.run?.status).toBe("succeeded");
     expect(result.current.run?.progress_pct).toBe(100);
   });
+
+  it("falls back to SSE when WebSocket closes abnormally", async () => {
+    const { result } = renderHook(() =>
+      useAutonomousDeployStream({
+        projectId,
+        runId,
+        initialRun,
+      }),
+    );
+
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    expect(ws).toBeDefined();
+
+    act(() => {
+      ws.open();
+    });
+    expect(result.current.isConnected).toBe(true);
+
+    // Abnormally close WS (code 1006)
+    act(() => {
+      ws.close(1006);
+    });
+
+    // Check fallback to EventSource
+    expect(MockEventSource.instances.length).toBeGreaterThan(0);
+    const sse = MockEventSource.instances[MockEventSource.instances.length - 1];
+
+    act(() => {
+      sse.open();
+      sse.sendServerMessage({
+        event_seq: 1,
+        event_type: "run_progress",
+        payload: { progress_pct: 75, status: "running" },
+      });
+    });
+
+    expect(result.current.run?.progress_pct).toBe(75);
+  });
+
+  it("falls back to SSE when WebSocket is undefined in global scope", () => {
+    const origWS = window.WebSocket;
+    // @ts-expect-error simulating environment without WebSocket
+    delete window.WebSocket;
+
+    try {
+      const { result } = renderHook(() =>
+        useAutonomousDeployStream({
+          projectId,
+          runId,
+          initialRun,
+        }),
+      );
+
+      expect(MockEventSource.instances.length).toBeGreaterThan(0);
+      const sse = MockEventSource.instances[MockEventSource.instances.length - 1];
+
+      act(() => {
+        sse.open();
+        sse.sendServerMessage({
+          event_seq: 1,
+          event_type: "run_progress",
+          payload: { progress_pct: 90, status: "running" },
+        });
+      });
+
+      expect(result.current.run?.progress_pct).toBe(90);
+    } finally {
+      window.WebSocket = origWS;
+    }
+  });
 });

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Canonical Gate Evaluators (G1-G7) and Operational Stage Handlers (Phase 5).
+"""Canonical Gate Evaluators (G1-G7) and Operational Stage Handlers (Stage 5).
 
 Provides:
 - GateResult: Standardized outcome of canonical verification gates (G1-G6).

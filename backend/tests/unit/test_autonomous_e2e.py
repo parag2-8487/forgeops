@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""End-to-End Integration Test Suite & Verification Matrix (Phase 11).
+"""End-to-End Integration Test Suite & Verification Matrix (Stage 11).
 
 Reference Specification: docs/superpowers/specs/2026-10-10-autonomous-deployment-orchestrator-design.md (§8)
-Reference Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Phase 11)
+Reference Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Stage 11)
 
 Comprehensive test suite verifying:
 1. Full lifecycles for all 4 deployment strategies:

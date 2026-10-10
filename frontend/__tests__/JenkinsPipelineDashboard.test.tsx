@@ -29,6 +29,10 @@ vi.mock("@/lib/api", async () => {
 
 import {
   JenkinsPipelineDashboard,
+  formatElapsedTime,
+  getStrategyLabel,
+  getStageDisplayInfo,
+  getTargetVerificationStatus,
   type AutonomousRunPublicResponse,
 } from "@/features/deployments/JenkinsPipelineDashboard";
 
@@ -617,5 +621,309 @@ describe("JenkinsPipelineDashboard", () => {
     expect(screen.getByTestId("branch-flow-pill")).toHaveTextContent("forgeops/deploy-11111111");
     expect(screen.getByTestId("branch-flow-pill")).toHaveTextContent("main");
     expect(screen.getByTestId("pr-commit-sha")).toHaveTextContent("commit12");
+  });
+
+  it("renders stages with waiting, cancelling, cancelled, rolled_back, and skipped statuses", () => {
+    const multiStatusRun: AutonomousRunPublicResponse = {
+      id: "55555555-5555-5555-8555-555555555555",
+      project_id: projectId,
+      attempt_number: 1,
+      status: "cancelling",
+      strategy: "docker_github_vercel",
+      progress_pct: 50,
+      agent_connected: true,
+      stages: [
+        {
+          id: "ms-s1",
+          run_id: "55555555-5555-5555-8555-555555555555",
+          stage_name: "G1_blueprint",
+          gate_id: "G1",
+          position: 1,
+          status: "rolled_back",
+          progress_pct: 100,
+        },
+        {
+          id: "ms-s2",
+          run_id: "55555555-5555-5555-8555-555555555555",
+          stage_name: "G2_existing_artifacts",
+          gate_id: "G2",
+          position: 2,
+          status: "waiting",
+          progress_pct: 0,
+        },
+        {
+          id: "ms-s3",
+          run_id: "55555555-5555-5555-8555-555555555555",
+          stage_name: "G3_consistency",
+          gate_id: "G3",
+          position: 3,
+          status: "cancelling",
+          progress_pct: 30,
+        },
+        {
+          id: "ms-s4",
+          run_id: "55555555-5555-5555-8555-555555555555",
+          stage_name: "G4_build",
+          gate_id: "G4",
+          position: 4,
+          status: "cancelled",
+          progress_pct: 0,
+        },
+        {
+          id: "ms-s5",
+          run_id: "55555555-5555-5555-8555-555555555555",
+          stage_name: "G5_apply",
+          gate_id: "G5",
+          position: 5,
+          status: "skipped",
+          progress_pct: 0,
+        },
+      ],
+    };
+
+    renderWithClient(
+      <JenkinsPipelineDashboard
+        projectId={projectId}
+        projectName={projectName}
+        run={multiStatusRun}
+      />,
+    );
+
+    expect(screen.getByTestId("stage-node-G1_blueprint")).toBeInTheDocument();
+    expect(screen.getByTestId("stage-node-G2_existing_artifacts")).toBeInTheDocument();
+    expect(screen.getByTestId("stage-node-G3_consistency")).toBeInTheDocument();
+    expect(screen.getByTestId("stage-node-G4_build")).toBeInTheDocument();
+    expect(screen.getByTestId("stage-node-G5_apply")).toBeInTheDocument();
+  });
+
+  it("renders Docker container, Vercel deployment URL, and direct push cards when metadata is present", async () => {
+    const user = userEvent.setup();
+    const artifactsRun: AutonomousRunPublicResponse = {
+      id: "66666666-6666-6666-8666-666666666666",
+      project_id: projectId,
+      attempt_number: 1,
+      status: "succeeded",
+      strategy: "docker_github_vercel",
+      progress_pct: 100,
+      agent_connected: true,
+      stages: [
+        {
+          id: "art-s1",
+          run_id: "66666666-6666-6666-8666-666666666666",
+          stage_name: "docker_deploy",
+          gate_id: null,
+          position: 1,
+          status: "succeeded",
+          progress_pct: 100,
+          stage_metadata: {
+            container_id: "c1234567890abcdef",
+            image: "my-docker-image:latest",
+          },
+        },
+        {
+          id: "art-s2",
+          run_id: "66666666-6666-6666-8666-666666666666",
+          stage_name: "vercel_deploy",
+          gate_id: null,
+          position: 2,
+          status: "succeeded",
+          progress_pct: 100,
+          stage_metadata: {
+            deployment_url: "https://my-vercel-deployment.vercel.app",
+          },
+        },
+        {
+          id: "art-s3",
+          run_id: "66666666-6666-6666-8666-666666666666",
+          stage_name: "github_release",
+          gate_id: null,
+          position: 3,
+          status: "succeeded",
+          progress_pct: 100,
+          stage_metadata: {
+            publishing_mode: "direct_push",
+            target_branch: "release-v1",
+            commit_sha: "fedcba9876543210",
+          },
+        },
+      ],
+    };
+
+    renderWithClient(
+      <JenkinsPipelineDashboard
+        projectId={projectId}
+        projectName={projectName}
+        run={artifactsRun}
+      />,
+    );
+
+    // Click docker_deploy
+    await user.click(screen.getByTestId("stage-node-docker_deploy"));
+    expect(screen.getByTestId("container-id")).toHaveTextContent("c1234567890abcdef");
+
+    // Click vercel_deploy
+    await user.click(screen.getByTestId("stage-node-vercel_deploy"));
+    expect(screen.getByTestId("deployment-url")).toHaveAttribute(
+      "href",
+      "https://my-vercel-deployment.vercel.app",
+    );
+
+    // Click github_release
+    await user.click(screen.getByTestId("stage-node-github_release"));
+    expect(screen.getByTestId("commit-sha")).toHaveTextContent("fedcba9876543210");
+  });
+
+  describe("helper functions", () => {
+    it("formatElapsedTime returns expected formatted strings across edge cases", () => {
+      expect(formatElapsedTime(null)).toBe("--");
+      expect(formatElapsedTime(undefined)).toBe("--");
+      expect(formatElapsedTime("invalid-date")).toBe("--");
+      expect(formatElapsedTime("2026-10-10T10:00:00Z", "2026-10-10T10:00:30Z")).toBe("30s");
+      expect(formatElapsedTime("2026-10-10T10:00:00Z", "2026-10-10T10:02:15Z")).toBe("2m 15s");
+    });
+
+    it("getStrategyLabel formats strategies and falls back to input string", () => {
+      expect(getStrategyLabel("docker_github_vercel")).toBe("Docker + GitHub + Vercel");
+      expect(getStrategyLabel("docker_github")).toBe("Docker + GitHub");
+      expect(getStrategyLabel("github_only")).toBe("GitHub Only");
+      expect(getStrategyLabel("vercel_only")).toBe("Vercel Only");
+      expect(getStrategyLabel("custom_strategy")).toBe("custom_strategy");
+    });
+
+    it("getStageDisplayInfo handles custom stage names without gates", () => {
+      const customStage = {
+        id: "cust-1",
+        run_id: "r1",
+        stage_name: "custom_cleanup",
+        gate_id: null,
+        position: 10,
+        status: "succeeded" as const,
+        progress_pct: 100,
+      };
+      const info = getStageDisplayInfo(customStage);
+      expect(info.title).toBe("custom_cleanup");
+      expect(info.badge).toBe("Step");
+      expect(info.isGate).toBe(false);
+    });
+
+    it("getTargetVerificationStatus handles failed G7 targets and fallback branches", () => {
+      const stages = [
+        {
+          id: "s1",
+          run_id: "r1",
+          stage_name: "docker_apply",
+          gate_id: "G5",
+          position: 1,
+          status: "failed" as const,
+          progress_pct: 50,
+        },
+        {
+          id: "s2",
+          run_id: "r1",
+          stage_name: "github_release",
+          gate_id: null,
+          position: 2,
+          status: "failed" as const,
+          progress_pct: 50,
+        },
+        {
+          id: "s3",
+          run_id: "r1",
+          stage_name: "vercel_deploy",
+          gate_id: null,
+          position: 3,
+          status: "failed" as const,
+          progress_pct: 50,
+        },
+        {
+          id: "s4",
+          run_id: "r1",
+          stage_name: "G7_verification",
+          gate_id: "G7",
+          position: 4,
+          status: "failed" as const,
+          progress_pct: 0,
+        },
+      ];
+      expect(getTargetVerificationStatus("docker", "docker_github", stages)).toBe("Failed");
+      expect(getTargetVerificationStatus("github", "github_only", stages)).toBe("Failed");
+      expect(getTargetVerificationStatus("vercel", "vercel_only", stages)).toBe("Failed");
+      expect(getTargetVerificationStatus("vercel", "docker_github", stages)).toBe("Not Applicable");
+
+      // Pending state
+      const pendingStages = [
+        {
+          id: "s5",
+          run_id: "r1",
+          stage_name: "G7_verification",
+          gate_id: "G7",
+          position: 1,
+          status: "pending" as const,
+          progress_pct: 0,
+        },
+      ];
+      expect(getTargetVerificationStatus("docker", "docker_github", pendingStages)).toBe("Pending");
+
+      // Metadata target_results with various values
+      const metaStages = [
+        {
+          id: "s6",
+          run_id: "r1",
+          stage_name: "G7_verification",
+          gate_id: "G7",
+          position: 1,
+          status: "succeeded" as const,
+          progress_pct: 100,
+          stage_metadata: {
+            target_results: {
+              docker: "passed",
+              github: "error",
+              vercel: "skipped",
+            },
+          },
+        },
+      ];
+      expect(getTargetVerificationStatus("docker", "docker_github_vercel", metaStages)).toBe(
+        "Verified",
+      );
+      expect(getTargetVerificationStatus("github", "docker_github_vercel", metaStages)).toBe(
+        "Failed",
+      );
+      expect(getTargetVerificationStatus("vercel", "docker_github_vercel", metaStages)).toBe(
+        "Not Applicable",
+      );
+    });
+
+    it("triggers stage selection from log console and fetches run via runQuery queryFn", async () => {
+      const user = userEvent.setup();
+      get.mockResolvedValueOnce(mockGithubOnlyRun);
+
+      renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          runId={mockGithubOnlyRun.id}
+          projectName={projectName}
+        />,
+      );
+
+      // Verify query was called
+      await waitFor(() => {
+        expect(get).toHaveBeenCalledWith(
+          `/projects/${projectId}/autonomous-deploy/${mockGithubOnlyRun.id}`,
+        );
+      });
+
+      // Filter select in console triggers onSelectStage callback
+      await waitFor(() => {
+        expect(screen.getByTestId("stage-filter-select")).toBeInTheDocument();
+      });
+      const stageSelect = screen.getByTestId("stage-filter-select");
+      await user.selectOptions(stageSelect, "G1_blueprint");
+
+      // Verify selected stage updates
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "G1 Blueprint" })).toBeInTheDocument();
+      });
+    });
   });
 });

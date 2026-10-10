@@ -409,4 +409,92 @@ describe("AutonomousDeployModal", () => {
       screen.getByText(/Repository contains >1,000 branches; listing capped at 1,000/i),
     ).toBeInTheDocument();
   });
+
+  it("handles commit message, Vercel options, Docker ports, and direct push mode", async () => {
+    const user = userEvent.setup();
+    renderWithClient(
+      <AutonomousDeployModal
+        projectId={projectId}
+        projectName={projectName}
+        isOpen={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    // Click direct push button
+    const directPushBtn = screen.getByTestId("publishing-mode-direct-push");
+    await user.click(directPushBtn);
+
+    // Target branch
+    const branchInput = screen.getByLabelText("Target Branch");
+    await user.clear(branchInput);
+    await user.type(branchInput, "staging");
+
+    // Commit message
+    const commitMsgInput = screen.getByLabelText("Commit Message");
+    await user.clear(commitMsgInput);
+    await user.type(commitMsgInput, "feat: deploy to staging");
+
+    // Vercel project name
+    const vercelInput = screen.getByLabelText("Vercel Project Name");
+    await user.clear(vercelInput);
+    await user.type(vercelInput, "my-staging-app");
+
+    // Vercel deploy to production
+    const prodCheckbox = screen.getByLabelText("Deploy to Production");
+    await user.click(prodCheckbox);
+
+    // Docker ports
+    const hostPortInput = screen.getByLabelText("Host Port");
+    await user.clear(hostPortInput);
+    await user.type(hostPortInput, "9000");
+
+    const containerPortInput = screen.getByLabelText("Container Port");
+    await user.clear(containerPortInput);
+    await user.type(containerPortInput, "8000");
+
+    const submitBtn = screen.getByTestId("create-run-button");
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledTimes(1);
+    });
+
+    const [, calledPayload] = post.mock.calls[0];
+    expect(calledPayload).toMatchObject({
+      strategy: "docker_github_vercel",
+      github_config: {
+        publishing_mode: "direct_push",
+        target_branch: "staging",
+        commit_message: "feat: deploy to staging",
+      },
+      vercel_config: {
+        project_name: "my-staging-app",
+        production_deploy: false,
+      },
+      docker_config: {
+        port_bindings: { "9000": 8000 },
+      },
+    });
+  });
+
+  it("allows switching repository mode between existing and new_private", async () => {
+    const user = userEvent.setup();
+    renderWithClient(
+      <AutonomousDeployModal
+        projectId={projectId}
+        projectName={projectName}
+        isOpen={true}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const existingBtn = screen.getByRole("button", { name: "Existing Repository" });
+    await user.click(existingBtn);
+
+    const newPrivateBtn = screen.getByRole("button", { name: "New Private Repository" });
+    await user.click(newPrivateBtn);
+
+    expect(newPrivateBtn).toHaveClass("border-primary");
+  });
 });

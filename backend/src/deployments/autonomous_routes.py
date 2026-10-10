@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Autonomous Deployment Orchestrator HTTP & Streaming Surface (Phase 7).
+"""Autonomous Deployment Orchestrator HTTP & Streaming Surface (Stage 7).
 
 Reference:
 - Specification: docs/superpowers/specs/2026-10-10-autonomous-deployment-orchestrator-design.md (§5.1, §5.2)
-- Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Phase 7)
+- Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Stage 7)
 
 Provides REST endpoints, Server-Sent Events (SSE) streaming, and WebSocket streaming:
 1. `POST /api/v1/projects/{project_id}/autonomous-deploy`: Create run (201 new, 200 idempotent repeat, 409 conflict).

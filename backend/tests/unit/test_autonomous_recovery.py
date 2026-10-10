@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Unit tests for Autonomous Deployment Orchestrator Phase 6:
+"""Unit tests for Autonomous Deployment Orchestrator Stage 6:
 Cancellation Settlement, Compensation Rollback & Recovery Sweeper.
 
 Tests:

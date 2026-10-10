@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Autonomous Deployment Orchestrator Transactional Outbox Publisher (Phase 7).
+"""Autonomous Deployment Orchestrator Transactional Outbox Publisher (Stage 7).
 
 Reference:
 - Specification: docs/superpowers/specs/2026-10-10-autonomous-deployment-orchestrator-design.md (§3.4, §5.2)
-- Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Phase 7)
+- Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Stage 7)
 
 Drains committed events from `autonomous_deployment_outbox` where `status = 'pending'`,
 publishes each frame to Redis Pub/Sub channel `forgeops:events:autonomous-deploy:{run_id}`,

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Unit tests for Autonomous Deployment Orchestrator Phase 7:
+"""Unit tests for Autonomous Deployment Orchestrator Stage 7:
 Transactional Outbox, Streaming Bridge & REST / WebSocket Endpoints.
 
 Reference:
 - Specification: docs/superpowers/specs/2026-10-10-autonomous-deployment-orchestrator-design.md (§5.1, §5.2)
-- Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Phase 7)
+- Plan: docs/superpowers/plans/2026-10-10-autonomous-deployment-orchestrator.md (Stage 7)
 
 Tests:
 1. REST API:

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
-"""Autonomous Deployment Orchestrator Recovery, Rollback & Cancellation Settlement (Phase 6).
+"""Autonomous Deployment Orchestrator Recovery, Rollback & Cancellation Settlement (Stage 6).
 
 Implements:
 1. CancellationSettlement:
