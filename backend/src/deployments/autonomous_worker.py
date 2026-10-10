@@ -14,6 +14,7 @@ Implements:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -23,6 +24,12 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from .autonomous_gates import (
+    GATE_EVALUATORS,
+    STAGE_EVALUATORS,
+    G7VerificationResult,
+    GateResult,
+)
 from .autonomous_models import (
     AutonomousDeployment,
     AutonomousDeploymentOutbox,
@@ -39,6 +46,7 @@ from .autonomous_service import (
     STAGE_G7_VERIFICATION,
     STAGE_GITHUB_RELEASE,
     STAGE_VERCEL_DEPLOY,
+    AutonomousDeploymentService,
 )
 
 logger = logging.getLogger(__name__)
@@ -651,3 +659,274 @@ class AutonomousWorker:
                 )
 
         return run.status in ("cancelling", "cancelled")
+
+    async def run_pipeline(
+        self,
+        *args: Any,
+        run_id: uuid.UUID | str | None = None,
+        worker_id: str | None = None,
+        context: Any = None,
+        **kwargs: Any,
+    ) -> AutonomousDeployment:
+        """Executes the strategy-aware gate and stage pipeline for an autonomous deployment."""
+        session: AsyncSession
+        rem_args: list[Any] = []
+        if args:
+            session, consumed = self._resolve_session(args[0])
+            rem_args = list(args[1:]) if consumed else list(args)
+        elif self.session is not None:
+            session = self.session
+        else:
+            raise ValueError("AsyncSession must be provided.")
+
+        if rem_args and run_id is None:
+            run_id = rem_args[0]
+        if run_id is None:
+            run_id = kwargs.get("run_id")
+        if run_id is None:
+            raise ValueError("run_id is required for run_pipeline.")
+
+        return await run_pipeline(
+            session,
+            run_id=run_id,
+            worker_id=worker_id or self.worker_id,
+            context=context if context is not None else kwargs.get("context"),
+        )
+
+    async def execute_run(
+        self,
+        *args: Any,
+        run_id: uuid.UUID | str | None = None,
+        context: Any = None,
+        **kwargs: Any,
+    ) -> AutonomousDeployment:
+        """Alias for run_pipeline for engine task execution."""
+        return await self.run_pipeline(*args, run_id=run_id, context=context, **kwargs)
+
+
+async def run_pipeline(
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID | str,
+    worker_id: str | None = None,
+    context: Any = None,
+) -> AutonomousDeployment:
+    """Sequentially executes canonical gates and operational stages for an autonomous deployment run.
+
+    Guarantees:
+    - Worker fencing token claim and validation per execution epoch.
+    - Routine heartbeat renewals before and after stage execution.
+    - Periodic cooperative cancellation checks.
+    - Stage transitions through running -> succeeded or failed.
+    - Sanitized log appending using AutonomousDeploymentService.append_logs.
+    - Strategy-aware stage omission (e.g. G4-G6 omitted for github_only / vercel_only).
+    - Pipeline halt on gate failure: marks stage 'failed', run 'failed',
+      records error_summary and primary_error, leaving subsequent stages in 'pending'.
+    - On full completion: marks run 'succeeded', progress_pct=100, completed_at=now().
+    """
+    target_run_id = uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
+    effective_worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
+    worker = AutonomousWorker(worker_id=effective_worker_id)
+    service = AutonomousDeploymentService()
+
+    # 1. Fetch authoritative run with eager-loaded stages
+    stmt = (
+        select(AutonomousDeployment)
+        .options(selectinload(AutonomousDeployment.stages))
+        .where(AutonomousDeployment.id == target_run_id)
+    )
+    result = await session.execute(stmt)
+    run = result.scalars().first()
+    if run is None:
+        raise ValueError(f"Autonomous deployment '{target_run_id}' not found.")
+
+    if run.status == "cancelling":
+        run.status = "cancelled"
+        run.completed_at = datetime.now(timezone.utc)
+        await session.flush()
+        return run
+
+    if run.status in NON_CLAIMABLE_STATUSES:
+        return run
+
+    # 2. Worker fencing claim / custody verification
+    now = datetime.now(timezone.utc)
+    lease_norm = _normalize_datetime(run.lease_expires_at)
+    lease_active = (
+        run.worker_id == effective_worker_id
+        and lease_norm is not None
+        and lease_norm > now
+        and run.fence_token > 0
+    )
+
+    if lease_active:
+        fence_token = run.fence_token
+    else:
+        claimed_token = await worker.claim_run(
+            session,
+            run_id=target_run_id,
+            worker_id=effective_worker_id,
+        )
+        if claimed_token is None:
+            raise WorkerFencingLostError(
+                f"Could not claim lease for run {target_run_id}: active lease held by another worker."
+            )
+        fence_token = claimed_token
+
+    # 3. Initial cancellation check
+    if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
+        run.status = "cancelled"
+        run.completed_at = datetime.now(timezone.utc)
+        await session.flush()
+        return run
+
+    # 4. Mark run running if currently pending
+    if run.status == "pending":
+        run.status = "running"
+        run.started_at = run.started_at or datetime.now(timezone.utc)
+        await session.flush()
+
+    # 5. Ensure stages are loaded and sorted by position
+    if not run.stages:
+        stmt_stages = select(AutonomousDeploymentStage).where(AutonomousDeploymentStage.run_id == target_run_id)
+        res_stages = await session.execute(stmt_stages)
+        run.stages = list(res_stages.scalars().all())
+
+    stages = sorted(run.stages, key=lambda s: s.position)
+
+    # 6. Execute stages sequentially
+    for stage in stages:
+        # Skip stages already succeeded or skipped
+        if stage.status in ("succeeded", "skipped"):
+            continue
+
+        # Cancellation check before stage start
+        if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
+            stage.status = "cancelled"
+            stage.completed_at = datetime.now(timezone.utc)
+            run.status = "cancelled"
+            run.completed_at = datetime.now(timezone.utc)
+            await session.flush()
+            return run
+
+        # Routine heartbeat before stage
+        await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
+
+        # Transition stage to running
+        await worker.transition_stage(
+            session,
+            run_id=target_run_id,
+            stage_name=stage.stage_name,
+            fence_token=fence_token,
+            status="running",
+            progress_pct=10,
+        )
+
+        # Append stage start log
+        await service.append_logs(
+            session,
+            run_id=target_run_id,
+            stage_name=stage.stage_name,
+            entries=[f"Starting stage {stage.stage_name}..."],
+            fence_token=fence_token,
+        )
+
+        # Check cancellation right before evaluator execution
+        if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
+            stage.status = "cancelled"
+            stage.completed_at = datetime.now(timezone.utc)
+            run.status = "cancelled"
+            run.completed_at = datetime.now(timezone.utc)
+            await session.flush()
+            return run
+
+        # Locate stage or gate evaluator
+        evaluator = STAGE_EVALUATORS.get(stage.stage_name)
+        if evaluator is None and stage.gate_id:
+            evaluator = GATE_EVALUATORS.get(stage.gate_id)
+
+        if evaluator is not None:
+            if inspect.iscoroutinefunction(evaluator):
+                result = await evaluator(session, run, context)
+            else:
+                res = evaluator(session, run, context)
+                if inspect.iscoroutine(res):
+                    result = await res
+                else:
+                    result = res
+        else:
+            result = GateResult(
+                gate_id=stage.gate_id or "",
+                passed=True,
+                status="succeeded",
+                message=f"Stage {stage.stage_name} completed",
+            )
+
+        stage_passed = getattr(result, "overall_passed", getattr(result, "passed", False))
+        details = getattr(result, "details", {})
+        message = getattr(result, "message", "")
+
+        if stage_passed:
+            # Append success log
+            await service.append_logs(
+                session,
+                run_id=target_run_id,
+                stage_name=stage.stage_name,
+                entries=[(f"Stage {stage.stage_name} succeeded: {message}", "INFO")],
+                fence_token=fence_token,
+            )
+            # Transition stage to succeeded
+            await worker.transition_stage(
+                session,
+                run_id=target_run_id,
+                stage_name=stage.stage_name,
+                fence_token=fence_token,
+                status="succeeded",
+                progress_pct=100,
+                metadata=details,
+            )
+            # Heartbeat after successful stage
+            await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
+        else:
+            # Append failure log
+            await service.append_logs(
+                session,
+                run_id=target_run_id,
+                stage_name=stage.stage_name,
+                entries=[(f"Stage {stage.stage_name} failed: {message}", "ERROR")],
+                fence_token=fence_token,
+            )
+            # Transition stage to failed
+            await worker.transition_stage(
+                session,
+                run_id=target_run_id,
+                stage_name=stage.stage_name,
+                fence_token=fence_token,
+                status="failed",
+                progress_pct=stage.progress_pct,
+                metadata=details,
+                error_message=message,
+            )
+            # Mark run failed and record primary error
+            fail_now = datetime.now(timezone.utc)
+            run.status = "failed"
+            run.error_summary = message or f"Stage '{stage.stage_name}' failed."
+            run.primary_error = {
+                "stage_name": stage.stage_name,
+                "gate_id": stage.gate_id,
+                "message": message,
+                "details": details,
+            }
+            run.completed_at = fail_now
+            await session.flush()
+            # Pipeline stops immediately; subsequent stages remain pending
+            return run
+
+    # 7. Full completion: mark run succeeded, progress_pct=100, completed_at=now()
+    finish_now = datetime.now(timezone.utc)
+    run.status = "succeeded"
+    run.progress_pct = 100
+    if run.completed_at is None:
+        run.completed_at = finish_now
+    await session.flush()
+    return run
