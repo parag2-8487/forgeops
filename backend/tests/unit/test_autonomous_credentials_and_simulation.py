@@ -101,7 +101,7 @@ class TestCredentialResolutionAndAuthorizationBoundaries:
 
         session.execute.side_effect = [gh_mapping, v_mapping]
 
-        with patch("src.deployments.autonomous_credentials.get_settings") as mock_settings:
+        with patch("src.deployments.autonomous_credentials.get_settings", autospec=True) as mock_settings:
             mock_settings.return_value.envelope_pepper = _TEST_PEPPER
             creds = await resolve_deployment_credentials(session, run)
 
@@ -131,7 +131,7 @@ class TestCredentialResolutionAndAuthorizationBoundaries:
         }
         session.execute.side_effect = [gh_mapping]
 
-        with patch("src.deployments.autonomous_credentials.get_settings") as mock_settings:
+        with patch("src.deployments.autonomous_credentials.get_settings", autospec=True) as mock_settings:
             mock_settings.return_value.envelope_pepper = _TEST_PEPPER
             creds = await resolve_deployment_credentials(session, run_user_b)
 
@@ -148,7 +148,7 @@ class TestCredentialResolutionAndAuthorizationBoundaries:
         empty_mapping.mappings.return_value.first.return_value = None
         session.execute.return_value = empty_mapping
 
-        with patch("src.deployments.autonomous_credentials.get_settings") as mock_settings:
+        with patch("src.deployments.autonomous_credentials.get_settings", autospec=True) as mock_settings:
             mock_settings.return_value.envelope_pepper = _TEST_PEPPER
             creds = await resolve_deployment_credentials(session, run)
 
@@ -174,7 +174,7 @@ class TestCredentialResolutionAndAuthorizationBoundaries:
         }
         session.execute.side_effect = [gh_mapping, MagicMock(mappings=lambda: MagicMock(first=lambda: None))]
 
-        with patch("src.deployments.autonomous_credentials.get_settings") as mock_settings:
+        with patch("src.deployments.autonomous_credentials.get_settings", autospec=True) as mock_settings:
             mock_settings.return_value.envelope_pepper = _TEST_PEPPER
             creds = await resolve_deployment_credentials(session, run)
 
