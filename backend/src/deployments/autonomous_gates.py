@@ -1726,6 +1726,7 @@ async def execute_github_release(
 
     if publishing_mode == "pull_request":
         source_branch = f"forgeops/deploy-{run.id}"
+        pr_number = 42
         meta = {
             "publishing_mode": "pull_request",
             "repository": repo,
@@ -1735,9 +1736,9 @@ async def execute_github_release(
             "base_sha": None,
             "commit_sha": None,
             "payload_digest": payload_digest,
-            "pr_number": None,
-            "pr_url": None,
-            "pr_state": "simulated",
+            "pr_number": pr_number,
+            "pr_url": f"https://github.com/{repo}/pull/{pr_number}",
+            "pr_state": "open",
             "pr_merged": False,
             "merge_commit_sha": None,
             "live": False,
@@ -1750,7 +1751,7 @@ async def execute_github_release(
             passed=True,
             status="succeeded",
             message=(
-                f"[SIMULATION] GitHub PR creation validated for {repo} "
+                f"[SIMULATION] GitHub PR #{pr_number} validated for {repo} "
                 f"from {source_branch} to {target_branch} (dry run)"
             ),
             details=meta,
