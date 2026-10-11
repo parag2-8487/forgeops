@@ -29,6 +29,7 @@ vi.mock("@/lib/api", async () => {
 
 import AutonomousDeployPage from "@/app/(shell)/projects/[projectId]/autonomous-deploy/page";
 import ProjectDetailPage from "@/app/(shell)/projects/[projectId]/page";
+import { AutonomousDeployForm } from "@/features/deployments/AutonomousDeployForm";
 import { validateGitBranchName } from "@/lib/git-validation";
 
 describe("Autonomous Deploy UX Improvements", () => {
@@ -927,6 +928,216 @@ describe("Autonomous Deploy UX Improvements", () => {
             }),
           }),
         );
+      });
+    });
+
+    it("handles strategy selection and dynamically updates visible configuration sections", async () => {
+      const user = userEvent.setup();
+      renderWithClient(<AutonomousDeployPage />);
+      await screen.findByRole("heading", { level: 1, name: "Autonomous Deployment" });
+
+      // Default: full stack has GitHub, Vercel, and Docker
+      expect(screen.getByTestId("github-config-section")).toBeInTheDocument();
+      expect(screen.getByTestId("vercel-config-section")).toBeInTheDocument();
+      expect(screen.getByTestId("docker-config-section")).toBeInTheDocument();
+
+      // Click Docker + GitHub
+      await user.click(screen.getByTestId("strategy-docker_github"));
+      expect(screen.getByTestId("github-config-section")).toBeInTheDocument();
+      expect(screen.getByTestId("docker-config-section")).toBeInTheDocument();
+      expect(screen.queryByTestId("vercel-config-section")).not.toBeInTheDocument();
+
+      // Click GitHub Only
+      await user.click(screen.getByTestId("strategy-github_only"));
+      expect(screen.getByTestId("github-config-section")).toBeInTheDocument();
+      expect(screen.queryByTestId("docker-config-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("vercel-config-section")).not.toBeInTheDocument();
+
+      // Click Vercel Only
+      await user.click(screen.getByTestId("strategy-vercel_only"));
+      expect(screen.queryByTestId("github-config-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("docker-config-section")).not.toBeInTheDocument();
+      expect(screen.getByTestId("vercel-config-section")).toBeInTheDocument();
+
+      // Switch back to Full Stack
+      await user.click(screen.getByTestId("strategy-docker_github_vercel"));
+      expect(screen.getByTestId("github-config-section")).toBeInTheDocument();
+      expect(screen.getByTestId("vercel-config-section")).toBeInTheDocument();
+      expect(screen.getByTestId("docker-config-section")).toBeInTheDocument();
+    });
+
+    it("supports configuring Vercel options, Docker ports, and custom commit message", async () => {
+      const user = userEvent.setup();
+      renderWithClient(<AutonomousDeployPage />);
+      await screen.findByRole("heading", { level: 1, name: "Autonomous Deployment" });
+
+      // Change commit message
+      const commitInput = screen.getByTestId("github-commit-message-input");
+      await user.clear(commitInput);
+      await user.type(commitInput, "Custom release commit");
+
+      // Change Vercel project and toggle production checkbox
+      const vercelInput = screen.getByTestId("vercel-project-input");
+      await user.clear(vercelInput);
+      await user.type(vercelInput, "my-custom-vercel-project");
+
+      const vercelCheckbox = screen.getByTestId("vercel-production-checkbox");
+      await user.click(vercelCheckbox);
+
+      // Change Docker ports
+      const hostPortInput = screen.getByTestId("docker-host-port-input");
+      await user.clear(hostPortInput);
+      await user.type(hostPortInput, "3000");
+
+      const containerPortInput = screen.getByTestId("docker-container-port-input");
+      await user.clear(containerPortInput);
+      await user.type(containerPortInput, "3000");
+
+      // Wait for repository availability
+      await waitFor(() => {
+        expect(screen.getByTestId("repo-availability-available")).toBeInTheDocument();
+      });
+
+      const submitBtn = screen.getByTestId("create-run-button");
+      expect(submitBtn).toBeEnabled();
+      await user.click(submitBtn);
+
+      await waitFor(() => {
+        expect(post).toHaveBeenCalledWith(
+          `/projects/${projectId}/autonomous-deploy`,
+          expect.objectContaining({
+            github_config: expect.objectContaining({
+              commit_message: "Custom release commit",
+            }),
+            vercel_config: expect.objectContaining({
+              project_name: "my-custom-vercel-project",
+              production_deploy: false,
+            }),
+            docker_config: expect.objectContaining({
+              port_bindings: { "3000": 3000 },
+            }),
+          }),
+        );
+      });
+    });
+
+    it("supports onCancel and onSuccess callback props directly on AutonomousDeployForm", async () => {
+      const user = userEvent.setup();
+      const mockCancel = vi.fn();
+      const mockSuccess = vi.fn();
+      const fakeRun = {
+        id: "run-custom-success-123",
+        project_id: projectId,
+        status: "pending",
+        strategy: "docker_github_vercel" as const,
+        attempt_number: 1,
+      };
+      post.mockResolvedValueOnce(fakeRun);
+
+      renderWithClient(
+        <AutonomousDeployForm
+          projectId={projectId}
+          projectName={projectName}
+          onCancel={mockCancel}
+          onSuccess={mockSuccess}
+        />,
+      );
+
+      // Verify Cancel button triggers onCancel prop
+      const cancelBtn = screen.getByRole("button", { name: "Cancel" });
+      await user.click(cancelBtn);
+      expect(mockCancel).toHaveBeenCalledTimes(1);
+
+      // Wait for availability check and click submit
+      await waitFor(() => {
+        expect(screen.getByTestId("repo-availability-available")).toBeInTheDocument();
+      });
+
+      const submitBtn = screen.getByTestId("create-run-button");
+      await user.click(submitBtn);
+
+      await waitFor(() => {
+        expect(mockSuccess).toHaveBeenCalledWith(fakeRun);
+      });
+    });
+
+    it("displays retry button when remote branch query fails and allows retry", async () => {
+      const user = userEvent.setup();
+      let branchQueryFails = true;
+      get.mockImplementation((url: string) => {
+        if (url === `/projects/${projectId}`) {
+          return Promise.resolve({
+            id: projectId,
+            name: projectName,
+            created_at: new Date().toISOString(),
+          });
+        }
+        if (url === "/integrations/github") {
+          return Promise.resolve({ configured: true, connected: true, login: "parag2-8487" });
+        }
+        if (url.startsWith("/integrations/github/repositories?")) {
+          return Promise.resolve({
+            items: [
+              {
+                full_name: "parag2-8487/test",
+                owner: "parag2-8487",
+                name: "test",
+                private: true,
+                default_branch: "main",
+                language: "TypeScript",
+                pushed_at: new Date().toISOString(),
+                clone_url: "https://github.com/parag2-8487/test.git",
+                html_url: "https://github.com/parag2-8487/test",
+                size_kb: 1024,
+                archived: false,
+              },
+            ],
+            total: 1,
+            page: 1,
+            per_page: 50,
+            truncated: false,
+          });
+        }
+        if (url.includes("/branches")) {
+          if (branchQueryFails) {
+            return Promise.reject(new Error("Failed to load branches"));
+          }
+          return Promise.resolve({
+            owner: "parag2-8487",
+            repo: "test",
+            default_branch: "main",
+            branches: ["main", "feature/awesome"],
+            can_push: true,
+            is_private: true,
+            truncated: false,
+          });
+        }
+        if (url.startsWith("/agents/devices")) {
+          return Promise.resolve({ devices: [], next_cursor: null });
+        }
+        return Promise.resolve({});
+      });
+
+      renderWithClient(<AutonomousDeployPage />);
+      await screen.findByRole("heading", { level: 1, name: "Autonomous Deployment" });
+
+      // Switch to Existing Repository mode and select repo
+      await user.click(screen.getByTestId("repo-mode-existing"));
+      await user.click(screen.getByLabelText("Toggle repository dropdown"));
+      await user.click(await screen.findByTestId("repo-select-parag2-8487/test"));
+
+      // Open branch dropdown
+      const toggleBtn = screen.getByLabelText("Toggle branch dropdown");
+      await user.click(toggleBtn);
+
+      // Verify retry button rendered and click it
+      const retryBtn = await screen.findByRole("button", { name: /retry/i });
+      branchQueryFails = false;
+      await user.click(retryBtn);
+
+      // Verify branches loaded after retry
+      await waitFor(() => {
+        expect(screen.getByTestId("branch-select-feature/awesome")).toBeInTheDocument();
       });
     });
   });
