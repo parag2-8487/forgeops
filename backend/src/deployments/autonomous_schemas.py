@@ -14,6 +14,7 @@ Provides:
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from enum import StrEnum
@@ -110,11 +111,11 @@ class GitHubConfigRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     repository_mode: str = Field(default="existing", max_length=50)
+    branch_mode: str = Field(default="existing", max_length=50)
     repository_name: str = Field(
         ...,
-        min_length=3,
+        min_length=1,
         max_length=200,
-        pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
     )
     # Optional on creation: dynamically resolved to repository default branch if omitted
     target_branch: str | None = Field(default=None, max_length=255)
@@ -124,6 +125,33 @@ class GitHubConfigRequest(BaseModel):
     pr_title: str | None = Field(default=None, max_length=255)
     pr_body: str | None = Field(default=None, max_length=10000)
 
+    @field_validator("repository_name")
+    @classmethod
+    def validate_repository_name_format(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Repository name cannot be empty.")
+        if any(ch.isspace() for ch in v):
+            raise ValueError(f"Invalid repository name '{v}': whitespace is forbidden.")
+        if v.startswith("http://") or v.startswith("https://") or v.startswith("git@"):
+            raise ValueError(
+                f"Invalid repository name '{v}': full URLs are not permitted. Enter only the repository name."
+            )
+        parts = v.split("/")
+        if len(parts) > 2:
+            raise ValueError(f"Invalid repository name '{v}': contains multiple slashes.")
+        for part in parts:
+            if not part:
+                raise ValueError(f"Invalid repository name '{v}': path component cannot be empty.")
+            if not re.match(r"^[A-Za-z0-9_.-]+$", part):
+                raise ValueError(f"Invalid repository name '{v}': component '{part}' contains unsupported characters.")
+            if part in (".", ".."):
+                raise ValueError(f"Invalid repository name '{v}': component cannot be '.' or '..'.")
+            if part.startswith(".") or part.startswith("-") or part.endswith("."):
+                raise ValueError(
+                    f"Invalid repository name '{v}': component '{part}' cannot start with '.' or '-', or end with '.'."
+                )
+        return v
+
     @field_validator("target_branch", "base_branch")
     @classmethod
     def validate_branch_format(cls, v: str | None) -> str | None:
@@ -131,6 +159,15 @@ class GitHubConfigRequest(BaseModel):
 
     @model_validator(mode="after")
     def reconcile_and_normalize_branches(self) -> Self:
+        if self.repository_mode == "existing" and "/" not in self.repository_name:
+            raise ValueError(f"Existing repository name '{self.repository_name}' must be in 'owner/repo' format.")
+
+        if self.publishing_mode == GitHubPublishingMode.PULL_REQUEST:
+            if self.repository_mode != "existing":
+                raise ValueError("Pull requests require an existing repository and an existing base branch.")
+            if self.branch_mode == "new":
+                raise ValueError("Pull requests require an existing repository and an existing base branch.")
+
         if self.base_branch is not None:
             if self.target_branch is not None and self.target_branch != self.base_branch:
                 raise ValueError(
@@ -152,6 +189,7 @@ class StoredGitHubConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     repository_mode: str = "existing"
+    branch_mode: str = "existing"
     repository_name: str
     target_branch: str | None = None
     base_branch: str | None = None

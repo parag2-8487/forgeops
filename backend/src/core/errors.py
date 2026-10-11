@@ -272,6 +272,8 @@ PROBLEM_REGISTRY: Final[dict[str, ProblemSpec]] = {
     "github-rate-limited": ProblemSpec(429, "GitHub API rate limit exceeded"),
     "github-upstream-unreachable": ProblemSpec(502, "Could not connect to GitHub API"),
     "github-upstream-invalid": ProblemSpec(502, "GitHub API returned an invalid response structure"),
+    "github-repository-conflict": ProblemSpec(409, "Repository already exists or name is unavailable"),
+    "github-invalid-owner": ProblemSpec(400, "Repository owner does not match linked account"),
 }
 
 #: The 403 body, byte-identical for every forbidden outcome (design §4.2, Appendix

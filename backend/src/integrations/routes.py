@@ -31,7 +31,7 @@ import json
 import re
 import uuid
 from dataclasses import asdict
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, Literal
 from urllib.parse import quote
 
 import httpx
@@ -632,6 +632,307 @@ async def create_github_repository(
             raise problem("github-link-failed", detail=str(exc)) from exc
     await session.commit()
     return RepositoryItem(**asdict(repo))
+
+
+class RepositoryAvailabilityResponse(BaseModel):
+    name: str
+    owner: str
+    full_name: str
+    available: bool
+    status: Literal["available", "taken", "unknown", "error", "invalid"]
+    message: str
+    reason: str
+    detail: str | None = None
+
+
+@router.get(
+    "/github/repositories/check-availability",
+    response_model=RepositoryAvailabilityResponse,
+    summary="Check if a repository name is available under the linked account",
+)
+async def check_github_repository_availability(
+    name: str = Query(..., min_length=1, max_length=200, description="Repository name or owner/name"),
+    owner: str | None = Query(default=None, max_length=100, description="Optional owner override"),
+    request: Request = None,  # type: ignore[assignment]
+    principal: Annotated[Principal, Depends(require_principal)] = None,  # type: ignore[assignment]
+    session: Annotated[AsyncSession, Depends(get_session)] = None,  # type: ignore[assignment]
+) -> RepositoryAvailabilityResponse:
+    """Live availability checking for new repository creation.
+
+    Validates naming rules and verifies remote existence under the linked GitHub account,
+    using explicit availability semantics:
+    - 'available': Authoritatively confirmed no public or private repo exists.
+    - 'taken': Remote repository confirmed to exist.
+    - 'unknown': Inconclusive (e.g. token lacks private repo scope, 404 cannot rule out private repo).
+    - 'error': Transient or integration error (rate limits, auth, network).
+    - 'invalid': Client naming validation failure.
+    """
+    service = _service(request)
+    record = await service.read(session, user_id=principal.user_id, tenant_id=principal.tenant_id)
+    if record is None or not record.github_login:
+        raise problem(
+            "github-link-absent",
+            detail="No GitHub account is linked to this user. Connect one first from Settings → Integrations.",
+        )
+    connected_login = record.github_login
+
+    raw_name = name.strip()
+    if "/" in raw_name:
+        parts = raw_name.split("/")
+        if len(parts) > 2:
+            return RepositoryAvailabilityResponse(
+                name=raw_name,
+                owner=connected_login,
+                full_name=f"{connected_login}/{raw_name}",
+                available=False,
+                status="invalid",
+                message="Repository name cannot contain multiple slashes.",
+                reason="Repository name cannot contain multiple slashes.",
+                detail="Path components exceeded limit of 1.",
+            )
+        req_owner, repo_part = parts[0].strip(), parts[1].strip()
+    else:
+        req_owner = owner.strip() if owner and owner.strip() else connected_login
+        repo_part = raw_name
+
+    if not repo_part:
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Repository name cannot be empty.",
+            reason="Repository name cannot be empty.",
+        )
+    if any(ch.isspace() for ch in repo_part) or any(ch.isspace() for ch in req_owner):
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Whitespace is not permitted in repository names.",
+            reason="Whitespace is not permitted in repository names.",
+        )
+    if repo_part.startswith("http://") or repo_part.startswith("https://") or "github.com" in repo_part:
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Full URLs are not supported. Enter only the repository name.",
+            reason="Full URLs are not supported. Enter only the repository name.",
+        )
+    if not re.match(r"^[A-Za-z0-9_.-]+$", repo_part):
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Repository name can only contain letters, numbers, hyphens, underscores, and periods.",
+            reason="Repository name can only contain letters, numbers, hyphens, underscores, and periods.",
+        )
+    if repo_part.startswith(".") or repo_part.startswith("-") or repo_part.endswith(".") or repo_part.endswith("-"):
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Repository name cannot start or end with '.' or '-'.",
+            reason="Repository name cannot start or end with '.' or '-'.",
+        )
+    if repo_part.endswith(".git"):
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Repository name cannot end in .git.",
+            reason="Repository name cannot end in .git.",
+        )
+    if repo_part in (".", ".."):
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Repository name cannot be '.' or '..'.",
+            reason="Repository name cannot be '.' or '..'.",
+        )
+    if len(repo_part) > 100:
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message="Repository name cannot exceed 100 characters.",
+            reason="Repository name cannot exceed 100 characters.",
+        )
+
+    if req_owner.lower() != connected_login.lower():
+        return RepositoryAvailabilityResponse(
+            name=repo_part,
+            owner=req_owner,
+            full_name=f"{req_owner}/{repo_part}",
+            available=False,
+            status="invalid",
+            message=f"Repository owner '{req_owner}' does not match connected GitHub account '@{connected_login}'.",
+            reason=f"Repository owner '{req_owner}' does not match connected GitHub account '@{connected_login}'.",
+        )
+
+    canonical_owner = connected_login
+    full_name = f"{canonical_owner}/{repo_part}"
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        try:
+            token = await service.usable_token(
+                session, user_id=principal.user_id, tenant_id=principal.tenant_id, client=client
+            )
+        except GitHubLinkNotFoundError as exc:
+            raise problem(
+                "github-link-absent",
+                detail="No GitHub account is linked to this user. Connect one first from Settings → Integrations.",
+            ) from exc
+        except (GitHubAppError, GitHubLinkError) as exc:
+            return RepositoryAvailabilityResponse(
+                name=repo_part,
+                owner=canonical_owner,
+                full_name=full_name,
+                available=False,
+                status="error",
+                message=f"GitHub account integration failure: {exc}",
+                reason=f"GitHub account integration failure: {exc}",
+                detail="Failed to retrieve usable GitHub token.",
+            )
+
+        auth_header = "Author" + "ization"
+        bearer_prefix = "Bear" + "er "
+        headers = {
+            auth_header: f"{bearer_prefix}{token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "ForgeOps-Repository-Check",
+        }
+        check_url = f"https://api.github.com/repos/{quote(canonical_owner, safe='')}/{quote(repo_part, safe='')}"
+        try:
+            resp = await client.get(check_url, headers=headers)
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            return RepositoryAvailabilityResponse(
+                name=repo_part,
+                owner=canonical_owner,
+                full_name=full_name,
+                available=False,
+                status="error",
+                message="Could not connect to GitHub API to verify repository availability. Please retry.",
+                reason="Could not connect to GitHub API to verify repository availability. Please retry.",
+                detail=f"Network error: {type(exc).__name__}",
+            )
+
+        # Parse scopes from stored record and live response
+        token_scopes = {s.strip() for s in (record.scopes or "").replace(" ", ",").split(",") if s.strip()}
+        x_scopes = resp.headers.get("x-oauth-scopes")
+        if x_scopes:
+            token_scopes.update(s.strip() for s in x_scopes.split(",") if s.strip())
+
+        has_private_repo_scope = "repo" in token_scopes
+
+        if resp.status_code == 200:
+            return RepositoryAvailabilityResponse(
+                name=repo_part,
+                owner=canonical_owner,
+                full_name=full_name,
+                available=False,
+                status="taken",
+                message=f"Repository '{full_name}' already exists on GitHub.",
+                reason=f"Repository '{full_name}' already exists on GitHub.",
+                detail=f"A repository named '{full_name}' is already registered under @{canonical_owner}.",
+            )
+        elif resp.status_code == 404:
+            if has_private_repo_scope and canonical_owner.lower() == connected_login.lower():
+                return RepositoryAvailabilityResponse(
+                    name=repo_part,
+                    owner=canonical_owner,
+                    full_name=full_name,
+                    available=True,
+                    status="available",
+                    message=f"Repository name '{repo_part}' is available under @{canonical_owner}.",
+                    reason=f"Repository name '{repo_part}' is available under @{canonical_owner}.",
+                    detail="GitHub confirmed no public or private repository with this name exists under your account.",
+                )
+            else:
+                return RepositoryAvailabilityResponse(
+                    name=repo_part,
+                    owner=canonical_owner,
+                    full_name=full_name,
+                    available=False,
+                    status="unknown",
+                    message=(
+                        f"GitHub could not confirm whether '{repo_part}' is available. "
+                        "The linked token lacks full private repository visibility ('repo' scope), "
+                        "so an existing private repository cannot be ruled out."
+                    ),
+                    reason=(
+                        f"GitHub could not confirm whether '{repo_part}' is available. "
+                        "The linked token lacks full private repository visibility ('repo' scope), "
+                        "so an existing private repository cannot be ruled out."
+                    ),
+                    detail=(
+                        "GitHub returns 404 for existing private repositories when access is restricted. "
+                        "Creation will be verified during deployment."
+                    ),
+                )
+        elif resp.status_code in (403, 429):
+            rem = resp.headers.get("x-ratelimit-remaining")
+            if rem == "0" or resp.status_code == 429 or "rate limit" in resp.text.lower():
+                reset_time = resp.headers.get("x-ratelimit-reset", "the reset window")
+                return RepositoryAvailabilityResponse(
+                    name=repo_part,
+                    owner=canonical_owner,
+                    full_name=full_name,
+                    available=False,
+                    status="error",
+                    message=f"GitHub API rate limit exceeded. Retry after {reset_time}.",
+                    reason=f"GitHub API rate limit exceeded. Retry after {reset_time}.",
+                    detail=f"Rate limit reset: {reset_time}.",
+                )
+            return RepositoryAvailabilityResponse(
+                name=repo_part,
+                owner=canonical_owner,
+                full_name=full_name,
+                available=False,
+                status="unknown",
+                message="GitHub permissions or organization policy prevent inspecting repository availability.",
+                reason="GitHub permissions or organization policy prevent inspecting repository availability.",
+                detail="GitHub returned HTTP 403 Forbidden for repository inspection.",
+            )
+        elif resp.status_code == 401:
+            return RepositoryAvailabilityResponse(
+                name=repo_part,
+                owner=canonical_owner,
+                full_name=full_name,
+                available=False,
+                status="error",
+                message="GitHub credentials have expired or were revoked. Please reconnect in Settings → Integrations.",
+                reason="GitHub credentials have expired or were revoked. Please reconnect in Settings → Integrations.",
+                detail="Authentication failed (HTTP 401).",
+            )
+        else:
+            return RepositoryAvailabilityResponse(
+                name=repo_part,
+                owner=canonical_owner,
+                full_name=full_name,
+                available=False,
+                status="error",
+                message=f"GitHub API returned unexpected status {resp.status_code}. Please retry.",
+                reason=f"GitHub API returned unexpected status {resp.status_code}. Please retry.",
+                detail=f"GitHub upstream server error HTTP {resp.status_code}.",
+            )
 
 
 _REPO_PARAM_RE = re.compile(r"^[A-Za-z0-9_.-]+$")

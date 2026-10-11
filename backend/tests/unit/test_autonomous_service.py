@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.sql.elements import BinaryExpression, BooleanClauseList
@@ -31,6 +32,7 @@ from src.deployments.autonomous_schemas import (
     DeploymentStrategy,
     DockerConfigRequest,
     GitHubConfigRequest,
+    GitHubPublishingMode,
     VercelConfigRequest,
 )
 from src.deployments.autonomous_service import (
@@ -300,6 +302,123 @@ class TestRunCreationAndIdempotency:
         assert is_created2 is True
         assert run1.id != run2.id
         assert len(session.runs) == 2
+
+    @pytest.mark.asyncio
+    async def test_create_run_new_repository_normalizes_bare_name(self) -> None:
+        session = MockAsyncSession()
+        service = AutonomousDeploymentService()
+        project_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+
+        mock_link = MagicMock()
+        mock_record = MagicMock()
+        mock_record.github_login = "octo-test"
+        mock_link.read = AsyncMock(return_value=mock_record)
+        mock_link.usable_token = AsyncMock(return_value=None)
+
+        req = CreateAutonomousRunRequest(
+            strategy=DeploymentStrategy.GITHUB_ONLY,
+            github_config=GitHubConfigRequest(
+                repository_mode="new_private",
+                repository_name="my-cool-app",
+                publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+            ),
+        )
+
+        run, is_created = await service.create_run(
+            session,
+            project_id=project_id,
+            requested_by=user_id,
+            request=req,
+            tenant_id=tenant_id,
+            link_service=mock_link,
+        )
+
+        assert is_created is True
+        assert run.configuration["github_config"]["repository_name"] == "octo-test/my-cool-app"
+        assert run.configuration["github_config"]["target_branch"] == "main"
+
+    @pytest.mark.asyncio
+    async def test_create_run_new_repository_rejects_owner_mismatch(self) -> None:
+        session = MockAsyncSession()
+        service = AutonomousDeploymentService()
+        project_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+
+        mock_link = MagicMock()
+        mock_record = MagicMock()
+        mock_record.github_login = "octo-test"
+        mock_link.read = AsyncMock(return_value=mock_record)
+        mock_link.usable_token = AsyncMock(return_value=None)
+
+        req = CreateAutonomousRunRequest(
+            strategy=DeploymentStrategy.GITHUB_ONLY,
+            github_config=GitHubConfigRequest(
+                repository_mode="new_private",
+                repository_name="stranger/my-cool-app",
+                publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+            ),
+        )
+
+        with pytest.raises(ProblemException) as exc_info:
+            await service.create_run(
+                session,
+                project_id=project_id,
+                requested_by=user_id,
+                request=req,
+                tenant_id=tenant_id,
+                link_service=mock_link,
+            )
+
+        problem = exc_info.value.problem
+        assert problem.status == 400
+        assert "github-invalid-owner" in problem.type
+        assert "does not match connected GitHub account" in (problem.detail or "")
+
+    @pytest.mark.asyncio
+    async def test_create_run_new_repository_detects_conflict(self) -> None:
+        session = MockAsyncSession()
+        service = AutonomousDeploymentService()
+        project_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+
+        mock_link = MagicMock()
+        mock_record = MagicMock()
+        mock_record.github_login = "octo-test"
+        mock_link.read = AsyncMock(return_value=mock_record)
+        mock_link.usable_token = AsyncMock(return_value="valid-token")
+
+        req = CreateAutonomousRunRequest(
+            strategy=DeploymentStrategy.GITHUB_ONLY,
+            github_config=GitHubConfigRequest(
+                repository_mode="new_private",
+                repository_name="already-taken",
+                publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+            ),
+        )
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_get.return_value = mock_resp
+
+            with pytest.raises(ProblemException) as exc_info:
+                await service.create_run(
+                    session,
+                    project_id=project_id,
+                    requested_by=user_id,
+                    request=req,
+                    tenant_id=tenant_id,
+                    link_service=mock_link,
+                )
+
+            problem = exc_info.value.problem
+            assert problem.status == 409
+            assert "github-repository-conflict" in problem.type
+            assert "already exists on GitHub" in (problem.detail or "")
 
 
 # ---------------------------------------------------------------------------

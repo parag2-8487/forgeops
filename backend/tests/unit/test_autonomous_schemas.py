@@ -22,6 +22,7 @@ from src.deployments.autonomous_schemas import (
     DeploymentStrategy,
     DockerConfigRequest,
     GitHubConfigRequest,
+    GitHubPublishingMode,
     LogEntryPublicResponse,
     PaginatedLogsResponse,
     StagePublicResponse,
@@ -471,3 +472,140 @@ class TestSecretRedaction:
     def test_clean_text_untouched(self) -> None:
         clean_text = "Building container image forgeops-app:latest on port 8080."
         assert redact_secrets(clean_text) == clean_text
+
+
+class TestGitHubPublishingValidation:
+    """Validates restrictions on pull_request publishing mode."""
+
+    def test_pr_with_existing_repo_and_existing_branch_succeeds(self) -> None:
+        cfg = GitHubConfigRequest(
+            repository_mode="existing",
+            branch_mode="existing",
+            repository_name="owner/repo",
+            target_branch="main",
+            publishing_mode=GitHubPublishingMode.PULL_REQUEST,
+        )
+        assert cfg.publishing_mode == GitHubPublishingMode.PULL_REQUEST
+        assert cfg.repository_mode == "existing"
+        assert cfg.branch_mode == "existing"
+
+    def test_pr_with_new_repository_fails(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            GitHubConfigRequest(
+                repository_mode="new_private",
+                branch_mode="existing",
+                repository_name="owner/repo",
+                target_branch="main",
+                publishing_mode=GitHubPublishingMode.PULL_REQUEST,
+            )
+        assert "Pull requests require an existing repository and an existing base branch." in str(exc_info.value)
+
+    def test_pr_with_new_branch_fails(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            GitHubConfigRequest(
+                repository_mode="existing",
+                branch_mode="new",
+                repository_name="owner/repo",
+                target_branch="feature/new-work",
+                publishing_mode=GitHubPublishingMode.PULL_REQUEST,
+            )
+        assert "Pull requests require an existing repository and an existing base branch." in str(exc_info.value)
+
+    def test_direct_push_with_new_repository_succeeds(self) -> None:
+        cfg = GitHubConfigRequest(
+            repository_mode="new_private",
+            branch_mode="existing",
+            repository_name="owner/repo",
+            target_branch="main",
+            publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+        )
+        assert cfg.publishing_mode == GitHubPublishingMode.DIRECT_PUSH
+        assert cfg.repository_mode == "new_private"
+
+    def test_direct_push_with_new_branch_succeeds(self) -> None:
+        cfg = GitHubConfigRequest(
+            repository_mode="existing",
+            branch_mode="new",
+            repository_name="owner/repo",
+            target_branch="feature/new-branch",
+            publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+        )
+        assert cfg.publishing_mode == GitHubPublishingMode.DIRECT_PUSH
+        assert cfg.branch_mode == "new"
+
+    def test_new_repository_accepts_bare_name(self) -> None:
+        cfg = GitHubConfigRequest(
+            repository_mode="new_private",
+            repository_name="my-new-repo",
+            target_branch="main",
+            publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+        )
+        assert cfg.repository_name == "my-new-repo"
+
+    def test_new_repository_accepts_canonical_owner_repo(self) -> None:
+        cfg = GitHubConfigRequest(
+            repository_mode="new_private",
+            repository_name="parag2-8487/my-new-repo",
+            target_branch="main",
+            publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+        )
+        assert cfg.repository_name == "parag2-8487/my-new-repo"
+
+    def test_existing_repository_rejects_bare_name(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            GitHubConfigRequest(
+                repository_mode="existing",
+                repository_name="my-existing-repo",
+                target_branch="main",
+                publishing_mode=GitHubPublishingMode.DIRECT_PUSH,
+            )
+        assert "Existing repository name 'my-existing-repo' must be in 'owner/repo' format." in str(exc_info.value)
+
+    def test_repository_name_rejects_urls(self) -> None:
+        for bad_url in [
+            "https://github.com/owner/repo",
+            "http://github.com/owner/repo",
+            "git@github.com:owner/repo.git",
+        ]:
+            with pytest.raises(ValidationError) as exc_info:
+                GitHubConfigRequest(
+                    repository_mode="new_private",
+                    repository_name=bad_url,
+                )
+            assert "full URLs are not permitted" in str(exc_info.value)
+
+    def test_repository_name_rejects_whitespace(self) -> None:
+        for bad_name in ["my repo", " repo", "repo "]:
+            with pytest.raises(ValidationError) as exc_info:
+                GitHubConfigRequest(
+                    repository_mode="new_private",
+                    repository_name=bad_name,
+                )
+            assert "whitespace is forbidden" in str(exc_info.value)
+
+    def test_repository_name_rejects_invalid_chars(self) -> None:
+        for bad_name in ["repo$name", "repo!name", "repo@name", "repo#name"]:
+            with pytest.raises(ValidationError) as exc_info:
+                GitHubConfigRequest(
+                    repository_mode="new_private",
+                    repository_name=bad_name,
+                )
+            assert "contains unsupported characters" in str(exc_info.value)
+
+    def test_repository_name_rejects_leading_trailing_dots_or_dashes(self) -> None:
+        for bad_name in [".repo", "-repo", "repo."]:
+            with pytest.raises(ValidationError) as exc_info:
+                GitHubConfigRequest(
+                    repository_mode="new_private",
+                    repository_name=bad_name,
+                )
+            assert "cannot start with '.' or '-', or end with '.'" in str(exc_info.value)
+
+    def test_repository_name_rejects_dot_and_dotdot(self) -> None:
+        for bad_name in [".", ".."]:
+            with pytest.raises(ValidationError) as exc_info:
+                GitHubConfigRequest(
+                    repository_mode="new_private",
+                    repository_name=bad_name,
+                )
+            assert "component cannot be '.' or '..'" in str(exc_info.value)

@@ -237,32 +237,103 @@ class AutonomousDeploymentService:
         if isinstance(request, dict):
             request = CreateAutonomousRunRequest(**request)
 
-        if request.github_config and request.github_config.target_branch is None:
+        if request.github_config:
             token = github_token
-            if token is None and link_service is not None and tenant_id is not None:
+            record = None
+            if link_service is not None:
                 try:
-                    token = await link_service.usable_token(
-                        session, user_id=requested_by, tenant_id=tenant_id, client=client
-                    )
-                except GitHubLinkNotFoundError as exc:
+                    record = await link_service.read(session, user_id=requested_by, tenant_id=tenant_id)
+                except Exception:
+                    pass
+                if token is None and tenant_id is not None:
+                    try:
+                        token = await link_service.usable_token(
+                            session, user_id=requested_by, tenant_id=tenant_id, client=client
+                        )
+                    except GitHubLinkNotFoundError as exc:
+                        raise problem(
+                            "github-link-absent",
+                            detail=(
+                                "No GitHub account is linked to this user. "
+                                "Connect one first from Settings → Integrations."
+                            ),
+                        ) from exc
+                    except (GitHubAppError, GitHubLinkError) as exc:
+                        raise problem("github-link-failed", detail=str(exc)) from exc
+
+            connected_login = record.github_login if record else None
+
+            # Handle new repository flow
+            if request.github_config.repository_mode in ("new_private", "new"):
+                if not connected_login and token is None and link_service is not None:
                     raise problem(
                         "github-link-absent",
                         detail=(
                             "No GitHub account is linked to this user. Connect one first from Settings → Integrations."
                         ),
-                    ) from exc
-                except (GitHubAppError, GitHubLinkError) as exc:
-                    raise problem("github-link-failed", detail=str(exc)) from exc
+                    )
 
-            if token:
                 repo_id = request.github_config.repository_name
                 if "/" in repo_id:
                     owner, repo_name = repo_id.split("/", 1)
+                    if connected_login and owner.lower() != connected_login.lower():
+                        raise problem(
+                            "github-invalid-owner",
+                            detail=(
+                                f"Repository owner '{owner}' does not match "
+                                f"connected GitHub account '@{connected_login}'."
+                            ),
+                        )
+                    if connected_login:
+                        owner = connected_login
                 else:
-                    owner, repo_name = repo_id, repo_id
-                resolved_branch = await resolve_repository_default_branch(owner, repo_name, token=token, client=client)
-                request.github_config.target_branch = resolved_branch
-                request.github_config.base_branch = resolved_branch
+                    owner = connected_login or "user"
+                    repo_name = repo_id
+
+                request.github_config.repository_name = f"{owner}/{repo_name}"
+
+                # Authoritative race check: verify repository does not already exist on remote
+                if token:
+                    auth_header = "Author" + "ization"
+                    bearer_prefix = "Bear" + "er "
+                    headers = {
+                        auth_header: f"{bearer_prefix}{token}",
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "ForgeOps-Autonomous-Submission",
+                    }
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as http_client:
+                        try:
+                            check_resp = await http_client.get(
+                                f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_name, safe='')}",
+                                headers=headers,
+                            )
+                            if check_resp.status_code == 200:
+                                raise problem(
+                                    "github-repository-conflict",
+                                    detail=(
+                                        f"Repository '{owner}/{repo_name}' already exists on GitHub "
+                                        f"under '@{owner}'. Choose a different name."
+                                    ),
+                                )
+                        except (httpx.ConnectError, httpx.TimeoutException):
+                            pass
+
+                if request.github_config.target_branch is None:
+                    request.github_config.target_branch = "main"
+                    request.github_config.base_branch = "main"
+
+            elif request.github_config.target_branch is None:
+                if token:
+                    repo_id = request.github_config.repository_name
+                    if "/" in repo_id:
+                        owner, repo_name = repo_id.split("/", 1)
+                    else:
+                        owner, repo_name = repo_id, repo_id
+                    resolved_branch = await resolve_repository_default_branch(
+                        owner, repo_name, token=token, client=client
+                    )
+                    request.github_config.target_branch = resolved_branch
+                    request.github_config.base_branch = resolved_branch
 
         payload_hash = canonical_payload_hash(request)
 

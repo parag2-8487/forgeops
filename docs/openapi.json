@@ -2614,6 +2614,12 @@
             ],
             "title": "Base Branch"
           },
+          "branch_mode": {
+            "default": "existing",
+            "maxLength": 50,
+            "title": "Branch Mode",
+            "type": "string"
+          },
           "commit_message": {
             "anyOf": [
               {
@@ -2663,8 +2669,7 @@
           },
           "repository_name": {
             "maxLength": 200,
-            "minLength": 3,
-            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "minLength": 1,
             "title": "Repository Name",
             "type": "string"
           },
@@ -4371,6 +4376,67 @@
           "reason"
         ],
         "title": "ReleasePipelineRequest",
+        "type": "object"
+      },
+      "RepositoryAvailabilityResponse": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "taken",
+              "unknown",
+              "error",
+              "invalid"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "owner",
+          "full_name",
+          "available",
+          "status",
+          "message",
+          "reason"
+        ],
+        "title": "RepositoryAvailabilityResponse",
         "type": "object"
       },
       "RepositoryBranchesResponse": {
@@ -9004,6 +9070,72 @@
           }
         },
         "summary": "Create a new GitHub repository for this user",
+        "tags": [
+          "integrations"
+        ]
+      }
+    },
+    "/api/v1/integrations/github/repositories/check-availability": {
+      "get": {
+        "description": "Live availability checking for new repository creation.\n\nValidates naming rules and verifies remote existence under the linked GitHub account,\nusing explicit availability semantics:\n- 'available': Authoritatively confirmed no public or private repo exists.\n- 'taken': Remote repository confirmed to exist.\n- 'unknown': Inconclusive (e.g. token lacks private repo scope, 404 cannot rule out private repo).\n- 'error': Transient or integration error (rate limits, auth, network).\n- 'invalid': Client naming validation failure.",
+        "operationId": "check_github_repository_availability_api_v1_integrations_github_repositories_check_availability_get",
+        "parameters": [
+          {
+            "description": "Repository name or owner/name",
+            "in": "query",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Repository name or owner/name",
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional owner override",
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional owner override",
+              "title": "Owner"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryAvailabilityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check if a repository name is available under the linked account",
         "tags": [
           "integrations"
         ]

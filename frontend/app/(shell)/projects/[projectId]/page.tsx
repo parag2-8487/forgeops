@@ -29,7 +29,6 @@ import {
   type ReadinessReport,
 } from "@/features/projects/types";
 import { CloudDeployModal } from "@/features/integrations/CloudDeployModal";
-import { AutonomousDeployModal } from "@/features/deployments/AutonomousDeployModal";
 
 /**
  * Everything about one project — phases.md §1.2 "Frontend: Project detail page".
@@ -37,7 +36,6 @@ import { AutonomousDeployModal } from "@/features/deployments/AutonomousDeployMo
 export default function ProjectDetailPage() {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId;
-  const [autonomousDeployOpen, setAutonomousDeployOpen] = useState(false);
   const [cloudDeployOpen, setCloudDeployOpen] = useState(false);
 
   const project = useQuery({
@@ -67,10 +65,10 @@ export default function ProjectDetailPage() {
           <div className="flex items-center gap-3">
             <Button
               variant="default"
-              onClick={() => setAutonomousDeployOpen(true)}
+              asChild
               className="font-medium text-sm shadow-sm bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              Autonomous Deploy
+              <Link href={`/projects/${projectId}/autonomous-deploy`}>Autonomous Deploy</Link>
             </Button>
             <Button
               variant="outline"
@@ -82,13 +80,6 @@ export default function ProjectDetailPage() {
           </div>
         </div>
       </div>
-
-      <AutonomousDeployModal
-        projectId={projectId}
-        projectName={project.data?.name ?? "project"}
-        isOpen={autonomousDeployOpen}
-        onClose={() => setAutonomousDeployOpen(false)}
-      />
 
       <CloudDeployModal
         projectId={projectId}

@@ -837,6 +837,80 @@ async def execute_github_release(
         }
         repo_url = f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo_part, safe='')}"
         async with httpx.AsyncClient(timeout=30.0) as client:
+            repo_mode = gh_cfg.get("repository_mode") or "existing"
+            if repo_mode in ("new_private", "new"):
+                try:
+                    repo_check = await client.get(repo_url, headers=headers)
+                    if repo_check.status_code == 200:
+                        return GateResult(
+                            gate_id="",
+                            passed=False,
+                            status="failed",
+                            message=(
+                                f"Repository '{repo}' already exists on GitHub. "
+                                "Switch repository mode to 'Existing Repository' to use it."
+                            ),
+                            details={"error": "github-repository-conflict", "status_code": 409},
+                        )
+                    elif repo_check.status_code == 404:
+                        create_payload = {
+                            "name": repo_part,
+                            "private": True,
+                            "auto_init": True,
+                            "description": "Created by ForgeOps Autonomous Deployment",
+                        }
+                        create_resp = await client.post(
+                            "https://api.github.com/user/repos", headers=headers, json=create_payload
+                        )
+                        if create_resp.status_code not in (200, 201):
+                            err_msg = create_resp.text
+                            try:
+                                err_data = create_resp.json()
+                                err_msg = err_data.get("message", err_msg)
+                            except Exception:
+                                pass
+                            if create_resp.status_code == 422 or "already exists" in str(err_msg).lower():
+                                return GateResult(
+                                    gate_id="",
+                                    passed=False,
+                                    status="failed",
+                                    message=(
+                                        f"Repository '{repo}' already exists on this GitHub account. "
+                                        "Switch to 'Existing Repository' to use it."
+                                    ),
+                                    details={
+                                        "error": "github-repository-conflict",
+                                        "status_code": 422,
+                                        "github_message": err_msg,
+                                    },
+                                )
+                            return GateResult(
+                                gate_id="",
+                                passed=False,
+                                status="failed",
+                                message=f"Failed to create new GitHub repository '{repo}': {err_msg}",
+                                details={"error": "github-create-failed", "status_code": create_resp.status_code},
+                            )
+                    elif repo_check.status_code in (401, 403):
+                        return GateResult(
+                            gate_id="",
+                            passed=False,
+                            status="failed",
+                            message=(
+                                f"GitHub authorization failed when checking repository '{repo}': "
+                                f"HTTP {repo_check.status_code}"
+                            ),
+                            details={"error": "github-auth-failed", "status_code": repo_check.status_code},
+                        )
+                except Exception as exc:
+                    return GateResult(
+                        gate_id="",
+                        passed=False,
+                        status="failed",
+                        message=f"Error verifying/creating new repository '{repo}': {exc}",
+                        details={"error": str(exc)},
+                    )
+
             # Dynamically resolve default branch if omitted
             if not target_branch:
                 try:

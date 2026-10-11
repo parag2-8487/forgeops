@@ -104,6 +104,8 @@ class TestTheRegistryMatchesTheAuthority:
             "github-rate-limited",
             "github-upstream-unreachable",
             "github-upstream-invalid",
+            "github-repository-conflict",
+            "github-invalid-owner",
         }
         extra = sorted(set(PROBLEM_REGISTRY) - set(C1_TYPES) - phase2_types)
         assert not extra, extra
