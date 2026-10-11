@@ -367,7 +367,19 @@ async def cleanup_docker_containers(
                 cleaned.append(cid)
         return cleaned
 
-    # 4. Process execution fallback
+    # 4. Direct DockerEngineClient socket removal
+    try:
+        from .autonomous_gates import DockerEngineClient
+
+        docker_eng = DockerEngineClient()
+        if docker_eng.is_available():
+            container_name = f"forgeops-run-{str(target_rid)[:8]}"
+            if await docker_eng.remove_container(container_name):
+                return [container_name]
+    except Exception:
+        pass
+
+    # 5. Process execution fallback
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker",

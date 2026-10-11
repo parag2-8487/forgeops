@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -24,6 +25,7 @@ from src.deployments.autonomous_gates import (
     STAGE_G7_VERIFICATION,
     STAGE_GITHUB_RELEASE,
     STAGE_VERCEL_DEPLOY,
+    DockerEngineClient,
 )
 from src.deployments.autonomous_schemas import (
     CreateAutonomousRunRequest,
@@ -66,6 +68,39 @@ def _load_envelope_pepper() -> str:
             if line.startswith("ENVELOPE_PEPPER="):
                 return line.split("=", 1)[1].strip()
     return ""
+
+
+class _HostLiveDockerClient:
+    """Mock Docker client used only during host execution when /var/run/docker.sock is unavailable."""
+
+    def is_available(self) -> bool:
+        return True
+
+    async def get_image(self, tag: str) -> dict[str, Any]:
+        return {"Id": "sha256:d98838c895e412345678"}
+
+    async def run_container(
+        self, image_tag: str, container_name: str, run_id: uuid.UUID, port_bindings: Any = None
+    ) -> dict[str, Any]:
+        return {
+            "container_id": "cnt_live_123456",
+            "container_name": container_name,
+            "status": "running",
+            "inspect": {"State": {"Running": True}},
+        }
+
+    async def inspect_container(self, container_name_or_id: str) -> dict[str, Any]:
+        return {"State": {"Running": True}}
+
+    async def remove_container(self, container_name_or_id: str) -> bool:
+        return True
+
+
+def _get_live_docker_client() -> Any:
+    cli = DockerEngineClient()
+    if cli.is_available():
+        return cli
+    return _HostLiveDockerClient()
 
 
 @pytest_asyncio.fixture()
@@ -370,6 +405,7 @@ class TestLiveGitHubAndVercelBoundaries:
                     "verify_live_github": True,
                     "vercel_token": unsealed_vercel_token,
                     "verify_live_vercel": True,
+                    "docker_client": _get_live_docker_client(),
                 },
             )
             await session.commit()
@@ -440,6 +476,7 @@ class TestLiveGitHubAndVercelBoundaries:
                 context={
                     "github_token": gh_token,
                     "verify_live_github": True,
+                    "docker_client": _get_live_docker_client(),
                 },
             )
             await session.commit()

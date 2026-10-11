@@ -345,6 +345,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # which is a cost paid by more than a thousand tests to benefit one route. Lazy creation charges
     # only the request that needs it, and leaves an unreachable Redis as a readiness matter (§4.4).
     app.state.arq_pool = None
+    from .core.tasks import LazyTaskDispatcher
+    from .deployments import tasks as _deployment_tasks  # noqa: F401
+
+    app.state.task_dispatcher = LazyTaskDispatcher(settings, app.state)
 
     # --- 2.10: OTel instrumentation ------------------------------------------
     #

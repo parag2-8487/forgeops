@@ -616,6 +616,76 @@ class TestStartRunExecution:
         assert start_resp.status_code == 409
         assert start_resp.json()["type"] == "https://errors.forgeops.dev/autonomous-run-conflict"
 
+    def test_start_run_fails_explicitly_when_dispatcher_is_none(
+        self,
+        client: TestClient,
+        test_app: FastAPI,
+        mock_session: MockAsyncSession,
+        project_id: uuid.UUID,
+    ) -> None:
+        create_resp = client.post(
+            f"/api/v1/projects/{project_id}/autonomous-deploy",
+            json={
+                "strategy": DeploymentStrategy.GITHUB_ONLY.value,
+                "github_config": {"repository_name": "owner/repo"},
+            },
+        )
+        run_id = uuid.UUID(create_resp.json()["id"])
+        active_device = AgentDevice(
+            id=uuid.uuid4(),
+            project_id=project_id,
+            status=DeviceStatus.ACTIVE,
+            agent_version="1.0.0",
+            platform="linux",
+            last_seen=datetime.now(UTC) - timedelta(seconds=5),
+        )
+        test_app.state.device_service = MockDeviceService(active_device)
+        test_app.state.task_dispatcher = None
+
+        start_resp = client.post(f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start")
+        assert start_resp.status_code == 503
+        assert "pipeline-engine-absent" in start_resp.json()["type"]
+        assert mock_session.runs[run_id].status == "failed"
+        assert mock_session.runs[run_id].dispatch_status == "failed"
+
+    def test_start_run_fails_explicitly_when_dispatcher_enqueue_raises(
+        self,
+        client: TestClient,
+        test_app: FastAPI,
+        mock_session: MockAsyncSession,
+        project_id: uuid.UUID,
+    ) -> None:
+        create_resp = client.post(
+            f"/api/v1/projects/{project_id}/autonomous-deploy",
+            json={
+                "strategy": DeploymentStrategy.GITHUB_ONLY.value,
+                "github_config": {"repository_name": "owner/repo"},
+            },
+        )
+        run_id = uuid.UUID(create_resp.json()["id"])
+        active_device = AgentDevice(
+            id=uuid.uuid4(),
+            project_id=project_id,
+            status=DeviceStatus.ACTIVE,
+            agent_version="1.0.0",
+            platform="linux",
+            last_seen=datetime.now(UTC) - timedelta(seconds=5),
+        )
+        test_app.state.device_service = MockDeviceService(active_device)
+
+        class FailingDispatcher:
+            async def enqueue(self, name: str, payload: dict[str, Any], *, idempotency_key: str | None = None) -> Any:
+                raise RuntimeError("Redis broker unreachable")
+
+        test_app.state.task_dispatcher = FailingDispatcher()
+
+        start_resp = client.post(f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start")
+        assert start_resp.status_code == 503
+        assert "worker-queue-unavailable" in start_resp.json()["type"]
+        assert mock_session.runs[run_id].status == "failed"
+        assert mock_session.runs[run_id].dispatch_status == "failed"
+        assert "Redis broker unreachable" in mock_session.runs[run_id].error_summary
+
 
 class TestCancelAndRetryRoutes:
     def test_cancel_pending_run_settles_to_cancelled_202(

@@ -457,6 +457,9 @@ services:
   worker:
     build: { context: ./backend, target: runtime }
     env_file: *service-env
+    user: "0:0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     # `python -m arq`, not `arq`. The runtime image installs the library but no console script, so
     # `arq src.worker.WorkerSettings` fails at container start with
     # `exec: "arq": executable file not found in $PATH`. The module entry point is the same code.

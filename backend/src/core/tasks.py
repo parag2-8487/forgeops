@@ -8,6 +8,7 @@ Business logic must never import an engine SDK directly (Research §0, §B6).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -174,6 +175,48 @@ def build_dispatcher(settings: Any, pool: Any | None = None) -> TaskDispatcher:
             raise ValueError("TASK_DISPATCHER=arq requires an ARQ pool; call create_arq_pool first")
         return ArqDispatcher(pool, queue_name=getattr(settings, "arq_queue_name", "forgeops"))
     return InlineDispatcher()
+
+
+class LazyTaskDispatcher:
+    """Delegates to build_dispatcher, resolving the ARQ pool lazily on first enqueue.
+
+    Prevents connection attempts at startup or during unit tests when Redis is not running,
+    while guaranteeing a non-None TaskDispatcher is always available on app.state.
+    """
+
+    def __init__(self, settings: Any, app_state: Any = None) -> None:
+        self._settings = settings
+        self._app_state = app_state
+        self._inner: TaskDispatcher | None = None
+        self._lock = asyncio.Lock()
+
+    async def _get_dispatcher(self) -> TaskDispatcher:
+        if self._inner is not None:
+            return self._inner
+        mode = getattr(self._settings, "task_dispatcher", "inline")
+        if mode == "arq":
+            async with self._lock:
+                if self._inner is not None:
+                    return self._inner
+                pool = getattr(self._app_state, "arq_pool", None) if self._app_state is not None else None
+                if pool is None:
+                    pool = await create_arq_pool(self._settings)
+                    if self._app_state is not None:
+                        self._app_state.arq_pool = pool
+                self._inner = build_dispatcher(self._settings, pool)
+                return self._inner
+        self._inner = build_dispatcher(self._settings)
+        return self._inner
+
+    async def enqueue(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> TaskHandle:
+        dispatcher = await self._get_dispatcher()
+        return await dispatcher.enqueue(name, payload, idempotency_key=idempotency_key)
 
 
 def worker_functions() -> list[Any]:

@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from src.core.logging import redact_secrets
 
+from .autonomous_credentials import resolve_deployment_credentials
 from .autonomous_gates import (
     GATE_EVALUATORS,
     STAGE_EVALUATORS,
@@ -838,6 +839,25 @@ async def run_pipeline(
 
     if run.status in NON_CLAIMABLE_STATUSES:
         return run
+
+    # Securely resolve credentials strictly scoped to run.created_by
+    exec_ctx: dict[str, Any] = (
+        dict(context) if isinstance(context, dict) else ({} if context is None else {"_raw_ctx": context})
+    )
+    try:
+        resolved_creds = await resolve_deployment_credentials(session, run)
+        if exec_ctx.get("github_token") is None and resolved_creds.get("github_token"):
+            exec_ctx["github_token"] = resolved_creds["github_token"]
+        if exec_ctx.get("vercel_token") is None and resolved_creds.get("vercel_token"):
+            exec_ctx["vercel_token"] = resolved_creds["vercel_token"]
+        if "credential_status" in resolved_creds:
+            exec_ctx["credential_status"] = {
+                **exec_ctx.get("credential_status", {}),
+                **resolved_creds["credential_status"],
+            }
+    except Exception as exc:
+        logger.debug("Credential resolution failed in worker: %s", exc)
+    context = exec_ctx
 
     # 2. Worker fencing claim / custody verification
     now = datetime.now(UTC)

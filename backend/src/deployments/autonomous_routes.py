@@ -274,16 +274,49 @@ async def start_run(
     await session.flush()
 
     dispatcher = getattr(request.app.state, "task_dispatcher", None)
-    if dispatcher is not None:
-        try:
-            await dispatcher.enqueue(
-                "autonomous_deploy_run",
-                {"run_id": str(run.id), "project_id": str(project_id)},
-            )
-            run.dispatch_status = "enqueued"
-            await session.flush()
-        except Exception:
-            logger.warning("Failed to enqueue autonomous_deploy_run for run %s", run.id, exc_info=True)
+    if dispatcher is None:
+        fail_now = datetime.now(UTC)
+        run.status = "failed"
+        run.dispatch_status = "failed"
+        run.completed_at = fail_now
+        run.error_summary = "Task dispatcher is not configured."
+        run.primary_error = {
+            "message": "Task dispatcher is not configured. Worker execution cannot be dispatched.",
+            "details": {"run_id": str(run.id), "project_id": str(project_id)},
+        }
+        await session.flush()
+        raise ProblemException(
+            status=503,
+            type_suffix="pipeline-engine-absent",
+            title="Service Unavailable",
+            detail="Task dispatcher is not configured. Worker execution cannot be dispatched.",
+        )
+
+    try:
+        await dispatcher.enqueue(
+            "autonomous_deploy_run",
+            {"run_id": str(run.id), "project_id": str(project_id)},
+        )
+        run.dispatch_status = "enqueued"
+        await session.flush()
+    except Exception as exc:
+        logger.error("Failed to enqueue autonomous_deploy_run for run %s", run.id, exc_info=True)
+        fail_now = datetime.now(UTC)
+        run.status = "failed"
+        run.dispatch_status = "failed"
+        run.completed_at = fail_now
+        run.error_summary = f"Failed to enqueue deployment run to worker queue: {exc}"
+        run.primary_error = {
+            "message": f"Failed to enqueue deployment run to worker queue: {exc}",
+            "details": {"error": str(exc), "run_id": str(run.id)},
+        }
+        await session.flush()
+        raise ProblemException(
+            status=503,
+            type_suffix="worker-queue-unavailable",
+            title="Service Unavailable",
+            detail=f"Failed to enqueue deployment run to worker queue: {exc}",
+        ) from exc
 
     redis = getattr(request.app.state, "redis", None)
     if redis is not None:

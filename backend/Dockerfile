@@ -25,7 +25,7 @@ COPY config/ ./config/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 
-RUN pip install --no-deps -e .
+RUN pip install hatchling editables && pip install --no-build-isolation --no-deps -e .
 
 # ---------- Stage 2: runtime ----------
 FROM python:3.13-slim AS runtime

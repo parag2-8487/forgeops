@@ -142,15 +142,25 @@ export function getStageDisplayInfo(stage: StagePublicResponse): {
   const gateId = stage.gate_id?.toUpperCase();
 
   if (gateId === "G1" || normName.includes("g1") || normName.includes("blueprint")) {
-    return { title: "G1 Blueprint", subtitle: "Project & Config Spec", badge: "G1", isGate: true };
+    return {
+      title: "G1 — Blueprint Validation",
+      subtitle: "Project & Config Spec",
+      badge: "G1",
+      isGate: true,
+    };
   }
   if (gateId === "G2" || normName.includes("g2") || normName.includes("artifact")) {
-    return { title: "G2 Artifacts", subtitle: "Dockerfile / Compose", badge: "G2", isGate: true };
+    return {
+      title: "G2 — Artifact Validation",
+      subtitle: "Dockerfile & Compose Generation",
+      badge: "G2",
+      isGate: true,
+    };
   }
   if (gateId === "G3" || normName.includes("g3") || normName.includes("consistency")) {
     return {
-      title: "G3 Consistency",
-      subtitle: "Ports, Branch & Config",
+      title: "G3 — Pre-Execution Consistency",
+      subtitle: "Ports, Branch & Config Verification",
       badge: "G3",
       isGate: true,
     };
@@ -159,17 +169,28 @@ export function getStageDisplayInfo(stage: StagePublicResponse): {
     gateId === "G4" ||
     normName.includes("g4") ||
     normName === "docker_build" ||
-    normName.includes("build")
+    (normName.includes("build") && !normName.includes("blueprint"))
   ) {
-    return { title: "Docker Build", subtitle: "Container Image Build", badge: "G4", isGate: true };
+    return {
+      title: "G4 — Build & Compile",
+      subtitle: "Container Image Build & Validation",
+      badge: "G4",
+      isGate: true,
+    };
   }
   if (
     gateId === "G5" ||
     normName.includes("g5") ||
     normName === "docker_apply" ||
+    normName === "docker_deploy" ||
     normName.includes("apply")
   ) {
-    return { title: "Docker Apply", subtitle: "Container Startup", badge: "G5", isGate: true };
+    return {
+      title: "G5 — Apply & Startup",
+      subtitle: "Container Startup & Port Binding",
+      badge: "G5",
+      isGate: true,
+    };
   }
   if (
     gateId === "G6" ||
@@ -177,7 +198,12 @@ export function getStageDisplayInfo(stage: StagePublicResponse): {
     normName === "docker_workload" ||
     normName.includes("workload")
   ) {
-    return { title: "G6 Workload", subtitle: "HTTP Health Probe", badge: "G6", isGate: true };
+    return {
+      title: "G6 — Workload Verification",
+      subtitle: "HTTP Health Probe & Verification",
+      badge: "G6",
+      isGate: true,
+    };
   }
   if (normName === "github_release" || normName.includes("github")) {
     return {
@@ -197,8 +223,8 @@ export function getStageDisplayInfo(stage: StagePublicResponse): {
   }
   if (gateId === "G7" || normName.includes("g7") || normName.includes("verification")) {
     return {
-      title: "G7 Verification",
-      subtitle: "Multi-Target E2E Probe",
+      title: "G7 — Final Deployment Sign-off",
+      subtitle: "Multi-Target E2E Probe & Sign-off",
       badge: "G7",
       isGate: true,
     };
@@ -287,6 +313,161 @@ export function getTargetVerificationStatus(
   }
 
   return "Pending";
+}
+
+export function getStageStatusStyles(status: StageStatus): {
+  cardClasses: string;
+  badgeClasses: string;
+  icon: React.ReactNode;
+  label: string;
+} {
+  switch (status) {
+    case "succeeded":
+      return {
+        cardClasses:
+          "border-emerald-500/60 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100 hover:bg-emerald-500/20",
+        badgeClasses: "bg-emerald-500 text-white",
+        icon: <CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />,
+        label: "succeeded",
+      };
+    case "failed":
+    case "rolled_back":
+      return {
+        cardClasses:
+          "border-rose-500/60 bg-rose-500/10 text-rose-950 dark:text-rose-100 hover:bg-rose-500/20",
+        badgeClasses: "bg-rose-500 text-white",
+        icon: <XCircle className="size-3.5 text-rose-600 dark:text-rose-400 shrink-0" />,
+        label: status,
+      };
+    case "running":
+    case "cancelling":
+      return {
+        cardClasses:
+          "border-blue-500/60 bg-blue-500/10 text-blue-950 dark:text-blue-100 animate-pulse hover:bg-blue-500/20",
+        badgeClasses: "bg-blue-500 text-white",
+        icon: (
+          <Loader2 className="size-3.5 text-blue-600 dark:text-blue-400 animate-spin shrink-0" />
+        ),
+        label: status,
+      };
+    case "waiting":
+      return {
+        cardClasses:
+          "border-amber-500/60 bg-amber-500/10 text-amber-950 dark:text-amber-100 animate-pulse hover:bg-amber-500/20",
+        badgeClasses: "bg-amber-500 text-white",
+        icon: <Clock className="size-3.5 text-amber-600 dark:text-amber-400 shrink-0" />,
+        label: "waiting",
+      };
+    case "cancelled":
+      return {
+        cardClasses:
+          "border-amber-500/50 bg-amber-500/10 text-amber-950 dark:text-amber-100 hover:bg-amber-500/15",
+        badgeClasses: "bg-amber-500 text-white",
+        icon: <Ban className="size-3.5 text-amber-600 dark:text-amber-400 shrink-0" />,
+        label: "cancelled",
+      };
+    case "skipped":
+      return {
+        cardClasses:
+          "border-2 border-dashed border-muted-foreground/40 bg-muted/15 text-muted-foreground",
+        badgeClasses: "bg-muted text-muted-foreground",
+        icon: <Ban className="size-3.5 text-muted-foreground shrink-0" />,
+        label: "skipped",
+      };
+    case "pending":
+    default:
+      return {
+        cardClasses: "border-border bg-muted/25 text-muted-foreground hover:bg-muted/40",
+        badgeClasses: "bg-muted text-muted-foreground",
+        icon: <Clock className="size-3.5 text-muted-foreground shrink-0" />,
+        label: "pending",
+      };
+  }
+}
+
+export interface StageCardProps {
+  stage: StagePublicResponse;
+  isSelected: boolean;
+  onSelect: () => void;
+  nowMs: number;
+  badgeOverride?: string;
+  isSubOperation?: boolean;
+}
+
+export function StageCard({
+  stage,
+  isSelected,
+  onSelect,
+  nowMs,
+  badgeOverride,
+  isSubOperation = false,
+}: StageCardProps) {
+  const info = getStageDisplayInfo(stage);
+  const statusInfo = getStageStatusStyles(stage.status);
+  const duration = formatElapsedTime(stage.started_at, stage.completed_at, nowMs);
+
+  return (
+    <button
+      type="button"
+      data-testid={`stage-node-${stage.stage_name}`}
+      onClick={onSelect}
+      aria-label={`Select stage ${info.title}`}
+      aria-pressed={isSelected}
+      className={cn(
+        "group relative flex flex-col justify-between w-full text-left rounded-lg border p-2.5 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+        isSubOperation ? "min-h-[64px]" : "min-h-[88px]",
+        isSelected
+          ? "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-md border-primary"
+          : "hover:border-foreground/30 hover:shadow-xs",
+        statusInfo.cardClasses,
+      )}
+    >
+      {/* Top row: badge + duration */}
+      <div className="flex items-center justify-between gap-1 w-full text-[11px]">
+        <span className="font-mono font-semibold px-1.5 py-0.5 rounded bg-background/70 border border-border/40 text-foreground text-[10px]">
+          {badgeOverride ?? info.badge}
+        </span>
+        <span className="font-mono text-[11px] text-muted-foreground flex items-center gap-1">
+          <Clock className="size-3" />
+          {duration}
+        </span>
+      </div>
+
+      {/* Title & subtitle */}
+      <div className="my-1.5 w-full">
+        <div className="font-semibold text-xs text-foreground truncate w-full" title={info.title}>
+          {isSubOperation ? info.title : (info.title.split(" — ")[1] ?? info.title)}
+        </div>
+        {!isSubOperation && (
+          <div className="text-[10px] text-muted-foreground truncate w-full">{info.subtitle}</div>
+        )}
+      </div>
+
+      {/* Bottom row: Status icon + label + progress */}
+      <div className="flex items-center justify-between gap-1 w-full pt-1 border-t border-border/30 text-[11px]">
+        <div className="flex items-center gap-1.5 font-medium truncate">
+          {statusInfo.icon}
+          <span className="capitalize text-foreground font-mono">{stage.status}</span>
+        </div>
+        {stage.status === "running" && stage.progress_pct > 0 && (
+          <span className="font-mono text-[10px] font-bold text-blue-600 dark:text-blue-400">
+            {stage.progress_pct}%
+          </span>
+        )}
+      </div>
+    </button>
+  );
+}
+
+export interface CanonicalGateColumn {
+  key: string;
+  gateId: string;
+  title: string;
+  shortTitle: string;
+  subtitle: string;
+  badge: string;
+  primaryStage?: StagePublicResponse;
+  subOperations: StagePublicResponse[];
 }
 
 export function JenkinsPipelineDashboard({
@@ -385,6 +566,169 @@ export function JenkinsPipelineDashboard({
     if (activeRun?.status === "succeeded" && g7) return g7.id;
     return stages[0].id;
   }, [stages, activeRun?.status]);
+
+  const canonicalColumns = useMemo<CanonicalGateColumn[]>(() => {
+    const defs = [
+      {
+        key: "g1",
+        gateId: "G1",
+        title: "G1 — Blueprint Validation",
+        shortTitle: "G1 Blueprint",
+        subtitle: "Project & Config Spec",
+        badge: "G1",
+      },
+      {
+        key: "g2",
+        gateId: "G2",
+        title: "G2 — Artifact Validation",
+        shortTitle: "G2 Artifacts",
+        subtitle: "Dockerfile / Compose",
+        badge: "G2",
+      },
+      {
+        key: "g3",
+        gateId: "G3",
+        title: "G3 — Pre-Execution Consistency",
+        shortTitle: "G3 Consistency",
+        subtitle: "Ports, Branch & Config",
+        badge: "G3",
+      },
+      {
+        key: "g4",
+        gateId: "G4",
+        title: "G4 — Build & Compile",
+        shortTitle: "G4 Build",
+        subtitle: "Docker Build",
+        badge: "G4",
+      },
+      {
+        key: "g5",
+        gateId: "G5",
+        title: "G5 — Apply & Startup",
+        shortTitle: "G5 Apply",
+        subtitle: "Docker Apply",
+        badge: "G5",
+      },
+      {
+        key: "g6",
+        gateId: "G6",
+        title: "G6 — Workload Verification",
+        shortTitle: "G6 Workload",
+        subtitle: "Health & Strategy Sync",
+        badge: "G6",
+      },
+      {
+        key: "g7",
+        gateId: "G7",
+        title: "G7 — Final Deployment Sign-off",
+        shortTitle: "G7 Sign-off",
+        subtitle: "Multi-Target Verification",
+        badge: "G7",
+      },
+    ];
+
+    const matchedStageIds = new Set<string>();
+
+    const cols: CanonicalGateColumn[] = defs.map((def) => {
+      let primary: StagePublicResponse | undefined;
+
+      if (def.gateId === "G1") {
+        primary = stages.find(
+          (s) =>
+            s.gate_id?.toUpperCase() === "G1" ||
+            s.stage_name.toLowerCase().includes("g1") ||
+            s.stage_name.toLowerCase().includes("blueprint"),
+        );
+      } else if (def.gateId === "G2") {
+        primary = stages.find(
+          (s) =>
+            s.gate_id?.toUpperCase() === "G2" ||
+            s.stage_name.toLowerCase().includes("g2") ||
+            s.stage_name.toLowerCase().includes("artifact"),
+        );
+      } else if (def.gateId === "G3") {
+        primary = stages.find(
+          (s) =>
+            s.gate_id?.toUpperCase() === "G3" ||
+            s.stage_name.toLowerCase().includes("g3") ||
+            s.stage_name.toLowerCase().includes("consistency"),
+        );
+      } else if (def.gateId === "G4") {
+        primary = stages.find(
+          (s) =>
+            s.gate_id?.toUpperCase() === "G4" ||
+            s.stage_name.toLowerCase().includes("g4") ||
+            s.stage_name.toLowerCase() === "docker_build" ||
+            (s.stage_name.toLowerCase().includes("build") &&
+              !s.stage_name.toLowerCase().includes("blueprint")),
+        );
+      } else if (def.gateId === "G5") {
+        primary = stages.find(
+          (s) =>
+            s.gate_id?.toUpperCase() === "G5" ||
+            s.stage_name.toLowerCase().includes("g5") ||
+            s.stage_name.toLowerCase() === "docker_apply" ||
+            s.stage_name.toLowerCase() === "docker_deploy" ||
+            s.stage_name.toLowerCase().includes("apply"),
+        );
+      } else if (def.gateId === "G6") {
+        primary = stages.find(
+          (s) =>
+            s.gate_id?.toUpperCase() === "G6" ||
+            s.stage_name.toLowerCase().includes("g6") ||
+            s.stage_name.toLowerCase() === "docker_workload" ||
+            s.stage_name.toLowerCase().includes("workload"),
+        );
+      } else if (def.gateId === "G7") {
+        primary = stages.find(
+          (s) =>
+            s.gate_id?.toUpperCase() === "G7" ||
+            s.stage_name.toLowerCase().includes("g7") ||
+            s.stage_name.toLowerCase().includes("verification"),
+        );
+      }
+
+      if (primary) matchedStageIds.add(primary.id);
+
+      return {
+        ...def,
+        primaryStage: primary,
+        subOperations: [],
+      };
+    });
+
+    // Strategy sub-operations under G6
+    const g6Col = cols.find((c) => c.gateId === "G6");
+    if (g6Col) {
+      const subOps = stages.filter((s) => {
+        if (matchedStageIds.has(s.id)) return false;
+        const norm = s.stage_name.toLowerCase();
+        return norm.includes("github") || norm.includes("vercel");
+      });
+      for (const sub of subOps) {
+        matchedStageIds.add(sub.id);
+        g6Col.subOperations.push(sub);
+      }
+    }
+
+    // Remaining unmatched stages
+    const unmatched = stages.filter((s) => !matchedStageIds.has(s.id));
+    for (const extra of unmatched) {
+      const extraInfo = getStageDisplayInfo(extra);
+      cols.push({
+        key: `custom-${extra.id}`,
+        gateId: extra.gate_id ?? "Step",
+        title: extraInfo.title,
+        shortTitle: extraInfo.title,
+        subtitle: extraInfo.subtitle,
+        badge: extraInfo.badge,
+        primaryStage: extra,
+        subOperations: [],
+      });
+    }
+
+    return cols;
+  }, [stages]);
 
   const currentSelectedStageId =
     selectedStageId && stages.some((s) => s.id === selectedStageId)
@@ -509,6 +853,12 @@ export function JenkinsPipelineDashboard({
     (metaDetails.base_branch as string | undefined) ||
     (stageMeta.target_branch as string | undefined) ||
     (metaDetails.target_branch as string | undefined);
+  const isSimulated =
+    stageMeta.simulated === true ||
+    metaDetails.simulated === true ||
+    stageMeta.execution_mode === "simulation" ||
+    (activeRun.configuration as Record<string, unknown> | undefined)?.simulation_mode === true ||
+    (activeRun.configuration as Record<string, unknown> | undefined)?.dry_run === true;
 
   // Strategy target statuses for G7 summary
   const dockerTargetStatus = getTargetVerificationStatus("docker", activeRun.strategy, stages);
@@ -730,110 +1080,175 @@ export function JenkinsPipelineDashboard({
         )}
       </div>
 
-      {/* Horizontal Blue Ocean Graph */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold tracking-tight text-foreground">
-            Pipeline Execution Graph
-          </h3>
-          <span className="text-xs text-muted-foreground">
-            Click any stage node to inspect gate verdicts and details
+      {/* Jenkins Pipeline Stage View */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold tracking-tight text-foreground flex items-center gap-2">
+              <span className="inline-block size-2 rounded-full bg-primary" />
+              Jenkins Pipeline Stage View
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Autonomous execution matrix across canonical deployment gates G1–G7
+            </p>
+          </div>
+          <span className="text-xs text-muted-foreground font-mono">
+            Click any stage node or sub-operation card to inspect verdicts &amp; logs
           </span>
         </div>
 
         <div
           data-testid="blue-ocean-graph"
-          className="rounded-xl border border-border bg-card p-6 shadow-sm overflow-x-auto"
+          className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"
         >
-          <div className="flex items-center min-w-max gap-0 py-4">
-            {stages.map((stage, idx) => {
-              const info = getStageDisplayInfo(stage);
-              const isSelected = stage.id === currentSelectedStageId;
-
-              // Node visual style classes
-              let nodeCircleClasses =
-                "border-2 bg-muted text-muted-foreground border-muted-foreground/30";
-              let iconComponent = <Clock className="size-4" />;
-
-              if (stage.status === "succeeded") {
-                nodeCircleClasses = "border-emerald-500 bg-emerald-500 text-white shadow-sm";
-                iconComponent = <CheckCircle2 className="size-4" />;
-              } else if (stage.status === "failed" || stage.status === "rolled_back") {
-                nodeCircleClasses = "border-rose-500 bg-rose-500 text-white shadow-sm";
-                iconComponent = <XCircle className="size-4" />;
-              } else if (stage.status === "running" || stage.status === "cancelling") {
-                nodeCircleClasses =
-                  "border-blue-500 bg-blue-500 text-white animate-pulse shadow-sm";
-                iconComponent = <Loader2 className="size-4 animate-spin" />;
-              } else if (stage.status === "waiting") {
-                nodeCircleClasses =
-                  "border-amber-500 bg-amber-500 text-white animate-pulse shadow-sm";
-                iconComponent = <Clock className="size-4" />;
-              } else if (stage.status === "cancelled") {
-                nodeCircleClasses = "border-amber-500 bg-amber-500 text-white shadow-sm";
-                iconComponent = <Ban className="size-4" />;
-              } else if (stage.status === "skipped") {
-                nodeCircleClasses =
-                  "border-2 border-dashed border-muted-foreground/60 bg-transparent text-muted-foreground";
-                iconComponent = <Ban className="size-4" />;
-              }
-
-              // Connecting line classes to subsequent node
-              const isLast = idx === stages.length - 1;
-              let connectorClasses = "bg-border";
-              if (stage.status === "succeeded") {
-                connectorClasses = "bg-emerald-500";
-              } else if (stage.status === "running") {
-                connectorClasses = "bg-blue-500 animate-pulse";
-              } else if (stage.status === "failed") {
-                connectorClasses = "bg-rose-500";
-              }
-
-              return (
-                <div key={stage.id} className="flex items-center">
-                  {/* Node Button */}
-                  <button
-                    type="button"
-                    data-testid={`stage-node-${stage.stage_name}`}
-                    onClick={() => setSelectedStageId(stage.id)}
-                    aria-label={`Select stage ${info.title}`}
-                    aria-pressed={isSelected}
-                    className={cn(
-                      "group flex flex-col items-center gap-2 p-2 rounded-xl transition-all focus:outline-none",
-                      isSelected &&
-                        "ring-2 ring-primary ring-offset-2 ring-offset-background bg-accent/40",
-                      !isSelected && "hover:bg-accent/20",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "flex size-11 items-center justify-center rounded-full transition-transform group-hover:scale-105",
-                        nodeCircleClasses,
-                      )}
-                    >
-                      {iconComponent}
-                    </div>
-
-                    <div className="flex flex-col items-center text-center max-w-[110px]">
-                      <span className="font-semibold text-xs text-foreground truncate w-full">
-                        {info.title}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground capitalize">
-                        {stage.status}
-                      </span>
-                    </div>
-                  </button>
-
-                  {/* Connecting Line */}
-                  {!isLast && (
-                    <div
-                      data-testid={`stage-connector-${stage.stage_name}`}
-                      className={cn("h-0.5 w-10 sm:w-16 transition-colors mx-1", connectorClasses)}
-                    />
-                  )}
+          <div className="overflow-x-auto">
+            <div className="min-w-max">
+              {/* Header row: Column Titles & Durations */}
+              <div className="flex items-stretch bg-muted/30 border-b border-border/80">
+                <div className="w-44 shrink-0 p-3 flex flex-col justify-center">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Pipeline Stages
+                  </span>
+                  <span className="text-[11px] text-muted-foreground/80">
+                    Execution Attempt #{activeRun.attempt_number}
+                  </span>
                 </div>
-              );
-            })}
+
+                {canonicalColumns.map((col) => {
+                  const colDuration = col.primaryStage
+                    ? formatElapsedTime(
+                        col.primaryStage.started_at,
+                        col.primaryStage.completed_at,
+                        nowMs,
+                      )
+                    : col.subOperations.length > 0 && col.subOperations[0].started_at
+                      ? formatElapsedTime(
+                          col.subOperations[0].started_at,
+                          col.subOperations[0].completed_at,
+                          nowMs,
+                        )
+                      : "--";
+
+                  return (
+                    <div
+                      key={col.key}
+                      className="w-56 shrink-0 p-3 border-l border-border/60 flex flex-col justify-between"
+                    >
+                      <div className="flex items-center justify-between gap-1.5 mb-1">
+                        <span
+                          className="font-semibold text-xs text-foreground truncate"
+                          title={col.title}
+                        >
+                          {col.shortTitle}
+                        </span>
+                        <span className="font-mono text-[11px] text-muted-foreground bg-background/80 px-1.5 py-0.5 rounded border border-border/40">
+                          {colDuration}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground truncate">{col.subtitle}</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Execution Matrix Row */}
+              <div className="flex items-stretch bg-card divide-x divide-border/60">
+                {/* Left Run Identity Cell */}
+                <div className="w-44 shrink-0 p-3 flex flex-col justify-between bg-muted/15">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-base text-foreground font-mono">
+                        #{activeRun.attempt_number}
+                      </span>
+                      <Badge
+                        variant={
+                          activeRun.status === "succeeded"
+                            ? "success"
+                            : activeRun.status === "failed" || activeRun.status === "rolled_back"
+                              ? "destructive"
+                              : activeRun.status === "cancelling" ||
+                                  activeRun.status === "cancelled"
+                                ? "warning"
+                                : activeRun.status === "running"
+                                  ? "default"
+                                  : "secondary"
+                        }
+                        className="capitalize text-[10px] font-semibold px-2 py-0"
+                      >
+                        {activeRun.status}
+                      </Badge>
+                    </div>
+
+                    <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-1">
+                      <Clock className="size-3" />
+                      <span>
+                        {formatElapsedTime(activeRun.started_at, activeRun.completed_at, nowMs)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] text-muted-foreground/70 font-mono pt-2">
+                    {activeRun.started_at
+                      ? new Date(activeRun.started_at).toLocaleTimeString()
+                      : "Pending"}
+                  </div>
+                </div>
+
+                {/* Stage Columns */}
+                {canonicalColumns.map((col) => {
+                  return (
+                    <div
+                      key={col.key}
+                      className="w-56 shrink-0 p-2.5 flex flex-col gap-2 justify-start"
+                    >
+                      {/* Primary stage card if present */}
+                      {col.primaryStage ? (
+                        <StageCard
+                          stage={col.primaryStage}
+                          isSelected={col.primaryStage.id === currentSelectedStageId}
+                          onSelect={() => {
+                            if (col.primaryStage) setSelectedStageId(col.primaryStage.id);
+                          }}
+                          nowMs={nowMs}
+                          badgeOverride={col.badge}
+                        />
+                      ) : col.subOperations.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center min-h-[88px] rounded-lg border border-dashed border-border/50 bg-muted/5 p-3 text-center">
+                          <span className="text-[11px] font-mono text-muted-foreground/60">--</span>
+                          <span className="text-[10px] text-muted-foreground/50">
+                            Not in strategy
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {/* Strategy Sub-Operations (Docker, GitHub Release, Vercel Deploy) */}
+                      {col.subOperations.length > 0 && (
+                        <div className="space-y-1.5 pt-1 border-t border-border/40">
+                          <div className="flex items-center justify-between text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                            <span>Strategy Operations</span>
+                            <span className="font-mono text-[9px]">
+                              {col.subOperations.length} sub-tasks
+                            </span>
+                          </div>
+                          <div className="space-y-1.5">
+                            {col.subOperations.map((sub) => (
+                              <StageCard
+                                key={sub.id}
+                                stage={sub}
+                                isSelected={sub.id === currentSelectedStageId}
+                                onSelect={() => setSelectedStageId(sub.id)}
+                                nowMs={nowMs}
+                                isSubOperation={true}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -939,11 +1354,22 @@ export function JenkinsPipelineDashboard({
           </div>
 
           {/* Contextual Operational Metadata */}
-          {(containerId || commitSha || deploymentUrl || prNumber || prUrl) && (
+          {(containerId || commitSha || deploymentUrl || prNumber || prUrl || isSimulated) && (
             <div className="space-y-2 border-t border-border/60 pt-4">
-              <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
-                Operational Artifacts
-              </h4>
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                  Operational Artifacts
+                </h4>
+                {isSimulated && (
+                  <Badge
+                    data-testid="simulated-badge"
+                    variant="outline"
+                    className="text-[10px] uppercase font-bold border-amber-500/40 text-amber-600 dark:text-amber-400"
+                  >
+                    Simulated / Dry Run
+                  </Badge>
+                )}
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
                 {(prNumber || prUrl) && (
                   <div
@@ -1028,6 +1454,41 @@ export function JenkinsPipelineDashboard({
                   </div>
                 )}
 
+                {isSimulated &&
+                  !commitSha &&
+                  !prNumber &&
+                  (selectedStage?.stage_name === "github_release" ||
+                    selectedStage?.stage_name?.includes("github")) && (
+                    <div className="rounded-lg border border-border bg-background p-3 space-y-1">
+                      <span className="text-muted-foreground flex items-center gap-1.5">
+                        <GitCommit className="size-3.5" /> Commit Status
+                      </span>
+                      <span
+                        data-testid="simulated-commit"
+                        className="font-mono text-amber-600 dark:text-amber-400 block truncate"
+                      >
+                        (Simulated / Dry Run)
+                      </span>
+                    </div>
+                  )}
+
+                {isSimulated &&
+                  !containerId &&
+                  (selectedStage?.stage_name === "apply_startup" ||
+                    selectedStage?.gate_id === "G5") && (
+                    <div className="rounded-lg border border-border bg-background p-3 space-y-1">
+                      <span className="text-muted-foreground flex items-center gap-1.5">
+                        <Box className="size-3.5" /> Container
+                      </span>
+                      <span
+                        data-testid="simulated-container"
+                        className="font-mono text-amber-600 dark:text-amber-400 block truncate"
+                      >
+                        (Simulated / Dry Run)
+                      </span>
+                    </div>
+                  )}
+
                 {deploymentUrl && (
                   <div className="rounded-lg border border-border bg-background p-3 space-y-1 sm:col-span-2 lg:col-span-1">
                     <span className="text-muted-foreground flex items-center gap-1.5">
@@ -1044,6 +1505,23 @@ export function JenkinsPipelineDashboard({
                     </a>
                   </div>
                 )}
+
+                {isSimulated &&
+                  !deploymentUrl &&
+                  (selectedStage?.stage_name === "vercel_deploy" ||
+                    selectedStage?.stage_name?.includes("vercel")) && (
+                    <div className="rounded-lg border border-border bg-background p-3 space-y-1 sm:col-span-2 lg:col-span-1">
+                      <span className="text-muted-foreground flex items-center gap-1.5">
+                        <ExternalLink className="size-3.5" /> Deployment
+                      </span>
+                      <span
+                        data-testid="simulated-deployment"
+                        className="font-mono text-amber-600 dark:text-amber-400 block truncate"
+                      >
+                        (Simulated / Dry Run)
+                      </span>
+                    </div>
+                  )}
               </div>
             </div>
           )}

@@ -922,7 +922,9 @@ describe("JenkinsPipelineDashboard", () => {
 
       // Verify selected stage updates
       await waitFor(() => {
-        expect(screen.getByRole("heading", { name: "G1 Blueprint" })).toBeInTheDocument();
+        expect(
+          screen.getByRole("heading", { name: "G1 — Blueprint Validation" }),
+        ).toBeInTheDocument();
       });
     });
   });
