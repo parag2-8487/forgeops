@@ -239,13 +239,6 @@ services:
     volumes:
       # The weights, so a restart is not another gigabyte of download.
       - ollamamodels:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     healthcheck:
       # Green means THE CONFIGURED MODELS ARE PRESENT, not merely that a port is open. A
       # probe that only checked the port would report ready while every completion came
