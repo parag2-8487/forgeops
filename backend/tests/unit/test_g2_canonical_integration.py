@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import httpx
 import pytest
@@ -86,7 +86,7 @@ async def test_g2_synthesizes_via_canonical_generation(tmp_path: Path):
         strategy="docker_only",
     )
 
-    mock_client = MagicMock(spec=httpx.AsyncClient)
+    mock_client = create_autospec(httpx.AsyncClient, spec_set=True)
 
     # Stream returns complete event
     async def mock_stream_chunks():

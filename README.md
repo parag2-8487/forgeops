@@ -26,13 +26,13 @@ by hand.
 
 ### Before you start
 
-| Requirement          | Why                                        | If it is missing                                                                      |
-| :------------------- | :----------------------------------------- | :------------------------------------------------------------------------------------ |
-| **Supported OS**     | Ubuntu 22.04 / 24.04 LTS (or 20.04 w/ Py 3.10+) | Ubuntu 22.04+ includes Python >= 3.10 in base repos; 20.04 requires Python 3.10+ pkg |
-| **~10 GB free disk** | four images plus their base layers         | the script stops with the measured free space rather than failing deep inside a build |
-| **Internet access**  | Docker's repository, PyPI, and base images | —                                                                                     |
-| **sudo rights**      | Docker and system packages                 | —                                                                                     |
-| **~4 GB RAM**        | Authentik alone wants about 1 GB           | under 2.5 GB with no swap, a safe 2 GB swapfile is created if filesystem supports it  |
+| Requirement          | Why                                             | If it is missing                                                                      |
+| :------------------- | :---------------------------------------------- | :------------------------------------------------------------------------------------ |
+| **Supported OS**     | Ubuntu 22.04 / 24.04 LTS (or 20.04 w/ Py 3.10+) | Ubuntu 22.04+ includes Python >= 3.10 in base repos; 20.04 requires Python 3.10+ pkg  |
+| **~10 GB free disk** | four images plus their base layers              | the script stops with the measured free space rather than failing deep inside a build |
+| **Internet access**  | Docker's repository, PyPI, and base images      | —                                                                                     |
+| **sudo rights**      | Docker and system packages                      | —                                                                                     |
+| **~4 GB RAM**        | Authentik alone wants about 1 GB                | under 2.5 GB with no swap, a safe 2 GB swapfile is created if filesystem supports it  |
 
 A first run takes roughly **10–20 minutes**, most of it pulling base images and building. Later
 runs detect the existing images and finish in seconds.
@@ -52,7 +52,7 @@ runs detect the existing images and finish in seconds.
    It never weakens system security with insecure world-writable socket permissions (`chmod 666`).
    It activates group membership immediately in the launcher subshell via `sg docker` when available,
    or provides clear diagnostic instructions to activate it (`newgrp docker`).
-   *(Note: membership in the docker group grants root-equivalent administrative privileges on the host).*
+   _(Note: membership in the docker group grants root-equivalent administrative privileges on the host)._
 4. **Daemon startup on any init system.** `systemctl` where systemd is present, `service` otherwise
    — covering WSL2 and container hosts as well as a normal desktop.
 5. **Python Compatibility.** Detects existing host Python (≥ 3.10) for host-side provisioning and

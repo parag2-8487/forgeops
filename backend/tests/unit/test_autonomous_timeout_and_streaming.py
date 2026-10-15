@@ -105,11 +105,11 @@ class TestWorkerTaskTimeoutAndFencing:
         mock_sessionmaker.return_value.__aenter__.return_value = mock_session
 
         with (
-            patch("src.deployments.tasks.get_settings", return_value=mock_settings),
-            patch("src.deployments.tasks.create_db_engine", return_value=mock_engine),
-            patch("src.deployments.tasks.create_sessionmaker", return_value=mock_sessionmaker),
-            patch("src.deployments.tasks.run_pipeline", side_effect=asyncio.CancelledError()),
-            patch("src.deployments.autonomous_outbox.AutonomousOutboxPublisher") as mock_pub_cls,
+            patch("src.deployments.tasks.get_settings", autospec=True, return_value=mock_settings),
+            patch("src.deployments.tasks.create_db_engine", autospec=True, return_value=mock_engine),
+            patch("src.deployments.tasks.create_sessionmaker", autospec=True, return_value=mock_sessionmaker),
+            patch("src.deployments.tasks.run_pipeline", autospec=True, side_effect=asyncio.CancelledError()),
+            patch("src.deployments.autonomous_outbox.AutonomousOutboxPublisher", autospec=True) as mock_pub_cls,
         ):
             mock_pub = mock_pub_cls.return_value
             mock_pub.drain_run_events = AsyncMock()
@@ -154,10 +154,10 @@ class TestWorkerTaskTimeoutAndFencing:
         mock_sessionmaker.return_value.__aenter__.return_value = mock_session
 
         with (
-            patch("src.deployments.tasks.get_settings", return_value=mock_settings),
-            patch("src.deployments.tasks.create_db_engine", return_value=mock_engine),
-            patch("src.deployments.tasks.create_sessionmaker", return_value=mock_sessionmaker),
-            patch("src.deployments.tasks.run_pipeline", side_effect=RuntimeError("Late error")),
+            patch("src.deployments.tasks.get_settings", autospec=True, return_value=mock_settings),
+            patch("src.deployments.tasks.create_db_engine", autospec=True, return_value=mock_engine),
+            patch("src.deployments.tasks.create_sessionmaker", autospec=True, return_value=mock_sessionmaker),
+            patch("src.deployments.tasks.run_pipeline", autospec=True, side_effect=RuntimeError("Late error")),
         ):
             res = await execute_autonomous_deploy_task(
                 {
@@ -194,10 +194,12 @@ class TestWorkerTaskTimeoutAndFencing:
         mock_sessionmaker.return_value.__aenter__.return_value = mock_session
 
         with (
-            patch("src.deployments.tasks.get_settings", return_value=mock_settings),
-            patch("src.deployments.tasks.create_db_engine", return_value=mock_engine),
-            patch("src.deployments.tasks.create_sessionmaker", return_value=mock_sessionmaker),
-            patch("src.deployments.tasks.run_pipeline", side_effect=RuntimeError("Old worker timed out")),
+            patch("src.deployments.tasks.get_settings", autospec=True, return_value=mock_settings),
+            patch("src.deployments.tasks.create_db_engine", autospec=True, return_value=mock_engine),
+            patch("src.deployments.tasks.create_sessionmaker", autospec=True, return_value=mock_sessionmaker),
+            patch(
+                "src.deployments.tasks.run_pipeline", autospec=True, side_effect=RuntimeError("Old worker timed out")
+            ),
         ):
             res = await execute_autonomous_deploy_task(
                 {
@@ -262,7 +264,9 @@ class TestIncrementalG4LogStreaming:
             "outbox_publisher": mock_publisher,
         }
 
-        with patch("src.deployments.autonomous_gates.AutonomousDeploymentService", return_value=mock_service):
+        with patch(
+            "src.deployments.autonomous_gates.AutonomousDeploymentService", autospec=True, return_value=mock_service
+        ):
             result = await evaluate_g4_build(mock_session, run, context)
 
         assert result.passed is True

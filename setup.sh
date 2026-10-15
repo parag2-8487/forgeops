@@ -312,7 +312,7 @@ swap_total_kb=$(awk '/SwapTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0
 # If available RAM is less than 2.5 GB and swap is 0, setup a safe 2GB swapfile
 if [ "$mem_avail_kb" -lt 2500000 ] && [ "$swap_total_kb" -eq 0 ]; then
   msg_warn "Host has low available RAM (< 2.5GB) and no swap configured."
-  
+
   fstype=$(stat -f -c %T / 2>/dev/null || df -T / 2>/dev/null | awk 'NR==2 {print $2}' || echo 'unknown')
   free_disk_kb=$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
 

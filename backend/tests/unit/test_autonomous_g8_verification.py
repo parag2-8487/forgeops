@@ -329,7 +329,7 @@ async def test_g8_recoverable_gate_failure_with_manifest_remediation(pg_session:
         )
 
     # Patch STAGE_EVALUATORS for G4 during pipeline run
-    with patch(
+    with patch(  # noqa: FO-TD003 - patching global dictionary mapping STAGE_EVALUATORS
         "src.deployments.autonomous_worker.STAGE_EVALUATORS",
         {
             **__import__("src.deployments.autonomous_worker", fromlist=["STAGE_EVALUATORS"]).STAGE_EVALUATORS,
@@ -421,7 +421,7 @@ async def test_g8_unrecoverable_failure_application_code(pg_session: AsyncSessio
             },
         )
 
-    with patch(
+    with patch(  # noqa: FO-TD003 - patching global dictionary mapping STAGE_EVALUATORS
         "src.deployments.autonomous_worker.STAGE_EVALUATORS",
         {
             **__import__("src.deployments.autonomous_worker", fromlist=["STAGE_EVALUATORS"]).STAGE_EVALUATORS,
@@ -513,7 +513,7 @@ async def test_g8_exhausted_recovery_attempts(pg_session: AsyncSession, tmp_path
             },
         )
 
-    with patch(
+    with patch(  # noqa: FO-TD003 - patching global dictionary mapping STAGE_EVALUATORS
         "src.deployments.autonomous_worker.STAGE_EVALUATORS",
         {
             **__import__("src.deployments.autonomous_worker", fromlist=["STAGE_EVALUATORS"]).STAGE_EVALUATORS,

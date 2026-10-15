@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from src.deployments.autonomous_models import (
@@ -74,6 +74,16 @@ def _create_mock_run(
         )
     run.stages = stages
     return run
+
+
+def _create_mock_worker() -> Any:
+    w = create_autospec(AutonomousWorker, instance=True, spec_set=True)
+    w.check_cancellation.return_value = False
+    return w
+
+
+def _create_mock_service() -> Any:
+    return create_autospec(AutonomousDeploymentService, instance=True, spec_set=True)
 
 
 def _project_mapping(project: Project) -> dict[str, Any]:
@@ -163,11 +173,8 @@ class TestSourcePreparationExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -216,11 +223,8 @@ class TestSourcePreparationExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -276,11 +280,8 @@ class TestSourcePreparationExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -327,11 +328,8 @@ class TestSourcePreparationExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -379,11 +377,8 @@ class TestSourcePreparationExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -470,7 +465,10 @@ class TestSourcePreparationExecution:
 
         session.execute = AsyncMock(side_effect=mock_exec)
 
-        with patch("src.deployments.autonomous_worker.resolve_deployment_credentials", new=AsyncMock(return_value={})):
+        with patch(  # noqa: FO-TD003 - coroutine mock cannot use autospec
+            "src.deployments.autonomous_worker.resolve_deployment_credentials",
+            new=AsyncMock(return_value={}),
+        ):
             result_run = await run_pipeline(
                 session,
                 run_id=run.id,
@@ -493,11 +491,8 @@ class TestSourcePreparationLifecycleAndRecovery:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -543,11 +538,8 @@ class TestSourcePreparationLifecycleAndRecovery:
         cs_id = uuid.uuid4()
         run = _create_mock_run(project_id)
         run.configuration["source_preparation"] = {"change_set_id": str(cs_id)}
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -607,11 +599,8 @@ class TestSourcePreparationLifecycleAndRecovery:
         project_id = uuid.uuid4()
         prior_cs_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -667,11 +656,8 @@ class TestSourcePreparationLifecycleAndRecovery:
         project_id = uuid.uuid4()
         competing_run_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -722,11 +708,8 @@ class TestSourcePreparationLifecycleAndRecovery:
         project_id = uuid.uuid4()
         failed_cs_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -822,12 +805,10 @@ class TestSourcePreparationLifecycleAndRecovery:
         cs_id = uuid.uuid4()
         run = _create_mock_run(project_id)
         run.configuration["source_preparation"] = {"change_set_id": str(cs_id)}
-        worker = MagicMock(spec=AutonomousWorker)
+        worker = _create_mock_worker()
         # Simulate cancellation detected during in-flight poll
-        worker.check_cancellation = AsyncMock(return_value=True)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker.check_cancellation.return_value = True
+        service = _create_mock_service()
 
         res = await prepare_source_workspace(
             session,
@@ -847,11 +828,8 @@ class TestSourcePreparationLifecycleAndRecovery:
         competing_run_id = uuid.uuid4()
         active_cs_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -913,11 +891,8 @@ class TestSourcePreparationLifecycleAndRecovery:
         session = AsyncMock()
         project_id = uuid.uuid4()
         prior_cs_id = uuid.uuid4()
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -1007,11 +982,8 @@ class TestWorkspaceResolutionAndDualPathExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -1064,11 +1036,8 @@ class TestWorkspaceResolutionAndDualPathExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -1112,7 +1081,9 @@ class TestWorkspaceResolutionAndDualPathExecution:
             (tpath / "server.py").write_text("print('hello')", encoding="utf-8")
             return True, "commit-sha-b", None
 
-        with patch("src.deployments.autonomous_source.clone_repository_to_workspace", side_effect=mock_clone):
+        with patch(
+            "src.deployments.autonomous_source.clone_repository_to_workspace", autospec=True, side_effect=mock_clone
+        ):
             res = await prepare_source_workspace(
                 session,
                 run=run,
@@ -1138,11 +1109,8 @@ class TestWorkspaceResolutionAndDualPathExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -1198,11 +1166,8 @@ class TestWorkspaceResolutionAndDualPathExecution:
         session = AsyncMock()
         project_id = uuid.uuid4()
         run = _create_mock_run(project_id)
-        worker = MagicMock(spec=AutonomousWorker)
-        worker.check_cancellation = AsyncMock(return_value=False)
-        worker.heartbeat = AsyncMock()
-        service = MagicMock(spec=AutonomousDeploymentService)
-        service.append_logs = AsyncMock()
+        worker = _create_mock_worker()
+        service = _create_mock_service()
 
         mock_project = Project(
             id=project_id,
@@ -1244,7 +1209,11 @@ class TestWorkspaceResolutionAndDualPathExecution:
                 "Git clone failed (exit code 128): fatal: repository 'https://github.com/parag8487/FailingRepo.git' not found",
             )
 
-        with patch("src.deployments.autonomous_source.clone_repository_to_workspace", side_effect=mock_failing_clone):
+        with patch(
+            "src.deployments.autonomous_source.clone_repository_to_workspace",
+            autospec=True,
+            side_effect=mock_failing_clone,
+        ):
             res = await prepare_source_workspace(
                 session,
                 run=run,

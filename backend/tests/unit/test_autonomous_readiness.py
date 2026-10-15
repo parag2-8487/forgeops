@@ -654,7 +654,10 @@ async def test_capture_authoritative_readiness_checkpoint_maps_api_response(pg_s
         ],
     )
 
-    with patch("src.projects.routes.get_project_readiness", new=AsyncMock(return_value=mock_report)) as mock_api:
+    with patch(  # noqa: FO-TD003 - FastAPI route handler cannot use autospec
+        "src.projects.routes.get_project_readiness",
+        new=AsyncMock(return_value=mock_report),
+    ) as mock_api:
         r0 = await capture_authoritative_readiness_checkpoint(
             session=pg_session,
             run=run,
@@ -726,7 +729,10 @@ async def test_capture_authoritative_readiness_checkpoint_unindexed_scores_zero(
         checks=[],
     )
 
-    with patch("src.projects.routes.get_project_readiness", new=AsyncMock(return_value=mock_unindexed)):
+    with patch(  # noqa: FO-TD003 - FastAPI route handler cannot use autospec
+        "src.projects.routes.get_project_readiness",
+        new=AsyncMock(return_value=mock_unindexed),
+    ):
         res = await capture_authoritative_readiness_checkpoint(
             session=pg_session,
             run=run,
@@ -762,7 +768,10 @@ async def test_capture_authoritative_readiness_checkpoint_api_error_fails_honest
     pg_session.add(run)
     await pg_session.flush([run])
 
-    with patch("src.projects.routes.get_project_readiness", side_effect=RuntimeError("DB connection dropped")):
+    with patch(  # noqa: FO-TD003 - FastAPI route handler cannot use autospec
+        "src.projects.routes.get_project_readiness",
+        side_effect=RuntimeError("DB connection dropped"),
+    ):
         res = await capture_authoritative_readiness_checkpoint(
             session=pg_session,
             run=run,

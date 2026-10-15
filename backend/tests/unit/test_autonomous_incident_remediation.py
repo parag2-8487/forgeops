@@ -74,11 +74,12 @@ async def test_execute_task_transitions_run_to_failed_on_unhandled_error() -> No
             return MockSession()
 
     with (
-        patch("src.deployments.tasks.get_settings") as mock_settings,
-        patch("src.deployments.tasks.create_db_engine") as mock_engine,
-        patch("src.deployments.tasks.create_sessionmaker", return_value=MockSessionMaker()),
+        patch("src.deployments.tasks.get_settings", autospec=True) as mock_settings,
+        patch("src.deployments.tasks.create_db_engine", autospec=True) as mock_engine,
+        patch("src.deployments.tasks.create_sessionmaker", autospec=True, return_value=MockSessionMaker()),
         patch(
             "src.deployments.tasks.run_pipeline",
+            autospec=True,
             side_effect=WorkerFencingLostError("Worker fence lease expired during G6 probe"),
         ),
     ):

@@ -190,7 +190,7 @@ class TestG2InProcessGenerationExecution:
             },
         )
 
-        with patch("src.core.index_evidence.load_index_evidence") as mock_evidence:
+        with patch("src.core.index_evidence.load_index_evidence", autospec=True) as mock_evidence:
             mock_evidence.return_value = MagicMock(paths=[])
             gate_res = await evaluate_g2_existing_artifacts(
                 session=session,
@@ -220,8 +220,8 @@ class TestG2InProcessGenerationExecution:
         )
 
         with (
-            patch("src.core.index_evidence.load_index_evidence") as mock_evidence,
-            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,
+            patch("src.core.index_evidence.load_index_evidence", autospec=True) as mock_evidence,
+            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,  # noqa: FO-TD003 - mock coroutine callable does not accept autospec
         ):
             mock_evidence.return_value = MagicMock(paths=["package.json"])
             mock_compile.return_value = (None, {}, [])
@@ -365,10 +365,10 @@ class TestG2InProcessGenerationExecution:
         )
 
         with (
-            patch("src.core.index_evidence.load_index_evidence") as mock_evidence,
-            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,
-            patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj,
-            patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval,
+            patch("src.core.index_evidence.load_index_evidence", autospec=True) as mock_evidence,
+            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,  # noqa: FO-TD003 - mock coroutine callable does not accept autospec
+            patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj,  # noqa: FO-TD003 - mock coroutine callable does not accept autospec
+            patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval,  # noqa: FO-TD003 - mock coroutine callable does not accept autospec
         ):
             mock_evidence.return_value = MagicMock(paths=["package.json"])
             mock_compile.return_value = (compiled_prompt, {}, {})
@@ -491,10 +491,10 @@ class TestG2InProcessGenerationExecution:
         )
 
         with (
-            patch("src.core.index_evidence.load_index_evidence") as mock_evidence,
-            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,
-            patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj,
-            patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval,
+            patch("src.core.index_evidence.load_index_evidence", autospec=True) as mock_evidence,
+            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,  # noqa: FO-TD003 - mock coroutine callable does not accept autospec
+            patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj,  # noqa: FO-TD003 - mock coroutine callable does not accept autospec
+            patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval,  # noqa: FO-TD003 - mock coroutine callable does not accept autospec
         ):
             mock_evidence.return_value = MagicMock(paths=["package.json"])
             mock_compile.return_value = (compiled_prompt, {}, {})

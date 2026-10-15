@@ -183,6 +183,7 @@ ignore = [
     # E501 line length: ruff format enforces layout; long strings and comments are preserved.
     "E501",
 ]
+external = ["FO-TD001", "FO-TD002", "FO-TD003", "FO-TD004", "FO-SEC001"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Cross-domain imports: domains must depend only on src/core, never on each other.

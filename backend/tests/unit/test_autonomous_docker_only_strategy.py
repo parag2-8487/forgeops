@@ -189,7 +189,7 @@ class TestDockerOnlyHandlerExclusionAndRecovery:
     @pytest.mark.asyncio
     async def test_g7_marks_external_targets_not_applicable(self) -> None:
         """In G7, external targets must be marked not_applicable under docker_only."""
-        run = MagicMock(spec=AutonomousDeployment)
+        run = MagicMock(spec=AutonomousDeployment)  # noqa: FO-TD002 - declarative SQLAlchemy model attributes not accessible via spec_set
         run.id = uuid.uuid4()
         run.strategy = DeploymentStrategy.DOCKER_ONLY
         run.configuration = {}
@@ -209,7 +209,7 @@ class TestDockerOnlyHandlerExclusionAndRecovery:
         """AutonomousRecoverySweeper must not reconcile GitHub or Vercel for docker_only."""
         from src.deployments.autonomous_recovery import AutonomousRecoverySweeper
 
-        run = MagicMock(spec=AutonomousDeployment)
+        run = MagicMock(spec=AutonomousDeployment)  # noqa: FO-TD002 - declarative SQLAlchemy model attributes not accessible via spec_set
         run.id = uuid.uuid4()
         run.strategy = DeploymentStrategy.DOCKER_ONLY
         run.configuration = {}
@@ -513,7 +513,7 @@ class TestDockerOnlyRemediationAndSafeguards:
 
         session = AsyncMock()
         # Mock load_index_evidence returning empty
-        with patch("src.core.index_evidence.load_index_evidence") as mock_ev:
+        with patch("src.core.index_evidence.load_index_evidence", autospec=True) as mock_ev:
             evidence_mock = MagicMock()
             evidence_mock.paths = ()
             mock_ev.return_value = evidence_mock
