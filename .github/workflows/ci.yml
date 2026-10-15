@@ -975,9 +975,9 @@ jobs:
           sudo apt-get install -y -qq postgresql-client
           bash scripts/postgres-init/10-forgeops-roles.sh
       - name: Migrate the database to head for the test session
-        run: |
-          set -euo pipefail
-          (cd backend && DATABASE_URL="$FORGEOPS_TEST_DATABASE_URL" python -m alembic upgrade head)
+        env:
+          DATABASE_URL: ${{ env.FORGEOPS_TEST_DATABASE_URL }}
+        run: python -m alembic upgrade head
       - name: Start the real Cerbos sidecar, digest-pinned (design §2.3, task 6.4)
         working-directory: .
         # Compiles the policy set with Cerbos's own test runner first, so a policy that
