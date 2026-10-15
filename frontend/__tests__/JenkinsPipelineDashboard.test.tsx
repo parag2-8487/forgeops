@@ -1045,7 +1045,9 @@ describe("JenkinsPipelineDashboard", () => {
       expect(screen.getByTestId("g8-recovery-panel")).toBeInTheDocument();
       expect(screen.getByText("Iteration 2/3")).toBeInTheDocument();
       expect(screen.getByText("90/100")).toBeInTheDocument();
-      expect(screen.getByText("G8 AI recovery recheck passed after artifact correction")).toBeInTheDocument();
+      expect(
+        screen.getByText("G8 AI recovery recheck passed after artifact correction"),
+      ).toBeInTheDocument();
     });
 
     it("renders progress bar human-readable activity text and status-aware styles across run states", () => {
@@ -1064,8 +1066,13 @@ describe("JenkinsPipelineDashboard", () => {
       );
       const progressBar1 = screen.getByRole("progressbar");
       expect(progressBar1).toHaveAttribute("aria-valuenow", "100");
-      expect(progressBar1).toHaveAttribute("aria-valuetext", "100 percent - Deployment succeeded and verified");
-      expect(screen.getByText("Completed — All deployment gates G1–G7 verified & signed")).toBeInTheDocument();
+      expect(progressBar1).toHaveAttribute(
+        "aria-valuetext",
+        "100 percent - Deployment succeeded and verified",
+      );
+      expect(
+        screen.getByText("Completed — All deployment gates G1–G7 verified & signed"),
+      ).toBeInTheDocument();
       unmount1();
 
       // 2. Failed run
@@ -1102,7 +1109,9 @@ describe("JenkinsPipelineDashboard", () => {
           projectName={projectName}
         />,
       );
-      expect(screen.getByText(/Rolled Back — Compensation cleanup complete \(45%\)/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Rolled Back — Compensation cleanup complete \(45%\)/),
+      ).toBeInTheDocument();
       unmount3();
 
       // 4. Cancelled run

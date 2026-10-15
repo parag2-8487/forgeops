@@ -41,11 +41,7 @@ import { AutonomousLogConsole } from "./AutonomousLogConsole";
 import { useAutonomousDeployStream, type AutonomousLogEntry } from "./useAutonomousDeployStream";
 
 export type DeploymentStrategy =
-  | "docker_only"
-  | "docker_github_vercel"
-  | "docker_github"
-  | "github_only"
-  | "vercel_only";
+  "docker_only" | "docker_github_vercel" | "docker_github" | "github_only" | "vercel_only";
 
 export type StageStatus =
   | "pending"
@@ -59,13 +55,7 @@ export type StageStatus =
   | "rolled_back";
 
 export type AutonomousRunStatus =
-  | "pending"
-  | "running"
-  | "cancelling"
-  | "cancelled"
-  | "succeeded"
-  | "failed"
-  | "rolled_back";
+  "pending" | "running" | "cancelling" | "cancelled" | "succeeded" | "failed" | "rolled_back";
 
 export interface StagePublicResponse {
   id: string;
@@ -609,7 +599,7 @@ export function JenkinsPipelineDashboard({
       setCopiedRunId(true);
       setTimeout(() => setCopiedRunId(false), 2000);
     }
-  }, [activeRun?.id]);
+  }, [activeRun]);
 
   // Live timer tick for running executions
   useEffect(() => {
@@ -944,7 +934,8 @@ export function JenkinsPipelineDashboard({
     (metaDetails.configured_host_port as number | undefined) ??
     (stageMeta.host_port as number | undefined) ??
     (metaDetails.host_port as number | undefined) ??
-    ((activeRun?.configuration?.docker_config as Record<string, unknown> | undefined)?.host_port as number | undefined);
+    ((activeRun?.configuration?.docker_config as Record<string, unknown> | undefined)?.host_port as
+      number | undefined);
   const containerPort =
     (stageMeta.resolved_container_port as number | undefined) ??
     (metaDetails.resolved_container_port as number | undefined) ??
@@ -954,9 +945,9 @@ export function JenkinsPipelineDashboard({
     (metaDetails.configured_container_port as number | undefined) ??
     (stageMeta.container_port as number | undefined) ??
     (metaDetails.container_port as number | undefined) ??
-    ((activeRun?.configuration?.docker_config as Record<string, unknown> | undefined)?.container_port as number | undefined);
-  const portConflict =
-    Boolean(stageMeta.port_conflict ?? metaDetails.port_conflict);
+    ((activeRun?.configuration?.docker_config as Record<string, unknown> | undefined)
+      ?.container_port as number | undefined);
+  const portConflict = Boolean(stageMeta.port_conflict ?? metaDetails.port_conflict);
   const commitSha =
     (stageMeta.commit_sha as string | undefined) || (metaDetails.commit_sha as string | undefined);
   const deploymentUrl =
@@ -990,7 +981,10 @@ export function JenkinsPipelineDashboard({
     (activeRun?.configuration as Record<string, unknown> | undefined)?.dry_run === true;
 
   // Source Preparation preflight state
-  const sourcePrep = (activeRun?.configuration?.source_preparation || {}) as Record<string, unknown>;
+  const sourcePrep = (activeRun?.configuration?.source_preparation || {}) as Record<
+    string,
+    unknown
+  >;
   const sourcePrepStatus =
     (sourcePrep.status as string) ||
     (activeRun?.current_stage === "source_preparation" ? "preparing_workspace" : null);
@@ -1063,9 +1057,7 @@ export function JenkinsPipelineDashboard({
     ) || [];
 
   const latestRecovery =
-    recoveryCheckpoints.length > 0
-      ? recoveryCheckpoints[recoveryCheckpoints.length - 1]
-      : null;
+    recoveryCheckpoints.length > 0 ? recoveryCheckpoints[recoveryCheckpoints.length - 1] : null;
 
   const recoveryAttempts =
     (activeRun?.configuration?.recovery_attempts as number | undefined) ??
@@ -1075,8 +1067,7 @@ export function JenkinsPipelineDashboard({
     recoveryAttempts > 0 ||
     Boolean(latestRecovery) ||
     Boolean(
-      activeRun?.primary_error &&
-        (activeRun.primary_error as Record<string, unknown>).recovery,
+      activeRun?.primary_error && (activeRun.primary_error as Record<string, unknown>).recovery,
     );
 
   // Calculate score delta between R1 and R0
@@ -1111,8 +1102,18 @@ export function JenkinsPipelineDashboard({
 
     const runningStage = stages.find((s) => s.status === "running" || s.status === "cancelling");
     const failedStage = stages.find((s) => s.status === "failed");
-    const currentName = activeRun.current_stage || runningStage?.stage_name || failedStage?.stage_name;
-    const activeStageInfo = currentName ? getStageDisplayInfo({ stage_name: currentName, position: 0, status: "running", progress_pct: 0, id: "", run_id: "" }) : null;
+    const currentName =
+      activeRun.current_stage || runningStage?.stage_name || failedStage?.stage_name;
+    const activeStageInfo = currentName
+      ? getStageDisplayInfo({
+          stage_name: currentName,
+          position: 0,
+          status: "running",
+          progress_pct: 0,
+          id: "",
+          run_id: "",
+        })
+      : null;
 
     if (activeRun.status === "succeeded") {
       return {
@@ -1221,7 +1222,15 @@ export function JenkinsPipelineDashboard({
       textColor: "text-muted-foreground",
       isIndeterminate: false,
     };
-  }, [activeRun, stages, hasRecovery, recoveryAttempts, sourcePrepStatus, sourcePrepLabel, isAgentConnected]);
+  }, [
+    activeRun,
+    stages,
+    hasRecovery,
+    recoveryAttempts,
+    sourcePrepStatus,
+    sourcePrepLabel,
+    isAgentConnected,
+  ]);
 
   if (!activeRun) {
     return (
@@ -1254,7 +1263,8 @@ export function JenkinsPipelineDashboard({
               <WifiOff className="size-4 animate-pulse" />
             </div>
             <span className="font-medium">
-              Live stream disconnected. Reconnecting to deployment event stream... Displaying authoritative database state.
+              Live stream disconnected. Reconnecting to deployment event stream... Displaying
+              authoritative database state.
             </span>
           </div>
           <Button
@@ -1317,10 +1327,7 @@ export function JenkinsPipelineDashboard({
             aria-label="Breadcrumb"
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
           >
-            <Link
-              href="/projects"
-              className="hover:text-foreground font-medium transition-colors"
-            >
+            <Link href="/projects" className="hover:text-foreground font-medium transition-colors">
               Projects
             </Link>
             <span className="text-muted-foreground/40 font-mono">/</span>
@@ -1339,7 +1346,13 @@ export function JenkinsPipelineDashboard({
 
           {/* Action Controls */}
           <div className="flex flex-wrap items-center gap-2">
-            <Button data-testid="btn-back-project" variant="outline" size="sm" asChild className="h-8 text-xs font-medium">
+            <Button
+              data-testid="btn-back-project"
+              variant="outline"
+              size="sm"
+              asChild
+              className="h-8 text-xs font-medium"
+            >
               <Link href={`/projects/${projectId}`}>
                 <ArrowLeft className="mr-1.5 size-3.5" />
                 Back to project
@@ -1431,9 +1444,15 @@ export function JenkinsPipelineDashboard({
                 }
                 className="capitalize text-xs font-semibold px-2.5 py-0.5 tracking-wide shadow-none"
               >
-                {isRunning && <span className="size-1.5 rounded-full bg-current animate-pulse mr-1.5 inline-block" />}
-                {activeRun.status === "succeeded" && <CheckCircle2 className="size-3 mr-1 inline-block" />}
-                {activeRun.status === "failed" && <AlertCircle className="size-3 mr-1 inline-block" />}
+                {isRunning && (
+                  <span className="size-1.5 rounded-full bg-current animate-pulse mr-1.5 inline-block" />
+                )}
+                {activeRun.status === "succeeded" && (
+                  <CheckCircle2 className="size-3 mr-1 inline-block" />
+                )}
+                {activeRun.status === "failed" && (
+                  <AlertCircle className="size-3 mr-1 inline-block" />
+                )}
                 {activeRun.status}
               </Badge>
 
@@ -1514,7 +1533,10 @@ export function JenkinsPipelineDashboard({
                         : "bg-muted-foreground",
                 )}
               />
-              <span className="font-semibold text-foreground text-xs sm:text-sm truncate" title={progressInfo.label}>
+              <span
+                className="font-semibold text-foreground text-xs sm:text-sm truncate"
+                title={progressInfo.label}
+              >
                 {progressInfo.label}
               </span>
             </div>
@@ -1535,7 +1557,10 @@ export function JenkinsPipelineDashboard({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuetext={progressInfo.ariaText}
-            className={cn("h-2.5 w-full overflow-hidden rounded-full p-0.5 border border-border/50 bg-secondary/60 shadow-inner transition-colors", progressInfo.trackColor)}
+            className={cn(
+              "h-2.5 w-full overflow-hidden rounded-full p-0.5 border border-border/50 bg-secondary/60 shadow-inner transition-colors",
+              progressInfo.trackColor,
+            )}
           >
             <div
               className={cn(
@@ -1553,7 +1578,9 @@ export function JenkinsPipelineDashboard({
           {isAgentConnected ? (
             <div className="flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 dark:bg-emerald-950/20 px-4 py-2.5 text-xs text-emerald-700 dark:text-emerald-300">
               <Server className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-              <span className="font-medium">Paired Agent Connected: Ready for local orchestration execution.</span>
+              <span className="font-medium">
+                Paired Agent Connected: Ready for local orchestration execution.
+              </span>
             </div>
           ) : (
             <div
@@ -1656,7 +1683,10 @@ export function JenkinsPipelineDashboard({
           >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                <Badge variant="outline" className="font-mono text-xs border-primary/40 text-primary">
+                <Badge
+                  variant="outline"
+                  className="font-mono text-xs border-primary/40 text-primary"
+                >
                   R0 Baseline
                 </Badge>
                 <div className="flex items-center gap-2">
@@ -1672,7 +1702,9 @@ export function JenkinsPipelineDashboard({
                 <span className="text-xs text-muted-foreground font-mono">
                   Score:{" "}
                   <span className="font-bold text-foreground">
-                    {r0.score !== null && r0.score !== undefined ? `${r0.score}/${r0.max_score || 100}` : "--"}
+                    {r0.score !== null && r0.score !== undefined
+                      ? `${r0.score}/${r0.max_score || 100}`
+                      : "--"}
                   </span>
                 </span>
                 <Badge
@@ -1709,7 +1741,8 @@ export function JenkinsPipelineDashboard({
             {r0.blockers && r0.blockers.length > 0 && (
               <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive space-y-1">
                 <span className="font-semibold flex items-center gap-1.5">
-                  <ShieldAlert className="size-3.5 shrink-0" /> Blockers Detected ({r0.blockers.length})
+                  <ShieldAlert className="size-3.5 shrink-0" /> Blockers Detected (
+                  {r0.blockers.length})
                 </span>
                 <ul className="list-disc list-inside space-y-0.5 text-[11px] font-mono">
                   {r0.blockers.map((b, idx) => (
@@ -1722,7 +1755,10 @@ export function JenkinsPipelineDashboard({
             )}
 
             {r0.explanation && (
-              <p className="text-xs text-muted-foreground font-mono truncate" title={r0.explanation}>
+              <p
+                className="text-xs text-muted-foreground font-mono truncate"
+                title={r0.explanation}
+              >
                 {r0.explanation}
               </p>
             )}
@@ -1764,9 +1800,7 @@ export function JenkinsPipelineDashboard({
 
                   return (
                     <div key={col.key} className="contents">
-                      <div
-                        className="w-56 shrink-0 p-3 border-l border-border/60 flex flex-col justify-between"
-                      >
+                      <div className="w-56 shrink-0 p-3 border-l border-border/60 flex flex-col justify-between">
                         <div className="flex items-center justify-between gap-1.5 mb-1">
                           <span
                             className="font-semibold text-xs text-foreground truncate"
@@ -1783,9 +1817,7 @@ export function JenkinsPipelineDashboard({
 
                       {/* R1 Post-Generation Informational Checkpoint nested after G2 */}
                       {col.gateId === "G2" && (
-                        <div
-                          className="w-28 shrink-0 p-3 border-l border-border/60 bg-primary/5 flex flex-col justify-between items-center text-center"
-                        >
+                        <div className="w-28 shrink-0 p-3 border-l border-border/60 bg-primary/5 flex flex-col justify-between items-center text-center">
                           <div className="flex items-center gap-1">
                             <Badge
                               variant="outline"
@@ -1850,9 +1882,7 @@ export function JenkinsPipelineDashboard({
                 {canonicalColumns.map((col) => {
                   return (
                     <div key={col.key} className="contents">
-                      <div
-                        className="w-56 shrink-0 p-2.5 flex flex-col gap-2 justify-start"
-                      >
+                      <div className="w-56 shrink-0 p-2.5 flex flex-col gap-2 justify-start">
                         {/* Primary stage card if present */}
                         {col.primaryStage ? (
                           <StageCard
@@ -1866,7 +1896,9 @@ export function JenkinsPipelineDashboard({
                           />
                         ) : col.subOperations.length === 0 ? (
                           <div className="flex flex-col items-center justify-center min-h-[88px] rounded-lg border border-dashed border-border/50 bg-muted/5 p-3 text-center">
-                            <span className="text-[11px] font-mono text-muted-foreground/60">--</span>
+                            <span className="text-[11px] font-mono text-muted-foreground/60">
+                              --
+                            </span>
                             <span className="text-[10px] text-muted-foreground/50">
                               Not in strategy
                             </span>
@@ -1908,7 +1940,9 @@ export function JenkinsPipelineDashboard({
                             R1 Score
                           </span>
                           <div className="text-sm font-bold font-mono text-primary">
-                            {r1?.score !== undefined && r1?.score !== null ? `${r1.score}/100` : "--"}
+                            {r1?.score !== undefined && r1?.score !== null
+                              ? `${r1.score}/100`
+                              : "--"}
                           </div>
                           {r1 ? (
                             <Badge
@@ -1924,7 +1958,9 @@ export function JenkinsPipelineDashboard({
                               {r1.status}
                             </Badge>
                           ) : (
-                            <span className="text-[10px] text-muted-foreground font-mono">Pending</span>
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              Pending
+                            </span>
                           )}
                           {typeof scoreDelta === "number" && (
                             <span
@@ -1988,7 +2024,9 @@ export function JenkinsPipelineDashboard({
             </div>
 
             <div className="rounded-lg border border-border/60 bg-background/80 p-3 space-y-1">
-              <span className="text-muted-foreground font-mono text-[11px]">Recovery Score (R_rec)</span>
+              <span className="text-muted-foreground font-mono text-[11px]">
+                Recovery Score (R_rec)
+              </span>
               <p className="font-mono font-bold text-foreground">
                 {latestRecovery?.score !== undefined && latestRecovery?.score !== null
                   ? `${latestRecovery.score}/100`
@@ -2120,7 +2158,13 @@ export function JenkinsPipelineDashboard({
           </div>
 
           {/* Contextual Operational Metadata */}
-          {(containerId || hostPort || commitSha || deploymentUrl || prNumber || prUrl || isSimulated) && (
+          {(containerId ||
+            hostPort ||
+            commitSha ||
+            deploymentUrl ||
+            prNumber ||
+            prUrl ||
+            isSimulated) && (
             <div className="space-y-2 border-t border-border/60 pt-4">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">

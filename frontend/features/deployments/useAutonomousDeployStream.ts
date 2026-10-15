@@ -126,7 +126,7 @@ export function useAutonomousDeployStream(
     isTerminalRef.current = Boolean(isTerminal);
   }, [isTerminal]);
 
-  const lastEventTimestampRef = useRef<number>(Date.now());
+  const lastEventTimestampRef = useRef<number>(0);
   const reconnectStreamRef = useRef<(() => void) | null>(null);
 
   // Reset stream state when switching to a different run or when initialRun prop changes
@@ -226,7 +226,8 @@ export function useAutonomousDeployStream(
 
           const isTerminal = (status?: string) =>
             status === "succeeded" || status === "failed" || status === "cancelled";
-          const preserveStatus = !isNewAttempt && isTerminal(prev.status) && !isTerminal(freshRun.status);
+          const preserveStatus =
+            !isNewAttempt && isTerminal(prev.status) && !isTerminal(freshRun.status);
 
           return {
             ...freshRun,
@@ -374,7 +375,7 @@ export function useAutonomousDeployStream(
               const newStatus =
                 isTerminal && stageStatus === "pending"
                   ? prevStage.status
-                  : stageStatus ?? prevStage.status;
+                  : (stageStatus ?? prevStage.status);
               const monotonicStageProgress =
                 stageProgress !== undefined
                   ? Math.max(prevStage.progress_pct ?? 0, stageProgress)
@@ -384,8 +385,7 @@ export function useAutonomousDeployStream(
                 ...prevStage,
                 status: newStatus,
                 progress_pct: monotonicStageProgress,
-                error_message:
-                  errorMessage !== undefined ? errorMessage : prevStage.error_message,
+                error_message: errorMessage !== undefined ? errorMessage : prevStage.error_message,
                 stage_metadata: {
                   ...(prevStage.stage_metadata || {}),
                   ...metadata,
@@ -468,9 +468,9 @@ export function useAutonomousDeployStream(
 
         if (Array.isArray(payload.stages)) {
           setStages((prevStages) => {
-            const incomingStages = [
-              ...(payload.stages as StagePublicResponse[]),
-            ].sort((a, b) => a.position - b.position);
+            const incomingStages = [...(payload.stages as StagePublicResponse[])].sort(
+              (a, b) => a.position - b.position,
+            );
             if (!prevStages || prevStages.length === 0) return incomingStages;
 
             return incomingStages.map((freshStage) => {
@@ -486,10 +486,7 @@ export function useAutonomousDeployStream(
                 return {
                   ...freshStage,
                   status: prevStage.status,
-                  progress_pct: Math.max(
-                    prevStage.progress_pct ?? 0,
-                    freshStage.progress_pct ?? 0,
-                  ),
+                  progress_pct: Math.max(prevStage.progress_pct ?? 0, freshStage.progress_pct ?? 0),
                   completed_at: prevStage.completed_at || freshStage.completed_at,
                   started_at: prevStage.started_at || freshStage.started_at,
                   error_message: prevStage.error_message || freshStage.error_message,
@@ -501,10 +498,7 @@ export function useAutonomousDeployStream(
               }
               return {
                 ...freshStage,
-                progress_pct: Math.max(
-                  prevStage.progress_pct ?? 0,
-                  freshStage.progress_pct ?? 0,
-                ),
+                progress_pct: Math.max(prevStage.progress_pct ?? 0, freshStage.progress_pct ?? 0),
               };
             });
           });

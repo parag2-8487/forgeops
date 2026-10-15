@@ -366,6 +366,7 @@ class AutonomousDeployment(SQLModel, table=True):
             back_populates="run",
             cascade="all, delete-orphan",
             order_by="AutonomousDeploymentStage.position",
+            lazy="selectin",
         )
     )
     logs: list[AutonomousDeploymentLog] = Relationship(

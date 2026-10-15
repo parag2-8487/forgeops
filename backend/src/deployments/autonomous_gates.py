@@ -2458,23 +2458,39 @@ async def evaluate_g4_build(
                 current_batch = list(log_batch)
                 log_batch.clear()
                 last_flush_time = loop.time()
-                try:
-                    await service.append_logs(
-                        session,
-                        run_id=run.id,
-                        stage_name="G4_build",
-                        entries=current_batch,
-                        fence_token=fence_tok,
-                    )
-                    await session.commit()
-                    if redis_client is not None:
-                        with contextlib.suppress(Exception):
-                            await publisher.drain_run_events(session, redis_client, run.id)
-                            await session.commit()
-                except Exception as ex:
-                    logger.warning("G4: failed to flush build log batch: %s", ex)
-                    with contextlib.suppress(Exception):
-                        await session.rollback()
+                sm = _get_ctx(context, "sessionmaker")
+                if sm is not None and callable(sm):
+                    try:
+                        async with sm() as log_session:
+                            await service.append_logs(
+                                log_session,
+                                run_id=run.id,
+                                stage_name="G4_build",
+                                entries=current_batch,
+                                fence_token=fence_tok,
+                            )
+                            await log_session.commit()
+                            if redis_client is not None:
+                                with contextlib.suppress(Exception):
+                                    await publisher.drain_run_events(log_session, redis_client, run.id)
+                                    await log_session.commit()
+                    except Exception as ex:
+                        logger.warning("G4: failed to flush build log batch: %s", ex)
+                else:
+                    try:
+                        await service.append_logs(
+                            session,
+                            run_id=run.id,
+                            stage_name="G4_build",
+                            entries=current_batch,
+                            fence_token=fence_tok,
+                        )
+                        await session.flush()
+                        if redis_client is not None:
+                            with contextlib.suppress(Exception):
+                                await publisher.drain_run_events(session, redis_client, run.id)
+                    except Exception as ex:
+                        logger.warning("G4: failed to flush build log batch: %s", ex)
 
             async def _on_build_log(line: str) -> None:
                 async with batch_lock:
@@ -6065,7 +6081,7 @@ async def execute_vercel_deploy(
                         },
                     )
 
-                # 5. Heartbeat callback
+                # 5. Heartbeat callback & pipeline heartbeat pulse
                 hb_cb = _get_ctx(context, "heartbeat_callback")
                 if hb_cb is not None:
                     try:
@@ -6075,6 +6091,13 @@ async def execute_vercel_deploy(
                             hb_cb()
                     except Exception:
                         pass
+
+                pipe_hb = _get_ctx(context, "_pipeline_heartbeat")
+                if pipe_hb is not None and hasattr(pipe_hb, "pulse"):
+                    try:
+                        await pipe_hb.pulse()
+                    except Exception as pulse_err:
+                        logger.debug("Vercel polling pipeline heartbeat pulse failed: %s", pulse_err)
 
                 # 6. Sleep before next poll
                 await asyncio.sleep(min(poll_interval, max(0.1, poll_timeout - elapsed)))

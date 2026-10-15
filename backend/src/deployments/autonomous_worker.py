@@ -1204,12 +1204,13 @@ async def run_pipeline(
             await session.commit()
 
         # 5. Ensure stages are loaded and sorted by position
-        if not run.stages:
-            stmt_stages = select(AutonomousDeploymentStage).where(AutonomousDeploymentStage.run_id == target_run_id)
-            res_stages = await session.execute(stmt_stages)
-            run.stages = list(res_stages.scalars().all())
-
-        stages = sorted(run.stages, key=lambda s: s.position)
+        stmt_stages = (
+            select(AutonomousDeploymentStage)
+            .where(AutonomousDeploymentStage.run_id == target_run_id)
+            .order_by(AutonomousDeploymentStage.position.asc())
+        )
+        res_stages = await session.execute(stmt_stages)
+        stages = list(res_stages.scalars().all())
 
         # 6. Execute stages sequentially
         stage_idx = 0
@@ -1635,7 +1636,7 @@ async def run_pipeline(
                 run.completed_at = fail_now
 
                 # Settle all subsequent unexecuted stages as skipped
-                for downstream in run.stages:
+                for downstream in stages:
                     if downstream.position > stage.position and downstream.status in ("pending", "waiting"):
                         downstream.status = "skipped"
                         downstream.error_message = f"Skipped: prerequisite '{stage.stage_name}' failed"
