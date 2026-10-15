@@ -196,8 +196,9 @@ def _mark_source_ready(
         source_prep[k] = v
     source_prep.pop("error", None)
     source_prep.pop("error_code", None)
-    source_prep.pop("failed_at", None)
-    run.configuration["source_preparation"] = source_prep
+    cfg = dict(run.configuration or {})
+    cfg["source_preparation"] = dict(source_prep)
+    run.configuration = cfg
     flag_modified(run, "configuration")
     if (
         run.primary_error
@@ -893,6 +894,7 @@ async def prepare_source_workspace(
             )
 
         _mark_source_ready(run, source_prep, workspace_path=str(resolved_ws))
+        await session.flush()
 
         await service.append_logs(
             session,
@@ -1237,6 +1239,7 @@ async def prepare_source_workspace(
             )
 
         _mark_source_ready(run, source_prep, workspace_path=str(run_scoped_ws))
+        await session.flush()
 
         await service.append_logs(
             session,
@@ -1371,6 +1374,7 @@ async def prepare_source_workspace(
         )
 
     _mark_source_ready(run, source_prep, workspace_path=str(stored_ws))
+    await session.flush()
 
     await service.append_logs(
         session,

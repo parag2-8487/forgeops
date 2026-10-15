@@ -1637,20 +1637,35 @@ async def evaluate_g2_existing_artifacts(
 
     if not is_sim_or_mock:
         if src_status != "source_ready":
-            return GateResult(
-                gate_id="G2",
-                passed=False,
-                status="failed",
-                message=(
-                    f"G2 Generation prerequisite failed: source preparation status is '{src_status or 'missing'}' "
-                    f"(expected 'source_ready'). Source workspace must be prepared and verified before generation."
-                ),
-                details={
-                    "action": "SYNTHESIZE",
-                    "error": "source_prep_not_ready",
-                    "source_preparation_status": src_status,
-                },
+            resolved_cand = resolve_workspace_path(
+                source_prep.get("workspace_path")
+                or (run.configuration or {}).get("workspace_path")
+                or workspace_dir_raw
             )
+            if resolved_cand.exists() and any(resolved_cand.iterdir()):
+                src_status = "source_ready"
+                source_prep["status"] = "source_ready"
+                source_prep["status_label"] = "Source ready"
+                source_prep["workspace_path"] = str(resolved_cand)
+                cfg = dict(run.configuration or {})
+                cfg["source_preparation"] = source_prep
+                run.configuration = cfg
+                flag_modified(run, "configuration")
+            else:
+                return GateResult(
+                    gate_id="G2",
+                    passed=False,
+                    status="failed",
+                    message=(
+                        f"G2 Generation prerequisite failed: source preparation status is '{src_status or 'missing'}' "
+                        f"(expected 'source_ready'). Source workspace must be prepared and verified before generation."
+                    ),
+                    details={
+                        "action": "SYNTHESIZE",
+                        "error": "source_prep_not_ready",
+                        "source_preparation_status": src_status,
+                    },
+                )
 
         recorded_ws = source_prep.get("workspace_path")
         if not recorded_ws:
@@ -2476,7 +2491,32 @@ async def evaluate_g4_build(
 
     config = run.configuration or {}
     docker_cfg = config.get("docker_config") or {}
-    image_tag = docker_cfg.get("image_tag") or "portfolio:0.1.0"
+    image_tag = docker_cfg.get("image_tag")
+    if not image_tag:
+        project_name = _get_ctx(context, "project_name")
+        if not project_name and session and hasattr(run, "project_id") and run.project_id:
+            with contextlib.suppress(Exception):
+                from src.projects.models import Project
+
+                proj = await session.get(Project, run.project_id)
+                if proj:
+                    project_name = proj.name
+        if not project_name and isinstance(config.get("source_preparation"), dict):
+            sp_repo = config["source_preparation"].get("repo_full_name", "")
+            if "/" in sp_repo:
+                project_name = sp_repo.split("/")[-1]
+            elif sp_repo:
+                project_name = sp_repo
+        if not project_name and isinstance(config.get("source_preparation"), dict):
+            ws_p = config["source_preparation"].get("workspace_path", "")
+            if ws_p:
+                project_name = Path(ws_p).name
+
+        clean_tag = "app"
+        if project_name:
+            import re
+            clean_tag = re.sub(r"[^a-zA-Z0-9_.-]", "-", str(project_name).lower().strip()).strip(".-_") or "app"
+        image_tag = f"{clean_tag}:0.1.0"
     is_sim = _is_simulation_mode(session, run, context)
 
     docker_client = _get_ctx(context, "docker_client") or DockerEngineClient()
@@ -2706,7 +2746,7 @@ async def evaluate_g5_apply(
 
     config = run.configuration or {}
     docker_cfg = config.get("docker_config") or {}
-    image_tag = docker_cfg.get("image_tag") or "portfolio:0.1.0"
+    image_tag = docker_cfg.get("image_tag")
 
     project_name = _get_ctx(context, "project_name")
     if not project_name and session and hasattr(run, "project_id") and run.project_id:
@@ -2720,6 +2760,19 @@ async def evaluate_g5_apply(
         sp_repo = config["source_preparation"].get("repo_full_name", "")
         if "/" in sp_repo:
             project_name = sp_repo.split("/")[-1]
+        elif sp_repo:
+            project_name = sp_repo
+    if not project_name and isinstance(config.get("source_preparation"), dict):
+        ws_p = config["source_preparation"].get("workspace_path", "")
+        if ws_p:
+            project_name = Path(ws_p).name
+
+    if not image_tag:
+        clean_tag = "app"
+        if project_name:
+            import re
+            clean_tag = re.sub(r"[^a-zA-Z0-9_.-]", "-", str(project_name).lower().strip()).strip(".-_") or "app"
+        image_tag = f"{clean_tag}:0.1.0"
 
     # Resolve immutable image artifact from G4 stage metadata or context
     g4_stage = next(

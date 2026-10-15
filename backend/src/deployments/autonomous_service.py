@@ -22,7 +22,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -631,7 +631,11 @@ class AutonomousDeploymentService:
             ProblemException (status 404, type "deployment-absent") if run does not exist.
             ProblemException (status 409, type "autonomous-run-conflict") on fence token mismatch.
         """
-        stmt = select(AutonomousDeployment).where(AutonomousDeployment.id == run_id)
+        stmt = (
+            select(AutonomousDeployment)
+            .where(AutonomousDeployment.id == run_id)
+            .with_for_update()
+        )
         result = await session.execute(stmt)
         run = result.scalars().first()
         if run is None:
@@ -643,7 +647,19 @@ class AutonomousDeploymentService:
                 detail=f"Worker fence token mismatch: expected {run.fence_token}, got {fence_token}.",
             )
 
-        current_counter = run.log_sequence_counter
+        current_counter = run.log_sequence_counter or 0
+        try:
+            if not hasattr(session, "runs"):
+                max_log_res = await session.execute(
+                    select(func.max(AutonomousDeploymentLog.log_seq)).where(
+                        AutonomousDeploymentLog.run_id == run_id
+                    )
+                )
+                if hasattr(max_log_res, "scalar"):
+                    highest_db_log_seq = max_log_res.scalar() or 0
+                    current_counter = max(current_counter, highest_db_log_seq)
+        except Exception:
+            pass
         remaining = MAX_LOG_LINES - current_counter
         if remaining <= 0 or not entries:
             return []
@@ -684,7 +700,20 @@ class AutonomousDeploymentService:
 
         run.log_sequence_counter = current_counter + len(persisted)
         if persisted:
-            run.outbox_sequence_counter = (run.outbox_sequence_counter or 0) + 1
+            next_outbox_seq = (run.outbox_sequence_counter or 0) + 1
+            try:
+                if not hasattr(session, "runs"):
+                    max_outbox_res = await session.execute(
+                        select(func.max(AutonomousDeploymentOutbox.event_seq)).where(
+                            AutonomousDeploymentOutbox.run_id == run_id
+                        )
+                    )
+                    if hasattr(max_outbox_res, "scalar"):
+                        highest_db_outbox_seq = max_outbox_res.scalar() or 0
+                        next_outbox_seq = max(next_outbox_seq, highest_db_outbox_seq + 1)
+            except Exception:
+                pass
+            run.outbox_sequence_counter = next_outbox_seq
             outbox_entry = AutonomousDeploymentOutbox(
                 run_id=run_id,
                 event_seq=run.outbox_sequence_counter,
