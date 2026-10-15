@@ -239,6 +239,13 @@ services:
     volumes:
       # The weights, so a restart is not another gigabyte of download.
       - ollamamodels:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       # Green means THE CONFIGURED MODELS ARE PRESENT, not merely that a port is open. A
       # probe that only checked the port would report ready while every completion came
@@ -353,6 +360,8 @@ services:
     env_file: *service-env
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - C:\:/c
     depends_on:
       postgres: { condition: service_started }
       redis: { condition: service_started }
@@ -457,8 +466,11 @@ services:
   worker:
     build: { context: ./backend, target: runtime }
     env_file: *service-env
+    group_add:
+      - "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - C:\:/c
     # `python -m arq`, not `arq`. The runtime image installs the library but no console script, so
     # `arq src.worker.WorkerSettings` fails at container start with
     # `exec: "arq": executable file not found in $PATH`. The module entry point is the same code.

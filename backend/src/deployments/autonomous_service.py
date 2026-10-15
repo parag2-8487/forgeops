@@ -166,7 +166,13 @@ def build_stage_graph(strategy: str | DeploymentStrategy) -> list[tuple[str, str
     ]
 
     # Docker strategy evaluates G4-G6
-    if strat in (DeploymentStrategy.DOCKER_GITHUB_VERCEL.value, DeploymentStrategy.DOCKER_GITHUB.value):
+    if strat in (
+        DeploymentStrategy.DOCKER_ONLY.value,
+        DeploymentStrategy.DOCKER_GITHUB_VERCEL.value,
+        DeploymentStrategy.DOCKER_GITHUB.value,
+        "docker_only",
+        "docker",
+    ):
         stages.extend(
             [
                 (STAGE_G4_BUILD, "G4"),
@@ -340,7 +346,10 @@ class AutonomousDeploymentService:
         if request.idempotency_key:
             stmt = (
                 select(AutonomousDeployment)
-                .options(selectinload(AutonomousDeployment.stages))
+                .options(
+                    selectinload(AutonomousDeployment.stages),
+                    selectinload(AutonomousDeployment.readiness_checkpoints),
+                )
                 .where(
                     AutonomousDeployment.project_id == project_id,
                     AutonomousDeployment.idempotency_key == request.idempotency_key,
@@ -400,6 +409,7 @@ class AutonomousDeploymentService:
             session.add(stage)
 
         run.stages = stages
+        run.readiness_checkpoints = []
 
         outbox = AutonomousDeploymentOutbox(
             run_id=run.id,
@@ -424,7 +434,10 @@ class AutonomousDeploymentService:
                 await session.rollback()
                 stmt = (
                     select(AutonomousDeployment)
-                    .options(selectinload(AutonomousDeployment.stages))
+                    .options(
+                        selectinload(AutonomousDeployment.stages),
+                        selectinload(AutonomousDeployment.readiness_checkpoints),
+                    )
                     .where(
                         AutonomousDeployment.project_id == project_id,
                         AutonomousDeployment.idempotency_key == request.idempotency_key,
@@ -451,10 +464,13 @@ class AutonomousDeploymentService:
         project_id: uuid.UUID,
         run_id: uuid.UUID,
     ) -> AutonomousDeployment | None:
-        """Fetch authoritative run with eager-loaded stages, validating project ownership."""
+        """Fetch authoritative run with eager-loaded stages and readiness checkpoints, validating project ownership."""
         stmt = (
             select(AutonomousDeployment)
-            .options(selectinload(AutonomousDeployment.stages))
+            .options(
+                selectinload(AutonomousDeployment.stages),
+                selectinload(AutonomousDeployment.readiness_checkpoints),
+            )
             .where(
                 AutonomousDeployment.id == run_id,
                 AutonomousDeployment.project_id == project_id,
@@ -479,7 +495,10 @@ class AutonomousDeploymentService:
         """
         stmt = (
             select(AutonomousDeployment)
-            .options(selectinload(AutonomousDeployment.stages))
+            .options(
+                selectinload(AutonomousDeployment.stages),
+                selectinload(AutonomousDeployment.readiness_checkpoints),
+            )
             .where(
                 AutonomousDeployment.id == run_id,
                 AutonomousDeployment.project_id == project_id,
@@ -664,6 +683,31 @@ class AutonomousDeploymentService:
             persisted.append(log_record)
 
         run.log_sequence_counter = current_counter + len(persisted)
+        if persisted:
+            run.outbox_sequence_counter = (run.outbox_sequence_counter or 0) + 1
+            outbox_entry = AutonomousDeploymentOutbox(
+                run_id=run_id,
+                event_seq=run.outbox_sequence_counter,
+                event_type="log_emitted",
+                payload={
+                    "run_id": str(run_id),
+                    "stage_name": stage_name,
+                    "logs": [
+                        {
+                            "id": lg.id,
+                            "run_id": str(lg.run_id),
+                            "stage_name": lg.stage_name,
+                            "log_seq": lg.log_seq,
+                            "level": lg.level,
+                            "message": lg.message,
+                            "created_at": lg.created_at.isoformat() if lg.created_at else None,
+                        }
+                        for lg in persisted
+                    ],
+                },
+                status="pending",
+            )
+            session.add(outbox_entry)
         session.add(run)
         await session.flush()
         return persisted

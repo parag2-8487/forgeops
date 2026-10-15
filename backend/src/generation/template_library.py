@@ -10,7 +10,7 @@ DEFAULT_TEMPLATES = {
             "FROM node:20-alpine\n"
             "WORKDIR /app\n"
             "COPY package*.json ./\n"
-            "RUN npm ci --only=production || npm install --omit=dev\n"
+            "RUN npm ci --omit=dev\n"
             "COPY . .\n"
             "EXPOSE {{PORT}}\n"
             'CMD ["npm", "start"]'
@@ -27,7 +27,7 @@ DEFAULT_TEMPLATES = {
             "RUN npm install\n"
             "COPY . .\n"
             "ENV NEXT_TELEMETRY_DISABLED=1\n"
-            "RUN npm run build || true\n"
+            "RUN npm run build\n"
             "FROM node:20-alpine\n"
             "WORKDIR /app\n"
             "ENV NODE_ENV=production\n"

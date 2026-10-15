@@ -14,15 +14,19 @@ Implements:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import inspect
 import logging
+import os
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import and_, or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from src.core.logging import redact_secrets
 
@@ -37,6 +41,7 @@ from .autonomous_models import (
     AutonomousDeploymentOutbox,
     AutonomousDeploymentStage,
 )
+from .autonomous_outbox import AutonomousOutboxPublisher
 from .autonomous_recovery import (
     CancellationSettlement,
     CompensationRollback,
@@ -57,8 +62,8 @@ from .autonomous_service import (
 
 logger = logging.getLogger(__name__)
 
-LEASE_DURATION_SECONDS: int = 30
-HEARTBEAT_INTERVAL_SECONDS: int = 10
+LEASE_DURATION_SECONDS: int = int(os.getenv("AUTONOMOUS_WORKER_LEASE_SECONDS", "300"))
+HEARTBEAT_INTERVAL_SECONDS: int = int(os.getenv("AUTONOMOUS_WORKER_HEARTBEAT_SECONDS", "10"))
 
 NON_CLAIMABLE_STATUSES: tuple[str, ...] = (
     "cancelling",
@@ -71,6 +76,15 @@ NON_CLAIMABLE_STATUSES: tuple[str, ...] = (
 CLAIMABLE_STATUSES: tuple[str, ...] = ("pending", "running")
 
 DEFAULT_STRATEGY_WEIGHTS: dict[str, dict[str, float]] = {
+    DeploymentStrategy.DOCKER_ONLY.value: {
+        STAGE_G1_BLUEPRINT: 15.0,
+        STAGE_G2_ARTIFACT: 15.0,
+        STAGE_G3_CONSISTENCY: 15.0,
+        STAGE_G4_BUILD: 20.0,
+        STAGE_G5_APPLY: 20.0,
+        STAGE_G6_WORKLOAD: 10.0,
+        STAGE_G7_VERIFICATION: 5.0,
+    },
     DeploymentStrategy.DOCKER_GITHUB_VERCEL.value: {
         STAGE_G1_BLUEPRINT: 10.0,
         STAGE_G2_ARTIFACT: 10.0,
@@ -171,8 +185,10 @@ def calculate_progress(
 
         w = weights.get(name, 100.0 / len(stages))
 
-        if status in ("succeeded", "skipped"):
+        if status == "succeeded":
             effective_pct = 100.0
+        elif status == "skipped":
+            effective_pct = 0.0
         elif status == "running":
             effective_pct = float(max(0, min(pct, 100)))
         else:
@@ -188,6 +204,166 @@ def calculate_progress(
     if g7_succeeded:
         return 100
     return min(calculated, 99)
+
+
+@contextlib.asynccontextmanager
+async def _heartbeat_session_context(session: AsyncSession, context: Any = None):
+    """Provides an isolated database session for background heartbeat renewal.
+
+    Prevents concurrency conflicts with the primary pipeline session and ensures
+    heartbeat transactions are strictly bounded and commit immediately.
+    """
+    sm = _get_ctx(context, "sessionmaker")
+    if sm is not None and callable(sm):
+        async with sm() as hb_session:
+            yield hb_session
+        return
+
+    bind = getattr(session, "bind", None)
+    if bind is not None and hasattr(bind, "connect") and type(bind).__name__ == "AsyncEngine":
+        hb_sm = async_sessionmaker(bind, expire_on_commit=False)
+        async with hb_sm() as hb_session:
+            yield hb_session
+        return
+
+    # In-memory test sessions (e.g. MockAsyncSession) without an AsyncEngine bind
+    yield session
+
+
+class PipelineHeartbeat:
+    """Manages independent background lease renewals and ownership tracking for an active worker."""
+
+    def __init__(
+        self,
+        worker: AutonomousWorker,
+        session: AsyncSession,
+        run_id: uuid.UUID,
+        fence_token: int,
+        context: Any = None,
+        run: AutonomousDeployment | None = None,
+        interval_seconds: float | None = None,
+    ) -> None:
+        self.worker = worker
+        self.session = session
+        self.run_id = run_id
+        self.fence_token = fence_token
+        self.context = context
+        self.run = run
+        self.interval_seconds = interval_seconds if interval_seconds is not None else float(HEARTBEAT_INTERVAL_SECONDS)
+        self.stop_event = asyncio.Event()
+        self.ownership_lost_event = asyncio.Event()
+        self.heartbeat_error: Exception | None = None
+        self.task: asyncio.Task | None = None
+        self.last_renewal_at: datetime | None = None
+        self.renewal_count: int = 0
+
+    async def start(self) -> None:
+        """Starts the background heartbeat loop."""
+        if self.task is None or self.task.done():
+            self.stop_event.clear()
+            self.task = asyncio.create_task(self._run_loop(), name=f"heartbeat-{self.run_id}")
+
+    async def stop(self) -> None:
+        """Stops the background heartbeat loop cleanly."""
+        self.stop_event.set()
+        if self.task is not None:
+            self.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.task
+            self.task = None
+
+    async def __aenter__(self) -> PipelineHeartbeat:
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        await self.stop()
+
+    def assert_ownership(self) -> None:
+        """Asserts that the worker has not lost ownership or encountered lease expiration."""
+        if self.ownership_lost_event.is_set():
+            err_msg = (
+                f"Worker fence lost for run {self.run_id} (fence_token={self.fence_token}): "
+                "Lease expired or token superseded during background heartbeat renewal."
+            )
+            if self.heartbeat_error:
+                err_msg += f" (Underlying error: {self.heartbeat_error})"
+            raise WorkerFencingLostError(err_msg)
+
+    async def pulse(self) -> None:
+        """Explicit on-demand heartbeat pulse, safe to call during long-running I/O or cold starts."""
+        self.assert_ownership()
+        try:
+            async with _heartbeat_session_context(self.session, self.context) as hb_session:
+                renewed = await self.worker.heartbeat(
+                    hb_session,
+                    run_id=self.run_id,
+                    fence_token=self.fence_token,
+                )
+                if renewed:
+                    with contextlib.suppress(Exception):
+                        await hb_session.commit()
+                    self.renewal_count += 1
+                    self.last_renewal_at = datetime.now(UTC)
+                    if self.run is not None:
+                        self.run.lease_expires_at = datetime.now(UTC) + timedelta(seconds=LEASE_DURATION_SECONDS)
+                else:
+                    self.heartbeat_error = WorkerFencingLostError(
+                        f"Worker fence lost for run {self.run_id} (fence_token={self.fence_token}). "
+                        "Lease expired or token superseded during manual pulse."
+                    )
+                    self.ownership_lost_event.set()
+                    self.assert_ownership()
+        except Exception as exc:
+            if isinstance(exc, WorkerFencingLostError):
+                raise
+            logger.warning("Manual heartbeat pulse failed for run %s: %s", self.run_id, exc)
+
+    async def _run_loop(self) -> None:
+        """Routine heartbeat renewal loop running independently of pipeline stages."""
+        while not self.stop_event.is_set():
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=self.interval_seconds)
+            except (asyncio.TimeoutError, TimeoutError):
+                pass
+            if self.stop_event.is_set():
+                break
+
+            try:
+                async with _heartbeat_session_context(self.session, self.context) as hb_session:
+                    renewed = await self.worker.heartbeat(
+                        hb_session,
+                        run_id=self.run_id,
+                        fence_token=self.fence_token,
+                    )
+                    if renewed:
+                        with contextlib.suppress(Exception):
+                            await hb_session.commit()
+                        self.renewal_count += 1
+                        self.last_renewal_at = datetime.now(UTC)
+                        if self.run is not None:
+                            self.run.lease_expires_at = datetime.now(UTC) + timedelta(seconds=LEASE_DURATION_SECONDS)
+                    else:
+                        logger.error(
+                            "Heartbeat renewal rejected for run %s (fence_token=%s): "
+                            "Lease lost or token superseded.",
+                            self.run_id,
+                            self.fence_token,
+                        )
+                        self.heartbeat_error = WorkerFencingLostError(
+                            f"Worker fence lost for run {self.run_id} (fence_token={self.fence_token}). "
+                            "Lease expired or token superseded."
+                        )
+                        self.ownership_lost_event.set()
+                        break
+            except Exception as hb_err:
+                logger.warning(
+                    "Heartbeat renewal tick failed for run %s (fence_token=%s): %s",
+                    self.run_id,
+                    self.fence_token,
+                    hb_err,
+                )
+                self.heartbeat_error = hb_err
 
 
 class AutonomousWorker:
@@ -384,6 +560,16 @@ class AutonomousWorker:
             updated_id = None
 
         if updated_id is not None:
+            id_map = getattr(session, "identity_map", None)
+            if id_map is not None and hasattr(id_map, "values"):
+                try:
+                    vals = id_map.values()
+                    if not inspect.iscoroutine(vals) and not hasattr(vals, "__await__"):
+                        for obj in vals:
+                            if isinstance(obj, AutonomousDeployment) and getattr(obj, "id", None) == target_run_id:
+                                obj.lease_expires_at = new_lease
+                except Exception:
+                    pass
             await session.flush()
             return True
         return False
@@ -463,6 +649,20 @@ class AutonomousWorker:
                 "Lease expired or token superseded."
             )
 
+        id_map = getattr(session, "identity_map", None)
+        if id_map is not None and hasattr(id_map, "values"):
+            try:
+                vals = id_map.values()
+                if not inspect.iscoroutine(vals) and not hasattr(vals, "__await__"):
+                    for obj in vals:
+                        if isinstance(obj, AutonomousDeployment) and getattr(obj, "id", None) == target_run_id:
+                            col_keys = {c.key for c in type(obj).__table__.columns}
+                            for k, v in update_values.items():
+                                if k in col_keys:
+                                    setattr(obj, k, v)
+            except Exception:
+                pass
+
         await session.flush()
         return len(updated)
 
@@ -529,11 +729,14 @@ class AutonomousWorker:
         target_run_id = uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
 
         # 1. Assert worker fencing guard and update current_stage
+        update_vals: dict[str, Any] = (
+            {"current_stage": stage_name} if status != "skipped" else {"fence_token": fence_token}
+        )
         await self.guarded_update(
             session,
             run_id=target_run_id,
             fence_token=fence_token,
-            values={"current_stage": stage_name},
+            values=update_vals,
         )
 
         # 2. Fetch authoritative run with eager loaded stages
@@ -658,11 +861,20 @@ class AutonomousWorker:
         target_run_id = uuid.UUID(str(run_id)) if isinstance(run_id, str) else run_id
         now = datetime.now(UTC)
 
-        stmt = select(AutonomousDeployment).where(AutonomousDeployment.id == target_run_id)
+        stmt = (
+            select(AutonomousDeployment)
+            .options(selectinload(AutonomousDeployment.stages))
+            .where(AutonomousDeployment.id == target_run_id)
+            .execution_options(populate_existing=True)
+        )
         result = await session.execute(stmt)
         run = result.scalars().first()
         if run is None:
             raise WorkerFencingLostError(f"Autonomous deployment '{target_run_id}' not found.")
+
+        hb = kwargs.get("heartbeat") or _get_ctx(kwargs.get("context"), "_pipeline_heartbeat")
+        if hb is not None and hasattr(hb, "assert_ownership"):
+            hb.assert_ownership()
 
         if run.fence_token != fence_token:
             raise WorkerFencingLostError(
@@ -772,6 +984,7 @@ class AutonomousWorker:
             rollback_on_failure=rollback_on_failure or kwargs.get("rollback_on_failure", False),
             rollback_handler=self.rollback_handler,
             cancellation_settlement=self.cancellation_settlement,
+            sessionmaker=kwargs.get("sessionmaker"),
         )
 
     async def execute_run(
@@ -794,6 +1007,8 @@ async def run_pipeline(
     rollback_on_failure: bool = False,
     rollback_handler: CompensationRollback | None = None,
     cancellation_settlement: CancellationSettlement | None = None,
+    redis: Any | None = None,
+    sessionmaker: Any | None = None,
 ) -> AutonomousDeployment:
     """Sequentially executes canonical gates and operational stages for an autonomous deployment run.
 
@@ -858,6 +1073,18 @@ async def run_pipeline(
     except Exception as exc:
         logger.debug("Credential resolution failed in worker: %s", exc)
     context = exec_ctx
+    if sessionmaker is not None and isinstance(context, dict):
+        context["sessionmaker"] = sessionmaker
+    publisher = AutonomousOutboxPublisher()
+    effective_redis = redis or exec_ctx.get("redis")
+    if isinstance(context, dict):
+        context["redis"] = effective_redis
+        context["outbox_publisher"] = publisher
+
+    async def _drain_outbox() -> None:
+        if effective_redis is not None:
+            with contextlib.suppress(Exception):
+                await publisher.drain_run_events(session, effective_redis, target_run_id)
 
     # 2. Worker fencing claim / custody verification
     now = datetime.now(UTC)
@@ -879,181 +1106,623 @@ async def run_pipeline(
                 f"Could not claim lease for run {target_run_id}: active lease held by another worker."
             )
         fence_token = claimed_token
+        with contextlib.suppress(Exception):
+            await session.commit()
 
-    # 3. Initial cancellation check
-    if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
-        return await cancel_settler.settle_cancellation(
-            session,
-            run=run,
-            fence_token=fence_token,
-            reason="Pipeline cancelled cooperatively by worker",
-        )
+    heartbeat_mgr = PipelineHeartbeat(
+        worker=worker,
+        session=session,
+        run_id=target_run_id,
+        fence_token=fence_token,
+        context=context,
+        run=run,
+    )
+    await heartbeat_mgr.start()
+    if isinstance(context, dict):
+        context["_pipeline_heartbeat"] = heartbeat_mgr
 
-    # 4. Mark run running if currently pending
-    if run.status == "pending":
-        run.status = "running"
-        run.started_at = run.started_at or datetime.now(UTC)
-        await session.flush()
-
-    # 5. Ensure stages are loaded and sorted by position
-    if not run.stages:
-        stmt_stages = select(AutonomousDeploymentStage).where(AutonomousDeploymentStage.run_id == target_run_id)
-        res_stages = await session.execute(stmt_stages)
-        run.stages = list(res_stages.scalars().all())
-
-    stages = sorted(run.stages, key=lambda s: s.position)
-
-    # 6. Execute stages sequentially
-    for stage in stages:
-        # Skip stages already succeeded or skipped
-        if stage.status in ("succeeded", "skipped"):
-            continue
-
-        # Cancellation check before stage start
+    try:
+        # 3. Initial cancellation check
         if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
             return await cancel_settler.settle_cancellation(
                 session,
                 run=run,
-                current_stage=stage,
                 fence_token=fence_token,
                 reason="Pipeline cancelled cooperatively by worker",
             )
 
-        # Routine heartbeat before stage
-        await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
+        # 4. Mark run running if currently pending
+        if run.status == "pending":
+            run.status = "running"
+            run.started_at = run.started_at or datetime.now(UTC)
+            await session.flush()
+            await _drain_outbox()
+            with contextlib.suppress(Exception):
+                await session.commit()
 
-        # Transition stage to running
-        await worker.transition_stage(
+        # 4b. Source Preparation Preflight Phase before G1 Blueprint Validation
+        from .autonomous_source import prepare_source_workspace
+
+        source_result = await prepare_source_workspace(
             session,
-            run_id=target_run_id,
-            stage_name=stage.stage_name,
+            run=run,
+            worker=worker,
             fence_token=fence_token,
-            status="running",
-            progress_pct=10,
+            service=service,
+            redis=effective_redis,
+            context=context,
         )
+        with contextlib.suppress(Exception):
+            await session.commit()
+        if not source_result.passed:
+            await _drain_outbox()
+            with contextlib.suppress(Exception):
+                await session.commit()
+            return run
 
-        # Append stage start log
+        # 4c. Initial Readiness Assessment (R0) Baseline before Gate Execution
+        from .autonomous_gates import capture_authoritative_readiness_checkpoint
+        from .readiness import resolve_workspace_path
+
+        workspace_dir_val = (
+            source_result.details.get("workspace_path")
+            or (run.configuration or {}).get("source_preparation", {}).get("workspace_path")
+            or _get_ctx(context, "workspace_dir")
+            or _get_ctx(context, "workspace_path")
+            or f".forgeops/snapshots/{run.id}"
+        )
+        ws_resolved = resolve_workspace_path(workspace_dir_val)
+        if isinstance(context, dict):
+            context["workspace_path"] = str(ws_resolved)
+            context["workspace_dir"] = str(ws_resolved)
+
+        r0_result = await capture_authoritative_readiness_checkpoint(
+            session=session,
+            run=run,
+            checkpoint_type="initial_r0",
+            assessment_version=1,
+            reusable_dockerfile=None,
+            workspace_path=ws_resolved,
+            context=context,
+        )
+        with contextlib.suppress(Exception):
+            await _drain_outbox()
+
         await service.append_logs(
             session,
             run_id=target_run_id,
-            stage_name=stage.stage_name,
-            entries=[f"Starting stage {stage.stage_name}..."],
+            stage_name="initial_readiness",
+            entries=[
+                (
+                    f"Initial Readiness Baseline (R0): {r0_result.score}/100 - {r0_result.explanation}",
+                    "INFO",
+                )
+            ],
             fence_token=fence_token,
         )
+        with contextlib.suppress(Exception):
+            await session.commit()
 
-        # Check cancellation right before evaluator execution
-        if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
-            return await cancel_settler.settle_cancellation(
-                session,
-                run=run,
-                current_stage=stage,
-                fence_token=fence_token,
-                reason="Pipeline cancelled cooperatively by worker",
-            )
+        # 5. Ensure stages are loaded and sorted by position
+        if not run.stages:
+            stmt_stages = select(AutonomousDeploymentStage).where(AutonomousDeploymentStage.run_id == target_run_id)
+            res_stages = await session.execute(stmt_stages)
+            run.stages = list(res_stages.scalars().all())
 
-        # Locate stage or gate evaluator
-        evaluator = STAGE_EVALUATORS.get(stage.stage_name)
-        if evaluator is None and stage.gate_id:
-            evaluator = GATE_EVALUATORS.get(stage.gate_id)
+        stages = sorted(run.stages, key=lambda s: s.position)
 
-        if evaluator is not None:
-            if inspect.iscoroutinefunction(evaluator):
-                result = await evaluator(session, run, context)
-            else:
-                res = evaluator(session, run, context)
-                if inspect.iscoroutine(res):
-                    result = await res
-                else:
-                    result = res
-        else:
-            result = GateResult(
-                gate_id=stage.gate_id or "",
-                passed=True,
-                status="succeeded",
-                message=f"Stage {stage.stage_name} completed",
-            )
+        # 6. Execute stages sequentially
+        stage_idx = 0
+        stage_recovery_attempts: dict[str, int] = {}
+        while stage_idx < len(stages):
+            heartbeat_mgr.assert_ownership()
+            stage = stages[stage_idx]
+            # Skip stages already succeeded or skipped
+            if stage.status in ("succeeded", "skipped"):
+                stage_idx += 1
+                continue
 
-        stage_passed = getattr(result, "overall_passed", getattr(result, "passed", False))
-        details = getattr(result, "details", {})
-        message = getattr(result, "message", "")
-
-        if stage_passed:
-            # Append success log
-            await service.append_logs(
-                session,
-                run_id=target_run_id,
-                stage_name=stage.stage_name,
-                entries=[(f"Stage {stage.stage_name} succeeded: {message}", "INFO")],
-                fence_token=fence_token,
-            )
-            # Transition stage to succeeded
-            await worker.transition_stage(
-                session,
-                run_id=target_run_id,
-                stage_name=stage.stage_name,
-                fence_token=fence_token,
-                status="succeeded",
-                progress_pct=100,
-                metadata=details,
-            )
-            # Heartbeat after successful stage
-            await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
-        else:
-            # Append failure log
-            await service.append_logs(
-                session,
-                run_id=target_run_id,
-                stage_name=stage.stage_name,
-                entries=[(f"Stage {stage.stage_name} failed: {message}", "ERROR")],
-                fence_token=fence_token,
-            )
-            # Transition stage to failed
-            await worker.transition_stage(
-                session,
-                run_id=target_run_id,
-                stage_name=stage.stage_name,
-                fence_token=fence_token,
-                status="failed",
-                progress_pct=stage.progress_pct,
-                metadata=details,
-                error_message=message,
-            )
-            # Mark run failed and record primary error
-            fail_now = datetime.now(UTC)
-            run.status = "failed"
-            redacted_msg = redact_secrets(message) if isinstance(message, str) else message
-            run.error_summary = redacted_msg or f"Stage '{stage.stage_name}' failed."
-            run.primary_error = {
-                "stage_name": stage.stage_name,
-                "gate_id": stage.gate_id,
-                "message": redacted_msg or "",
-                "details": details,
-            }
-            run.completed_at = fail_now
-
-            should_rollback = (
-                rollback_on_failure
-                or _get_ctx(context, "rollback_on_failure", False)
-                or _get_ctx(context, "enable_rollback", False)
-                or bool((run.configuration or {}).get("auto_rollback", False))
-            )
-            if should_rollback:
-                return await comp_rollback.execute_rollback(
+            # Cancellation check before stage start
+            if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
+                return await cancel_settler.settle_cancellation(
                     session,
                     run=run,
-                    primary_error=run.primary_error,
-                    context=context,
+                    current_stage=stage,
+                    fence_token=fence_token,
+                    reason="Pipeline cancelled cooperatively by worker",
                 )
 
-            await session.flush()
-            # Pipeline stops immediately; subsequent stages remain pending
-            return run
+            # Routine heartbeat before stage
+            await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
 
-    # 7. Full completion: mark run succeeded, progress_pct=100, completed_at=now()
-    finish_now = datetime.now(UTC)
-    run.status = "succeeded"
-    run.progress_pct = 100
-    if run.completed_at is None:
-        run.completed_at = finish_now
-    await session.flush()
-    return run
+            # Transition stage to running
+            await worker.transition_stage(
+                session,
+                run_id=target_run_id,
+                stage_name=stage.stage_name,
+                fence_token=fence_token,
+                status="running",
+                progress_pct=10,
+            )
+            await _drain_outbox()
+
+            # Append stage start log
+            await service.append_logs(
+                session,
+                run_id=target_run_id,
+                stage_name=stage.stage_name,
+                entries=[f"Starting stage {stage.stage_name}..."],
+                fence_token=fence_token,
+            )
+            with contextlib.suppress(Exception):
+                await session.commit()
+
+            # Check cancellation right before evaluator execution
+            if await worker.check_cancellation(session, run_id=target_run_id, fence_token=fence_token):
+                return await cancel_settler.settle_cancellation(
+                    session,
+                    run=run,
+                    current_stage=stage,
+                    fence_token=fence_token,
+                    reason="Pipeline cancelled cooperatively by worker",
+                )
+
+            try:
+                # Apply configured operational stage delay if requested
+                cfg = run.configuration or {}
+                delays = cfg.get("stage_delays") or {}
+                stg_delay = float(delays.get(stage.stage_name, 0.0))
+                if stg_delay > 0:
+                    remaining = stg_delay
+                    while remaining > 0:
+                        sleep_chunk = min(remaining, 1.0)
+                        await asyncio.sleep(sleep_chunk)
+                        remaining -= sleep_chunk
+                        await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
+
+                # Locate stage or gate evaluator
+                evaluator = STAGE_EVALUATORS.get(stage.stage_name)
+                if evaluator is None and stage.gate_id:
+                    evaluator = GATE_EVALUATORS.get(stage.gate_id)
+
+                if evaluator is not None:
+                    if inspect.iscoroutinefunction(evaluator):
+                        result = await evaluator(session, run, context)
+                    else:
+                        res = evaluator(session, run, context)
+                        if inspect.iscoroutine(res):
+                            result = await res
+                        else:
+                            result = res
+                else:
+                    result = GateResult(
+                        gate_id=stage.gate_id or "",
+                        passed=True,
+                        status="succeeded",
+                        message=f"Stage {stage.stage_name} completed",
+                    )
+            except Exception as exc:
+                logger.exception("Unexpected exception evaluating stage %s: %s", stage.stage_name, exc)
+                with contextlib.suppress(Exception):
+                    await session.rollback()
+                result = GateResult(
+                    gate_id=stage.gate_id or "",
+                    passed=False,
+                    status="failed",
+                    message=f"Stage {stage.stage_name} failed with internal error: {str(exc)}",
+                )
+
+            # Immediate heartbeat refresh on session to ensure active lease for state transition or recovery
+            with contextlib.suppress(Exception):
+                await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
+
+            stage_passed = getattr(result, "overall_passed", getattr(result, "passed", False))
+            details = getattr(result, "details", {})
+            message = getattr(result, "message", "")
+
+            if stage_passed:
+                if isinstance(details, dict) and "deployment_receipt" in details:
+                    run.configuration = {**(run.configuration or {}), "deployment_receipt": details["deployment_receipt"]}
+                    session.add(run)
+                # Append success log
+                await service.append_logs(
+                    session,
+                    run_id=target_run_id,
+                    stage_name=stage.stage_name,
+                    entries=[(f"Stage {stage.stage_name} succeeded: {message}", "INFO")],
+                    fence_token=fence_token,
+                )
+                # Transition stage to succeeded
+                await worker.transition_stage(
+                    session,
+                    run_id=target_run_id,
+                    stage_name=stage.stage_name,
+                    fence_token=fence_token,
+                    status="succeeded",
+                    progress_pct=100,
+                    metadata=details,
+                )
+                await _drain_outbox()
+                # Heartbeat after successful stage
+                await worker.heartbeat(session, run_id=target_run_id, fence_token=fence_token)
+                with contextlib.suppress(Exception):
+                    await session.commit()
+                stage_idx += 1
+            else:
+                # Check G8 conditional AI recovery
+                cfg = run.configuration or {}
+                rec_attempts = stage_recovery_attempts.get(stage.stage_name, int(cfg.get("recovery_attempts", 0)))
+                enable_g8 = bool(cfg.get("enable_ai_recovery", True))
+
+                is_provider_timeout = (
+                    bool(details.get("is_provider_timeout"))
+                    or bool(details.get("timed_out"))
+                    or details.get("provider_build_error") is False
+                    or details.get("ready_state") in ("BUILDING", "INITIALIZING", "ANALYZING", "DEPLOYING")
+                ) and stage.stage_name in ("vercel_deploy", "github_release")
+
+                is_cancellation = (
+                    bool(details.get("cancelled"))
+                    or bool(details.get("cancelled_by_operator"))
+                    or getattr(run, "status", None) in ("cancelling", "cancelled")
+                )
+
+                if is_provider_timeout:
+                    await service.append_logs(
+                        session,
+                        run_id=target_run_id,
+                        stage_name=stage.stage_name,
+                        entries=[
+                            (
+                                f"Stage '{stage.stage_name}' polling window elapsed while provider state is "
+                                f"'{details.get('ready_state', 'BUILDING')}'. Bypassing AI code recovery "
+                                "because no local manifest or compiler error occurred.",
+                                "WARN",
+                            )
+                        ],
+                        fence_token=fence_token,
+                    )
+                elif is_cancellation:
+                    logger.info("Stage '%s' cancelled; bypassing AI recovery.", stage.stage_name)
+                elif enable_g8 and rec_attempts < 3:
+                    rec_attempts += 1
+                    stage_recovery_attempts[stage.stage_name] = rec_attempts
+                    cfg["recovery_attempts"] = rec_attempts
+                    run.configuration = {**cfg}
+                    try:
+                        session.add(run)
+                        await worker.guarded_update(
+                            session,
+                            run_id=target_run_id,
+                            fence_token=fence_token,
+                            values={"configuration": run.configuration},
+                        )
+                    except Exception:
+                        with contextlib.suppress(Exception):
+                            await session.rollback()
+                        session.add(run)
+                        await worker.guarded_update(
+                            session,
+                            run_id=target_run_id,
+                            fence_token=fence_token,
+                            values={"configuration": run.configuration},
+                        )
+                    with contextlib.suppress(Exception):
+                        await session.commit()
+
+                    try:
+                        from src.diagnostics.bundle import DiagnosticBundle
+                        from src.recovery.ai_resolver import resolve_failure_with_ai, resolve_failure_with_ai_async
+                    except ImportError:
+                        from backend.src.diagnostics.bundle import DiagnosticBundle
+                        from backend.src.recovery.ai_resolver import resolve_failure_with_ai, resolve_failure_with_ai_async
+
+                    ws_resolved = resolve_workspace_path(workspace_dir_val)
+
+                    container_st = details.get("container_state") or {}
+                    if not isinstance(container_st, dict):
+                        container_st = {}
+                    if "container_running" in details and "container_running" not in container_st:
+                        container_st["container_running"] = details["container_running"]
+                    if "Running" not in container_st and "container_running" in details:
+                        container_st["Running"] = details["container_running"]
+                    if "ExitCode" not in container_st and "exit_code" in details:
+                        container_st["ExitCode"] = details["exit_code"]
+
+                    bundle = DiagnosticBundle(
+                        gate_identifier=stage.gate_id or stage.stage_name,
+                        stage=stage.stage_name,
+                        command_line=str(details.get("command", "") or details.get("command_line", "")),
+                        exit_code=int(details.get("exit_code", 1)),
+                        attempt_count=rec_attempts,
+                        stdout=str(details.get("stdout", "")),
+                        stderr=str(details.get("stderr", message or "")),
+                        error_classification=str(details.get("error_classification", "DETERMINISTIC")),
+                        container_state=container_st,
+                    )
+                    plan = await resolve_failure_with_ai_async(
+                        bundle,
+                        current_iteration=rec_attempts,
+                        workspace_path=ws_resolved,
+                        session=session,
+                        run=run,
+                        context=context,
+                    )
+
+                    heartbeat_mgr.assert_ownership()
+                    if plan.status == "PROPOSED":
+                        has_manifest_remedies = bool(plan.suggested_manifests)
+                        has_blueprint_remedies = bool(
+                            plan.updated_blueprint is not None
+                            and plan.updated_blueprint != getattr(bundle, "blueprint", None)
+                        )
+
+                        from .autonomous_gates import _is_simulation_mode
+                        is_sim = _is_simulation_mode(session, run, context)
+
+                        manifests_differ = False
+                        if has_manifest_remedies and ws_resolved and ws_resolved.exists():
+                            for m_path, m_content in plan.suggested_manifests.items():
+                                cur_file = ws_resolved / m_path
+                                if not cur_file.exists():
+                                    manifests_differ = True
+                                    break
+                                try:
+                                    cur_content = cur_file.read_text(encoding="utf-8", errors="replace")
+                                    if cur_content.strip() != m_content.strip():
+                                        manifests_differ = True
+                                        break
+                                except Exception:
+                                    manifests_differ = True
+                                    break
+                        elif has_manifest_remedies:
+                            manifests_differ = True
+
+                        if not has_blueprint_remedies and (not has_manifest_remedies or (not manifests_differ and not is_sim)):
+                            halt_reason = "IDENTICAL_MANIFEST_PROPOSED" if has_manifest_remedies else "NO_ACTIONABLE_REMEDY"
+                            halt_msg = (
+                                f"G8 AI Recovery halted ({plan.root_cause_category}): Proposed recovery manifests are identical to existing workspace manifests. "
+                                f"Halting to prevent ineffective retry loop."
+                                if has_manifest_remedies
+                                else f"G8 AI Recovery halted ({plan.root_cause_category}): No automated remediation manifests or configuration remedies available. "
+                                f"Halting to prevent ineffective retry loop: {plan.operator_message}"
+                            )
+                            await service.append_logs(
+                                session,
+                                run_id=target_run_id,
+                                stage_name=stage.stage_name,
+                                entries=[(halt_msg, "WARN")],
+                                fence_token=fence_token,
+                            )
+                            details["g8_recovery_halted"] = True
+                            details["g8_halt_reason"] = halt_reason
+                            details["g8_root_cause"] = plan.root_cause_category
+                            stage.stage_metadata = {
+                                **(stage.stage_metadata or {}),
+                                "g8_recovery_halted": True,
+                                "g8_halt_reason": halt_reason,
+                                "g8_root_cause": plan.root_cause_category,
+                            }
+                        else:
+                            await service.append_logs(
+                                session,
+                                run_id=target_run_id,
+                                stage_name=stage.stage_name,
+                                entries=[
+                                    (
+                                        f"G8 AI Recovery (Iteration {rec_attempts}/3): {plan.root_cause_category} - {plan.operator_message}",
+                                        "WARN",
+                                    )
+                                ],
+                                fence_token=fence_token,
+                            )
+
+                            heartbeat_mgr.assert_ownership()
+                            # Apply suggested manifests safely to workspace
+                            ws_resolved = resolve_workspace_path(workspace_dir_val)
+                            if plan.suggested_manifests and ws_resolved.exists():
+                                try:
+                                    from src.deployments.autonomous_gates import _apply_run_local_artifacts
+                                except ImportError:
+                                    from backend.src.deployments.autonomous_gates import _apply_run_local_artifacts
+                                try:
+                                    _apply_run_local_artifacts(ws_resolved, plan.suggested_manifests, run_id=target_run_id)
+                                except Exception as apply_exc:
+                                    logger.warning("G8 recovery could not apply manifests safely: %s", apply_exc)
+
+                            # Evaluate and persist R_recN checkpoint
+                            r_rec_result = await capture_authoritative_readiness_checkpoint(
+                                session=session,
+                                run=run,
+                                checkpoint_type="recovery_recheck",
+                                assessment_version=rec_attempts,
+                                reusable_dockerfile=None,
+                                workspace_path=ws_resolved,
+                                context=context,
+                            )
+                            with contextlib.suppress(Exception):
+                                run.outbox_sequence_counter += 1
+                                session.add(
+                                    AutonomousDeploymentOutbox(
+                                        run_id=run.id,
+                                        event_seq=run.outbox_sequence_counter,
+                                        event_type="recovery_attempted",
+                                        payload={
+                                            "run_id": str(run.id),
+                                            "stage_name": stage.stage_name,
+                                            "iteration": rec_attempts,
+                                            "status": plan.status,
+                                            "root_cause": plan.root_cause_category,
+                                            "operator_message": plan.operator_message,
+                                            "recovery_score": r_rec_result.score,
+                                        },
+                                        status="pending",
+                                    )
+                                )
+                                await session.flush()
+                                await _drain_outbox()
+
+                            await service.append_logs(
+                                session,
+                                run_id=target_run_id,
+                                stage_name=stage.stage_name,
+                                entries=[
+                                    (
+                                        f"Retrying stage {stage.stage_name} after applying G8 AI recovery remedies (Iteration {rec_attempts})",
+                                        "INFO",
+                                    )
+                                ],
+                                fence_token=fence_token,
+                            )
+                            heartbeat_mgr.assert_ownership()
+                            # Retry current stage without incrementing stage_idx
+                            with contextlib.suppress(Exception):
+                                await session.commit()
+                            continue
+                    else:
+                        details["g8_recovery_halted"] = True
+                        details["g8_halt_reason"] = plan.status
+                        details["g8_root_cause"] = plan.root_cause_category
+                        stage.stage_metadata = {
+                            **(stage.stage_metadata or {}),
+                            "g8_recovery_halted": True,
+                            "g8_halt_reason": plan.status,
+                            "g8_root_cause": plan.root_cause_category,
+                        }
+                        await service.append_logs(
+                            session,
+                            run_id=target_run_id,
+                            stage_name=stage.stage_name,
+                            entries=[
+                                (
+                                    f"G8 AI Recovery halted ({plan.status}): {plan.operator_message}",
+                                    "ERROR",
+                                )
+                            ],
+                            fence_token=fence_token,
+                        )
+
+                # Append failure log
+                await service.append_logs(
+                    session,
+                    run_id=target_run_id,
+                    stage_name=stage.stage_name,
+                    entries=[(f"Stage {stage.stage_name} failed: {message}", "ERROR")],
+                    fence_token=fence_token,
+                )
+                # Transition stage to failed
+                await worker.transition_stage(
+                    session,
+                    run_id=target_run_id,
+                    stage_name=stage.stage_name,
+                    fence_token=fence_token,
+                    status="failed",
+                    progress_pct=stage.progress_pct,
+                    metadata=details,
+                    error_message=message,
+                )
+                # Mark run failed and record primary error
+                fail_now = datetime.now(UTC)
+                run.status = "failed"
+                redacted_msg = redact_secrets(message) if isinstance(message, str) else message
+                run.error_summary = redacted_msg or f"Stage '{stage.stage_name}' failed."
+                run.primary_error = {
+                    "stage_name": stage.stage_name,
+                    "gate_id": stage.gate_id,
+                    "message": redacted_msg or "",
+                    "details": details,
+                }
+                run.completed_at = fail_now
+
+                # Settle all subsequent unexecuted stages as skipped
+                for downstream in run.stages:
+                    if downstream.position > stage.position and downstream.status in ("pending", "waiting"):
+                        downstream.status = "skipped"
+                        downstream.error_message = f"Skipped: prerequisite '{stage.stage_name}' failed"
+                        downstream.completed_at = fail_now
+                        downstream.progress_pct = 0
+                        downstream_meta = {
+                            "prerequisite_failed": stage.stage_name,
+                            "skipped_at": fail_now.isoformat(),
+                        }
+                        downstream.stage_metadata = {**(downstream.stage_metadata or {}), **downstream_meta}
+                        await worker.transition_stage(
+                            session,
+                            run_id=target_run_id,
+                            stage_name=downstream.stage_name,
+                            fence_token=fence_token,
+                            status="skipped",
+                            progress_pct=0,
+                            metadata=downstream_meta,
+                            error_message=downstream.error_message,
+                        )
+
+                run.outbox_sequence_counter += 1
+                outbox = AutonomousDeploymentOutbox(
+                    run_id=run.id,
+                    event_seq=run.outbox_sequence_counter,
+                    event_type="run_failed",
+                    payload={
+                        "run_id": str(run.id),
+                        "project_id": str(run.project_id),
+                        "status": "failed",
+                        "progress_pct": run.progress_pct,
+                        "current_stage": stage.stage_name,
+                        "error_summary": run.error_summary,
+                        "completed_at": fail_now.isoformat(),
+                    },
+                    status="pending",
+                )
+                session.add(outbox)
+                await session.flush()
+                await _drain_outbox()
+
+                should_rollback = (
+                    rollback_on_failure
+                    or _get_ctx(context, "rollback_on_failure", False)
+                    or _get_ctx(context, "enable_rollback", False)
+                    or bool((run.configuration or {}).get("auto_rollback", False))
+                )
+                if should_rollback:
+                    return await comp_rollback.execute_rollback(
+                        session,
+                        run=run,
+                        primary_error=run.primary_error,
+                        context=context,
+                    )
+
+                await session.flush()
+                with contextlib.suppress(Exception):
+                    await session.commit()
+                # Pipeline stops immediately; subsequent stages remain pending
+                return run
+
+        # 7. Full completion: mark run succeeded, progress_pct=100, completed_at=now()
+        finish_now = datetime.now(UTC)
+        run.status = "succeeded"
+        run.progress_pct = 100
+        if run.completed_at is None:
+            run.completed_at = finish_now
+
+        run.outbox_sequence_counter += 1
+        outbox = AutonomousDeploymentOutbox(
+            run_id=run.id,
+            event_seq=run.outbox_sequence_counter,
+            event_type="run_succeeded",
+            payload={
+                "run_id": str(run.id),
+                "project_id": str(run.project_id),
+                "status": "succeeded",
+                "progress_pct": 100,
+                "completed_at": finish_now.isoformat(),
+            },
+            status="pending",
+        )
+        session.add(outbox)
+        await session.flush()
+        await _drain_outbox()
+        with contextlib.suppress(Exception):
+            await session.commit()
+        return run
+    finally:
+        await heartbeat_mgr.stop()

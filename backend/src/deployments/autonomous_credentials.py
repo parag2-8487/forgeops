@@ -59,7 +59,8 @@ async def resolve_deployment_credentials(
     pepper = None
     try:
         settings = get_settings()
-        pepper = settings.envelope_pepper
+        raw_pepper = settings.envelope_pepper
+        pepper = raw_pepper.get_secret_value() if hasattr(raw_pepper, "get_secret_value") else raw_pepper
     except Exception:
         pass
     if not pepper:

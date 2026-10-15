@@ -123,19 +123,33 @@ install_docker_official() {
     $SUDO_CMD install -m 0755 -d /etc/apt/keyrings
 
     local os_distro="ubuntu"
+    local codename=""
     if [ -f /etc/os-release ]; then
       . /etc/os-release
       case "${ID:-ubuntu}" in
         debian|raspbian) os_distro="debian" ;;
         *) os_distro="ubuntu" ;;
       esac
+      codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
     fi
 
-    local codename="${VERSION_CODENAME:-}"
     if [ -z "$codename" ] && have lsb_release; then
       codename="$(lsb_release -cs 2>/dev/null || echo '')"
     fi
-    [ -n "$codename" ] || codename="jammy"
+
+    case "$codename" in
+      noble|jammy|focal|bookworm|bullseye) ;;
+      *)
+        case "${VERSION_ID:-}" in
+          24.*) codename="noble" ;;
+          22.*) codename="jammy" ;;
+          20.*) codename="focal" ;;
+          12*)  codename="bookworm" ;;
+          11*)  codename="bullseye" ;;
+          *)    codename="jammy" ;;
+        esac
+        ;;
+    esac
 
     if [ ! -f /etc/apt/keyrings/docker.asc ]; then
       $SUDO_CMD curl -fsSL "https://download.docker.com/linux/${os_distro}/gpg" -o /etc/apt/keyrings/docker.asc 2>/dev/null || true
@@ -150,8 +164,8 @@ install_docker_official() {
     fi
 
     if ! have docker; then
-      msg_warn "Official Docker repository install failed; falling back to distribution docker.io"
-      $SUDO_CMD apt-get install -y -qq docker.io docker-compose >/dev/null 2>&1 || true
+      msg_warn "Official Docker repository install failed or unavailable; falling back to distribution packages"
+      $SUDO_CMD apt-get install -y -qq docker.io docker-compose-v2 docker-compose >/dev/null 2>&1 || true
     fi
   fi
 }
@@ -174,31 +188,37 @@ elif have service; then
   $SUDO_CMD service docker start >/dev/null 2>&1 || true
 fi
 
-# Handle Docker group and socket permissions without requiring a session logout
-$SUDO_CMD usermod -aG docker "$ACTUAL_USER" 2>/dev/null || true
-if [ -S /var/run/docker.sock ]; then
-  $SUDO_CMD chmod 666 /var/run/docker.sock 2>/dev/null || true
-fi
-if [ -S /run/docker.sock ]; then
-  $SUDO_CMD chmod 666 /run/docker.sock 2>/dev/null || true
+# Configure Docker group membership securely.
+# Note: Membership in the 'docker' group grants root-equivalent privileges on the system.
+if [ -n "$ACTUAL_USER" ] && [ "$ACTUAL_USER" != "root" ]; then
+  if ! id -nG "$ACTUAL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    msg_info "Adding $ACTUAL_USER to the 'docker' group (note: grants root-equivalent Docker access)"
+    $SUDO_CMD usermod -aG docker "$ACTUAL_USER" 2>/dev/null || true
+  fi
 fi
 
-# Verify Docker engine response
+# Verify Docker engine response with bounded timeout
 docker_ready=0
 for _ in $(seq 1 30); do
   if docker info >/dev/null 2>&1; then
     docker_ready=1
     break
   fi
-  if [ -S /var/run/docker.sock ]; then
-    $SUDO_CMD chmod 666 /var/run/docker.sock 2>/dev/null || true
-  fi
   sleep 2
 done
 
-[ "$docker_ready" -eq 1 ] || die "Docker daemon did not answer after starting." \
-  "Check daemon status with: sudo systemctl status docker or sudo journalctl -u docker -n 20"
-msg_ok "Docker engine is running and responding"
+if [ "$docker_ready" -ne 1 ]; then
+  if [ -S /var/run/docker.sock ] || [ -S /run/docker.sock ]; then
+    msg_warn "Docker daemon is running, but user '$ACTUAL_USER' does not have socket access in this shell session."
+    msg_info "To activate the new 'docker' group without logging out, run: newgrp docker"
+    msg_info "Alternatively, restart your terminal or log out and log back in."
+  else
+    die "Docker daemon did not answer after starting." \
+      "Check daemon status with: sudo systemctl status docker or sudo journalctl -u docker -n 20"
+  fi
+else
+  msg_ok "Docker engine is running and responding"
+fi
 
 # Verify Docker Compose V2
 if ! docker compose version --short >/dev/null 2>&1; then
@@ -232,36 +252,53 @@ msg_ok "Docker Compose v$(docker compose version --short) is ready"
 msg_step "Checking Python interpreter and prerequisites"
 
 ensure_python() {
-  # Prefer Python 3.13
+  # Prefer Python 3.13 if already present
   if have python3.13; then
     msg_ok "Python 3.13 is available: $(python3.13 --version)"
     return 0
   fi
 
-  msg_info "Python 3.13 not found on host. Attempting installation via package manager..."
-  if have apt-get; then
-    $SUDO_CMD apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
-    $SUDO_CMD add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 || msg_warn "deadsnakes PPA could not be added"
-    $SUDO_CMD apt-get update -qq >/dev/null 2>&1 || true
-    $SUDO_CMD apt-get install -y -qq python3.13 python3.13-venv python3.13-dev >/dev/null 2>&1 || true
-  fi
-
-  if have python3.13; then
-    msg_ok "Installed Python 3.13: $(python3.13 --version)"
-    return 0
-  fi
-
-  # Fallback to host python3 if >= 3.10
-  if have python3 && python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-    msg_warn "Using system Python $(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])') as fallback for launcher scripts"
-    if have apt-get; then
-      $SUDO_CMD apt-get install -y -qq python3-venv python3-dev python3-pip >/dev/null 2>&1 || true
+  # Check existing host python3 (Ubuntu 22.04 ships 3.10; Ubuntu 24.04 ships 3.12)
+  if have python3; then
+    local py_ver
+    py_ver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo '')"
+    if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+      msg_ok "Using host Python $py_ver for launcher tooling (the backend runs containerized Python 3.13)"
+      if have apt-get; then
+        $SUDO_CMD apt-get install -y -qq python3-venv python3-dev >/dev/null 2>&1 || true
+      fi
+      return 0
+    else
+      msg_warn "Host Python $py_ver is older than the required minimum (Python >= 3.10)."
+      msg_info "ForgeOps containers carry their own Python 3.13 runtime, but host launcher scripts need Python >= 3.10."
     fi
-    return 0
   fi
+
+  # Check if official distribution repositories carry a compatible Python (without adding external PPAs)
+  if have apt-get; then
+    for cand in python3.12 python3.11 python3.10; do
+      if apt-cache show "$cand" >/dev/null 2>&1; then
+        msg_info "Installing $cand from official distribution repository..."
+        $SUDO_CMD apt-get install -y -qq "$cand" "${cand}-venv" >/dev/null 2>&1 || true
+        if have "$cand"; then
+          msg_ok "Installed $cand: $($cand --version)"
+          return 0
+        fi
+      fi
+    done
+  fi
+
+  for cand in python3.13 python3.12 python3.11 python3.10; do
+    if have "$cand"; then
+      msg_ok "Selected interpreter $cand: $($cand --version)"
+      return 0
+    fi
+  done
 
   die "Python >= 3.10 is required on the host for launcher bootstrapping." \
-    "Install Python: sudo apt-get install -y python3 python3-venv"
+    "Detected OS does not have Python >= 3.10 available in its standard repositories." \
+    "For Ubuntu 20.04 LTS: upgrade to Ubuntu 22.04 LTS / 24.04 LTS, or install Python 3.10+ manually:" \
+    "    sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get install -y python3.10 python3.10-venv"
 }
 
 ensure_python
@@ -275,14 +312,30 @@ swap_total_kb=$(awk '/SwapTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0
 # If available RAM is less than 2.5 GB and swap is 0, setup a safe 2GB swapfile
 if [ "$mem_avail_kb" -lt 2500000 ] && [ "$swap_total_kb" -eq 0 ]; then
   msg_warn "Host has low available RAM (< 2.5GB) and no swap configured."
-  msg_info "Creating a temporary 2GB swap file to prevent OOM errors during container build..."
-  if [ -n "$SUDO_CMD" ] || [ "$(id -u)" -eq 0 ]; then
-    $SUDO_CMD fallocate -l 2G /swapfile 2>/dev/null || $SUDO_CMD dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null || true
-    if [ -f /swapfile ]; then
-      $SUDO_CMD chmod 600 /swapfile
-      $SUDO_CMD mkswap /swapfile >/dev/null 2>&1 || true
-      $SUDO_CMD swapon /swapfile >/dev/null 2>&1 || true
-      msg_ok "Configured 2GB swap file at /swapfile"
+  
+  fstype=$(stat -f -c %T / 2>/dev/null || df -T / 2>/dev/null | awk 'NR==2 {print $2}' || echo 'unknown')
+  free_disk_kb=$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+
+  if [ "$fstype" = "btrfs" ] || [ "$fstype" = "zfs" ]; then
+    msg_warn "Filesystem holding / is $fstype. Automated swapfile creation is not safe on $fstype."
+    msg_info "To configure swap on $fstype manually, consult distribution documentation."
+  elif [ "$free_disk_kb" -lt 4194304 ]; then
+    msg_warn "Less than 4 GB free disk space available ($((free_disk_kb / 1024)) MB); skipping automatic 2GB swapfile creation."
+    msg_info "Free disk space to avoid out-of-memory errors during container builds."
+  elif [ -n "$SUDO_CMD" ] || [ "$(id -u)" -eq 0 ]; then
+    if [ ! -f /swapfile ]; then
+      msg_info "Creating a temporary 2GB swap file to prevent OOM errors during container build..."
+      if $SUDO_CMD fallocate -l 2G /swapfile 2>/dev/null || $SUDO_CMD dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none 2>/dev/null; then
+        $SUDO_CMD chmod 600 /swapfile
+        $SUDO_CMD mkswap /swapfile >/dev/null 2>&1 || true
+        $SUDO_CMD swapon /swapfile >/dev/null 2>&1 || true
+        msg_ok "Configured 2GB swap file at /swapfile"
+      else
+        msg_warn "Could not create /swapfile; continuing without swap"
+      fi
+    else
+      msg_info "Existing /swapfile found on disk; attempting to activate..."
+      $SUDO_CMD swapon /swapfile 2>/dev/null || true
     fi
   fi
 else

@@ -12,6 +12,7 @@ import {
   JenkinsPipelineDashboard,
   type AutonomousRunPublicResponse,
 } from "@/features/deployments/JenkinsPipelineDashboard";
+import type { AutonomousLogEntry } from "@/features/deployments/useAutonomousDeployStream";
 
 interface ProjectBrief {
   id: string;
@@ -41,6 +42,17 @@ export default function AutonomousDeployRunPage() {
       const status = query.state.data?.status;
       return status === "running" || status === "cancelling" ? 2500 : false;
     },
+    retry: false,
+  });
+
+  // Query initial logs for run hydration
+  const logsQuery = useQuery({
+    queryKey: ["projects", projectId, "autonomous-deploy", runId, "logs"],
+    queryFn: () =>
+      api.get<{ logs: AutonomousLogEntry[]; total_lines?: number }>(
+        `/projects/${projectId}/autonomous-deploy/${runId}/logs?since_log_seq=0&limit=1000`,
+      ),
+    enabled: Boolean(projectId && runId),
     retry: false,
   });
 
@@ -129,7 +141,11 @@ export default function AutonomousDeployRunPage() {
       runId={runId}
       projectName={projectName}
       run={runQuery.data}
-      onRefresh={() => runQuery.refetch()}
+      logs={logsQuery.data?.logs}
+      onRefresh={() => {
+        runQuery.refetch();
+        logsQuery.refetch();
+      }}
     />
   );
 }

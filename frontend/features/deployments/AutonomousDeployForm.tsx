@@ -49,7 +49,7 @@ export interface GitHubStatusResponse {
 }
 
 export type DeploymentStrategy =
-  "docker_github_vercel" | "docker_github" | "github_only" | "vercel_only";
+  "docker_only" | "docker_github_vercel" | "docker_github" | "github_only" | "vercel_only";
 
 export interface StrategyOption {
   id: DeploymentStrategy;
@@ -62,6 +62,16 @@ export interface StrategyOption {
 }
 
 export const STRATEGIES: StrategyOption[] = [
+  {
+    id: "docker_only",
+    title: "Docker Only",
+    badge: "Local Only",
+    description:
+      "Builds, executes, and verifies containers locally without publishing to GitHub or deploying to Vercel.",
+    hasDocker: true,
+    hasGitHub: false,
+    hasVercel: false,
+  },
   {
     id: "docker_github_vercel",
     title: "Full Stack (Docker + GitHub + Vercel)",
@@ -148,6 +158,7 @@ export function AutonomousDeployForm({
 
   // GitHub config state
   const [githubMode, setGithubMode] = useState<"existing" | "new_private">("new_private");
+  const [repositoryVisibility, setRepositoryVisibility] = useState<"private" | "public">("private");
   const [branchMode, setBranchMode] = useState<"existing" | "new">("existing");
   const [publishingMode, setPublishingMode] = useState<"direct_push" | "pull_request">(
     "direct_push",
@@ -495,6 +506,7 @@ export function AutonomousDeployForm({
 
       payload.github_config = {
         repository_mode: githubMode,
+        repository_visibility: repositoryVisibility,
         branch_mode: branchMode,
         repository_name: finalRepoName,
         target_branch: githubBranch.trim() || "main",
@@ -511,11 +523,15 @@ export function AutonomousDeployForm({
     }
 
     if (selectedStrategyOption.hasDocker) {
-      const hPort = hostPort.trim() || "8080";
+      const parsedHPort = parseInt(hostPort.trim() || "8080", 10);
       const parsedCPort = parseInt(containerPort.trim() || "8080", 10);
+      const finalHPort = isNaN(parsedHPort) ? 8080 : parsedHPort;
+      const finalCPort = isNaN(parsedCPort) ? 8080 : parsedCPort;
       payload.docker_config = {
+        host_port: finalHPort,
+        container_port: finalCPort,
         port_bindings: {
-          [hPort]: isNaN(parsedCPort) ? 8080 : parsedCPort,
+          [String(finalCPort)]: finalHPort,
         },
       };
     }
@@ -889,6 +905,28 @@ export function AutonomousDeployForm({
                     placeholder="e.g. my-new-repo"
                     className="text-sm font-mono"
                   />
+
+                  {/* Repository Visibility Selection */}
+                  <div className="space-y-1.5" data-testid="github-visibility-container">
+                    <label
+                      htmlFor="repo-visibility-select"
+                      className="text-xs font-medium text-foreground"
+                    >
+                      Repository Visibility
+                    </label>
+                    <select
+                      id="repo-visibility-select"
+                      data-testid="github-visibility-select"
+                      value={repositoryVisibility}
+                      onChange={(e) =>
+                        setRepositoryVisibility(e.target.value as "private" | "public")
+                      }
+                      className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="private">Private (Default)</option>
+                      <option value="public">Public</option>
+                    </select>
+                  </div>
 
                   {/* Availability and validation feedback */}
                   {isGitHubConnected && (

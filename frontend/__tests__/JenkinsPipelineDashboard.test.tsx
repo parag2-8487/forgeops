@@ -27,6 +27,25 @@ vi.mock("@/lib/api", async () => {
   };
 });
 
+let mockStreamOverrides: Record<string, unknown> = {};
+
+vi.mock("@/features/deployments/useAutonomousDeployStream", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/features/deployments/useAutonomousDeployStream")
+  >("@/features/deployments/useAutonomousDeployStream");
+  return {
+    ...actual,
+    useAutonomousDeployStream: (options: unknown) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const res = actual.useAutonomousDeployStream(options as any);
+      return {
+        ...res,
+        ...mockStreamOverrides,
+      };
+    },
+  };
+});
+
 import {
   JenkinsPipelineDashboard,
   formatElapsedTime,
@@ -291,6 +310,7 @@ describe("JenkinsPipelineDashboard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockStreamOverrides = {};
   });
 
   it("renders header summary bar, breadcrumb, badges, and progress bar", () => {
@@ -780,6 +800,9 @@ describe("JenkinsPipelineDashboard", () => {
       expect(formatElapsedTime("invalid-date")).toBe("--");
       expect(formatElapsedTime("2026-10-10T10:00:00Z", "2026-10-10T10:00:30Z")).toBe("30s");
       expect(formatElapsedTime("2026-10-10T10:00:00Z", "2026-10-10T10:02:15Z")).toBe("2m 15s");
+      expect(formatElapsedTime("2026-10-10T10:00:00.000Z", "2026-10-10T10:00:00.015Z")).toBe("<1s");
+      expect(formatElapsedTime("2026-10-10T10:00:00.000Z", "2026-10-10T10:00:00.329Z")).toBe("<1s");
+      expect(formatElapsedTime("2026-10-10T10:00:00.000Z", "2026-10-10T10:00:00.000Z")).toBe("<1s");
     });
 
     it("getStrategyLabel formats strategies and falls back to input string", () => {
@@ -926,6 +949,289 @@ describe("JenkinsPipelineDashboard", () => {
           screen.getByRole("heading", { name: "G1 — Blueprint Validation" }),
         ).toBeInTheDocument();
       });
+    });
+
+    it("renders R0 baseline readiness card, R1 indicator, and G8 recovery panel", () => {
+      const runWithReadiness: AutonomousRunPublicResponse = {
+        ...mockFullStackRun,
+        configuration: {
+          recovery_attempts: 2,
+        },
+        initial_readiness: {
+          id: "cp-r0",
+          run_id: runId,
+          checkpoint_type: "initial_r0",
+          assessment_version: 1,
+          status: "ready",
+          score: 85,
+          max_score: 100,
+          selected_strategy: "docker_github_vercel",
+          detected_stack: "nodejs",
+          dimension_scores: {
+            configuration: 25,
+            artifacts: 20,
+            environment: 20,
+            workload_integrity: 20,
+          },
+          explanation: "Initial readiness score: 85/100 (READY)",
+        },
+        post_generation_readiness: {
+          id: "cp-r1",
+          run_id: runId,
+          checkpoint_type: "post_generation_r1",
+          assessment_version: 1,
+          status: "ready",
+          score: 95,
+          max_score: 100,
+          score_delta: 10,
+          selected_strategy: "docker_github_vercel",
+          explanation: "Post-generation readiness score: 95/100 (READY)",
+        },
+        readiness_checkpoints: [
+          {
+            id: "cp-r0",
+            run_id: runId,
+            checkpoint_type: "initial_r0",
+            assessment_version: 1,
+            status: "ready",
+            score: 85,
+            max_score: 100,
+            selected_strategy: "docker_github_vercel",
+          },
+          {
+            id: "cp-r1",
+            run_id: runId,
+            checkpoint_type: "post_generation_r1",
+            assessment_version: 1,
+            status: "ready",
+            score: 95,
+            max_score: 100,
+            score_delta: 10,
+            selected_strategy: "docker_github_vercel",
+          },
+          {
+            id: "cp-rec2",
+            run_id: runId,
+            checkpoint_type: "recovery_recheck",
+            assessment_version: 2,
+            status: "completed",
+            score: 90,
+            max_score: 100,
+            selected_strategy: "docker_github_vercel",
+            explanation: "G8 AI recovery recheck passed after artifact correction",
+          },
+        ],
+      };
+
+      renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={runWithReadiness}
+          projectName={projectName}
+        />,
+      );
+
+      // Verify R0 baseline card
+      expect(screen.getByTestId("r0-baseline-card")).toBeInTheDocument();
+      expect(screen.getByText("85/100")).toBeInTheDocument();
+      expect(screen.getByText("R0 Baseline")).toBeInTheDocument();
+
+      // Verify R1 post-generation indicator between G2 and G3
+      expect(screen.getByTestId("r1-post-generation-indicator")).toBeInTheDocument();
+      expect(screen.getByText("95/100")).toBeInTheDocument();
+      expect(screen.getByText("+10 vs R0")).toBeInTheDocument();
+
+      // Verify G8 recovery panel
+      expect(screen.getByTestId("g8-recovery-panel")).toBeInTheDocument();
+      expect(screen.getByText("Iteration 2/3")).toBeInTheDocument();
+      expect(screen.getByText("90/100")).toBeInTheDocument();
+      expect(screen.getByText("G8 AI recovery recheck passed after artifact correction")).toBeInTheDocument();
+    });
+
+    it("renders progress bar human-readable activity text and status-aware styles across run states", () => {
+      // 1. Succeeded run
+      const succeededRun: AutonomousRunPublicResponse = {
+        ...mockFullStackRun,
+        status: "succeeded",
+        progress_pct: 100,
+      };
+      const { unmount: unmount1 } = renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={succeededRun}
+          projectName={projectName}
+        />,
+      );
+      const progressBar1 = screen.getByRole("progressbar");
+      expect(progressBar1).toHaveAttribute("aria-valuenow", "100");
+      expect(progressBar1).toHaveAttribute("aria-valuetext", "100 percent - Deployment succeeded and verified");
+      expect(screen.getByText("Completed — All deployment gates G1–G7 verified & signed")).toBeInTheDocument();
+      unmount1();
+
+      // 2. Failed run
+      const failedRun: AutonomousRunPublicResponse = {
+        ...mockFullStackRun,
+        status: "failed",
+        progress_pct: 45,
+        stages: mockFullStackRun.stages.map((s) =>
+          s.gate_id === "G4" ? { ...s, status: "failed" as const } : s,
+        ),
+      };
+      const { unmount: unmount2 } = renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={failedRun}
+          projectName={projectName}
+        />,
+      );
+      const progressBar2 = screen.getByRole("progressbar");
+      expect(progressBar2).toHaveAttribute("aria-valuenow", "45");
+      expect(screen.getByText(/Failed at G4 — Build & Compile \(45%\)/)).toBeInTheDocument();
+      unmount2();
+
+      // 3. Rolled back run
+      const rolledBackRun: AutonomousRunPublicResponse = {
+        ...mockFullStackRun,
+        status: "rolled_back",
+        progress_pct: 45,
+      };
+      const { unmount: unmount3 } = renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={rolledBackRun}
+          projectName={projectName}
+        />,
+      );
+      expect(screen.getByText(/Rolled Back — Compensation cleanup complete \(45%\)/)).toBeInTheDocument();
+      unmount3();
+
+      // 4. Cancelled run
+      const cancelledRun: AutonomousRunPublicResponse = {
+        ...mockFullStackRun,
+        status: "cancelled",
+        progress_pct: 45,
+      };
+      const { unmount: unmount4 } = renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={cancelledRun}
+          projectName={projectName}
+        />,
+      );
+      expect(screen.getByText(/Cancelled — Stopped at 45%/)).toBeInTheDocument();
+      unmount4();
+    });
+
+    it("renders negative score delta when R1 drops below R0", () => {
+      const runWithDrop: AutonomousRunPublicResponse = {
+        ...mockFullStackRun,
+        initial_readiness: {
+          id: "cp-r0",
+          run_id: runId,
+          checkpoint_type: "initial_r0",
+          assessment_version: 1,
+          status: "ready",
+          score: 85,
+          max_score: 100,
+          selected_strategy: "docker_github_vercel",
+        },
+        post_generation_readiness: {
+          id: "cp-r1",
+          run_id: runId,
+          checkpoint_type: "post_generation_r1",
+          assessment_version: 1,
+          status: "ready",
+          score: 75,
+          max_score: 100,
+          selected_strategy: "docker_github_vercel",
+        },
+      };
+
+      renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={runWithDrop}
+          projectName={projectName}
+        />,
+      );
+
+      expect(screen.getByTestId("r1-post-generation-indicator")).toBeInTheDocument();
+      expect(screen.getByText("75/100")).toBeInTheDocument();
+      expect(screen.getByText("-10 vs R0")).toBeInTheDocument();
+    });
+
+    it("renders stream reconnection and error banners with authoritative state notification", () => {
+      // 1. Reconnecting state
+      mockStreamOverrides = {
+        isReconnecting: true,
+        error: null,
+      };
+
+      const { unmount } = renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={mockFullStackRun}
+          projectName={projectName}
+        />,
+      );
+
+      expect(screen.getByTestId("reconnection-banner")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Live stream disconnected. Reconnecting to deployment event stream... Displaying authoritative database state.",
+        ),
+      ).toBeInTheDocument();
+      unmount();
+
+      // 2. Stream error state
+      mockStreamOverrides = {
+        isReconnecting: false,
+        error: "SSE stream connection lost",
+      };
+
+      renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={mockFullStackRun}
+          projectName={projectName}
+        />,
+      );
+
+      expect(screen.getByTestId("stream-error-banner")).toBeInTheDocument();
+      expect(
+        screen.getByText(/Stream connection error: SSE stream connection lost/),
+      ).toBeInTheDocument();
+    });
+
+    it("supports arrow key keyboard navigation across stage columns", async () => {
+      const user = userEvent.setup();
+
+      renderWithClient(
+        <JenkinsPipelineDashboard
+          projectId={projectId}
+          run={mockFullStackRun}
+          projectName={projectName}
+        />,
+      );
+
+      const consoleRoot = screen.getByLabelText(
+        "Autonomous deployment pipeline console. Use left and right arrow keys to navigate stages.",
+      );
+
+      // Focus the dashboard container
+      consoleRoot.focus();
+      expect(consoleRoot).toHaveFocus();
+
+      // Initially G4 (running stage) is selected
+      expect(screen.getByRole("heading", { name: "G4 — Build & Compile" })).toBeInTheDocument();
+
+      // Press ArrowRight to move to G5
+      await user.keyboard("{ArrowRight}");
+      expect(screen.getByRole("heading", { name: "G5 — Apply & Startup" })).toBeInTheDocument();
+
+      // Press ArrowLeft to navigate back to G4
+      await user.keyboard("{ArrowLeft}");
+      expect(screen.getByRole("heading", { name: "G4 — Build & Compile" })).toBeInTheDocument();
     });
   });
 });

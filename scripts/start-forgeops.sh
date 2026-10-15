@@ -182,14 +182,8 @@ if ! have_ docker; then
   fi
   CURRENT_USER="$(id -un)"
   if ! id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-    warn_ "adding $CURRENT_USER to the 'docker' group"
+    info_ "adding $CURRENT_USER to the 'docker' group (note: grants root-equivalent Docker access)"
     sudo usermod -aG docker "$CURRENT_USER" || true
-  fi
-  if [ -S /var/run/docker.sock ]; then
-    sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
-  fi
-  if [ -S /run/docker.sock ]; then
-    sudo chmod 666 /run/docker.sock 2>/dev/null || true
   fi
 fi
 ok_ "$(docker --version)"
@@ -215,25 +209,19 @@ if [ "$docker_ok" -eq 0 ]; then
     *"permission denied"*)
       warn_ 'the Docker engine is running, but this user cannot reach its socket.'
       CURRENT_USER="$(id -un)"
-      sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
-      if [ -S /var/run/docker.sock ]; then
-        info_ 'granting temporary access to /var/run/docker.sock so you do not need to log out'
-        sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
+      if ! id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        info_ "adding $CURRENT_USER to the 'docker' group (note: grants root-equivalent Docker access)"
+        sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
       fi
-      if [ -S /run/docker.sock ]; then
-        sudo chmod 666 /run/docker.sock 2>/dev/null || true
-      fi
-      probe_docker_
-      if [ "$docker_ok" -eq 1 ]; then
-        ok_ 'Docker socket is now accessible in this session'
+      if id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        die_ "you are in the 'docker' group, but this shell session has not loaded the group token." \
+          "Run 'newgrp docker' or start a new shell session, then rerun:" \
+          "    $0 $*"
       else
-        if id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-          die_ "you are in the 'docker' group, but this shell cannot reach the socket." \
-            'Run: sudo chmod 666 /var/run/docker.sock or start a new session: newgrp docker'
-        else
-          die_ "your user is not in the 'docker' group." \
-            "Run: sudo usermod -aG docker \"$CURRENT_USER\" && sudo chmod 666 /var/run/docker.sock"
-        fi
+        die_ "your user is not in the 'docker' group and cannot reach the Docker socket." \
+          "To grant access securely without weakening socket permissions, run:" \
+          "    sudo usermod -aG docker \"$CURRENT_USER\"" \
+          "    newgrp docker"
       fi
       ;;
     *"Cannot connect to the Docker daemon"*|*"Is the docker daemon running"* \
@@ -260,9 +248,6 @@ if [ "$docker_ok" -eq 0 ]; then
 
       info_ 'waiting for the engine (up to 3 minutes)'
       for i in $(seq 1 36); do
-        if [ -S /var/run/docker.sock ]; then
-          sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
-        fi
         sleep 5
         probe_docker_
         if [ "$docker_ok" -eq 1 ]; then break; fi
@@ -407,15 +392,28 @@ elif py_has_deps_ "$VENV_PY"; then
   LAUNCHER_PY="$VENV_PY"; ok_ 'using the existing launcher virtual environment'
 else
   BASE_PY=''
+  # Prefer Python 3.13 if already installed
   for cand in python3.13 python3; do
     if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
       BASE_PY="$cand"; break
     fi
   done
 
+  # If Python 3.13 is not present, use any existing host Python >= 3.10
+  # Host launcher tasks (port probing, init_ca, provisioning) run cleanly on Python 3.10+
+  if [ -z "$BASE_PY" ]; then
+    for cand in python3.12 python3.11 python3.10 python3; do
+      if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        BASE_PY="$cand"
+        info_ "using host interpreter $($cand -c 'import sys; print("%d.%d" % sys.version_info[:2])') for launcher tasks (Python 3.13 runs inside containers)"
+        break
+      fi
+    done
+  fi
+
   if [ -z "$BASE_PY" ]; then
     found=''
-    for cand in python3.13 python3.12 python3.11 python3; do
+    for cand in python3.13 python3.12 python3.11 python3.10 python3 python; do
       if have_ "$cand"; then
         found="$found $cand=$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
       fi
@@ -423,47 +421,34 @@ else
     [ -n "$found" ] && info_ "present interpreters:$found"
 
     if [ "$SKIP_INSTALL" -eq 1 ]; then
-      die_ 'Python 3.13 was not found, and --skip-install was given.' \
-        'On Ubuntu, install it with: sudo add-apt-repository -y ppa:deadsnakes/ppa && sudo apt-get install -y python3.13 python3.13-venv'
+      die_ 'No compatible Python interpreter (>= 3.10) found, and --skip-install was given.' \
+        'Ubuntu 22.04 LTS and 24.04 LTS provide compatible Python versions natively in main repositories.' \
+        'Install with: sudo apt-get install -y python3 python3-venv python3-dev'
     fi
 
-    warn_ 'attempting to install Python 3.13 via package manager'
+    warn_ 'attempting to install Python via standard package manager'
     if have_ apt-get; then
       sudo apt-get update -qq >/dev/null 2>&1 || true
-      sudo apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
-      sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 \
-        || warn_ 'could not add the deadsnakes PPA; trying default repositories'
-      sudo apt-get update -qq >/dev/null 2>&1 || true
-      sudo apt-get install -y -qq python3.13 python3.13-venv python3.13-dev >/dev/null 2>&1 || true
+      sudo apt-get install -y -qq python3 python3-venv python3-dev >/dev/null 2>&1 || true
     elif have_ dnf; then
-      sudo dnf install -y -q python3.13 >/dev/null 2>&1 || true
+      sudo dnf install -y -q python3 python3-devel >/dev/null 2>&1 || true
     elif have_ pacman; then
       sudo pacman -Sy --noconfirm python >/dev/null 2>&1 || true
     elif have_ brew; then
-      brew install python@3.13 >/dev/null 2>&1 || true
+      brew install python@3.12 >/dev/null 2>&1 || brew install python@3.13 >/dev/null 2>&1 || true
     fi
 
-    for cand in python3.13 python3; do
-      if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
+    for cand in python3.13 python3.12 python3.11 python3.10 python3; do
+      if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
         BASE_PY="$cand"; break
       fi
     done
 
-    # Resilient fallback: If Python 3.13 could not be installed, use available Python >= 3.10
-    if [ -z "$BASE_PY" ]; then
-      for cand in python3.12 python3.11 python3.10 python3; do
-        if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-          BASE_PY="$cand"
-          warn_ "Python 3.13 not found; using host interpreter $($cand -c 'import sys; print("%d.%d" % sys.version_info[:2])') as fallback for launcher tasks"
-          break
-        fi
-      done
-    fi
-
     [ -n "$BASE_PY" ] || die_ 'No compatible Python interpreter (>= 3.10) found.' \
-      'Install Python 3.13: sudo apt-get install -y python3 python3-venv'
-    ok_ "Python $("$BASE_PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') selected"
+      'Ubuntu 22.04 LTS and 24.04 LTS provide compatible Python versions natively in main repositories.' \
+      'Ubuntu 20.04 LTS ships Python 3.8 by default; please install Python 3.10+ or upgrade to Ubuntu 22.04+ LTS.'
   fi
+  ok_ "Python $("$BASE_PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') selected"
 
   info_ "creating a virtual environment with $BASE_PY"
   mkdir -p "$(dirname "$VENV_DIR")"
@@ -518,6 +503,9 @@ elif [ -z "$(dc ps -aq 2>/dev/null)" ]; then
 else
   DOWN_ARGS='--remove-orphans'
   if [ "$FRESH" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
+    if [ ! -t 0 ]; then
+      die_ '--fresh deletes all persistent data and requires interactive confirmation or --force.'
+    fi
     warn_ '--fresh DELETES every project, device, change set, audit row and identity.'
     printf '      type "yes" to continue: '
     read -r answer
@@ -1225,8 +1213,13 @@ printf '      logs            docker compose %s logs -f backend\n' "${COMPOSE_FI
 printf '      wipe and redo   ./scripts/start-forgeops.sh --fresh\n\n'
 
 if [ "$NO_BROWSER" -eq 0 ]; then
-  if have_ xdg-open; then xdg-open "$FRONTEND_URL" >/dev/null 2>&1 || true
-  elif have_ open; then open "$FRONTEND_URL" >/dev/null 2>&1 || true
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    if have_ xdg-open; then xdg-open "$FRONTEND_URL" >/dev/null 2>&1 || true
+    elif have_ open; then open "$FRONTEND_URL" >/dev/null 2>&1 || true
+    fi
+  elif [ "$(uname -s)" = "Darwin" ]; then
+    if have_ open; then open "$FRONTEND_URL" >/dev/null 2>&1 || true
+    fi
   fi
 fi
 

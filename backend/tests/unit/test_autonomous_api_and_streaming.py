@@ -100,6 +100,9 @@ class MockResult:
     def scalars(self) -> MockScalars:
         return MockScalars(self._items)
 
+    def mappings(self) -> MockScalars:
+        return MockScalars(self._items)
+
     def scalar(self) -> Any:
         return self._scalar_val
 
@@ -142,7 +145,24 @@ class MockAsyncSession:
     async def rollback(self) -> None:
         pass
 
-    async def execute(self, stmt: Any) -> MockResult:
+    async def execute(self, stmt: Any, params: Any = None, **kwargs: Any) -> MockResult:
+        if hasattr(stmt, "text") or not hasattr(stmt, "column_descriptions"):
+            text_str = str(getattr(stmt, "text", stmt))
+            if "FROM projects" in text_str:
+                mock_proj = {
+                    "id": uuid.uuid4(),
+                    "name": "Portfolio",
+                    "path": "C:/Users/ASUS/Downloads/for testing/Portfolio",
+                    "repo_url": "https://github.com/parag8487/Portfolio",
+                    "settings": {
+                        "repo_full_name": "parag8487/Portfolio",
+                        "clone_url": "https://github.com/parag8487/Portfolio.git",
+                        "clone_state": "cloned",
+                    },
+                }
+                return MockResult([mock_proj])
+            return MockResult([])
+
         desc = getattr(stmt, "column_descriptions", None)
         if desc and len(desc) > 0:
             type_or_expr = desc[0]["type"]
@@ -922,3 +942,186 @@ class TestStreamingBridgeAndReplayProtocol:
             assert frame["event_seq"] == 1
             assert frame["event_type"] == "run_created"
             assert frame["run_id"] == str(run_id)
+
+    def test_sse_stream_emits_heartbeat_during_quiet_stream(
+        self,
+        client: TestClient,
+        mock_session: MockAsyncSession,
+        mock_redis: MockRedis,
+        project_id: uuid.UUID,
+    ) -> None:
+        """Requirement 1: Emits lightweight SSE comment heartbeat during an otherwise quiet stream."""
+        create_resp = client.post(
+            f"/api/v1/projects/{project_id}/autonomous-deploy",
+            json={
+                "strategy": DeploymentStrategy.GITHUB_ONLY.value,
+                "github_config": {"repository_name": "owner/repo"},
+            },
+        )
+        run_id = uuid.UUID(create_resp.json()["id"])
+
+        # Connect with max_events=1 to consume the initial run_created event
+        resp = client.get(
+            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events?since_event_seq=0&max_events=1",
+        )
+        assert resp.status_code == 200
+        # Verify response headers for streaming and proxy buffering prevention
+        assert "no-cache" in resp.headers.get("Cache-Control", "")
+        assert "no-transform" in resp.headers.get("Cache-Control", "")
+        assert resp.headers.get("Connection") == "keep-alive"
+        assert resp.headers.get("X-Accel-Buffering") == "no"
+
+        # Verify transport heartbeat comment is present
+        assert ": keep-alive" in resp.text
+
+    def test_sse_stream_handles_quiet_period_then_resumes(
+        self,
+        client: TestClient,
+        mock_session: MockAsyncSession,
+        mock_redis: MockRedis,
+        project_id: uuid.UUID,
+    ) -> None:
+        """Requirement 2: Long-running build that produces no logs temporarily, then resumes."""
+        create_resp = client.post(
+            f"/api/v1/projects/{project_id}/autonomous-deploy",
+            json={
+                "strategy": DeploymentStrategy.GITHUB_ONLY.value,
+                "github_config": {"repository_name": "owner/repo"},
+            },
+        )
+        run_id = uuid.UUID(create_resp.json()["id"])
+        channel = get_autonomous_event_channel(run_id)
+
+        # Deterministically simulate idle timeout followed by live event resumption
+        calls = 0
+
+        def _custom_pubsub():
+            ps = MockPubSub(mock_redis)
+
+            async def _instrumented_get_msg(ignore_subscribe_messages: bool = True, timeout: float | None = None):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    # Tick 1: Idle timeout during quiet build phase (yields : keep-alive)
+                    return None
+                # Tick 2: Resumed build logs from worker
+                return {
+                    "channel": channel,
+                    "data": json.dumps({
+                        "event_seq": 2,
+                        "event_type": "log_batch",
+                        "run_id": str(run_id),
+                        "payload": {
+                            "logs": [
+                                {"log_seq": 10, "stage_name": "G4_build", "level": "INFO", "message": "npm ci completed in 2m"}
+                            ]
+                        },
+                    }),
+                }
+
+            ps.get_message = _instrumented_get_msg
+            return ps
+
+        mock_redis.pubsub = _custom_pubsub
+
+        resp = client.get(
+            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events?since_event_seq=0&max_events=2",
+        )
+        assert resp.status_code == 200
+        content = resp.text
+
+        # Verify both heartbeat comment and the resumed domain event are present
+        assert ": keep-alive" in content
+        assert "npm ci completed in 2m" in content
+        assert "event: log" in content
+
+    def test_sse_stream_disconnect_and_cancellation_cleanup(
+        self,
+        client: TestClient,
+        mock_session: MockAsyncSession,
+        mock_redis: MockRedis,
+        project_id: uuid.UUID,
+    ) -> None:
+        """Requirement 8: Client disconnect and backend cancellation cleanup."""
+        create_resp = client.post(
+            f"/api/v1/projects/{project_id}/autonomous-deploy",
+            json={
+                "strategy": DeploymentStrategy.GITHUB_ONLY.value,
+                "github_config": {"repository_name": "owner/repo"},
+            },
+        )
+        run_id = uuid.UUID(create_resp.json()["id"])
+        channel = get_autonomous_event_channel(run_id)
+
+        unsubscribed = False
+
+        def _custom_pubsub():
+            ps = MockPubSub(mock_redis)
+            orig_unsub = ps.unsubscribe
+
+            async def _tracked_unsub(ch: str | None = None):
+                nonlocal unsubscribed
+                unsubscribed = True
+                await orig_unsub(ch)
+
+            ps.unsubscribe = _tracked_unsub
+            return ps
+
+        mock_redis.pubsub = _custom_pubsub
+
+        # Request with max_events=1 completes the stream generator and triggers cleanup in finally block
+        resp = client.get(
+            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events?since_event_seq=0&max_events=1",
+        )
+        assert resp.status_code == 200
+        assert unsubscribed is True
+
+    def test_sse_stream_preserves_event_contracts(
+        self,
+        client: TestClient,
+        mock_session: MockAsyncSession,
+        mock_redis: MockRedis,
+        project_id: uuid.UUID,
+    ) -> None:
+        """Requirement 9: Preservation of all existing SSE event contracts."""
+        create_resp = client.post(
+            f"/api/v1/projects/{project_id}/autonomous-deploy",
+            json={
+                "strategy": DeploymentStrategy.GITHUB_ONLY.value,
+                "github_config": {"repository_name": "owner/repo"},
+            },
+        )
+        run_id = uuid.UUID(create_resp.json()["id"])
+
+        ev = AutonomousDeploymentOutbox(
+            run_id=run_id,
+            event_seq=2,
+            event_type="stage_transition",
+            payload={"stage": STAGE_G1_BLUEPRINT, "status": "running"},
+            status="published",
+        )
+        mock_session.add(ev)
+
+        resp = client.get(
+            f"/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events?since_event_seq=0&max_events=2",
+        )
+        assert resp.status_code == 200
+
+        # Parse SSE stream frames: comments start with ':', events start with 'event:', data starts with 'data:'
+        lines = resp.text.splitlines()
+        comments = [line for line in lines if line.startswith(":")]
+        event_lines = [line for line in lines if line.startswith("event:")]
+        data_lines = [line for line in lines if line.startswith("data:")]
+
+        assert len(comments) >= 1
+        assert any("keep-alive" in c for c in comments)
+        assert len(event_lines) >= 1
+
+        for d_line in data_lines:
+            json_str = d_line.removeprefix("data:").strip()
+            data = json.loads(json_str)
+            assert "event_seq" in data
+            assert "event_type" in data
+            assert "run_id" in data
+            assert data["run_id"] == str(run_id)
+

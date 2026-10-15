@@ -118,13 +118,15 @@ def _hkdf_sha256(*, secret: bytes, salt: bytes, info: bytes, length: int) -> byt
     return okm[:length]
 
 
-def derive_link_key(pepper: str | bytes) -> bytes:
+def derive_link_key(pepper: str | bytes | Any) -> bytes:
     """The AES-256-GCM key-encryption key for GitHub links.
 
     An empty pepper is refused. A deployment with no pepper would otherwise derive a well-known key
     from the empty string and seal every user's GitHub token under it, which is indistinguishable
     from encryption while providing none.
     """
+    if hasattr(pepper, "get_secret_value"):
+        pepper = pepper.get_secret_value()
     material = pepper.encode("utf-8") if isinstance(pepper, str) else bytes(pepper)
     if not material:
         raise GitHubLinkError(

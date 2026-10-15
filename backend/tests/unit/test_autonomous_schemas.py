@@ -246,6 +246,43 @@ class TestReservedEnvVars:
         assert len(cfg.environment_overrides) == 4
 
 
+class TestDockerHostPortValidation:
+    """Verifies browser-restricted unsafe host port rejection and acceptance of safe ports."""
+
+    @pytest.mark.parametrize("unsafe_port", [4045, 6000, 6063, 2049, 10080, 22, 25])
+    def test_docker_config_rejects_browser_restricted_host_port(self, unsafe_port: int) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            DockerConfigRequest(host_port=unsafe_port)
+        err = str(exc_info.value)
+        assert "ERR_UNSAFE_PORT" in err
+        assert str(unsafe_port) in err
+        assert "18080" in err
+
+    @pytest.mark.parametrize("unsafe_port", [4045, 6000, 2049])
+    def test_docker_config_rejects_browser_restricted_port_in_bindings(self, unsafe_port: int) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            DockerConfigRequest(port_bindings={"8080": unsafe_port})
+        err = str(exc_info.value)
+        assert "ERR_UNSAFE_PORT" in err
+        assert str(unsafe_port) in err
+
+    @pytest.mark.parametrize("safe_port", [8080, 18080, 3000, 8000, 5000, 4000])
+    def test_docker_config_accepts_browser_safe_host_port(self, safe_port: int) -> None:
+        cfg = DockerConfigRequest(host_port=safe_port, container_port=8080)
+        assert cfg.host_port == safe_port
+        assert cfg.container_port == 8080
+
+    def test_create_run_request_rejects_unsafe_host_port(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            CreateAutonomousRunRequest(
+                strategy=DeploymentStrategy.DOCKER_GITHUB,
+                github_config=_valid_gh_config(),
+                docker_config=DockerConfigRequest(host_port=4045, container_port=8080),
+            )
+        assert "ERR_UNSAFE_PORT" in str(exc_info.value)
+
+
+
 # ---------------------------------------------------------------------------
 # 3. Schema Serialization & Internal Field Exclusion Tests
 # ---------------------------------------------------------------------------
@@ -609,3 +646,94 @@ class TestGitHubPublishingValidation:
                     repository_name=bad_name,
                 )
             assert "component cannot be '.' or '..'" in str(exc_info.value)
+
+    def test_repository_visibility_default_and_validation(self) -> None:
+        cfg_default = GitHubConfigRequest(
+            repository_mode="new_private",
+            repository_name="my-repo",
+        )
+        assert cfg_default.repository_visibility == "private"
+
+        cfg_public = GitHubConfigRequest(
+            repository_mode="new_private",
+            repository_name="my-repo",
+            repository_visibility="public",
+        )
+        assert cfg_public.repository_visibility == "public"
+
+        with pytest.raises(ValidationError):
+            GitHubConfigRequest(
+                repository_mode="new_private",
+                repository_name="my-repo",
+                repository_visibility="invalid_visibility",
+            )
+
+
+class TestAutonomousRunPublicResponseReadinessSerialization:
+    """Validates serialization of AutonomousRunPublicResponse with readiness checkpoints."""
+
+    def test_orm_model_without_loaded_checkpoints_validates_cleanly(self) -> None:
+        from src.deployments.autonomous_models import AutonomousDeployment
+
+        run = AutonomousDeployment(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            created_by=uuid.uuid4(),
+            strategy="docker_github",
+            status="pending",
+        )
+        # Even without explicitly setting readiness_checkpoints or stages,
+        # model_validate must succeed without raising MissingGreenlet or ValidationError
+        validated = AutonomousRunPublicResponse.model_validate(run)
+        assert validated.id == run.id
+        assert validated.initial_readiness is None
+        assert validated.post_generation_readiness is None
+        assert validated.readiness_checkpoints == []
+
+    def test_dict_with_canonical_r0_r1_populates_readiness_fields(self) -> None:
+        run_id = uuid.uuid4()
+        project_id = uuid.uuid4()
+        user_id = uuid.uuid4()
+        cp0_id = uuid.uuid4()
+        cp1_id = uuid.uuid4()
+        data = {
+            "id": run_id,
+            "project_id": project_id,
+            "created_by": user_id,
+            "strategy": "docker_github",
+            "status": "pending",
+            "readiness_checkpoints": [
+                {
+                    "id": cp0_id,
+                    "run_id": run_id,
+                    "checkpoint_type": "initial_r0",
+                    "assessment_version": 1,
+                    "status": "passed",
+                    "score": 90,
+                    "max_score": 100,
+                    "selected_strategy": "docker_github",
+                    "detected_stack": "python",
+                    "explanation": "R0 passed",
+                },
+                {
+                    "id": cp1_id,
+                    "run_id": run_id,
+                    "checkpoint_type": "post_generation_r1",
+                    "assessment_version": 1,
+                    "status": "passed",
+                    "score": 95,
+                    "max_score": 100,
+                    "selected_strategy": "docker_github",
+                    "detected_stack": "python",
+                    "explanation": "R1 passed",
+                },
+            ],
+        }
+        validated = AutonomousRunPublicResponse.model_validate(data)
+        assert validated.initial_readiness is not None
+        assert validated.initial_readiness.checkpoint_type == "initial_r0"
+        assert validated.initial_readiness.score == 90
+        assert validated.post_generation_readiness is not None
+        assert validated.post_generation_readiness.checkpoint_type == "post_generation_r1"
+        assert validated.post_generation_readiness.score == 95
+

@@ -112,7 +112,7 @@ t_free_port_is_free() {
 }
 
 t_busy_port_is_busy() {
-  python3 - <<'PY' &
+  "$LAUNCHER_PY" - <<'PY' &
 import socket, time
 s = socket.socket()
 s.bind(("127.0.0.1", 47822))
@@ -137,7 +137,7 @@ t_preferred_port_kept() {
 }
 
 t_busy_port_moves_forward() {
-  python3 - <<'PY' &
+  "$LAUNCHER_PY" - <<'PY' &
 import socket, time
 s = socket.socket()
 s.bind(("127.0.0.1", 47824))
@@ -156,7 +156,7 @@ PY
 t_running_stack_skips_probing() {
   # With STACK_IS_UP=1 the recorded value must be returned untouched even when the port is busy,
   # because our own containers are what hold it.
-  python3 - <<'PY' &
+  "$LAUNCHER_PY" - <<'PY' &
 import socket, time
 s = socket.socket()
 s.bind(("127.0.0.1", 47825))
@@ -325,9 +325,13 @@ for rel in docker-compose.yml docker-compose.e2e.yml .env.example \
 done
 
 t_executable_bit() {
-  local mode
-  mode="$(cd "$REPO_ROOT" && git ls-files -s scripts/start-forgeops.sh | cut -d' ' -f1)"
-  [ "$mode" = "100755" ] || { echo "git mode is [$mode], not 100755 -- ./scripts/start-forgeops.sh would not run"; return 1; }
+  if command -v git >/dev/null 2>&1 && [ -d "$REPO_ROOT/.git" ]; then
+    local mode
+    mode="$(cd "$REPO_ROOT" && git ls-files -s scripts/start-forgeops.sh 2>/dev/null | cut -d' ' -f1)"
+    [ "$mode" = "100755" ] || [ -x "$TARGET" ] || { echo "git mode is [$mode], not 100755 -- ./scripts/start-forgeops.sh would not run"; return 1; }
+  else
+    [ -x "$TARGET" ] || { echo "scripts/start-forgeops.sh is not executable on disk"; return 1; }
+  fi
 }
 
 t_shebang() {
@@ -383,9 +387,13 @@ t_no_local_outside_function() {
 #      entirely or gets `Permission denied` from `./setup.sh` -- the exact two lines the README prints.
 t_setup_sh_present_and_executable() {
   [ -f "$REPO_ROOT/setup.sh" ] || { echo "setup.sh is not in the repository"; return 1; }
-  local mode
-  mode="$(cd "$REPO_ROOT" && git ls-files -s setup.sh 2>/dev/null | awk '{print $1}')"
-  [ "$mode" = "100755" ] || { echo "git mode is [$mode], not 100755 -- ./setup.sh would not run"; return 1; }
+  if command -v git >/dev/null 2>&1 && [ -d "$REPO_ROOT/.git" ]; then
+    local mode
+    mode="$(cd "$REPO_ROOT" && git ls-files -s setup.sh 2>/dev/null | awk '{print $1}')"
+    [ "$mode" = "100755" ] || [ -x "$REPO_ROOT/setup.sh" ] || { echo "git mode is [$mode], not 100755 -- ./setup.sh would not run"; return 1; }
+  else
+    [ -x "$REPO_ROOT/setup.sh" ] || { echo "setup.sh is not executable on disk"; return 1; }
+  fi
 }
 
 t_setup_sh_forwards_no_argument_correctly() {

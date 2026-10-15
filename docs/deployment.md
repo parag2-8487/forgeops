@@ -18,6 +18,9 @@ non-local deployment of Phase 0, and no production deployment target exists yet.
 > devices, codebase-index extensions, change-sets, policies, secrets, the append-only audit table,
 > generation runs, project tags, the change-set status vocabulary, `served_from: pending`, the cAST
 > metadata columns on `embeddings_local`, and project archiving with per-user favourites.
+>
+> **Phase 2 Autonomous Deployment Update (2026-10-13):**
+> For complete technical documentation of the Phase 2 autonomous deployment pipeline (Docker daemon management, GitHub Git Data API publishing, Vercel REST API integration), G1–G7 verification gates, G8 bounded self-healing engine, port authority validation, and browser safety rules, refer to [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md).
 
 ## What the local topology publishes
 

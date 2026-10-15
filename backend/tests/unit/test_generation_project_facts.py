@@ -142,3 +142,39 @@ class TestTheRenderReadsTheProject:
         """`settings` is operator-supplied JSON, so it may not be a mapping at all."""
         files = self._render("a python service", {"name": "api", "settings": ["not", "a", "mapping"]})
         assert "name: api" in next(f.content for f in files if f.path == "k8s/deployment.yaml")
+
+    def test_render_uses_npm_ci_when_lockfile_in_inventory(self) -> None:
+        """When package-lock.json is present, npm ci must be used deterministically without fallback."""
+        project = {
+            "name": "nextjs-app",
+            "inventory": {
+                "frameworks": [{"name": "next"}],
+                "manifests": ["package.json", "package-lock.json"],
+                "languages": ["typescript"],
+            },
+        }
+        files = GenerationService()._render("deploy next app", project)
+        dockerfile = next(f.content for f in files if f.path == "Dockerfile")
+        assert "RUN npm ci --prefer-offline --no-audit" in dockerfile
+        assert "|| npm install" not in dockerfile
+        assert "|| true" not in dockerfile
+
+    def test_render_uses_npm_install_when_no_lockfile_frontend(self) -> None:
+        """When no lockfile is present, npm install must be used deterministically without fallback."""
+        project = {
+            "name": "frontend-app",
+            "inventory": {
+                "frameworks": [{"name": "next"}],
+                "manifests": ["package.json"],
+                "languages": ["javascript"],
+            },
+        }
+        files = GenerationService()._render(
+            "deploy frontend app",
+            project,
+            existing={"package.json": '{"name": "frontend-app", "scripts": {"build": "next build"}}'},
+        )
+        dockerfile = next(f.content for f in files if f.path == "Dockerfile")
+        assert "RUN npm install --prefer-offline --no-audit" in dockerfile
+        assert "|| npm install" not in dockerfile
+        assert "|| true" not in dockerfile

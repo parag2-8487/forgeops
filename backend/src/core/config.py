@@ -655,7 +655,7 @@ class Settings(BaseSettings):
     forgeops_prometheus_url: str = ""
     arq_queue_name: str = Field(default="forgeops")
     arq_max_jobs: int = Field(default=10, ge=1, le=1000)
-    arq_job_timeout_seconds: int = Field(default=900, ge=1)
+    arq_job_timeout_seconds: int = Field(default=1800, ge=1)
 
     # ─── Phase 1 §6.7 database pooling ───────────────────────────────────────
     # `transaction` mode means a pooler hands out a different backend connection per

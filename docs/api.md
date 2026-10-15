@@ -13,6 +13,11 @@
 > file is rewritten, the accurate and self-updating source is the generated schema â€” Swagger UI at
 > <http://localhost:8000/api/v1/docs> and `openapi.json` beside it â€” because it is produced from the
 > routers themselves and cannot drift from them.
+>
+> **Phase 2 Autonomous Deployment API (2026-10-13):**
+> Phase 2 adds `/api/v1/autonomous/deployments` for triggering deployments, tracking lifecycle stages, evaluating G1–G7 verification gates, retrieving real-time event logs, and reading operational artifacts. For complete schemas, endpoints, request/response models, and error behaviors, consult:
+> - Master Reference: [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md)
+> - OpenAPI interactive documentation: <http://localhost:8000/api/v1/docs>
 
 Authority: `.antigravity/specs/phase-0-foundation/design.md` Â§4.2, Â§4.3, Â§4.4, Â§11, Â§14.2, Â§15.2.
 Only the surfaces listed here exist in Phase 0.

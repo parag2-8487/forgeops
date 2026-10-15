@@ -22,8 +22,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 import uuid
+
+logger = logging.getLogger(__name__)
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -442,6 +445,7 @@ class GenerationService:
             outcome=outcome,
             provider_findings=provider_findings,
             existing=existing,
+            compiled=compiled,
         ):
             yield frame
 
@@ -764,6 +768,12 @@ class GenerationService:
 
             files = tuple(merged.values())
             passed, gate_findings = self._validate(files, existing)
+            if compiled is not None and compiled.write_targets:
+                produced_paths = {artifact.path for artifact in files}
+                missing_essential = [t for t in compiled.write_targets if t in ("Dockerfile", "docker-compose.yml") and t not in produced_paths]
+                if missing_essential:
+                    passed = False
+                    gate_findings = (*gate_findings, *(f"{t}: required artifact was not produced" for t in missing_essential))
             yield format_event(
                 SSEEventType.VALIDATION,
                 {
@@ -806,17 +816,24 @@ class GenerationService:
                     for artifact in files:
                         if not _is_rejected(artifact.path):
                             carried[artifact.path] = artifact
-                        elif artifact.path in carried:
-                            del carried[artifact.path]
+
                     # HIGHEST STAKES FIRST when several failed, because the attempt budget is finite and a
                     # Dockerfile carries more of the score than a `.gitleaks.toml`. `repair_prompts` is
                     # keyed by write target, so a path with no repair prompt is one no artifact instruction
                     # claims and there is nothing narrower to ask.
-                    candidates = [
-                        path
-                        for path in rejected_paths + missing
-                        if repair_prompts is not None and path in repair_prompts
-                    ]
+                    def _repair_priority(p: str) -> tuple[int, int]:
+                        is_df = 0 if p == "Dockerfile" or p.endswith("/Dockerfile") else 1
+                        has_direct_finding = 0 if any(f.startswith(f"{p}: ") for f in gate_findings) else 1
+                        return (is_df, has_direct_finding)
+
+                    candidates = sorted(
+                        [
+                            path
+                            for path in set(rejected_paths + missing)
+                            if repair_prompts is not None and path in repair_prompts
+                        ],
+                        key=_repair_priority,
+                    )
                     repair_for = candidates[0] if candidates else None
                     if repair_for is not None:
                         # ONLY THIS ARTIFACT'S FINDINGS. Handing over five other files' complaints is the
@@ -879,6 +896,7 @@ class GenerationService:
                         prompt=prompt,
                         project=project,
                         existing=existing,
+                        compiled=compiled,
                     )
                 if not accepted:
                     findings = gate_findings
@@ -932,8 +950,23 @@ class GenerationService:
                     prompt=prompt,
                     project=project,
                     existing=existing,
+                    compiled=compiled,
                 )
                 recheck_passed, recheck_findings = self._validate(filled, existing)
+                if not recheck_passed and any("cross-artifact: port mismatch" in f for f in recheck_findings):
+                    filled2, also_sub2 = self._apply_floor(
+                        accepted=(),
+                        rejected=asked_for_order,
+                        prompt=prompt,
+                        project=project,
+                        existing=existing,
+                        compiled=compiled,
+                    )
+                    r2_passed, r2_findings = self._validate(filled2, existing)
+                    if r2_passed:
+                        filled = filled2
+                        also_substituted = tuple(sorted(set(also_substituted) | set(also_sub2)))
+                        recheck_passed = True
                 if recheck_passed:
                     files = filled
                     substituted = tuple(sorted(set(substituted) | set(also_substituted)))
@@ -988,7 +1021,26 @@ class GenerationService:
             # among them would make the delivered order disagree with the compiled order for no gain.
             # The model's own compose file still wins when it produced a usable one — this is a floor,
             # not a requirement, and requiring it would discard a whole attempt over one optional file.
-            if not any(f.path == "docker-compose.yml" for f in files):
+            arch = getattr(prompt, "architecture", None) or (getattr(compiled, "architecture", None) if compiled is not None else None)
+            is_multi = getattr(arch, "is_multi_service", False)
+            existing_compose = getattr(arch, "existing_compose_path", None)
+            write_targets = getattr(prompt, "write_targets", ()) or (getattr(compiled, "write_targets", ()) if compiled is not None else ())
+            strat_l = (
+                str(
+                    getattr(compiled, "target_strategy", "")
+                    or getattr(prompt, "target_strategy", "")
+                    or ((project.get("target_strategy") or project.get("strategy")) if isinstance(project, Mapping) else "")
+                    or ""
+                )
+            ).lower()
+            wants_compose = (
+                "compose" in strat_l
+                or is_multi
+                or bool(existing_compose)
+                or any("compose" in t for t in write_targets)
+                or not isinstance(prompt, CompiledPrompt)
+            )
+            if wants_compose and not any(f.path in ("docker-compose.yml", "compose.yaml", "compose.yml") for f in files):
                 resolved_port = None
                 for f in files:
                     if f.path == "Dockerfile":
@@ -1002,7 +1054,7 @@ class GenerationService:
                             resolved_port = sorted(kp_set)[0]
                             break
 
-                for rendered in self._render(prompt, project):
+                for rendered in self._render(prompt, project, compiled=compiled):
                     if rendered.path == "docker-compose.yml":
                         compose_content = rendered.content
                         if resolved_port is not None:
@@ -1072,10 +1124,13 @@ class GenerationService:
             # and it would refresh the TTL on every read, so a hot entry could never expire -- which is how
             # a cache comes to serve an answer from a model version that is no longer configured.
             if served_from == "provider" and result.content and first_attempt_prompt is not None and not substituted:
-                await self._model.remember(
-                    prompt=first_attempt_prompt,
-                    content=result.content,
-                )
+                try:
+                    await self._model.remember(
+                        prompt=first_attempt_prompt,
+                        content=result.content,
+                    )
+                except Exception as cache_err:
+                    logger.warning("Failed to store generation result in semantic cache: %s", cache_err)
 
             _record_attempt("accepted")
             report.succeeded = True
@@ -1106,10 +1161,11 @@ class GenerationService:
         existing: Mapping[str, str] | None,
         outcome: GenerationOutcome | None,
         provider_findings: tuple[str, ...],
+        compiled: CompiledPrompt | None = None,
     ) -> AsyncGenerator[str]:
         """The deterministic renderer, reached when no model produced usable artifacts."""
         try:
-            files = self._render(prompt, project)
+            files = self._render(prompt, project, compiled=compiled)
         except Exception as exc:  # noqa: BLE001 - reported to the client as a terminal frame
             if outcome is not None:
                 outcome.status = "failed"
@@ -1188,7 +1244,13 @@ class GenerationService:
 
     # ?? the pipeline, kept small and honest ??????????????????????????????????
 
-    def _render(self, prompt: str, project: Mapping[str, Any] | None = None) -> tuple[GeneratedFile, ...]:
+    def _render(
+        self,
+        prompt: str,
+        project: Mapping[str, Any] | None = None,
+        compiled: Any | None = None,
+        existing: Mapping[str, str] | None = None,
+    ) -> tuple[GeneratedFile, ...]:
         """Render the four artifacts ?12.6 step 6 asks for, from what is actually known.
 
         WHAT CHANGED AND WHY
@@ -1272,11 +1334,88 @@ class GenerationService:
         )
 
         # Detect workspaces if manifests contain package.json files in subdirectories
-        workspace_manifests = [
-            m
-            for m in inv_manifests
-            if m.endswith("package.json") and m != "package.json" and not m.startswith("node_modules")
+        ref_paths = getattr(compiled, "referenced_paths", ()) or ()
+        candidate_manifests = list(inventory.get("manifests") or []) + [
+            str(p).replace("\\", "/") for p in ref_paths if str(p).endswith("package.json")
         ]
+        declared_ws_dirs: list[str] = []
+        p_root = None
+        if project and project.get("path"):
+            with contextlib.suppress(Exception):
+                from ..deployments.autonomous_gates import resolve_workspace_path
+
+                p_root = resolve_workspace_path(str(project["path"]))
+                if p_root.exists() and p_root.is_dir():
+                    root_pkg = p_root / "package.json"
+                    if root_pkg.exists():
+                        import json
+
+                        pkg_d = json.loads(root_pkg.read_text(encoding="utf-8"))
+                        ws_e = pkg_d.get("workspaces")
+                        if isinstance(ws_e, list):
+                            declared_ws_dirs = [w for w in ws_e if isinstance(w, str) and "*" not in w]
+                        elif isinstance(ws_e, dict) and "packages" in ws_e:
+                            declared_ws_dirs = [w for w in ws_e["packages"] if isinstance(w, str) and "*" not in w]
+                        for w in declared_ws_dirs:
+                            candidate_manifests.append(f"{w}/package.json")
+
+        if existing is None and p_root is not None and p_root.exists() and p_root.is_dir():
+            disk_existing: dict[str, str] = {}
+            root_pkg_file = p_root / "package.json"
+            if root_pkg_file.exists():
+                with contextlib.suppress(Exception):
+                    disk_existing["package.json"] = root_pkg_file.read_text(encoding="utf-8")
+            root_lock_file = p_root / "package-lock.json"
+            if root_lock_file.exists():
+                disk_existing["package-lock.json"] = ""
+            for w in declared_ws_dirs:
+                w_pkg = p_root / w / "package.json"
+                if w_pkg.exists():
+                    with contextlib.suppress(Exception):
+                        disk_existing[f"{w}/package.json"] = w_pkg.read_text(encoding="utf-8")
+                w_lock = p_root / w / "package-lock.json"
+                if w_lock.exists():
+                    disk_existing[f"{w}/package-lock.json"] = ""
+            existing = disk_existing
+
+        seen_manifests: set[str] = set()
+        workspace_manifests: list[str] = []
+        for m_raw in candidate_manifests:
+            m = str(m_raw).strip().replace("\\", "/")
+            m_lower = m.lower()
+            if (
+                m_lower.endswith("package.json")
+                and m_lower != "package.json"
+                and not m_lower.startswith("node_modules")
+                and m_lower not in seen_manifests
+            ):
+                if declared_ws_dirs and not any(m_lower.startswith(w.lower() + "/") for w in declared_ws_dirs):
+                    continue
+                seen_manifests.add(m_lower)
+                workspace_manifests.append(m)
+        workspace_manifests.sort()
+
+        # Determine whether a lockfile exists for npm reproducibility
+        has_npm_lockfile = False
+        if p_root is not None and p_root.exists() and p_root.is_dir():
+            if (p_root / "package-lock.json").exists() or (p_root / "npm-shrinkwrap.json").exists():
+                has_npm_lockfile = True
+        if not has_npm_lockfile:
+            all_manifest_keys: list[str] = []
+            if isinstance(candidate_manifests, (list, tuple, set)):
+                all_manifest_keys.extend(str(m).replace("\\", "/") for m in candidate_manifests)
+            if isinstance(inv_manifests, (list, tuple, set)):
+                all_manifest_keys.extend(str(m).replace("\\", "/") for m in inv_manifests)
+            if isinstance(existing, Mapping):
+                all_manifest_keys.extend(str(k).replace("\\", "/") for k in existing.keys())
+            for m in all_manifest_keys:
+                m_base = m.rsplit("/", 1)[-1].lower()
+                if m_base in ("package-lock.json", "npm-shrinkwrap.json"):
+                    has_npm_lockfile = True
+                    break
+
+        if not has_npm_lockfile and existing is None and p_root is None:
+            has_npm_lockfile = True
 
         if runtime.startswith("node"):
             base, port = "node:20-alpine", 3000
@@ -1286,10 +1425,20 @@ class GenerationService:
                     start = ["npm", "run", "start", f"--workspace={ws_dir}"]
                 else:
                     start = ["npm", "start"]
-                install = "npm install"
+                if has_npm_lockfile:
+                    install = "npm ci --prefer-offline --no-audit"
+                else:
+                    install = "npm install --prefer-offline --no-audit"
             else:
-                start = ["npm", "start"]
-                install = "npm ci --omit=dev || npm install --omit=dev"
+                if workspace_manifests:
+                    ws_dir = workspace_manifests[0].rsplit("/package.json", 1)[0]
+                    start = ["npm", "run", "start", f"--workspace={ws_dir}"]
+                else:
+                    start = ["npm", "start"]
+                if has_npm_lockfile:
+                    install = "npm ci --omit=dev"
+                else:
+                    install = "npm install --omit=dev"
         elif runtime.startswith("go"):
             base, start, port = "golang:1.24-alpine", ["/app/server"], 8080
             install = "go mod download"
@@ -1317,6 +1466,18 @@ class GenerationService:
                 base = configured_base
             else:
                 rejected_base = configured_base
+        arch = (
+            (getattr(compiled, "architecture", None) if compiled is not None else None)
+            or getattr(prompt, "architecture", None)
+            or (project.get("architecture") if isinstance(project, Mapping) else None)
+        )
+        if arch and getattr(arch, "services", None) and not settings.get("port"):
+            for s in arch.services:
+                if getattr(s, "port", None):
+                    with contextlib.suppress(TypeError, ValueError):
+                        port = int(s.port)
+                        break
+
         with contextlib.suppress(TypeError, ValueError):
             if settings.get("port") is not None:
                 configured = int(settings["port"])
@@ -1329,17 +1490,51 @@ class GenerationService:
             start = configured_start.split()
 
         if runtime.startswith("node"):
-            ws_copies = [f"COPY {m} ./{m}" for m in workspace_manifests]
+            ws_copies = []
+            for m in workspace_manifests:
+                if "/" in m:
+                    ws_dir = m.rsplit("/", 1)[0]
+                    if " " in ws_dir:
+                        ws_copies.append(f'COPY ["{ws_dir}/package*.json", "./{ws_dir}/"]')
+                    else:
+                        ws_copies.append(f"COPY {ws_dir}/package*.json ./{ws_dir}/")
+                else:
+                    ws_copies.append(f"COPY {m} ./{m}")
             if is_nextjs or is_frontend_or_build:
+                build_cmd = "npm run build"
+                root_has_build = False
+                if isinstance(existing, Mapping) and "package.json" in existing:
+                    raw_pkg = existing.get("package.json", "")
+                    with contextlib.suppress(Exception):
+                        pkg_data = json.loads(raw_pkg) if isinstance(raw_pkg, str) else raw_pkg
+                        if isinstance(pkg_data, dict) and "build" in pkg_data.get("scripts", {}):
+                            root_has_build = True
+
+                if not root_has_build and workspace_manifests:
+                    for m in workspace_manifests:
+                        ws_raw = existing.get(m, "")
+                        if ws_raw:
+                            with contextlib.suppress(Exception):
+                                ws_data = json.loads(ws_raw) if isinstance(ws_raw, str) else ws_raw
+                                if isinstance(ws_data, dict) and "build" in ws_data.get("scripts", {}):
+                                    ws_dir = m.rsplit("/package.json", 1)[0]
+                                    build_cmd = f"npm run build --workspace={ws_dir}"
+                                    break
+
                 builder = [
                     f"FROM {base} AS builder",
                     "WORKDIR /app",
+                    "ENV npm_config_fetch_retries=5",
+                    "ENV npm_config_fetch_retry_mintimeout=20000",
+                    "ENV npm_config_fetch_retry_maxtimeout=120000",
+                    "ENV npm_config_maxsockets=15",
                     "COPY package*.json ./",
                     *ws_copies,
                     f"RUN {install}",
                     "COPY . .",
                     "ENV NEXT_TELEMETRY_DISABLED=1",
-                    "RUN npm run build || true",
+                    'ENV NODE_OPTIONS="--max-old-space-size=1536"',
+                    f"RUN {build_cmd}",
                 ]
                 copy_forward = ["COPY --from=builder /app ./"]
                 health = (
@@ -1351,6 +1546,10 @@ class GenerationService:
                 builder = [
                     f"FROM {base} AS builder",
                     "WORKDIR /app",
+                    "ENV npm_config_fetch_retries=5",
+                    "ENV npm_config_fetch_retry_mintimeout=20000",
+                    "ENV npm_config_fetch_retry_maxtimeout=120000",
+                    "ENV npm_config_maxsockets=15",
                     "COPY package*.json ./",
                     *ws_copies,
                     f"RUN {install}",
@@ -1366,10 +1565,10 @@ class GenerationService:
                 f"FROM {base} AS builder",
                 "WORKDIR /app",
                 "COPY go.mod go.sum* ./",
-                "RUN go mod download || true",
+                "RUN go mod download",
                 "COPY . .",
                 "RUN CGO_ENABLED=0 go build -o /app/server . "
-                "|| CGO_ENABLED=0 go build -o /app/server ./cmd/... || true",
+                "|| CGO_ENABLED=0 go build -o /app/server ./cmd/...",
             ]
             copy_forward = ["COPY --from=builder /app/server /app/server"]
             health = (
@@ -1381,12 +1580,12 @@ class GenerationService:
                 f"FROM {base} AS builder",
                 "WORKDIR /app",
                 "COPY requirements.txt ./",
-                "RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt || true",
+                "RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt",
             ]
             copy_forward = [
                 "COPY --from=builder /wheels /wheels",
                 "RUN pip install --no-cache-dir --no-index --find-links=/wheels /wheels/* "
-                "2>/dev/null || pip install -r requirements.txt || true",
+                "2>/dev/null || pip install -r requirements.txt",
                 "COPY . .",
             ]
             health = (
@@ -1433,44 +1632,107 @@ class GenerationService:
         # loads rather than a name that merely satisfies the path check.
         lint_path, lint_body = lint_config(runtime)
 
+        strat = (
+            (getattr(compiled, "target_strategy", None) if compiled is not None else None)
+            or getattr(prompt, "target_strategy", None)
+            or (project.get("target_strategy") if isinstance(project, Mapping) else None)
+            or (project.get("strategy") if isinstance(project, Mapping) else None)
+            or (project.get("deployment_strategy") if isinstance(project, Mapping) else None)
+            or (
+                project.get("settings", {}).get("target_strategy")
+                if isinstance(project, Mapping) and isinstance(project.get("settings"), Mapping)
+                else None
+            )
+            or (
+                project.get("settings", {}).get("strategy")
+                if isinstance(project, Mapping) and isinstance(project.get("settings"), Mapping)
+                else None
+            )
+            or (
+                project.get("settings", {}).get("deployment_strategy")
+                if isinstance(project, Mapping) and isinstance(project.get("settings"), Mapping)
+                else None
+            )
+        )
+        strat_l = str(strat).strip().lower() if strat is not None else ""
+        is_docker_only = strat_l in ("docker_only", "docker") or "docker_only" in strat_l
+        if strat is not None:
+            if is_docker_only or strat_l in ("docker_github", "docker_github_vercel", "github_only", "vercel_only"):
+                is_k8s = False
+            elif "kubernetes" in strat_l or "k8s" in strat_l:
+                is_k8s = True
+            else:
+                is_k8s = False
+        else:
+            is_k8s = True
+
+        is_multi = getattr(arch, "is_multi_service", False) if arch is not None else False
+
+        k8s_files = (
+            (
+                GeneratedFile(path="k8s/deployment.yaml", content=_deployment_yaml(app_name, port)),
+                GeneratedFile(path="k8s/service.yaml", content=_service_yaml(app_name, port)),
+                GeneratedFile(path="k8s/ingress.yaml", content=_ingress_yaml(app_name, port)),
+                GeneratedFile(path=f"charts/{app_name}/Chart.yaml", content=helm_chart_yaml(app_name)),
+                GeneratedFile(path=f"charts/{app_name}/.helmignore", content=helm_chart_ignore()),
+                GeneratedFile(path=f"charts/{app_name}/values.yaml", content=helm_values_yaml(app_name, port)),
+                GeneratedFile(
+                    path=f"charts/{app_name}/templates/_helpers.tpl",
+                    content=helm_helpers_template(app_name),
+                ),
+                GeneratedFile(
+                    path=f"charts/{app_name}/templates/deployment.yaml",
+                    content=helm_deployment_template(app_name),
+                ),
+            )
+            if is_k8s
+            else ()
+        )
+
+        include_compose = (not is_docker_only) or is_multi or "compose" in strat_l
+        compose_files = (
+            (
+                GeneratedFile(
+                    path="docker-compose.yml",
+                    content=compose_file(
+                        app_name,
+                        port,
+                        GENERATED_IMAGE_TAG,
+                        architecture=arch,
+                    ),
+                ),
+            )
+            if include_compose
+            else ()
+        )
+
+        external_files = (
+            (
+                GeneratedFile(
+                    path=".github/workflows/build.yml",
+                    content=github_workflow_yaml(app_name, runtime="node" if runtime.startswith("node") else "python"),
+                ),
+                GeneratedFile(path="infra/main.tf", content=opentofu_main_tf(app_name, port)),
+            )
+            if not is_docker_only
+            else ()
+        )
+
         return (
             GeneratedFile(path="Dockerfile", content=dockerfile),
-            GeneratedFile(path="k8s/deployment.yaml", content=_deployment_yaml(app_name, port)),
-            GeneratedFile(path="k8s/service.yaml", content=_service_yaml(app_name, port)),
-            GeneratedFile(path="k8s/ingress.yaml", content=_ingress_yaml(app_name, port)),
-            # FR-24's other two halves. A Dockerfile and manifests with nothing to build the image and
-            # nothing to create the cluster is not a deployable project, and the agent's
-            # `validate.yaml`, `validate.helm` and `validate.tofu` operations had nothing to check.
-            GeneratedFile(
-                path=".github/workflows/build.yml",
-                # The runtime is threaded through so the workflow tests the language the image contains.
-                content=github_workflow_yaml(app_name, runtime="node" if runtime.startswith("node") else "python"),
-            ),
-            GeneratedFile(path=f"charts/{app_name}/Chart.yaml", content=helm_chart_yaml(app_name)),
-            # Declares what is not chart content, so a stray file beside a template cannot make
-            # `helm lint` reject a chart this platform just wrote.
-            GeneratedFile(path=f"charts/{app_name}/.helmignore", content=helm_chart_ignore()),
-            GeneratedFile(path=f"charts/{app_name}/values.yaml", content=helm_values_yaml(app_name, port)),
-            GeneratedFile(
-                path=f"charts/{app_name}/templates/_helpers.tpl",
-                content=helm_helpers_template(app_name),
-            ),
-            GeneratedFile(
-                path=f"charts/{app_name}/templates/deployment.yaml",
-                content=helm_deployment_template(app_name),
-            ),
-            GeneratedFile(path="infra/main.tf", content=opentofu_main_tf(app_name, port)),
-            # The six kinds `GENERATED_ARTIFACT_KINDS` declared generatable and nothing rendered. The
-            # readiness screen was offering these as fixes — `env_example_present` alone is 40 points —
-            # while no code path produced them, so the offer could never be fulfilled.
+            *k8s_files,
+            *external_files,
             GeneratedFile(path=".dockerignore", content=dockerignore(runtime)),
-            GeneratedFile(path=".env.example", content=env_example(app_name, port)),
-            GeneratedFile(path="SECURITY.md", content=security_policy(app_name)),
-            GeneratedFile(path=".gitleaks.toml", content=secret_scanner_config()),
-            GeneratedFile(path=lint_path, content=lint_body),
-            GeneratedFile(
-                path="docker-compose.yml",
-                content=compose_file(app_name, port, GENERATED_IMAGE_TAG),
+            GeneratedFile(path=".env.example", content=env_example(app_name, port, architecture=arch)),
+            *compose_files,
+            *(
+                (
+                    GeneratedFile(path="SECURITY.md", content=security_policy(app_name)),
+                    GeneratedFile(path=".gitleaks.toml", content=secret_scanner_config()),
+                    GeneratedFile(path=lint_path, content=lint_body),
+                )
+                if not is_docker_only
+                else ()
             ),
         )
 
@@ -1491,6 +1753,7 @@ class GenerationService:
         prompt: str,
         project: Mapping[str, Any] | None,
         existing: Mapping[str, str] | None,
+        compiled: Any | None = None,
     ) -> tuple[tuple[GeneratedFile, ...], tuple[str, ...]]:
         """Replace each rejected artifact with the audited template, when the template is better.
 
@@ -1557,6 +1820,16 @@ class GenerationService:
                         elif kind == "Ingress":
                             if not aligned_name and isinstance(meta, Mapping) and meta.get("name"):
                                 aligned_name = str(meta["name"])
+                        elif "services" in doc and isinstance(doc["services"], Mapping):
+                            for _sname, scfg in doc["services"].items():
+                                if isinstance(scfg, Mapping):
+                                    ports = scfg.get("ports") or []
+                                    for p in ports:
+                                        p_str = str(p)
+                                        container_p = p_str.split(":")[-1].strip().strip('"').strip("'")
+                                        if container_p.isdigit() and detected_port is None:
+                                            detected_port = int(container_p)
+                                            break
             elif norm == "Dockerfile" or norm.endswith("/Dockerfile"):
                 df_ports = _extract_dockerfile_container_ports(item.content)
                 if df_ports and detected_port is None:
@@ -1568,7 +1841,7 @@ class GenerationService:
             aligned_project["name"] = aligned_name
         aligned_project["settings"] = aligned_settings
 
-        floor = {item.path: item.content for item in self._render(prompt, aligned_project)}
+        floor = {item.path: item.content for item in self._render(prompt, aligned_project, compiled=compiled, existing=existing)}
         candidates: dict[str, str] = {}
         for path in rejected:
             body = floor.get(path)
@@ -1617,7 +1890,7 @@ class GenerationService:
         cheap and offline and actionable by a repair iteration; the agent's is "will the real tools
         accept it".
         """
-        findings = list(validate_artifacts(files))
+        findings = list(validate_artifacts(files, existing=existing))
         # A SECOND QUESTION, ASKED IN THE SAME PLACE. `validate_artifacts` answers "is this document
         # well formed and the right shape"; a 345-byte Deployment with no probes, no resource limits
         # and `:latest` passes that and is still strictly worse than the 1301-byte one it replaces.

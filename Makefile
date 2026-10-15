@@ -47,7 +47,7 @@ test-backend: ## Run Python backend tests
 	@# anything: a test command that mutated the developer's environment would produce results that
 	@# depend on state they did not choose. See scripts/check-test-services.sh.
 	@bash scripts/check-test-services.sh
-	@cd backend && .venv/Scripts/python -m pytest tests/ -q
+	@cd backend && if [ -x .venv/bin/python ]; then .venv/bin/python -m pytest tests/ -q; elif [ -x .venv/Scripts/python.exe ]; then .venv/Scripts/python.exe -m pytest tests/ -q; elif [ -x .venv/Scripts/python ]; then .venv/Scripts/python -m pytest tests/ -q; else python3 -m pytest tests/ -q; fi
 
 # ─── Lint targets ───────────────────────────────────────────────────────────
 lint: lint-agent lint-backend lint-frontend lint-chokepoint ## Lint all components
@@ -59,7 +59,7 @@ lint-chokepoint: ## Assert the mutation chokepoint is unbypassable (design §2.2
 .PHONY: check-phase-references
 check-phase-references: ## Assert no document names a phase or subsection the plan does not have
 	@printf '==> check-phase-references: every phase reference must resolve against the phase plan\n'
-	@python scripts/check-phase-references.py
+	@if command -v python3 >/dev/null 2>&1; then python3 scripts/check-phase-references.py; else python scripts/check-phase-references.py; fi
 
 lint-agent: ## Lint Go agent with golangci-lint
 	@printf '==> lint-agent: golangci-lint v1.62.2 from agent/tools (checksum-verified)\n'

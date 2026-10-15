@@ -41,7 +41,7 @@ from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
 from ..core.db import get_session
 from ..core.errors import forbidden_problem
-from ..core.index_evidence import load_index_evidence
+from ..core import index_evidence
 from ..core.readiness import ReadinessEngine
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from ..governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, MutationRequest
@@ -111,6 +111,7 @@ class GenerationRequest(BaseModel):
     #: nothing, which is the same outcome as asking for a check that already passes; rejecting the
     #: request would make a stale browser tab an error rather than a no-op.
     target_checks: list[str] | None = Field(default=None, max_length=64)
+    target_strategy: str | None = Field(default=None, max_length=128)
 
 
 def _service(request: Request) -> GenerationService:
@@ -194,7 +195,23 @@ async def _load_project_for_generation(session: AsyncSession, project_id: uuid.U
         text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
         {"p": project_id},
     )
-    data["inventory"] = inv_res.scalar_one_or_none() or {}
+    inv = inv_res.scalar_one_or_none() or {}
+    if not inv.get("manifests"):
+        with contextlib.suppress(Exception):
+            ft_res = await session.execute(
+                text(
+                    "SELECT path FROM file_tree WHERE project_id = :p AND ("
+                    "path LIKE '%package.json' OR path LIKE '%package-lock.json' OR "
+                    "path LIKE '%requirements.txt' OR path LIKE '%pyproject.toml' OR "
+                    "path LIKE '%go.mod' OR path LIKE '%Cargo.toml')"
+                ),
+                {"p": project_id},
+            )
+            found_manifests = [str(r[0]).replace("\\", "/") for r in ft_res.fetchall()]
+            if found_manifests:
+                inv = dict(inv)
+                inv["manifests"] = sorted(found_manifests)
+    data["inventory"] = inv
     return data
 
 
@@ -286,10 +303,12 @@ async def create_generation_run(
         # prohibitions that describe how generated infrastructure goes wrong. A model asked for "a
         # Dockerfile" with no facts has to guess the language, the entry point and the port, and a guess
         # that reads plausibly is indistinguishable from a fact until it fails.
+        effective_strat = body.target_strategy or ((project_row.get("settings") or {}).get("deployment_strategy") if project_row else None)
         compiled, existing_contents, repair_prompts = await _compile_generation_plan(
             session,
             project_id=body.project_id,
             selected_check_ids=body.target_checks,
+            target_strategy=effective_strat,
         )
         # 2.13: THIS PROJECT'S LEARNED PREFERENCES, injected into the instruction.
         #
@@ -511,6 +530,7 @@ async def _compile_generation_plan(
     *,
     project_id: uuid.UUID,
     selected_check_ids: list[str] | None,
+    target_strategy: str | None = None,
 ) -> tuple[CompiledPrompt | None, Mapping[str, str], dict[str, CompiledPrompt]]:
     """Build the instruction from this project's own index and its failing checks.
 
@@ -519,16 +539,70 @@ async def _compile_generation_plan(
     template-with-substitutions this compiler exists to replace. The service then uses the older
     free-text path, which is honest about having nothing to ground itself in.
     """
-    evidence = await load_index_evidence(session, project_id=project_id)
+    evidence = await index_evidence.load_index_evidence(session, project_id=project_id)
+    if not evidence.paths:
+        try:
+            proj_res = await session.execute(
+                text("SELECT path, tenant_id FROM projects WHERE id = :p"),
+                {"p": project_id},
+            )
+            proj_row = proj_res.mappings().first()
+            if proj_row and proj_row.get("path"):
+                from ..deployments.autonomous_gates import resolve_workspace_path
+                from ..deployments.autonomous_source import scan_workspace_to_report
+                from ..analysis.indexer import persist_scan_report
+
+                ws_path = resolve_workspace_path(proj_row["path"])
+                if ws_path.exists() and ws_path.is_dir():
+                    report = scan_workspace_to_report(ws_path)
+                    if report and getattr(report, "files", None):
+                        tenant_id = proj_row.get("tenant_id")
+                        await persist_scan_report(
+                            session,
+                            project_id=project_id,
+                            tenant_id=tenant_id,
+                            report=report,
+                            embedder=None,
+                            embedder_absent_reason="Direct workspace scan fallback for generation prompt compiler",
+                        )
+                        await session.flush()
+                        evidence = await index_evidence.load_index_evidence(session, project_id=project_id)
+        except Exception as scan_err:
+            logger.warning("Direct workspace scan fallback in _compile_generation_plan failed: %s", scan_err)
+
     if not evidence.paths:
         # No index: no facts to compile from, and no stored text to compare a rewrite against.
         return None, {}, {}
+
     inventory = (
         await session.execute(
             text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
             {"p": project_id},
         )
     ).scalar_one_or_none() or {}
+
+    if not inventory.get("manifests") and evidence.paths:
+        manifests_from_paths = [
+            p
+            for p in evidence.paths
+            if any(
+                p.endswith(m) or p == m
+                for m in (
+                    "package.json",
+                    "package-lock.json",
+                    "pnpm-lock.yaml",
+                    "yarn.lock",
+                    "requirements.txt",
+                    "pyproject.toml",
+                    "go.mod",
+                    "Cargo.toml",
+                    "pnpm-workspace.yaml",
+                )
+            )
+        ]
+        if manifests_from_paths:
+            inventory = dict(inventory)
+            inventory["manifests"] = sorted(manifests_from_paths)
     # The project's own name, which is the fact that fills the one placeholder the findings table
     # carries: a chart directory. Without it `charts/<name>/Chart.yaml` would reach the model verbatim
     # and the model would either invent a name or write the angle brackets into the tree.
@@ -547,6 +621,7 @@ async def _compile_generation_plan(
             inventory=inventory,
             selected_check_ids=selected_check_ids,
             project_name=str(project_name),
+            target_strategy=target_strategy,
         ),
         evidence.contents,
         # ONE PROMPT PER ARTIFACT, for the repair loop. Built here, from the SAME readiness report that
@@ -559,6 +634,7 @@ async def _compile_generation_plan(
             inventory=inventory,
             selected_check_ids=selected_check_ids,
             project_name=str(project_name),
+            target_strategy=target_strategy,
         ),
     )
 

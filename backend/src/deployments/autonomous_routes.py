@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -33,7 +34,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
@@ -63,7 +64,7 @@ router = APIRouter(
     dependencies=[Depends(require_principal)],
 )
 
-_IDLE_KEEP_ALIVE_SECONDS = 15.0
+_IDLE_KEEP_ALIVE_SECONDS = float(os.getenv("FORGEOPS_SSE_KEEPALIVE_SECONDS", "15.0"))
 _MAX_STREAM_TIMEOUT_SECONDS = 3600.0
 
 
@@ -119,7 +120,7 @@ def _map_event_type_to_sse(event_type: str) -> SSEEventType:
         return SSEEventType.STATUS
     if norm in ("stage_transition", "stage_started", "stage_completed", "progress_updated"):
         return SSEEventType.PROGRESS
-    if norm in ("log", "log_emitted"):
+    if norm in ("log", "log_emitted", "log_batch"):
         return SSEEventType.LOG
     if norm in ("run_succeeded", "run_completed"):
         return SSEEventType.COMPLETE
@@ -250,6 +251,86 @@ async def start_run(
             ),
         )
 
+    # Preflight Source Preparation: if project requires a repository clone, dispatch it through governance chokepoint
+    proj_stmt = text("SELECT path, repo_url, settings FROM projects WHERE id = :id")
+    proj_res = await session.execute(proj_stmt, {"id": project_id})
+    proj_row = proj_res.mappings().first()
+    if proj_row:
+        p_settings = proj_row.get("settings") or {}
+        p_clone_state = p_settings.get("clone_state")
+        if p_clone_state == "cloning":
+            cs_stmt = text(
+                "SELECT id, status FROM change_sets "
+                "WHERE project_id = :p AND operation = 'repository.clone' "
+                "ORDER BY created_at DESC LIMIT 1"
+            )
+            cs_res = await session.execute(cs_stmt, {"p": project_id})
+            cs_row = cs_res.mappings().first()
+            if cs_row and cs_row.get("status") == "applied":
+                await session.execute(
+                    text("UPDATE projects SET settings = settings - 'clone_state' WHERE id = :id"),
+                    {"id": project_id},
+                )
+                p_clone_state = None
+            elif not cs_row or cs_row.get("status") in ("rolled_back", "rejected"):
+                p_clone_state = "clone_failed"
+
+        if p_clone_state in ("awaiting_clone", "clone_failed"):
+            chokepoint = getattr(request.app.state, "governance_chokepoint", None)
+            link_service = getattr(request.app.state, "github_link_service", None)
+            if chokepoint is not None and link_service is not None and p_settings.get("repo_full_name"):
+                try:
+                    stored_path = str(proj_row.get("path") or "")
+                    directory = stored_path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+                    parent = stored_path[: len(stored_path) - len(directory)].rstrip("/\\")
+                    import httpx
+
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+                        token = await link_service.usable_token(
+                            session, user_id=principal.user_id, tenant_id=principal.tenant_id, client=client
+                        )
+
+                    submission = await chokepoint.clone_repository(
+                        session,
+                        project_id=project_id,
+                        principal=principal,
+                        repo_full_name=str(p_settings["repo_full_name"]),
+                        clone_url=str(p_settings.get("clone_url") or proj_row.get("repo_url") or ""),
+                        parent_directory=parent,
+                        directory_name=directory,
+                        branch=str(p_settings.get("repo_default_branch") or "main"),
+                        credential=token,
+                        reason=f"preflight clone for autonomous deploy {run.id}",
+                        environment="dev",
+                    )
+                    next_state = "cloning" if submission.outcome == "applying" else "awaiting_clone"
+                    await session.execute(
+                        text(
+                            "UPDATE projects SET settings = jsonb_set(settings, '{clone_state}', "
+                            "to_jsonb(CAST(:state AS text))) WHERE id = :id"
+                        ),
+                        {"state": next_state, "id": project_id},
+                    )
+                    source_prep_cfg = dict(run.configuration.get("source_preparation") or {})
+                    source_prep_cfg.update(
+                        {
+                            "status": "cloning_repository",
+                            "status_label": "Cloning repository",
+                            "change_set_id": str(submission.change_set_id),
+                            "repo_full_name": str(p_settings.get("repo_full_name") or ""),
+                            "clone_url": str(p_settings.get("clone_url") or proj_row.get("repo_url") or ""),
+                            "branch": str(p_settings.get("repo_default_branch") or "main"),
+                            "workspace_path": stored_path,
+                        }
+                    )
+                    run.configuration["source_preparation"] = source_prep_cfg
+                    from sqlalchemy.orm.attributes import flag_modified
+
+                    flag_modified(run, "configuration")
+                    await session.flush()
+                except Exception as clone_err:
+                    logger.warning("Could not pre-dispatch repository clone in start_run: %s", clone_err)
+
     now = datetime.now(UTC)
     run.status = "running"
     run.started_at = now
@@ -355,21 +436,14 @@ async def cancel_run(
             detail=f"Autonomous deployment run '{run_id}' not found in project '{project_id}'.",
         )
 
-    now = datetime.now(UTC)
+    settlement = CancellationSettlement()
+
     if run.status == "pending":
-        run.status = "cancelled"
-        run.completed_at = now
-        run.outbox_sequence_counter += 1
-        outbox = AutonomousDeploymentOutbox(
-            run_id=run.id,
-            event_seq=run.outbox_sequence_counter,
-            event_type="run_cancelled",
-            payload={"run_id": str(run.id), "status": "cancelled", "completed_at": now.isoformat()},
-            status="pending",
+        await settlement.settle_cancellation(
+            session,
+            run=run,
+            reason="Cancelled before execution",
         )
-        session.add(outbox)
-        session.add(run)
-        await session.flush()
     elif run.status == "running":
         run.status = "cancelling"
         run.outbox_sequence_counter += 1
@@ -382,11 +456,18 @@ async def cancel_run(
         )
         session.add(outbox)
         session.add(run)
-        settlement = CancellationSettlement()
+        await session.flush()
         with contextlib.suppress(Exception):
             await settlement.terminate_processes(run.id, grace_period_seconds=0.1)
-    elif run.status in ("cancelling", "cancelled"):
-        pass  # Already cancelling or cancelled
+    elif run.status == "cancelling":
+        # If already cancelling, cancelling again immediately settles it cleanly to cancelled
+        await settlement.settle_cancellation(
+            session,
+            run=run,
+            reason="Settled repeatedly cancelled deployment run",
+        )
+    elif run.status == "cancelled":
+        pass  # Already cancelled
     else:
         raise problem(
             "autonomous-run-conflict",
@@ -445,6 +526,39 @@ async def retry_run(
         status_code=status.HTTP_201_CREATED,
         content=json.loads(resp.model_dump_json(by_alias=True)),
     )
+
+
+@router.post(
+    "/{run_id}/reconcile",
+    response_model=AutonomousRunPublicResponse,
+    summary="Reconcile an existing cloud deployment stage (e.g. Vercel) and verify without redeploying",
+)
+async def reconcile_run_endpoint(
+    project_id: uuid.UUID,
+    run_id: uuid.UUID,
+    request: Request,
+    principal: Annotated[Principal, Depends(require_principal)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AutonomousRunPublicResponse:
+    """Reconciles in-progress or timed-out cloud deployments with live provider status without redeploying."""
+    service = AutonomousDeploymentService()
+    run = await service.get_run(session, project_id=project_id, run_id=run_id)
+    if run is None:
+        raise problem(
+            "deployment-absent",
+            detail=f"Autonomous deployment run '{run_id}' not found in project '{project_id}'.",
+        )
+
+    from .autonomous_recovery import reconcile_and_verify_run
+    redis = getattr(request.app.state, "redis", None)
+    context = {"redis": redis}
+    ok, msg = await reconcile_and_verify_run(session, run, context=context)
+
+    refreshed_run = await service.get_run(session, project_id=project_id, run_id=run_id)
+    agent_connected = await _check_agent_connected(session, request.app.state, project_id)
+    resp = AutonomousRunPublicResponse.model_validate(refreshed_run or run)
+    resp.agent_connected = agent_connected
+    return resp
 
 
 @router.get(
@@ -516,7 +630,7 @@ async def stream_events(
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
         raise problem(
-            "dependency-unavailable",
+            "pipeline-engine-absent",
             detail="Redis client is not configured; real-time event streaming is unavailable.",
         )
 
@@ -525,14 +639,17 @@ async def stream_events(
         pubsub = redis.pubsub()
         await pubsub.subscribe(channel)
 
-        # 1. Determine PostgreSQL high-water mark
+        # 1. Emit an initial transport keepalive comment to flush HTTP headers immediately
+        yield b": keep-alive\n\n"
+
+        # 2. Determine PostgreSQL high-water mark
         hwm_stmt = select(func.max(AutonomousDeploymentOutbox.event_seq)).where(
             AutonomousDeploymentOutbox.run_id == run_id
         )
         hwm_result = await session.execute(hwm_stmt)
         high_water_mark = hwm_result.scalar() or 0
 
-        # 2. Replay historical events from PostgreSQL
+        # 3. Replay historical events from PostgreSQL
         replay_stmt = (
             select(AutonomousDeploymentOutbox)
             .where(
@@ -564,7 +681,7 @@ async def stream_events(
                 await pubsub.close()
                 return
 
-        # 3. Stream live events from Redis pub/sub
+        # 4. Stream live events from Redis pub/sub with periodic keep-alive comments
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _MAX_STREAM_TIMEOUT_SECONDS
 
@@ -578,6 +695,7 @@ async def stream_events(
                     timeout=_IDLE_KEEP_ALIVE_SECONDS,
                 )
                 if message is None:
+                    # Emit transport heartbeat comment on idle timeout
                     yield b": keep-alive\n\n"
                     continue
 
@@ -609,6 +727,8 @@ async def stream_events(
 
                 if ev_type in ("run_succeeded", "run_failed", "run_cancelled", "run_completed"):
                     break
+        except (asyncio.CancelledError, GeneratorExit):
+            pass
         finally:
             with contextlib.suppress(Exception):
                 await pubsub.unsubscribe(channel)
@@ -617,7 +737,11 @@ async def stream_events(
     return StreamingResponse(
         sse_generator(),
         media_type=SSE_MEDIA_TYPE,
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

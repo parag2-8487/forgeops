@@ -31,6 +31,7 @@ THE FOUR PROPERTIES THAT MAKE IT TRUSTWORTHY
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Final
 
@@ -109,10 +110,25 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "(for example: `COPY --from=builder /app/dist ./` or `COPY --from=builder /app/build "
         "./`). Never use relative paths like `./dist` or `dist`, which resolve to `/` "
         "(container root) and cause build failures.",
+        "SPACES IN PATHS REQUIRE JSON ARRAY SYNTAX: If any workspace directory or path contains a space "
+        "(such as 'live classroom'), you MUST use Docker JSON array syntax for COPY instructions: "
+        'COPY ["live classroom/package*.json", "./live classroom/"] or COPY ["live classroom", "./live classroom"]. '
+        "NEVER write bare unquoted COPY with spaces (e.g. NEVER write `COPY live classroom/... ./live classroom/`), "
+        "because Docker splits on spaces and treats 'live' as a separate missing source file.",
+        "MONOREPO WORKDIR ORDER: Always declare `WORKDIR /app` BEFORE copying package manifests and installing dependencies. "
+        "First declare `WORKDIR /app`, then copy the root `package*.json ./`, then copy workspace manifests, then run `npm ci`.",
+        "For Next.js applications (framework 'Next.js' or having `next` in dependencies): "
+        "Next.js outputs to `.next` (not `dist`). Multi-stage Dockerfiles must copy the built application "
+        "(e.g. `COPY --from=builder /app ./`) and start with `CMD [\"npm\", \"run\", \"start\"]` "
+        "or standalone output (`node server.js`). Never use `npx serve -s dist` for Next.js applications.",
         "For frontend client applications (Vite, React, Vue, Svelte, static web apps) without a backend server, "
         "if you run `npm start` in the final image, you MUST also `COPY package*.json ./` to the final stage so npm "
         "can find package.json. Better yet, serve the built static directory with a lightweight static server "
         "(e.g. `npx serve -s dist -l $PORT`) or copy `package*.json` so `npm` commands do not fail with ENOENT.",
+        "For monorepos or repositories with workspace packages (e.g. package.json `workspaces` or nested packages), "
+        "you MUST copy BOTH the root `package*.json` AND every workspace package manifest (e.g. `COPY <workspace>/package*.json ./<workspace>/`) "
+        "BEFORE executing `RUN npm ci` or `RUN npm install`. Running install before copying workspace manifests fails with missing executables "
+        "and ENOENT errors because workspace dependencies cannot be resolved.",
         "Install with the package manager this repository's lockfile names, using that manager's own "
         "install command. Do not invent flags it does not have, and never run an install command whose "
         "lockfile is absent from section 1.",
@@ -145,9 +161,10 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "the dependency install command. Installing without workspace manifests "
         "causes missing CLI executables and exit code 127 during the build stage.",
         "SSR RUNTIME STAGE: For Fullstack SSR frameworks without standalone output, "
-        "conventional deployments require the built application tree and runtime dependencies. "
         "Never copy `/app/dist` when the framework does not output to `dist`; copy the built application "
         "(`COPY --from=builder /app ./`) or use a single-stage build.",
+        "NON-ROOT USER: Drop root privileges in the final runtime stage with an explicit non-root USER instruction "
+        "(for example: `USER 1001` or `USER 10001`). Never leave the final stage running as root.",
         "The file contains at least one real instruction, not only comments.",
     ),
     "k8s": (
@@ -276,6 +293,323 @@ LINT_CONFIG_BY_LANGUAGE: Final[Mapping[str, str]] = {
     "ruby": ".rubocop.yml",
     "php": ".php-cs-fixer.php",
 }
+
+
+class ServiceSpec(BaseModel):
+    """Specification of an individual application service within a project."""
+
+    name: str
+    directory: str
+    dockerfile_path: str
+    port: int
+    host_port: int | None = None
+    environment_vars: tuple[str, ...] = ()
+    depends_on: tuple[str, ...] = ()
+    healthcheck_path: str = "/"
+
+    model_config = {"frozen": True}
+
+
+class ProjectArchitecture(BaseModel):
+    """Structural analysis of repository services, monorepo workspaces, and backing stores."""
+
+    is_multi_service: bool
+    services: tuple[ServiceSpec, ...] = ()
+    databases: tuple[str, ...] = ()
+    has_workspaces: bool = False
+    workspace_roots: tuple[str, ...] = ()
+    existing_compose_path: str | None = None
+
+    model_config = {"frozen": True}
+
+
+def _detect_grounded_databases(
+    contents_map: Mapping[str, str],
+    compose_path: str | None = None,
+) -> list[str]:
+    """Detects database/cache services only when grounded evidence exists in dependencies, environment, or compose."""
+    import json
+    databases: set[str] = set()
+
+    # 1. Environment evidence (.env, .env.example, etc.)
+    env_vars: set[str] = set()
+    for path, content in contents_map.items():
+        base = path.rsplit("/", 1)[-1].lower()
+        if base.startswith(".env") or "env" in base:
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#") and "=" in stripped:
+                    env_vars.add(stripped.split("=", 1)[0].strip().upper())
+
+    if any(k in env_vars for k in ("POSTGRES_DB", "POSTGRES_PASSWORD", "DATABASE_URL", "POSTGRESQL_URL", "PGDATABASE")):
+        databases.add("postgres")
+    if any(k in env_vars for k in ("REDIS_URL", "REDIS_HOST", "REDIS_PORT")):
+        databases.add("redis")
+    if any(k in env_vars for k in ("MONGODB_URI", "MONGO_URL", "MONGODB_URL")):
+        databases.add("mongodb")
+    if any(k in env_vars for k in ("MYSQL_DATABASE", "MYSQL_URL", "MYSQL_PASSWORD")):
+        databases.add("mysql")
+
+    # 2. Existing compose file evidence
+    if compose_path and contents_map.get(compose_path):
+        raw_compose = contents_map[compose_path].lower()
+        if any(img in raw_compose for img in ("postgres:", "postgresql:", "image: postgres")):
+            databases.add("postgres")
+        if any(img in raw_compose for img in ("redis:", "image: redis")):
+            databases.add("redis")
+        if any(img in raw_compose for img in ("mongo:", "mongodb:", "image: mongo")):
+            databases.add("mongodb")
+        if any(img in raw_compose for img in ("mysql:", "mariadb:", "image: mysql")):
+            databases.add("mysql")
+
+    # 3. Explicit dependency manifests (exact package matching, never loose substrings)
+    for path, content in contents_map.items():
+        base = path.rsplit("/", 1)[-1].lower()
+        if base == "package.json":
+            try:
+                pkg_data = json.loads(content)
+                deps = {
+                    **pkg_data.get("dependencies", {}),
+                    **pkg_data.get("devDependencies", {}),
+                }
+                deps_lower = {k.lower() for k in deps}
+                if any(k in deps_lower for k in ("pg", "postgres")):
+                    databases.add("postgres")
+                elif any(k in deps_lower for k in ("@prisma/client", "typeorm", "sequelize")):
+                    if "postgres" in content.lower() or "postgresql" in content.lower():
+                        databases.add("postgres")
+                if any(k in deps_lower for k in ("redis", "ioredis", "bull", "bullmq", "connect-redis")):
+                    databases.add("redis")
+                if any(k in deps_lower for k in ("mongodb", "mongoose")):
+                    databases.add("mongodb")
+                if any(k in deps_lower for k in ("mysql", "mysql2")):
+                    databases.add("mysql")
+            except Exception:
+                pass
+        elif base in ("requirements.txt", "pyproject.toml"):
+            lines_lower = [line.strip().lower() for line in content.splitlines()]
+            for line in lines_lower:
+                if line.startswith("#"):
+                    continue
+                req_pkg = line.split("==")[0].split(">=")[0].split("<=")[0].split("~=")[0].strip()
+                if req_pkg in ("psycopg2", "psycopg", "psycopg2-binary", "asyncpg"):
+                    databases.add("postgres")
+                elif req_pkg in ("redis", "aioredis"):
+                    databases.add("redis")
+                elif req_pkg in ("pymongo", "motor"):
+                    databases.add("mongodb")
+                elif req_pkg in ("mysqlclient", "pymysql"):
+                    databases.add("mysql")
+
+    return sorted(databases)
+
+
+def _detect_service_port(
+    sname: str,
+    sdir: str,
+    manifest_path: str,
+    manifest_content: str,
+    default_port: int = 8000,
+) -> int:
+    """Grounds service listening port via framework and manifest inspection."""
+    import json
+    import re
+
+    base_manifest = manifest_path.rsplit("/", 1)[-1].lower()
+
+    if base_manifest == "package.json":
+        if manifest_content:
+            try:
+                pkg = json.loads(manifest_content)
+                deps = {
+                    **pkg.get("dependencies", {}),
+                    **pkg.get("devDependencies", {}),
+                }
+                deps_keys = {k.lower() for k in deps}
+                scripts = pkg.get("scripts", {})
+                start_cmd = str(scripts.get("start", "")).lower()
+                server_cmd = str(scripts.get("server", "")).lower()
+                prod_cmd = f"{start_cmd} {server_cmd}".strip()
+
+                # Check if explicit port is passed in production start/server scripts (e.g. -p 8080 or --port 8080)
+                if prod_cmd:
+                    port_match = re.search(r"(?:-p|--port)\s+([0-9]{2,5})", prod_cmd)
+                    if port_match:
+                        p = int(port_match.group(1))
+                        if 1 <= p <= 65535:
+                            return p
+
+                # Next.js, React, Vite, Remix, Nuxt default to 3000
+                if any(k in deps_keys for k in ("next", "react", "react-scripts", "remix", "nuxt")):
+                    return 3000
+                if "vite" in deps_keys:
+                    return 3000
+                scripts_str = " ".join(str(v) for v in scripts.values()).lower()
+                if "next " in scripts_str or "next" in scripts_str:
+                    return 3000
+
+                # Check if explicit port is passed in other scripts
+                port_match = re.search(r"(?:-p|--port)\s+([0-9]{2,5})", scripts_str)
+                if port_match:
+                    p = int(port_match.group(1))
+                    if 1 <= p <= 65535:
+                        return p
+            except Exception:
+                pass
+        # Any Node.js service defaults to 3000, not 8000
+        return 3000
+
+    if base_manifest in ("requirements.txt", "pyproject.toml"):
+        return 8000
+
+    if base_manifest == "go.mod":
+        return 8080
+
+    if base_manifest == "cargo.toml":
+        return 8080
+
+    if any(fe in sname for fe in ("front", "client", "web", "ui")):
+        return 3000
+
+    return default_port
+
+
+def analyze_project_architecture(
+    paths: Sequence[str],
+    contents: Mapping[str, str] | None = None,
+    inventory: Mapping[str, Any] | None = None,
+) -> ProjectArchitecture:
+    """Analyzes indexed paths, manifest contents, and frameworks to detect single vs multi-service architecture."""
+    norm_paths = [p.replace("\\", "/").strip() for p in paths if p and p.strip()]
+    contents_map = contents or {}
+    inv = inventory or {}
+
+    # Check for existing compose file
+    compose_path: str | None = None
+    for p in norm_paths:
+        base = p.rsplit("/", 1)[-1].lower()
+        if base in ("docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml"):
+            compose_path = p
+            break
+
+    # Check for manifests across subdirectories
+    manifest_names = ("package.json", "requirements.txt", "pyproject.toml", "go.mod", "cargo.toml")
+    service_dirs: dict[str, str] = {}
+    root_manifests: list[str] = []
+
+    for p in norm_paths:
+        parts = p.split("/")
+        filename = parts[-1].lower()
+        if filename in manifest_names:
+            if len(parts) == 1:
+                root_manifests.append(p)
+            elif len(parts) == 2:
+                parent = parts[0]
+                if parent.lower() not in (
+                    ".git",
+                    "tests",
+                    "test",
+                    ".github",
+                    "node_modules",
+                    ".venv",
+                    "venv",
+                    "dist",
+                    "build",
+                ):
+                    service_dirs[parent] = p
+            elif len(parts) >= 3 and parts[0].lower() in ("packages", "services", "apps"):
+                svc_dir = f"{parts[0]}/{parts[1]}"
+                service_dirs[svc_dir] = p
+
+    # Check for root package workspaces (npm, yarn, pnpm)
+    has_workspaces = False
+    workspace_roots: list[str] = []
+    root_pkg_json = contents_map.get("package.json") or contents_map.get("PACKAGE.JSON")
+    if root_pkg_json:
+        try:
+            import json as _json
+
+            data = _json.loads(root_pkg_json)
+            ws = data.get("workspaces")
+            if ws:
+                has_workspaces = True
+                if isinstance(ws, list):
+                    workspace_roots = [str(w) for w in ws]
+                elif isinstance(ws, dict) and "packages" in ws:
+                    workspace_roots = [str(w) for w in ws["packages"]]
+        except Exception:
+            pass
+
+    # Detect databases / cache dependencies from explicit grounded evidence
+    databases = _detect_grounded_databases(contents_map, compose_path)
+
+    is_multi = False
+    if len(service_dirs) >= 2:
+        is_multi = True
+    elif len(service_dirs) == 1 and root_manifests and has_workspaces:
+        is_multi = True
+    elif compose_path and contents_map.get(compose_path):
+        raw_compose = contents_map[compose_path]
+        if "services:" in raw_compose:
+            lines = raw_compose.splitlines()
+            svc_lines = [
+                line
+                for line in lines
+                if line.startswith("  ") and not line.startswith("    ") and line.strip().endswith(":")
+            ]
+            if len(svc_lines) >= 2:
+                is_multi = True
+
+    specs: list[ServiceSpec] = []
+    allocated_host_ports: set[int] = set()
+
+    if is_multi and service_dirs:
+        for sdir, mpath in sorted(service_dirs.items()):
+            raw_sname = sdir.rsplit("/", 1)[-1].lower()
+            sname = _slugify(raw_sname) or "service"
+            df_path = f"{sdir}/Dockerfile" if f"{sdir}/Dockerfile" in norm_paths else "Dockerfile"
+            mcontent = contents_map.get(mpath, "")
+            port = _detect_service_port(sname, sdir, mpath, mcontent, default_port=8000)
+
+            # Eliminate host port collisions across sibling services while preserving container port
+            candidate_host_port = port
+            while candidate_host_port in allocated_host_ports:
+                candidate_host_port += 1
+            allocated_host_ports.add(candidate_host_port)
+
+            specs.append(
+                ServiceSpec(
+                    name=sname,
+                    directory=sdir,
+                    dockerfile_path=df_path,
+                    port=port,
+                    host_port=candidate_host_port,
+                )
+            )
+    elif not is_multi:
+        port_val = 3000 if any("node" in str(v).lower() for v in inv.get("languages", [])) else 8000
+        if root_manifests and contents_map.get(root_manifests[0]):
+            port_val = _detect_service_port(
+                "app", ".", root_manifests[0], contents_map[root_manifests[0]], default_port=port_val
+            )
+        specs.append(
+            ServiceSpec(
+                name="app",
+                directory=".",
+                dockerfile_path="Dockerfile",
+                port=port_val,
+                host_port=port_val,
+            )
+        )
+
+    return ProjectArchitecture(
+        is_multi_service=is_multi,
+        services=tuple(specs),
+        databases=tuple(sorted(list(set(databases)))),
+        has_workspaces=has_workspaces,
+        workspace_roots=tuple(workspace_roots),
+        existing_compose_path=compose_path,
+    )
 
 
 def _slugify(name: str) -> str:
@@ -417,6 +751,8 @@ class CompiledPrompt(BaseModel):
     #: One sentence naming what was done about the budget. Always populated, including when nothing had
     #: to be done, so a reader never has to infer it from the absence of a warning.
     budget_strategy: str = ""
+    target_strategy: str | None = None
+    architecture: ProjectArchitecture | None = None
 
     model_config = {"frozen": True}
 
@@ -574,6 +910,8 @@ def compile_repair_prompts(
     selected_check_ids: Sequence[str] | None = None,
     token_budget: int = 24_000,
     project_name: str = "",
+    target_strategy: str | None = None,
+    architecture: ProjectArchitecture | None = None,
 ) -> dict[str, CompiledPrompt]:
     """One prompt per artifact, each carrying ONLY that artifact's requirements, keyed by write target.
 
@@ -611,12 +949,26 @@ def compile_repair_prompts(
         wanted = set(selected_check_ids)
         failing = [c for c in failing if c.id in wanted]
 
+    strat = (target_strategy or "").lower()
+    if strat in ("docker_only", "docker") or "docker_only" in strat:
+        is_k8s_strategy = False
+    elif "kubernetes" in strat or "k8s" in strat:
+        is_k8s_strategy = True
+    elif target_strategy is not None:
+        is_k8s_strategy = False
+    else:
+        is_k8s_strategy = True
+
     by_kind: dict[str, list[str]] = {}
     for check in failing:
         explanation = CHECK_EXPLANATIONS.get(check.id)
         if explanation is None or not explanation.artifact or not check.generatable:
             # Unaddressable here for the same reason `compile_prompt` skips it: no generated artifact
             # fixes it, so there is no repair prompt to build.
+            continue
+        if not is_k8s_strategy and explanation.artifact in ("k8s", "helm"):
+            continue
+        if (strat in ("docker_only", "docker") or "docker_only" in strat) and explanation.artifact in ("opentofu", "github_workflow"):
             continue
         by_kind.setdefault(explanation.artifact, []).append(check.id)
 
@@ -631,6 +983,8 @@ def compile_repair_prompts(
             token_budget=token_budget,
             project_name=project_name,
             include_companions=False,
+            target_strategy=target_strategy,
+            architecture=architecture,
         )
         for target in one.write_targets:
             # `setdefault`: the first kind to claim a path owns it. Two kinds naming one path would be
@@ -650,6 +1004,8 @@ def compile_prompt(
     max_write_targets: int = DEFAULT_MAX_WRITE_TARGETS,
     project_name: str = "",
     include_companions: bool = True,
+    target_strategy: str | None = None,
+    architecture: ProjectArchitecture | None = None,
 ) -> CompiledPrompt:
     """Build the instruction for the failing checks a generated artifact can satisfy.
 
@@ -660,6 +1016,17 @@ def compile_prompt(
     indexed = {p.replace("\\", "/") for p in paths}
     project_slug = _slugify(project_name)
     lowered = {p.lower(): p for p in indexed}
+
+    arch = architecture or analyze_project_architecture(paths, contents, inventory)
+    strat = (target_strategy or "").lower()
+    if strat in ("docker_only", "docker") or "docker_only" in strat:
+        is_k8s_strategy = False
+    elif "kubernetes" in strat or "k8s" in strat:
+        is_k8s_strategy = True
+    elif target_strategy is not None:
+        is_k8s_strategy = False
+    else:
+        is_k8s_strategy = True
 
     failing = [c for c in checks if not c.passed]
     if selected_check_ids is not None:
@@ -674,6 +1041,18 @@ def compile_prompt(
         if explanation is None or not explanation.artifact or not check.generatable:
             reason = check.blocked_because or "no generated artifact addresses this check"
             unaddressable.append(f"{check.id}: {reason}")
+            continue
+
+        if not is_k8s_strategy and explanation.artifact in ("k8s", "helm"):
+            unaddressable.append(
+                f"{check.id}: target deployment strategy '{target_strategy}' does not target Kubernetes/Helm; manifests omitted"
+            )
+            continue
+
+        if (strat in ("docker_only", "docker") or "docker_only" in strat) and explanation.artifact in ("opentofu", "github_workflow"):
+            unaddressable.append(
+                f"{check.id}: target deployment strategy '{target_strategy}' is local Docker-only; external infrastructure/workflow manifests omitted"
+            )
             continue
 
         by_artifact.setdefault(explanation.artifact, []).append(check)
@@ -705,20 +1084,77 @@ def compile_prompt(
         body = contents.get(target.lower(), "") or contents.get(target, "")
         action = "modify" if existing else "create"
 
-        faults = tuple(
+        fault_list = [
             f"{c.found}{f' (line {c.line})' if c.line is not None else ''} â€” required: {c.looked_for}" for c in group
-        )
-        # THE BLOCKING RULES BESIDE THE FILE THEY GOVERN, not only in section 3.
-        #
-        # They were listed once, further down, under a heading about how files are checked. A 1.5b model
-        # given a 9,500-character instruction failed the SAME requirement on all three attempts â€” the
-        # Dockerfile's `USER` line â€” so the file was withheld every time and the user's most important
-        # recommendation went unaddressed. Attention falls off with distance from the point of writing, so
-        # the rule now sits directly under the path it applies to as well.
-        #
-        # Duplicated deliberately: repetition in a prompt is cheap, and a rule the model misses is not.
-        faults = faults + GATE_REQUIREMENTS.get(artifact, ())
+        ]
+        fault_list.extend(GATE_REQUIREMENTS.get(artifact, ()))
+
+        if artifact == "dockerfile":
+            ws_dirs: list[str] = []
+            root_pkg = contents.get("package.json", "")
+            if root_pkg:
+                with contextlib.suppress(Exception):
+                    import json
+                    pdata = json.loads(root_pkg)
+                    ws_val = pdata.get("workspaces")
+                    if isinstance(ws_val, list):
+                        ws_dirs = [w for w in ws_val if isinstance(w, str) and "*" not in w]
+                    elif isinstance(ws_val, dict) and "packages" in ws_val:
+                        ws_dirs = [w for w in ws_val["packages"] if isinstance(w, str) and "*" not in w]
+            if not ws_dirs:
+                ws_dirs = [
+                    p.rsplit("/package.json", 1)[0]
+                    for p in paths
+                    if p.endswith("package.json") and p != "package.json" and not p.startswith("node_modules")
+                ]
+            if ws_dirs:
+                copy_lines = []
+                for w in ws_dirs:
+                    if " " in w:
+                        copy_lines.append(f'COPY ["{w}/package*.json", "./{w}/"]')
+                    else:
+                        copy_lines.append(f"COPY {w}/package*.json ./{w}/")
+                fault_list.append(
+                    f"MONOREPO WORKSPACE MANIFESTS: This repository contains workspace packages ({', '.join(ws_dirs)}). "
+                    f"In the builder stage, you MUST copy the workspace package manifests:\n"
+                    + "\n".join(f"  {c}" for c in copy_lines)
+                    + "\nBEFORE executing `RUN npm ci` or `RUN npm install`. Running install before workspace manifests are copied fails."
+                )
+
+            main_port = arch.services[0].port if arch.services else (3000 if any("node" in str(l).lower() for l in inventory.get("languages", [])) else 8000)
+            fault_list.append(
+                f"LISTEN PORT: The application service listens on container port {main_port}. "
+                f"You MUST declare `EXPOSE {main_port}` in Dockerfile and configure `ENV PORT={main_port}`."
+            )
+
+        if artifact == "compose":
+            main_port = arch.services[0].port if arch.services else (3000 if any("node" in str(l).lower() for l in inventory.get("languages", [])) else 8000)
+            fault_list.append(
+                f"PORT ALIGNMENT: The application service listens on container port {main_port}. "
+                f"The compose service port mapping MUST target container port {main_port} (e.g. `\"{main_port}:{main_port}\"`) "
+                f"to match the Dockerfile EXPOSE {main_port} directive."
+            )
+            if arch.is_multi_service:
+                svc_names = ", ".join(s.name for s in arch.services)
+                fault_list.append(
+                    f"MULTI-SERVICE TOPOLOGY: This project is a multi-service architecture requiring Compose orchestration. "
+                    f"Define distinct services for: {svc_names}. Configure each service with its exact build context, "
+                    "container_name, ports, restart policies, and depends_on."
+                )
+                if arch.databases:
+                    db_names = ", ".join(arch.databases)
+                    fault_list.append(
+                        f"BACKING DATABASES: Define database service mappings for {db_names} with named volume persistence."
+                    )
+
+        faults = tuple(fault_list)
         quoted, line_count = _quote(target, body) if body else ("", 0)
+
+        # Prioritize compose for multi-service architectures so it survives count capping
+        base_weight = sum(CATEGORY_WEIGHTS.get(c.category, 0) + c.max_points for c in group)
+        if artifact == "compose" and (arch.is_multi_service or "compose" in strat):
+            base_weight += 200
+
         instructions.append(
             ArtifactInstruction(
                 path=existing or target,
@@ -738,7 +1174,7 @@ def compile_prompt(
                     if include_companions
                     else ()
                 ),
-                weight=sum(CATEGORY_WEIGHTS.get(c.category, 0) + c.max_points for c in group),
+                weight=base_weight,
             )
         )
 
@@ -994,6 +1430,8 @@ def compile_prompt(
         token_estimate=len(text) // CHARS_PER_TOKEN_ESTIMATE,
         token_budget=token_budget,
         budget_strategy=strategy,
+        target_strategy=target_strategy,
+        architecture=arch,
     )
 
 

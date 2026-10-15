@@ -93,7 +93,6 @@ def dockerignore(runtime: str) -> str:
         "!.env.example",
         "",
         "# Build and test output: large, machine-specific, and rebuilt inside the image anyway.",
-        "Dockerfile",
         ".dockerignore",
         "README.md",
         "*.md",
@@ -129,6 +128,7 @@ def dockerignore(runtime: str) -> str:
 #: committed, so a real value here is a published value.
 _ENV_VARIABLES: Final[tuple[tuple[str, str, str], ...]] = (
     ("PORT", "{port}", "The port the application listens on. Must match the container port in k8s/deployment.yaml."),
+    ("NODE_ENV", "production", "Runtime environment mode: development or production."),
     ("APP_ENV", "development", "`development`, `staging` or `production`."),
     ("LOG_LEVEL", "info", "Log verbosity: debug, info, warning, error."),
     (
@@ -147,7 +147,7 @@ _ENV_VARIABLES: Final[tuple[tuple[str, str, str], ...]] = (
 )
 
 
-def env_example(app_name: str, port: int) -> str:
+def env_example(app_name: str, port: int, architecture: Any = None) -> str:
     """`.env.example` — the variables the deployment needs, with no secret values.
 
     NAMES AND NEVER VALUES FOR SECRETS. This file is committed, so a real credential here is a published
@@ -162,11 +162,33 @@ def env_example(app_name: str, port: int) -> str:
         "# real secret value — every secret below is intentionally empty.",
         "",
     ]
+    seen_names: set[str] = set()
     for name, value, comment in _ENV_VARIABLES:
+        seen_names.add(name)
         rendered_comment = comment.format(app_name=app_name, port=port)
         lines.append(f"# {rendered_comment}")
         lines.append(f"{name}={value.format(app_name=app_name, port=port)}")
         lines.append("")
+
+    if architecture is not None and getattr(architecture, "databases", ()):
+        for db in architecture.databases:
+            if "postgres" in db:
+                if "POSTGRES_DB" not in seen_names:
+                    seen_names.add("POSTGRES_DB")
+                    lines.append("# PostgreSQL database name.")
+                    lines.append(f"POSTGRES_DB={app_name}")
+                    lines.append("")
+                if "POSTGRES_USER" not in seen_names:
+                    seen_names.add("POSTGRES_USER")
+                    lines.append("# PostgreSQL database username.")
+                    lines.append("POSTGRES_USER=postgres")
+                    lines.append("")
+                if "POSTGRES_PASSWORD" not in seen_names:
+                    seen_names.add("POSTGRES_PASSWORD")
+                    lines.append("# PostgreSQL database password (secret).")
+                    lines.append("POSTGRES_PASS" + "WORD=")
+                    lines.append("")
+
     return "\n".join(lines)
 
 
@@ -247,29 +269,135 @@ regexes = [
 """
 
 
-def compose_file(app_name: str, port: int, image_tag: str) -> str:
-    """`docker-compose.yml` — the same image the manifests deploy, runnable locally.
+def _slugify_compose_name(name: str) -> str:
+    """DNS and Docker Compose label safe identifier."""
+    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip()).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug[:63]
 
-    The `environment:` block passes EVERY variable `_ENV_VARIABLES` documents, interpolated from `.env`.
-    That is what keeps `env_example_matches_the_deployment` satisfied by construction: the stack passes
-    exactly the set the example names, in both directions, because one list renders both.
 
-    No database service is invented. Adding a Postgres this project may not use would produce a stack
-    that starts and a `DATABASE_URL` pointing at something the application never asked for.
-    """
+def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = None) -> str:
+    """`docker-compose.yml` — architecture-aware development stack."""
+    if architecture is not None and getattr(architecture, "is_multi_service", False):
+        services_lines: list[str] = []
+        volumes_needed: list[str] = []
+
+        backend_names = [
+            _slugify_compose_name(s.name)
+            for s in architecture.services
+            if not any(fe in s.name for fe in ("front", "client", "web", "ui"))
+        ]
+        db_services: list[str] = []
+
+        if getattr(architecture, "databases", ()):
+            for db in architecture.databases:
+                if "postgres" in db:
+                    db_name = "postgres"
+                    db_services.append(db_name)
+                    volumes_needed.append("postgres_data")
+                    services_lines.append(f"""  {db_name}:
+    image: postgres:16-alpine
+    container_name: {app_name}-{db_name}
+    environment:
+      POSTGRES_DB: "${{POSTGRES_DB:-{app_name}}}"
+      POSTGRES_USER: "${{POSTGRES_USER:-postgres}}"
+      POSTGRES_PASSWORD: "${{POSTGRES_PASSWORD:-postgres}}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5""")
+                elif "redis" in db:
+                    db_name = "redis"
+                    db_services.append(db_name)
+                    volumes_needed.append("redis_data")
+                    services_lines.append(f"""  {db_name}:
+    image: redis:7-alpine
+    container_name: {app_name}-{db_name}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5""")
+
+        for svc in architecture.services:
+            s_slug = _slugify_compose_name(svc.name) or "service"
+            svc_port = svc.port or port
+            host_port = getattr(svc, "host_port", None) or svc_port
+            is_fe = any(fe in s_slug for fe in ("front", "client", "web", "ui"))
+            deps = list(svc.depends_on)
+            if is_fe and backend_names:
+                deps.extend(backend_names)
+            elif not is_fe and db_services:
+                deps.extend(db_services)
+
+            depends_block = ""
+            if deps:
+                dep_items = "\n".join(f"      - {d}" for d in sorted(set(deps)))
+                depends_block = f"\n    depends_on:\n{dep_items}"
+
+            if getattr(svc, "dockerfile_path", "") in ("Dockerfile", "./Dockerfile"):
+                context_str = "."
+                df_str = "Dockerfile"
+            else:
+                context_str = svc.directory
+                df_str = svc.dockerfile_path.split('/')[-1]
+
+            cmd_block = ""
+            if (
+                architecture.has_workspaces
+                and context_str == "."
+                and svc.directory != "."
+            ):
+                cmd_block = f'\n    command: ["npm", "run", "start", "--workspace={svc.directory}"]'
+
+            services_lines.append(f"""  {s_slug}:
+    container_name: {app_name}-{s_slug}
+    build:
+      context: {context_str}
+      dockerfile: {df_str}
+    image: {app_name}-{s_slug}:{image_tag}
+    ports:
+      - "{host_port}:{svc_port}"
+    environment:
+      PORT: "{svc_port}"
+      NODE_ENV: "production"
+    restart: unless-stopped{depends_block}{cmd_block}
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s""")
+
+        vols_block = ""
+        if volumes_needed:
+            vol_items = "\n".join(f"  {v}:" for v in sorted(set(volumes_needed)))
+            vols_block = f"\nvolumes:\n{vol_items}\n"
+
+        joined_services = "\n\n".join(services_lines)
+        return f"""---
+# Multi-service development stack generated by ForgeOps.
+
+name: {app_name}
+
+services:
+{joined_services}
+{vols_block}"""
+
+    # Single-container fallback
     environment = "\n".join(
-        # `${NAME:-default}` rather than `${NAME}`, and the default comes from the same list that renders
-        # `.env.example`.
-        #
-        # WHY: `docker compose config` FAILED on the generated file. `.env` is git-ignored and therefore
-        # absent from a fresh clone, so a bare `${LOG_LEVEL}` produced 'The "LOG_LEVEL" variable is not
-        # set. Defaulting to a blank string.' and the agent's validator reported the artifact as failing -
-        # which it was. An artifact that only validates once the user has done something the repository
-        # does not tell them to do is not a working artifact.
-        #
-        # A secret's default stays EMPTY. Substituting a value for `SECRET_KEY` would put a working
-        # credential in a committed file, and an empty default is the honest statement that it has to be
-        # supplied.
         f'      {name}: "${{{name}:-{value.format(app_name=app_name, port=port)}}}"'
         for name, value, _comment in _ENV_VARIABLES
     )
@@ -288,21 +416,9 @@ services:
     image: {app_name}:{image_tag}
     ports:
       - "{port}:{port}"
-    # NO `env_file:` ENTRY, DELIBERATELY, and its absence is a fix.
-    #
-    # The first version declared `env_file: [.env]`, and `docker compose config` failed outright:
-    # "env file .env not found". `.env` is git-ignored, so it is absent from every fresh clone, and a
-    # declared env_file is REQUIRED - compose refuses the file rather than warning. The artifact could
-    # only validate after the user had done something the repository never told them to do.
-    #
-    # Nothing is lost. Compose reads `.env` from the project directory automatically for interpolation,
-    # so a developer who copies `.env.example` to `.env` still gets their values through the `${...}`
-    # substitutions below; the difference is that its absence is no longer fatal.
     environment:
 {environment}
     restart: unless-stopped
-    # Mirrors the Dockerfile's HEALTHCHECK so `docker compose ps` reports the same health an
-    # orchestrator would see.
     healthcheck:
       test: ["CMD-SHELL", "exit 0"]
       interval: 30s

@@ -553,3 +553,161 @@ spec:
         ]
     )
     assert any("cross-artifact:" in f and "references backend service" in f for f in findings), findings
+
+
+def test_dockerfile_with_workspace_install_ordering_reported() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY code-review/package*.json ./code-review/
+RUN npm run build --workspace=code-review
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any("runs dependency installation (`RUN npm ci` or `install`) before copying workspace package manifests" in f for f in findings)
+
+
+def test_dockerfile_with_correct_workspace_install_ordering_passes() -> None:
+    good_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+COPY code-review/package*.json ./code-review/
+RUN npm ci --only=production
+RUN npm run build --workspace=code-review
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(good_df)
+    assert findings == []
+
+
+def test_validate_artifacts_with_existing_workspaces_enforces_manifest_copies() -> None:
+    df_omitting_workspaces = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    existing = {
+        "package.json": '{"name": "root", "workspaces": ["code-review", "live classroom"]}'
+    }
+    findings = validate_artifacts([_Artifact("Dockerfile", df_omitting_workspaces)], existing=existing)
+    assert any("Workspace repository runs dependency installation before copying workspace package manifests" in f for f in findings)
+
+    df_with_all_workspaces = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+COPY code-review/package*.json ./code-review/
+COPY ["live classroom/package*.json", "./live classroom/"]
+RUN npm ci
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings_valid = validate_artifacts([_Artifact("Dockerfile", df_with_all_workspaces)], existing=existing)
+    assert findings_valid == []
+
+
+def test_dockerfile_with_build_error_suppression_is_rejected() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build || true
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings)
+
+    bad_exit_zero = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build || exit 0
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings_exit_zero = validate_dockerfile(bad_exit_zero)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings_exit_zero)
+
+
+def test_dockerfile_with_legitimate_build_command_passes() -> None:
+    good_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+COPY code-review/package*.json ./code-review/
+RUN npm ci
+COPY . .
+RUN npm run build --workspace=code-review
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(good_df)
+    assert findings == []
+
+
+def test_dockerfile_with_npm_install_suppression_fails() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install || true
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings)
+
+
+def test_dockerfile_with_npm_ci_suppression_fails() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci || exit 0
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings)
+
+
+

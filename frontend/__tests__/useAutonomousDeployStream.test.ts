@@ -503,4 +503,464 @@ describe("useAutonomousDeployStream", () => {
       window.WebSocket = origWS;
     }
   });
+
+  it("reconciles pending stages when initialRun updates with authoritative stage results", () => {
+    const pendingStages: StagePublicResponse[] = [
+      {
+        id: "s1",
+        run_id: runId,
+        stage_name: "G1_blueprint",
+        position: 1,
+        status: "pending",
+        progress_pct: 0,
+      },
+      {
+        id: "s2",
+        run_id: runId,
+        stage_name: "G4_build",
+        position: 2,
+        status: "pending",
+        progress_pct: 0,
+      },
+    ];
+
+    const initialPendingRun: AutonomousRunPublicResponse = {
+      ...initialRun,
+      status: "pending",
+      progress_pct: 0,
+      stages: pendingStages,
+    };
+
+    const { result, rerender } = renderHook(
+      ({ runProp }) =>
+        useAutonomousDeployStream({
+          projectId,
+          runId,
+          initialRun: runProp,
+        }),
+      { initialProps: { runProp: initialPendingRun } },
+    );
+
+    expect(result.current.stages[0].status).toBe("pending");
+    expect(result.current.stages[1].status).toBe("pending");
+
+    // Server snapshot updates with G1 succeeded and G4 failed
+    const updatedAuthoritativeRun: AutonomousRunPublicResponse = {
+      ...initialRun,
+      status: "failed",
+      progress_pct: 32,
+      stages: [
+        { ...pendingStages[0], status: "succeeded", progress_pct: 100 },
+        {
+          ...pendingStages[1],
+          status: "failed",
+          progress_pct: 10,
+          error_message: "image not found",
+        },
+      ],
+    };
+
+    rerender({ runProp: updatedAuthoritativeRun });
+
+    expect(result.current.stages[0].status).toBe("succeeded");
+    expect(result.current.stages[0].progress_pct).toBe(100);
+    expect(result.current.stages[1].status).toBe("failed");
+    expect(result.current.stages[1].error_message).toBe("image not found");
+    expect(result.current.run?.status).toBe("failed");
+    expect(result.current.run?.progress_pct).toBe(32);
+  });
+
+  it("resets internal state when runId changes on retry navigation", () => {
+    const { result, rerender } = renderHook(
+      ({ rId, currentRun }: { rId: string; currentRun?: AutonomousRunPublicResponse }) =>
+        useAutonomousDeployStream({
+          projectId,
+          runId: rId,
+          initialRun: currentRun,
+        }),
+      {
+        initialProps: {
+          rId: "run-1",
+          currentRun: {
+            ...initialRun,
+            id: "run-1",
+            status: "failed",
+            progress_pct: 32,
+          } as AutonomousRunPublicResponse,
+        },
+      },
+    );
+
+    expect(result.current.run?.id).toBe("run-1");
+
+    // Navigate to new retry attempt
+    rerender({
+      rId: "run-2",
+      currentRun: {
+        ...initialRun,
+        id: "run-2",
+        attempt_number: 2,
+        parent_run_id: "run-1",
+        status: "pending" as const,
+        progress_pct: 0,
+        stages: [
+          {
+            id: "s-retry-1",
+            run_id: "run-2",
+            stage_name: "G1_blueprint",
+            position: 1,
+            status: "pending",
+            progress_pct: 0,
+          },
+        ],
+      },
+    });
+
+    expect(result.current.run?.id).toBe("run-2");
+    expect(result.current.run?.status).toBe("pending");
+    expect(result.current.run?.progress_pct).toBe(0);
+    expect(result.current.stages[0].run_id).toBe("run-2");
+  });
+
+  it("preserves monotonic progress and completed stages when snapshot refetch returns degraded/stale state", async () => {
+    mockApiStream.mockReturnValue(
+      new ReadableStream({
+        start() {},
+      }),
+    );
+
+    const initialRunningRun: AutonomousRunPublicResponse = {
+      ...initialRun,
+      status: "running",
+      progress_pct: 75,
+      current_stage: "G6_workload",
+      stages: [
+        { ...initialStages[0], status: "succeeded", progress_pct: 100 },
+        { ...initialStages[1], status: "succeeded", progress_pct: 100 },
+      ],
+    };
+
+    const { result } = renderHook(() =>
+      useAutonomousDeployStream({
+        projectId,
+        runId,
+        initialRun: initialRunningRun,
+      }),
+    );
+
+    expect(result.current.run?.progress_pct).toBe(75);
+    expect(result.current.stages[0].status).toBe("succeeded");
+
+    // Simulate backend rollback scenario where snapshot returns 0% and all pending stages
+    const degradedRolledBackSnapshot: AutonomousRunPublicResponse = {
+      ...initialRun,
+      status: "running",
+      progress_pct: 0,
+      current_stage: undefined,
+      stages: initialStages.map((s) => ({ ...s, status: "pending", progress_pct: 0 })),
+    };
+
+    mockApiGet.mockResolvedValueOnce(degradedRolledBackSnapshot);
+    mockApiGet.mockResolvedValueOnce({ logs: [] });
+
+    await act(async () => {
+      await result.current.refetchSnapshot();
+    });
+
+    // Progress and succeeded stages MUST NOT be wiped out
+    expect(result.current.run?.progress_pct).toBe(75);
+    expect(result.current.run?.current_stage).toBe("G6_workload");
+    expect(result.current.stages[0].status).toBe("succeeded");
+    expect(result.current.stages[1].status).toBe("succeeded");
+  });
+
+  it("ignores regress in stage status and progress from stale event frames", async () => {
+    mockApiStream.mockReturnValue(
+      new ReadableStream({
+        start() {},
+      }),
+    );
+
+    const stableRunningRun: AutonomousRunPublicResponse = {
+      ...initialRun,
+      status: "running",
+      progress_pct: 50,
+      stages: [
+        { ...initialStages[0], status: "succeeded", progress_pct: 100 },
+        { ...initialStages[1], status: "running", progress_pct: 40 },
+      ],
+    };
+
+    const { result } = renderHook(() =>
+      useAutonomousDeployStream({
+        projectId,
+        runId,
+        initialRun: stableRunningRun,
+      }),
+    );
+
+    // Stale event attempting to reset G1 back to pending with 0% progress
+    act(() => {
+      const ws = MockWebSocket.instances[0];
+      ws?.sendServerMessage({
+        event_seq: 10,
+        event_type: "stage_update",
+        payload: {
+          stage_name: "G1_blueprint",
+          status: "pending",
+          progress_pct: 0,
+          run_progress_pct: 20,
+        },
+      });
+    });
+
+    expect(result.current.stages[0].status).toBe("succeeded");
+    expect(result.current.stages[0].progress_pct).toBe(100);
+    expect(result.current.run?.progress_pct).toBe(50);
+  });
+
+  it("detects silent stale stream and reconciles snapshot over REST API", async () => {
+    vi.useFakeTimers();
+    try {
+      const runningRun: AutonomousRunPublicResponse = {
+        ...initialRun,
+        status: "running",
+        progress_pct: 25,
+      };
+
+      const freshSnapshot: AutonomousRunPublicResponse = {
+        ...initialRun,
+        status: "running",
+        progress_pct: 70,
+        stages: [
+          { ...initialStages[0], status: "succeeded", progress_pct: 100 },
+          { ...initialStages[1], status: "running", progress_pct: 40 },
+        ],
+      };
+      mockApiGet.mockResolvedValueOnce(freshSnapshot);
+      mockApiGet.mockResolvedValueOnce({
+        logs: [{ log_seq: 1, stage_name: "G1_blueprint", level: "INFO", message: "Snapshot log" }],
+        total_lines: 1,
+      });
+
+      const { result } = renderHook(() =>
+        useAutonomousDeployStream({
+          projectId,
+          runId,
+          initialRun: runningRun,
+          stalenessThresholdMs: 200,
+          watchdogIntervalMs: 100,
+        }),
+      );
+
+      // Stream opens but receives no events (simulating silent freeze or quiet build)
+      const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => {
+        ws.open();
+      });
+
+      expect(mockApiGet).not.toHaveBeenCalled();
+
+      // Advance time past the staleness threshold (250ms)
+      await act(async () => {
+        vi.advanceTimersByTime(250);
+        await Promise.resolve();
+      });
+
+      // Watchdog must have triggered snapshot reconciliation
+      expect(mockApiGet).toHaveBeenCalledWith(`/projects/${projectId}/autonomous-deploy/${runId}`);
+      expect(result.current.run?.progress_pct).toBe(70);
+      expect(result.current.stages[0].status).toBe("succeeded");
+      expect(result.current.logs.some((l) => l.message === "Snapshot log")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops watchdog polling when deployment reaches a terminal state", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminalRun: AutonomousRunPublicResponse = {
+        ...initialRun,
+        status: "succeeded",
+        progress_pct: 100,
+      };
+
+      renderHook(() =>
+        useAutonomousDeployStream({
+          projectId,
+          runId,
+          initialRun: terminalRun,
+          stalenessThresholdMs: 100,
+          watchdogIntervalMs: 50,
+        }),
+      );
+
+      mockApiGet.mockClear();
+
+      // Advance time by 300ms
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+        await Promise.resolve();
+      });
+
+      // Because the run is terminal, watchdog timer must not poll
+      expect(mockApiGet).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cleans up watchdog interval and active sockets on component unmount", async () => {
+    vi.useFakeTimers();
+    try {
+      const runningRun: AutonomousRunPublicResponse = {
+        ...initialRun,
+        status: "running",
+        progress_pct: 10,
+      };
+
+      const { unmount } = renderHook(() =>
+        useAutonomousDeployStream({
+          projectId,
+          runId,
+          initialRun: runningRun,
+          stalenessThresholdMs: 100,
+          watchdogIntervalMs: 50,
+        }),
+      );
+
+      const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      act(() => {
+        ws.open();
+      });
+
+      mockApiGet.mockClear();
+
+      // Unmount component
+      unmount();
+
+      // Advance time by 500ms
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+        await Promise.resolve();
+      });
+
+      // No watchdog calls made after unmount
+      expect(mockApiGet).not.toHaveBeenCalled();
+      // WebSocket closed on unmount
+      expect(ws.readyState).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("triggers immediate snapshot reconciliation and initiates reconnect on EventSource error", async () => {
+    const freshRun: AutonomousRunPublicResponse = {
+      ...initialRun,
+      status: "running",
+      progress_pct: 55,
+    };
+    mockApiGet.mockResolvedValueOnce(freshRun);
+    mockApiGet.mockResolvedValueOnce({ logs: [] });
+
+    renderHook(() =>
+      useAutonomousDeployStream({
+        projectId,
+        runId,
+        initialRun,
+      }),
+    );
+
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    // WS error falls back to SSE
+    act(() => {
+      ws.triggerError();
+      ws.close(1006);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const sse = MockEventSource.instances[MockEventSource.instances.length - 1];
+    act(() => {
+      sse.open();
+    });
+
+    mockApiGet.mockClear();
+    mockApiGet.mockResolvedValueOnce(freshRun);
+    mockApiGet.mockResolvedValueOnce({ logs: [] });
+
+    // SSE encounters transport error
+    act(() => {
+      sse.triggerError(new Error("Network drop"));
+    });
+
+    // Must immediately invoke snapshot reconciliation to avoid freezing UI
+    expect(mockApiGet).toHaveBeenCalledWith(`/projects/${projectId}/autonomous-deploy/${runId}`);
+  });
+
+  it("reconnects stream without duplicate logs or regressions in stage status", async () => {
+    const { result } = renderHook(() =>
+      useAutonomousDeployStream({
+        projectId,
+        runId,
+        initialRun,
+      }),
+    );
+
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+    act(() => {
+      ws.open();
+      ws.sendServerMessage({
+        event_seq: 1,
+        event_type: "log_batch",
+        payload: {
+          logs: [
+            { log_seq: 1, stage_name: "G1_blueprint", level: "INFO", message: "Blueprint ok" },
+            { log_seq: 2, stage_name: "G4_build", level: "INFO", message: "Build starting" },
+          ],
+        },
+      });
+      ws.sendServerMessage({
+        event_seq: 2,
+        event_type: "stage_update",
+        payload: { stage_name: "G1_blueprint", status: "succeeded", progress_pct: 100 },
+      });
+    });
+
+    expect(result.current.logs.map((l) => l.log_seq)).toEqual([1, 2]);
+    expect(result.current.stages[0].status).toBe("succeeded");
+
+    // Replay on SSE after connection drop with overlapping and new logs
+    act(() => {
+      ws.triggerError();
+      ws.close(1006);
+    });
+
+    const sse = MockEventSource.instances[MockEventSource.instances.length - 1];
+    act(() => {
+      sse.open();
+      // Replayed batch overlapping log 2 and adding log 3
+      sse.sendServerMessage(
+        {
+          event_seq: 3,
+          event_type: "log_batch",
+          payload: {
+            logs: [
+              { log_seq: 2, stage_name: "G4_build", level: "INFO", message: "Build starting" },
+              { log_seq: 3, stage_name: "G4_build", level: "INFO", message: "npm ci done" },
+            ],
+          },
+        },
+        "log_batch",
+      );
+    });
+
+    // Duplicate log 2 must be deduplicated, monotonic ordering: [1, 2, 3]
+    expect(result.current.logs.map((l) => l.log_seq)).toEqual([1, 2, 3]);
+    // Succeeded stage G1 must not regress
+    expect(result.current.stages[0].status).toBe("succeeded");
+  });
 });

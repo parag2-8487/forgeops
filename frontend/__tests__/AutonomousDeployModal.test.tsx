@@ -473,7 +473,9 @@ describe("AutonomousDeployModal", () => {
         production_deploy: false,
       },
       docker_config: {
-        port_bindings: { "9000": 8000 },
+        host_port: 9000,
+        container_port: 8000,
+        port_bindings: { "8000": 9000 },
       },
     });
   });

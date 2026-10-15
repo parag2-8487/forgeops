@@ -25,11 +25,15 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    inspect as sa_inspect,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+from sqlalchemy.orm.base import NO_VALUE
 from sqlmodel import Field, Relationship, SQLModel
+from src.auth.models import User  # noqa: F401
+from src.projects.models import Project  # noqa: F401, TID251
 
 AUTONOMOUS_RUN_STATUSES: tuple[str, ...] = (
     "pending",
@@ -55,6 +59,8 @@ AUTONOMOUS_STAGE_STATUSES: tuple[str, ...] = (
 
 AUTONOMOUS_LOG_LEVELS: tuple[str, ...] = ("INFO", "WARN", "ERROR")
 AUTONOMOUS_OUTBOX_STATUSES: tuple[str, ...] = ("pending", "published")
+READINESS_CHECKPOINT_TYPES: tuple[str, ...] = ("initial_r0", "post_generation_r1", "recovery_recheck")
+READINESS_STATUSES: tuple[str, ...] = ("completed", "failed")
 
 
 class AutonomousDeploymentStage(SQLModel, table=True):
@@ -377,4 +383,147 @@ class AutonomousDeployment(SQLModel, table=True):
             cascade="all, delete-orphan",
             order_by="AutonomousDeploymentOutbox.event_seq",
         )
+    )
+    readiness_checkpoints: list["ReadinessCheckpoint"] = Relationship(
+        sa_relationship=relationship(
+            "ReadinessCheckpoint",
+            back_populates="run",
+            cascade="all, delete-orphan",
+            order_by="ReadinessCheckpoint.created_at",
+        )
+    )
+
+    def _get_loaded_checkpoints(self) -> list["ReadinessCheckpoint"]:
+        try:
+            insp = sa_inspect(self)
+            if insp is not None:
+                attr = insp.attrs.get("readiness_checkpoints")
+                if attr is not None and attr.loaded_value is not NO_VALUE:
+                    return attr.loaded_value or []
+                return []
+        except Exception:
+            pass
+        return getattr(self, "readiness_checkpoints", []) or []
+
+    @property
+    def initial_readiness(self) -> Optional["ReadinessCheckpoint"]:
+        for cp in self._get_loaded_checkpoints():
+            if cp.checkpoint_type in ("initial_r0", "initial_readiness"):
+                return cp
+        return None
+
+    @property
+    def post_generation_readiness(self) -> Optional["ReadinessCheckpoint"]:
+        matching = [
+            cp for cp in self._get_loaded_checkpoints()
+            if cp.checkpoint_type in ("post_generation_r1", "post_generation_readiness")
+        ]
+        if not matching:
+            return None
+        return max(matching, key=lambda cp: cp.assessment_version)
+
+
+class ReadinessCheckpoint(SQLModel, table=True):
+    """Immutable project readiness evaluation checkpoint."""
+
+    __tablename__ = "deployment_readiness_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("run_id", "checkpoint_type", "assessment_version", name="uq_run_checkpoint_version"),
+        CheckConstraint(
+            "checkpoint_type IN (" + ", ".join(f"'{c}'" for c in READINESS_CHECKPOINT_TYPES) + ")",
+            name="chk_readiness_checkpoint_type",
+        ),
+        CheckConstraint(
+            "status IN (" + ", ".join(f"'{s}'" for s in READINESS_STATUSES) + ")",
+            name="chk_readiness_status",
+        ),
+        Index("idx_readiness_run_lookup", "run_id", "created_at"),
+    )
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column("id", Uuid(), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    run_id: uuid.UUID = Field(
+        sa_column=Column(
+            "run_id",
+            Uuid(),
+            ForeignKey("autonomous_deployments.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    checkpoint_type: str = Field(
+        sa_column=Column("checkpoint_type", String(length=32), nullable=False),
+    )
+    assessment_version: int = Field(
+        default=1,
+        sa_column=Column("assessment_version", Integer, nullable=False, server_default=text("1")),
+    )
+    status: str = Field(
+        sa_column=Column("status", String(length=20), nullable=False),
+    )
+    score: int | None = Field(
+        default=None,
+        sa_column=Column("score", Integer, nullable=True),
+    )
+    max_score: int = Field(
+        default=100,
+        sa_column=Column("max_score", Integer, nullable=False, server_default=text("100")),
+    )
+    score_delta: int | None = Field(
+        default=None,
+        sa_column=Column("score_delta", Integer, nullable=True),
+    )
+    selected_strategy: str = Field(
+        sa_column=Column("selected_strategy", String(length=32), nullable=False),
+    )
+    detected_stack: str = Field(
+        sa_column=Column("detected_stack", String(length=64), nullable=False),
+    )
+    snapshot_identity: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("snapshot_identity", JSONB, nullable=False),
+    )
+    dimension_scores: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("dimension_scores", JSONB, nullable=False),
+    )
+    dimension_explanations: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("dimension_explanations", JSONB, nullable=False),
+    )
+    blockers: list[str] = Field(
+        default_factory=list,
+        sa_column=Column("blockers", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        sa_column=Column("warnings", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+    artifacts_detected: list[str] = Field(
+        default_factory=list,
+        sa_column=Column("artifacts_detected", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+    resolved_blockers: list[str] = Field(
+        default_factory=list,
+        sa_column=Column("resolved_blockers", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+    new_blockers: list[str] = Field(
+        default_factory=list,
+        sa_column=Column("new_blockers", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
+    explanation: str = Field(
+        sa_column=Column("explanation", Text, nullable=False),
+    )
+    assessment_error: str | None = Field(
+        default=None,
+        sa_column=Column("assessment_error", Text, nullable=True),
+    )
+    created_at: datetime | None = Field(
+        default=None,
+        sa_column=Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    )
+
+    run: Optional["AutonomousDeployment"] = Relationship(
+        sa_relationship=relationship("AutonomousDeployment", back_populates="readiness_checkpoints")
     )

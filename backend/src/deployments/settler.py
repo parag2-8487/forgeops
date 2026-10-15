@@ -82,7 +82,32 @@ class DeploymentSettler:
         )
         if row is None:
             # Not every change set is a deployment — an apply, a clone and a dashboard action all reach
-            # here. Nothing to settle is the ordinary case, not a failure.
+            # here. Check if this is a repository.clone change set and settle its clone_state in project settings.
+            cs_row = (
+                (
+                    await session.execute(
+                        text("SELECT project_id, operation FROM change_sets WHERE id = :cs"),
+                        {"cs": change_set_id},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if cs_row and cs_row.get("operation") == "repository.clone":
+                p_id = cs_row["project_id"]
+                if succeeded:
+                    await session.execute(
+                        text("UPDATE projects SET settings = settings - 'clone_state' WHERE id = :id"),
+                        {"id": p_id},
+                    )
+                else:
+                    await session.execute(
+                        text(
+                            "UPDATE projects SET settings = jsonb_set(settings, '{clone_state}', '\"clone_failed\"') "
+                            "WHERE id = :id"
+                        ),
+                        {"id": p_id},
+                    )
             return
 
         deployment_id = row["id"]

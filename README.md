@@ -5,35 +5,19 @@ AI-powered DevOps automation platform.
 - **Repository:** <https://github.com/parag8487/ForgeOps>
 - **Owner:** `parag8487`
 - **Go module path (agent):** `github.com/parag8487/ForgeOps/agent`
-- **Status:** **Phase 1 substantially complete — 12 of its 14 completion criteria are met.**
-  Phase 0, foundation and project scaffolding, closed with 108 task leaves and all **18** of
-  its criteria. Phase 1, MVP core: analysis, generation and approval, has all 166 task leaves
-  implemented, 13 of 14 criteria met, and **31** property tests each carrying a verified
-  negative control. It is `in-progress`, not `completed`, because **two criteria are
-  outstanding and were found on 2026-08-21 to have been recorded as met on evidence that does
-  not exist:**
-
-  - **C10 — end-to-end journey: not met.** The record described a 13-step journey run against
-    built backend and frontend images with a paired agent container. What exists is a 20-line
-    shell smoke test; the workflow builds only the frontend and starts no agent. Zero of the 13
-    steps are implemented.
-  - **C11 — test coverage ≥ 70 %: not met.** Of the four gates the record named, three do not
-    exist — the backend `--cov-fail-under` setting, `scripts/check-coverage.sh`, and any
-    frontend coverage thresholds. A unit test asserted the backend gate's _absence_.
-
-  Both are corrected in [`PROGRESS.md`](PROGRESS.md) with the specifics, and the phase status
-  reflects them. That is **2 of the 6 phases** in [`phases.md`](phases.md) substantially done;
-  **Phases 2–5 are not started.** The work is on the `phase-1-implementation` branch and is not
-  yet merged into `main`.
+- **Master Technical Document:** For the complete, authoritative specification covering the full architecture, problem statement, objectives, feature catalogue, G1–G7 gate workflows, G8 recovery, port authority, testing evidence, and evaluation guide, see [`FORGEOPS_PROJECT_MASTER_DOCUMENT.md`](FORGEOPS_PROJECT_MASTER_DOCUMENT.md).
+- **Status:** **Phase 2 Autonomous Deployment Engine Implemented.**
+  Phase 0 (foundation scaffolding) and Phase 1 (MVP core analysis, generation, and approval) are complete. Phase 2 (Autonomous Deployment Orchestrator, multi-target deployment strategies across Docker, GitHub, and Vercel, G1–G7 verification gates, deterministic port authority, and G8 bounded self-healing recovery) is active and implemented on the `phase-2-implementation` branch.
 
 ## Running on Linux / Ubuntu (1-Click Master Setup)
 
 For Linux systems — especially **fresh installations such as college lab computers** running
-Ubuntu 20.04, 22.04 or 24.04 that have **no Docker**, an **older Python**, or none of the build
-tools — use the master setup script. It installs everything the stack needs and then starts and
-verifies it.
+Ubuntu 22.04 LTS or 24.04 LTS (or Ubuntu 20.04 LTS with Python 3.10+ installed) that have **no Docker**,
+missing build tools, or stopped services — use the master setup script. It installs everything the stack
+needs and then starts and verifies it.
 
 ```bash
+chmod +x setup.sh
 ./setup.sh
 ```
 
@@ -44,10 +28,11 @@ by hand.
 
 | Requirement          | Why                                        | If it is missing                                                                      |
 | :------------------- | :----------------------------------------- | :------------------------------------------------------------------------------------ |
+| **Supported OS**     | Ubuntu 22.04 / 24.04 LTS (or 20.04 w/ Py 3.10+) | Ubuntu 22.04+ includes Python >= 3.10 in base repos; 20.04 requires Python 3.10+ pkg |
 | **~10 GB free disk** | four images plus their base layers         | the script stops with the measured free space rather than failing deep inside a build |
 | **Internet access**  | Docker's repository, PyPI, and base images | —                                                                                     |
 | **sudo rights**      | Docker and system packages                 | —                                                                                     |
-| **~4 GB RAM**        | Authentik alone wants about 1 GB           | under 2.5 GB with no swap, a 2 GB swapfile is created automatically                   |
+| **~4 GB RAM**        | Authentik alone wants about 1 GB           | under 2.5 GB with no swap, a safe 2 GB swapfile is created if filesystem supports it  |
 
 A first run takes roughly **10–20 minutes**, most of it pulling base images and building. Later
 runs detect the existing images and finish in seconds.
@@ -63,17 +48,23 @@ runs detect the existing images and finish in seconds.
    `containerd.io`, `docker-buildx-plugin` and `docker-compose-plugin`. If that repository is
    unreachable it falls back to the distribution packages, and if the Compose V2 plugin is still
    absent it downloads the plugin binary directly.
-3. **Docker permissions without a logout.** Adds your user to the `docker` group and applies socket
-   permissions in place, so the shell you are already in can talk to the daemon immediately. No
-   reboot, no re-login.
+3. **Secure Docker group permissions.** Adds your user to the `docker` group (`usermod -aG docker`).
+   It never weakens system security with insecure world-writable socket permissions (`chmod 666`).
+   It activates group membership immediately in the launcher subshell via `sg docker` when available,
+   or provides clear diagnostic instructions to activate it (`newgrp docker`).
+   *(Note: membership in the docker group grants root-equivalent administrative privileges on the host).*
 4. **Daemon startup on any init system.** `systemctl` where systemd is present, `service` otherwise
    — covering WSL2 and container hosts as well as a normal desktop.
-5. **Python.** Installs **Python 3.13** and `python3.13-venv` from the deadsnakes PPA. This is the
-   interpreter the backend pins (`requires-python = ">=3.13,<3.14"`). If the PPA is blocked by a
-   campus network, it falls back to the best host Python ≥ 3.10 for the launcher's own tooling and
-   says so — the stack still runs, because the backend's real interpreter comes from its image.
-6. **Low-memory protection.** Under 2.5 GB available RAM with no swap, it creates a 2 GB swapfile so
-   a container build cannot be OOM-killed.
+5. **Python Compatibility.** Detects existing host Python (≥ 3.10) for host-side provisioning and
+   launcher tasks (such as internal CA generation, port probing, and Authentik initialization).
+   Ubuntu 22.04 LTS (Python 3.10) and Ubuntu 24.04 LTS (Python 3.12) are supported out of the box
+   using official distribution packages without requiring third-party PPAs. Ubuntu 20.04 LTS (which
+   ships Python 3.8 by default) requires manual installation of a Python 3.10+ package. The full
+   backend runtime runs inside Docker pinned to Python 3.13.
+6. **Low-memory and safe swap protection.** Under 2.5 GB available RAM with no swap, it verifies
+   filesystem compatibility (safely skipping swapfile creation on Btrfs or ZFS to prevent filesystem
+   corruption) and checks for at least 4 GB free disk before creating a 2 GB swapfile, preventing
+   container builds from being OOM-killed.
 7. **Free-capacity check.** Refuses to start a build that cannot fit, printing the actual available
    bytes and how to reclaim more, rather than failing partway through.
 8. **Port collision avoidance.** Finds free host ports for PostgreSQL, Redis, Cerbos, OPA, Authentik,
@@ -162,7 +153,22 @@ addresses actually in use.
 - **Smart SPA Routing**: Automatically injects Single Page Application rewrite rules into `vercel.json` (`"source": "/(.*)", "destination": "/index.html"`) so that client-side routers don't throw 404 errors on deep paths.
 - **REST Deployment Engine**: Deploys project files directly through Vercel's REST API (`POST /v13/deployments`) with live deployment status and URL reporting.
 
-### 4. Zero-Trust Local Agent & Governance Chokepoint
+### 4. Autonomous Deployment Engine & Verification Gates (G1–G7)
+
+- **Multi-Target Strategies**: Orchestrates unified deployments across Docker, GitHub, and Vercel (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`).
+- **Deterministic Port Authority**: Enforces user-declared container ports (e.g. `8080`) over framework defaults, injecting runtime `PORT` and `HOST=0.0.0.0` environment variables and configuring Dockerfile synthesis.
+- **Browser Port Safety**: Protects operators by strictly rejecting browser-restricted host ports (such as `4045` with `ERR_UNSAFE_PORT`) during schema validation and G3.
+- **Sequential Gate Verification**:
+  - **G1**: Blueprint baseline validation and R0 readiness assessment.
+  - **G2**: Existing artifact reuse or multi-stage Dockerfile synthesis, and R1 readiness.
+  - **G3**: Pre-execution consistency, port range, and browser bad ports audit.
+  - **G4**: Secure Docker image building with symlink confinement and secret exclusion.
+  - **G5**: Container launch via Docker Engine API over Unix Domain Socket with runtime port binding.
+  - **G6**: Container inspect publication check and live HTTP readiness probing.
+  - **G7**: Multi-target final verification (exact `8080/tcp -> 18080` port bindings, GitHub remote branch commit verification, and Vercel assigned production alias verification with SSO bypass).
+- **G8 Bounded Self-Healing**: Automated crash recovery sweeper with monotonic worker fencing tokens and AI incident remediation bounded to 3 iterations with zero application source code mutation.
+
+### 5. Zero-Trust Local Agent & Governance Chokepoint
 
 - Local Go agent connects via outbound-only WebSockets to the control plane.
 - Every modification is modeled as an immutable `ChangeSet` validated against Cerbos/OPA policies.

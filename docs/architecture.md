@@ -1,8 +1,10 @@
 # ForgeOps Architecture — Phase 0
 
-> **Partly stale as of 2026-08-21.** The title and the sections that follow describe **Phase
-> 0**. This file _does_ carry a Phase 1 additions section further down, so it contradicts its own
-> heading: read the Phase 1 section as current and the Phase 0 framing as history.
+> **Update (2026-10-13):** The title and foundation sections describe **Phase 0**, with Phase 1 additions
+> detailed below. For the authoritative, comprehensive Phase 2 architecture—including the Autonomous
+> Deployment Engine, G1–G7 verification gates, G8 bounded self-healing, port authority hierarchy, and
+> multi-target deployment strategies (Docker, GitHub, Vercel)—refer to the master technical reference:
+> [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md).
 
 Repository: `github.com/parag8487/ForgeOps`. This document describes what Phase 0
 actually builds, what it deliberately leaves out, and the cross-cutting contracts every
@@ -263,6 +265,17 @@ Three details are worth knowing before trusting either:
 Neither script is a formality: `scripts/mutation-harness.py` applies each declared mutation and
 reports a property that survives its own control as `VACUOUS`, and the manifest check is what
 stops a row being declared without one.
+
+## Phase 2 additions — Autonomous Deployment Engine
+
+Phase 2 adds the end-to-end Autonomous Deployment Engine on top of the Phase 0 foundation and Phase 1 MVP core.
+
+Key architectural components implemented:
+- **Autonomous Deployment Orchestrator & Gates G1–G7**: Located in [`backend/src/autonomous/autonomous_orchestrator.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/autonomous/autonomous_orchestrator.py) and [`backend/src/autonomous/autonomous_gates.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/autonomous/autonomous_gates.py). Gates enforce strict verification: G1 Workspace, G2 Runtime Config, G3 Security & Port Validation, G4 Build/Staging, G5 Apply/Deploy, G6 Workload Verification, and G7 Final Sign-off.
+- **Port Authority Hierarchy & Browser Safety**: User-configured container ports take absolute authority over inferred ports. Host ports are validated against a 77-entry browser-restricted port list (preventing `ERR_UNSAFE_PORT` blocks such as port 4045).
+- **G8 Bounded Self-Healing Engine**: Automated failure classification and bounded retries without source code mutation.
+- **Multi-Target Deployment Strategies**: Supports Docker (local daemon / UDS), GitHub (Git Data API low-level objects), and Vercel (REST API v13 deployment and v9 alias assignment).
+- **Comprehensive Master Reference**: See [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md).
 
 ## Reference documents
 

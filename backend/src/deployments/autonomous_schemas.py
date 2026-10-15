@@ -70,6 +70,7 @@ class GitHubPublishingMode(StrEnum):
 class DeploymentStrategy(StrEnum):
     """Supported orchestration deployment strategies."""
 
+    DOCKER_ONLY = "docker_only"
     DOCKER_GITHUB_VERCEL = "docker_github_vercel"
     DOCKER_GITHUB = "docker_github"
     GITHUB_ONLY = "github_only"
@@ -111,6 +112,7 @@ class GitHubConfigRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     repository_mode: str = Field(default="existing", max_length=50)
+    repository_visibility: str = Field(default="private", pattern="^(private|public)$")
     branch_mode: str = Field(default="existing", max_length=50)
     repository_name: str = Field(
         ...,
@@ -189,6 +191,7 @@ class StoredGitHubConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     repository_mode: str = "existing"
+    repository_visibility: str = "private"
     branch_mode: str = "existing"
     repository_name: str
     target_branch: str | None = None
@@ -220,6 +223,100 @@ class VercelConfigRequest(BaseModel):
 RESERVED_DOCKER_ENV_NAMES: frozenset[str] = frozenset({"PORT", "NODE_ENV"})
 RESERVED_DOCKER_ENV_PREFIX: str = "FORGEOPS_"
 
+# Canonical list of ports restricted by Chromium and the WHATWG Fetch standard (ERR_UNSAFE_PORT)
+BROWSER_RESTRICTED_PORTS: frozenset[int] = frozenset(
+    {
+        1,      # tcpmux
+        7,      # echo
+        9,      # discard
+        11,     # systat
+        13,     # daytime
+        15,     # netstat
+        17,     # qotd
+        19,     # chargen
+        20,     # ftp-data
+        21,     # ftp
+        22,     # ssh
+        23,     # telnet
+        25,     # smtp
+        37,     # time
+        42,     # name
+        43,     # nicname
+        53,     # domain
+        77,     # rje
+        79,     # finger
+        87,     # link
+        95,     # supdup
+        101,    # hostriame
+        102,    # iso-tsap
+        103,    # gppitnp
+        104,    # acr-nema
+        109,    # pop2
+        110,    # pop3
+        111,    # sunrpc
+        113,    # auth
+        115,    # sftp
+        117,    # uucp-path
+        119,    # nntp
+        123,    # ntp
+        135,    # epmap
+        137,    # netbios-ns
+        139,    # netbios-ssn
+        143,    # imap
+        179,    # bgp
+        389,    # ldap
+        427,    # svrloc
+        465,    # smtps
+        512,    # print / exec
+        513,    # login
+        514,    # shell
+        515,    # printer
+        526,    # tempo
+        530,    # courier
+        531,    # chat
+        532,    # netnews
+        540,    # uucp
+        548,    # afp
+        556,    # remotefs
+        563,    # nntps
+        587,    # submission
+        601,    # syslog-conn
+        636,    # ldaps
+        993,    # imaps
+        995,    # pop3s
+        2049,   # nfs
+        3659,   # apple-sasl
+        4045,   # lockd / nfs-lock
+        5060,   # sip
+        5061,   # sips
+        *range(6000, 6064),  # x11 (6000-6063)
+        6566,   # sane
+        6665,   # irc
+        6666,   # irc
+        6667,   # irc
+        6668,   # irc
+        6669,   # irc
+        6697,   # ircs
+        10080,  # amanda
+    }
+)
+
+
+def is_browser_restricted_port(port: int) -> bool:
+    """Returns True if the port is restricted by web browsers (ERR_UNSAFE_PORT)."""
+    return int(port) in BROWSER_RESTRICTED_PORTS
+
+
+def validate_browser_safe_host_port(port: int) -> int:
+    """Asserts that a host port is not blocked as unsafe by web browsers."""
+    p_int = int(port)
+    if is_browser_restricted_port(p_int):
+        raise ValueError(
+            f"Host port {p_int} is restricted by web browsers (ERR_UNSAFE_PORT). "
+            f"Please select a browser-safe port (e.g. 8080, 18080)."
+        )
+    return p_int
+
 
 def _check_reserved_docker_env(name: str) -> None:
     norm = name.strip().upper()
@@ -233,9 +330,26 @@ class DockerConfigRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     port_bindings: dict[str, int] = Field(default_factory=dict)
+    host_port: int | None = Field(default=None, ge=1, le=65535)
+    container_port: int | None = Field(default=None, ge=1, le=65535)
     environment_overrides: dict[str, str] = Field(default_factory=dict)
     container_name: str | None = None
     image_tag: str | None = None
+
+    @field_validator("host_port")
+    @classmethod
+    def validate_host_port(cls, v: int | None) -> int | None:
+        if v is not None:
+            validate_browser_safe_host_port(v)
+        return v
+
+    @field_validator("port_bindings")
+    @classmethod
+    def validate_port_bindings(cls, v: dict[str, int]) -> dict[str, int]:
+        for c_port, h_port in v.items():
+            if isinstance(h_port, int):
+                validate_browser_safe_host_port(h_port)
+        return v
 
     @field_validator("environment_overrides")
     @classmethod
@@ -255,11 +369,20 @@ class CreateAutonomousRunRequest(BaseModel):
     vercel_config: VercelConfigRequest | None = None
     docker_config: DockerConfigRequest | None = None
     idempotency_key: str | None = None
+    dry_run: bool = False
+    simulation_mode: bool = False
+    workspace_path: str | None = None
+    stage_delays: dict[str, float] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_strategy_constraints(self) -> CreateAutonomousRunRequest:
         strat = self.strategy
-        if strat == DeploymentStrategy.DOCKER_GITHUB_VERCEL:
+        if strat == DeploymentStrategy.DOCKER_ONLY:
+            if self.github_config is not None:
+                raise ValueError("Strategy 'docker_only' forbids github_config")
+            if self.vercel_config is not None:
+                raise ValueError("Strategy 'docker_only' forbids vercel_config")
+        elif strat == DeploymentStrategy.DOCKER_GITHUB_VERCEL:
             if self.github_config is None:
                 raise ValueError("Strategy 'docker_github_vercel' requires github_config")
             if self.vercel_config is None:
@@ -341,6 +464,34 @@ class StagePublicResponse(BaseModel):
         return self.stage_metadata
 
 
+class ReadinessCheckpointPublicResponse(BaseModel):
+    """Public representation of an assessment readiness checkpoint."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    checkpoint_type: str
+    assessment_version: int = 1
+    status: str
+    score: int | None = None
+    max_score: int = 100
+    score_delta: int | None = None
+    selected_strategy: str
+    detected_stack: str
+    snapshot_identity: dict[str, Any] = Field(default_factory=dict)
+    dimension_scores: dict[str, Any] = Field(default_factory=dict)
+    dimension_explanations: dict[str, Any] = Field(default_factory=dict)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    artifacts_detected: list[str] = Field(default_factory=list)
+    resolved_blockers: list[str] = Field(default_factory=list)
+    new_blockers: list[str] = Field(default_factory=list)
+    explanation: str
+    assessment_error: str | None = None
+    created_at: datetime | None = None
+
+
 class AutonomousRunPublicResponse(BaseModel):
     """Authoritative public run response. Strictly excludes internal fencing and lease fields."""
 
@@ -367,6 +518,46 @@ class AutonomousRunPublicResponse(BaseModel):
     completed_at: datetime | None = None
     stages: list[StagePublicResponse] = Field(default_factory=list)
     agent_connected: bool | None = None
+    initial_readiness: ReadinessCheckpointPublicResponse | None = None
+    post_generation_readiness: ReadinessCheckpointPublicResponse | None = None
+    readiness_checkpoints: list[ReadinessCheckpointPublicResponse] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_readiness_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            cps = data.get("readiness_checkpoints") or []
+            if "initial_readiness" not in data or data["initial_readiness"] is None:
+                for cp in cps:
+                    cp_type = cp.get("checkpoint_type") if isinstance(cp, dict) else getattr(cp, "checkpoint_type", None)
+                    if cp_type in ("initial_r0", "initial_readiness"):
+                        data["initial_readiness"] = cp
+                        break
+            if "post_generation_readiness" not in data or data["post_generation_readiness"] is None:
+                matching = []
+                for cp in cps:
+                    cp_type = cp.get("checkpoint_type") if isinstance(cp, dict) else getattr(cp, "checkpoint_type", None)
+                    if cp_type in ("post_generation_r1", "post_generation_readiness"):
+                        matching.append(cp)
+                if matching:
+                    def _get_ver(x: Any) -> int:
+                        return x.get("assessment_version", 0) if isinstance(x, dict) else getattr(x, "assessment_version", 0)
+                    data["post_generation_readiness"] = max(matching, key=_get_ver)
+            return data
+
+        # Protect against SQLAlchemy lazy-load greenlet errors during Pydantic extraction
+        try:
+            from sqlalchemy import inspect as sa_inspect
+            from sqlalchemy.orm.base import NO_VALUE
+
+            insp = sa_inspect(data)
+            if insp is not None:
+                attr = insp.attrs.get("readiness_checkpoints")
+                if attr is not None and attr.loaded_value is NO_VALUE:
+                    data.__dict__["readiness_checkpoints"] = []
+        except Exception:
+            pass
+        return data
 
 
 class LogEntryPublicResponse(BaseModel):

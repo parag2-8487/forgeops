@@ -17,6 +17,7 @@ Tests:
 
 from __future__ import annotations
 
+import asyncio
 import operator
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -47,7 +48,9 @@ from src.deployments.autonomous_service import (
     build_stage_graph,
 )
 from src.deployments.autonomous_worker import (
+    LEASE_DURATION_SECONDS,
     AutonomousWorker,
+    PipelineHeartbeat,
     WorkerFencingLostError,
     calculate_progress,
 )
@@ -148,13 +151,16 @@ class MockAsyncSession:
         self.stages: list[AutonomousDeploymentStage] = []
         self.logs: list[AutonomousDeploymentLog] = []
         self.outbox: list[AutonomousDeploymentOutbox] = []
+        self.identity_map: dict[Any, Any] = {}
 
     def add(self, entity: Any) -> None:
         if isinstance(entity, AutonomousDeployment):
             self.runs[entity.id] = entity
+            self.identity_map[entity.id] = entity
         elif isinstance(entity, AutonomousDeploymentStage):
             if entity not in self.stages:
                 self.stages.append(entity)
+                self.identity_map[(entity.run_id, entity.stage_name)] = entity
         elif isinstance(entity, AutonomousDeploymentLog):
             if entity not in self.logs:
                 self.logs.append(entity)
@@ -314,10 +320,10 @@ class TestWorkerClaimProtocol:
         assert run.dispatch_status == "acknowledged"
         assert run.lease_expires_at is not None
 
-        # Verify lease duration is approximately 30 seconds
+        # Verify lease duration matches LEASE_DURATION_SECONDS
         now = datetime.now(UTC)
         assert run.lease_expires_at > now
-        assert run.lease_expires_at <= now + timedelta(seconds=31)
+        assert run.lease_expires_at <= now + timedelta(seconds=LEASE_DURATION_SECONDS + 1)
 
     @pytest.mark.asyncio
     async def test_concurrent_claim_rejected_while_lease_is_active(self) -> None:
@@ -837,3 +843,376 @@ class TestMonotonicProgressCalculation:
         prog_seq.append(calculate_progress(stages, strat))
         assert prog_seq[-1] == 100
         assert all(prog_seq[i] <= prog_seq[i + 1] for i in range(len(prog_seq) - 1))
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_syncs_session_identity_map_in_place(self) -> None:
+        """Verifies that worker.heartbeat refreshes lease_expires_at on objects in session.identity_map."""
+        worker = AutonomousWorker()
+        session = MockAsyncSession()
+        now = datetime.now(UTC)
+        run = AutonomousDeployment(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            strategy="docker_github_vercel",
+            status="running",
+            fence_token=1,
+            lease_expires_at=now + timedelta(seconds=10),
+        )
+        session.add(run)
+
+        # Confirm identity map has the run with old lease
+        assert session.identity_map[run.id].lease_expires_at == run.lease_expires_at
+
+        # Heartbeat executes
+        renewed = await worker.heartbeat(session, run_id=run.id, fence_token=1)
+        assert renewed is True
+
+        # In-memory run in identity map must have updated lease_expires_at > now + 30s
+        assert run.lease_expires_at > now + timedelta(seconds=30)
+        assert session.identity_map[run.id].lease_expires_at == run.lease_expires_at
+
+    @pytest.mark.asyncio
+    async def test_check_cancellation_survives_long_stage_with_renewed_database_lease(self) -> None:
+        """Regression test for G4 build failure (run 88b25f83-10e5-45bb-a144-347ccaf033c2).
+
+        Simulates:
+        1. Worker claims lease at T0 (expires at T0 + 60s).
+        2. A long Docker build stage takes 194s (T0 + 194s).
+        3. Background heartbeat / post-eval heartbeat renewed the database row to T0 + 254s.
+        4. Stale in-memory run object had lease_expires_at at T0 + 60s.
+        5. worker.check_cancellation must evaluate against the renewed lease, not stale cache,
+           and must NOT raise WorkerFencingLostError.
+        """
+        worker = AutonomousWorker()
+        session = MockAsyncSession()
+        now = datetime.now(UTC)
+
+        run = AutonomousDeployment(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            strategy="docker_github_vercel",
+            status="running",
+            fence_token=1,
+            lease_expires_at=now + timedelta(seconds=60),
+        )
+        session.add(run)
+
+        # Worker completes a 194-second Docker build stage
+        # Post-stage heartbeat updates the database row
+        renewed = await worker.heartbeat(session, run_id=run.id, fence_token=1)
+        assert renewed is True
+
+        # Check cancellation at transition to next stage (G5)
+        is_cancelling = await worker.check_cancellation(session, run_id=run.id, fence_token=1)
+        assert is_cancelling is False
+
+    @pytest.mark.asyncio
+    async def test_worker_preemption_cancels_old_worker_on_next_cancellation_check(self) -> None:
+        """Verifies that when a worker is preempted (token incremented by a new worker),
+
+        the old worker's check_cancellation fails immediately with WorkerFencingLostError,
+        heartbeat is rejected, and guarded_update fails.
+        """
+        worker1 = AutonomousWorker(worker_id="worker-1")
+        worker2 = AutonomousWorker(worker_id="worker-2")
+        session = MockAsyncSession()
+        now = datetime.now(UTC)
+
+        # Run claimed by worker 1 with token 1, but its lease expired
+        run = AutonomousDeployment(
+            id=uuid.uuid4(),
+            project_id=uuid.uuid4(),
+            strategy="docker_github_vercel",
+            status="running",
+            fence_token=1,
+            worker_id="worker-1",
+            lease_expires_at=now - timedelta(seconds=1),
+        )
+        session.add(run)
+
+        # Worker 2 claims the run after lease expiration, incrementing fence_token to 2
+        token2 = await worker2.claim_run(session, run_id=run.id, worker_id="worker-2")
+        assert token2 == 2
+        assert run.fence_token == 2
+        assert run.worker_id == "worker-2"
+
+        # Worker 1 attempts heartbeat with stale token 1 -> rejected
+        heartbeat_ok = await worker1.heartbeat(session, run_id=run.id, fence_token=1)
+        assert heartbeat_ok is False
+
+        # Worker 1 attempts check_cancellation with stale token 1 -> raises WorkerFencingLostError
+        with pytest.raises(WorkerFencingLostError) as exc_info:
+            await worker1.check_cancellation(session, run_id=run.id, fence_token=1)
+        assert "expected token 1, current is 2" in str(exc_info.value)
+
+        # Worker 1 attempts guarded update with stale token 1 -> raises WorkerFencingLostError
+        with pytest.raises(WorkerFencingLostError):
+            await worker1.guarded_update(
+                session,
+                run_id=run.id,
+                fence_token=1,
+                values={"current_stage": "G5_apply"},
+            )
+
+
+# ---------------------------------------------------------------------------
+# 6. PipelineHeartbeat Continuous Lifecycle and Ownership Fencing Tests
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineHeartbeatLifecycle:
+    """Verifies independent background heartbeat lifecycle, long stage renewal,
+    long G8 recovery lease extension, and stale worker preemption detection.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pipeline_heartbeat_renews_during_long_stage(self) -> None:
+        """Verifies that a stage running longer than the initial lease TTL completes
+        without WorkerFencingLostError, and authoritative lease timestamp advances.
+        """
+        session = MockAsyncSession()
+        worker = AutonomousWorker(worker_id="worker-1")
+        now = datetime.now(UTC)
+
+        initial_ttl_seconds = 0.15
+        run = _create_test_run(
+            session,
+            status="running",
+            fence_token=1,
+            worker_id="worker-1",
+            lease_expires_at=now + timedelta(seconds=initial_ttl_seconds),
+        )
+        initial_lease = run.lease_expires_at
+
+        heartbeat_mgr = PipelineHeartbeat(
+            worker=worker,
+            session=session,
+            run_id=run.id,
+            fence_token=1,
+            run=run,
+            interval_seconds=0.04,
+        )
+
+        await heartbeat_mgr.start()
+        try:
+            # Simulate a long stage execution (0.25s) exceeding initial lease TTL (0.15s)
+            await asyncio.sleep(0.25)
+
+            # Assert background renewals occurred
+            assert heartbeat_mgr.renewal_count >= 2
+            assert run.lease_expires_at > initial_lease
+            assert heartbeat_mgr.ownership_lost_event.is_set() is False
+
+            # Assert worker ownership is confirmed and write operations succeed
+            heartbeat_mgr.assert_ownership()
+            updated_count = await worker.guarded_update(
+                session,
+                run_id=run.id,
+                fence_token=1,
+                values={"current_stage": STAGE_G4_BUILD},
+            )
+            assert updated_count == 1
+            assert run.current_stage == STAGE_G4_BUILD
+        finally:
+            await heartbeat_mgr.stop()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_heartbeat_renews_during_long_g8_recovery(self) -> None:
+        """Verifies that slow AI/Ollama synthesis during G8 recovery maintains active lease
+        custody, allowing the worker to apply repaired manifests and retry G2 successfully.
+        """
+        session = MockAsyncSession()
+        worker = AutonomousWorker(worker_id="worker-1")
+        now = datetime.now(UTC)
+
+        initial_ttl_seconds = 0.15
+        run = _create_test_run(
+            session,
+            status="running",
+            fence_token=1,
+            worker_id="worker-1",
+            lease_expires_at=now + timedelta(seconds=initial_ttl_seconds),
+        )
+        initial_lease = run.lease_expires_at
+
+        heartbeat_mgr = PipelineHeartbeat(
+            worker=worker,
+            session=session,
+            run_id=run.id,
+            fence_token=1,
+            run=run,
+            interval_seconds=0.04,
+        )
+
+        await heartbeat_mgr.start()
+        try:
+            # Simulate slow Ollama LLM recovery synthesis taking 0.25s (> 0.15s TTL)
+            await asyncio.sleep(0.25)
+
+            # Verify ownership remained intact throughout recovery
+            heartbeat_mgr.assert_ownership()
+            assert heartbeat_mgr.renewal_count >= 2
+            assert run.lease_expires_at > initial_lease
+
+            # Worker safely applies repaired configuration directly to workspace run
+            await worker.guarded_update(
+                session,
+                run_id=run.id,
+                fence_token=1,
+                values={"configuration": {"repaired": True, "recovery_iteration": 1}},
+            )
+            assert run.configuration == {"repaired": True, "recovery_iteration": 1}
+
+            # Worker transitions stage G2 to running for retry
+            stage_retry = await worker.transition_stage(
+                session,
+                run_id=run.id,
+                stage_name=STAGE_G2_ARTIFACT,
+                fence_token=1,
+                status="running",
+                progress_pct=10,
+                metadata={"retrying_after_g8": True},
+            )
+            assert stage_retry.status == "running"
+        finally:
+            await heartbeat_mgr.stop()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_heartbeat_detects_takeover_and_halts_stale_worker(self) -> None:
+        """Verifies that when a run is preempted by another worker incrementing fence_token,
+        the old worker's heartbeat detects loss immediately and asserts ownership failure.
+        """
+        session = MockAsyncSession()
+        worker1 = AutonomousWorker(worker_id="worker-1")
+        now = datetime.now(UTC)
+
+        run = _create_test_run(
+            session,
+            status="running",
+            fence_token=1,
+            worker_id="worker-1",
+            lease_expires_at=now + timedelta(seconds=10),
+        )
+
+        heartbeat_mgr = PipelineHeartbeat(
+            worker=worker1,
+            session=session,
+            run_id=run.id,
+            fence_token=1,
+            run=run,
+            interval_seconds=0.03,
+        )
+
+        await heartbeat_mgr.start()
+        try:
+            # New worker increments fence_token (takeover)
+            run.fence_token = 2
+            run.worker_id = "worker-2"
+
+            # Allow heartbeat tick to run and detect token mismatch
+            await asyncio.sleep(0.08)
+
+            assert heartbeat_mgr.ownership_lost_event.is_set() is True
+            assert isinstance(heartbeat_mgr.heartbeat_error, WorkerFencingLostError)
+
+            # Calling assert_ownership raises WorkerFencingLostError
+            with pytest.raises(WorkerFencingLostError) as exc_info:
+                heartbeat_mgr.assert_ownership()
+            assert "Worker fence lost for run" in str(exc_info.value)
+
+            # Stale worker 1 cannot mutate database state or apply manifests
+            with pytest.raises(WorkerFencingLostError):
+                await worker1.guarded_update(
+                    session,
+                    run_id=run.id,
+                    fence_token=1,
+                    values={"current_stage": STAGE_G5_APPLY},
+                )
+        finally:
+            await heartbeat_mgr.stop()
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_clean_cancellation_and_no_duplicates(self) -> None:
+        """Verifies clean stop on cancellation, avoidance of duplicate background tasks,
+        and graceful handling of transient database exceptions.
+        """
+        session = MockAsyncSession()
+        worker = AutonomousWorker(worker_id="worker-1")
+        now = datetime.now(UTC)
+
+        run = _create_test_run(
+            session,
+            status="running",
+            fence_token=1,
+            worker_id="worker-1",
+            lease_expires_at=now + timedelta(seconds=10),
+        )
+
+        heartbeat_mgr = PipelineHeartbeat(
+            worker=worker,
+            session=session,
+            run_id=run.id,
+            fence_token=1,
+            run=run,
+            interval_seconds=0.04,
+        )
+
+        # 1. Starting creates task
+        await heartbeat_mgr.start()
+        t1 = heartbeat_mgr.task
+        assert t1 is not None
+        assert not t1.done()
+
+        # 2. Calling start again is idempotent and does not create duplicate tasks
+        await heartbeat_mgr.start()
+        assert heartbeat_mgr.task is t1
+
+        # 3. Clean stop cancels task and resets state
+        await heartbeat_mgr.stop()
+        assert heartbeat_mgr.stop_event.is_set()
+        assert heartbeat_mgr.task is None
+        assert t1.done()
+
+        # 4. Transient database exception handling without unhandled process crashes
+        class FaultyWorker(AutonomousWorker):
+            def __init__(self) -> None:
+                super().__init__(worker_id="faulty")
+                self.calls = 0
+
+            async def heartbeat(self, *args: Any, **kwargs: Any) -> bool:
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("Transient database network interruption")
+                return True
+
+        faulty_worker = FaultyWorker()
+        faulty_hb = PipelineHeartbeat(
+            worker=faulty_worker,
+            session=session,
+            run_id=run.id,
+            fence_token=1,
+            run=run,
+            interval_seconds=0.03,
+        )
+
+        await faulty_hb.start()
+        try:
+            # First tick encounters Transient DB error
+            for _ in range(15):
+                if faulty_hb.heartbeat_error is not None:
+                    break
+                await asyncio.sleep(0.02)
+            assert isinstance(faulty_hb.heartbeat_error, RuntimeError)
+            assert "Transient database network interruption" in str(faulty_hb.heartbeat_error)
+            # Ownership is not marked as permanently lost for transient network errors
+            assert faulty_hb.ownership_lost_event.is_set() is False
+
+            # Second tick succeeds
+            for _ in range(15):
+                if faulty_hb.renewal_count >= 1:
+                    break
+                await asyncio.sleep(0.02)
+            assert faulty_hb.renewal_count >= 1
+        finally:
+            await faulty_hb.stop()
+

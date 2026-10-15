@@ -68,6 +68,38 @@ class RoutedArtifactModel:
     def tier_name(self) -> str:
         return self._tier.value
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def primary_endpoint_descriptor(self) -> Any:
+        chain = self._router._tier_config.tiers.get(self._tier)
+        if chain is None:
+            return None
+        return self._router._tier_config.endpoints.get(chain.primary)
+
+    async def ensure_ready(
+        self,
+        *,
+        warmup_timeout_seconds: float = 360.0,
+        heartbeat_callback: Any = None,
+    ) -> None:
+        """Warms up self-hosted / Ollama endpoints before streaming generation."""
+        descriptor = self.primary_endpoint_descriptor
+        if descriptor is None:
+            return
+        base_url = str(descriptor.base_url or "").lower()
+        if "11434" in base_url or "ollama" in base_url or getattr(descriptor, "provider", "") == "ollama":
+            from ..core.ollama_readiness import ensure_ollama_model_ready
+
+            await ensure_ollama_model_ready(
+                descriptor.base_url,
+                self._model,
+                warmup_timeout_seconds=warmup_timeout_seconds,
+                heartbeat_callback=heartbeat_callback,
+            )
+
     async def complete(
         self,
         *,
@@ -184,3 +216,62 @@ def build_artifact_model(
     if descriptor is None or not descriptor.model.strip():
         return None
     return RoutedArtifactModel(router=router, tier=tier, model=descriptor.model, max_tokens=max_tokens)
+
+
+def create_artifact_model_from_settings(
+    settings: Any | None = None,
+    redis_client: Any | None = None,
+    http_client: Any | None = None,
+) -> RoutedArtifactModel | None:
+    """Construct a RoutedArtifactModel directly from application Settings.
+
+    Enables worker processes (like ARQ tasks) to run model routing without needing FastAPI app state.
+    """
+    import logging
+    import os
+    from pathlib import Path
+    import httpx
+    from ..core.config import get_settings
+    from .routing.credentials import EnvKeyResolver, LayeredKeyResolver
+    from .routing.endpoints import EndpointRegistry
+    from .routing.circuit_breaker import CircuitBreaker
+    from .routing.cache import TieredSemanticCache
+    from .routing.tiers import load_tier_config
+
+    logger = logging.getLogger(__name__)
+    settings = settings or get_settings()
+    configured_path = Path(settings.model_tier_config_path or "")
+    if not configured_path.is_absolute():
+        configured_path = Path(__file__).resolve().parent.parent.parent / configured_path
+
+    try:
+        tier_config = load_tier_config(configured_path, env=os.environ)
+    except Exception as exc:
+        logger.warning("Could not load tier_config from %s: %s", configured_path, exc)
+        return None
+
+    model_http = http_client or httpx.AsyncClient(timeout=settings.model_http_timeout_seconds)
+    key_resolver = LayeredKeyResolver(fallback=EnvKeyResolver())
+    endpoint_registry = EndpointRegistry.from_config(tier_config, http=model_http, key_resolver=key_resolver)
+    breakers = {
+        endpoint_id: CircuitBreaker(
+            failure_threshold=settings.cb_failure_threshold,
+            failure_window_seconds=float(settings.cb_window_seconds),
+            cooldown_seconds=float(settings.cb_open_seconds),
+        )
+        for endpoint_id in tier_config.endpoints
+    }
+    semantic_cache = TieredSemanticCache(redis=redis_client)
+    router = ModelRouter(
+        tier_config=tier_config,
+        registry=endpoint_registry,
+        cache=semantic_cache,
+        breakers=breakers,
+        key_resolver=key_resolver,
+    )
+    return build_artifact_model(
+        router=router,
+        tier_config=tier_config,
+        tier_name=settings.generation_tier,
+    )
+

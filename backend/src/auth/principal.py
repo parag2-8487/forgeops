@@ -167,3 +167,27 @@ class Principal:
             device_id=device_id,
             blast_radius=blast_radius_for_device(attestation=attestation, project_grant=project_grant),
         )
+
+    @classmethod
+    def for_service(
+        cls,
+        *,
+        service_id: uuid.UUID,
+        subject: str,
+        email: str,
+        role: UserRole = UserRole.DEVELOPER,
+        tenant_id: uuid.UUID | None = None,
+    ) -> Principal:
+        """Build a service principal with derived workspace blast radius."""
+        return cls(
+            user_id=service_id,
+            subject=subject,
+            email=email,
+            role=role,
+            tenant_id=tenant_id,
+            session_id=None,
+            kind="service",
+            device_id=None,
+            blast_radius=blast_radius_for_role(role),
+        )
+

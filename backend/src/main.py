@@ -21,8 +21,9 @@ import httpx
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.responses import ORJSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from .ai.custom_endpoints import load_custom_endpoints, merge_custom_endpoints
 from .ai.embeddings import EmbeddingOrchestrator, SelfHostedEmbedder
@@ -47,7 +48,7 @@ from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
 from .core.config import Settings, get_settings
 from .core.db import create_db_engine, create_sessionmaker
-from .core.errors import PROBLEM_CONTENT_TYPE, install_problem_handlers
+from .core.errors import PROBLEM_CONTENT_TYPE, ProblemDetail, TYPE_BASE, _render, install_problem_handlers
 from .core.logging import configure_logging
 from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
 from .core.tenancy import TenantContextMiddleware
@@ -922,6 +923,31 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         logger.info("shutdown complete")
 
 
+class CatchAllExceptionsMiddleware(BaseHTTPMiddleware):
+    """Ensure any unhandled exception caught inside the application produces an
+    RFC 9457 Problem Details response that propagates through CORSMiddleware.
+    """
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            logger.exception("unhandled application exception: %s", exc)
+            return _render(
+                request,
+                ProblemDetail(
+                    type=f"{TYPE_BASE}/internal",
+                    title="Internal Server Error",
+                    status=500,
+                    detail="An unexpected error occurred. Quote the trace_id when reporting this.",
+                ),
+            )
+
+
 def create_app() -> FastAPI:
     """Application factory (§11.1)."""
     settings = get_settings()
@@ -938,14 +964,23 @@ def create_app() -> FastAPI:
     # Starlette PREPENDS middleware, so registration order is the REVERSE of
     # execution order. Registering innermost-first yields the §4.3 stack:
     # ServerError(1) -> RequestId(2) -> TraceContext(3) -> AccessLog(4) -> CORS(5)
-    #                -> TenantContext(6)
+    #                -> CatchAllExceptions(6) -> TenantContext(7)
     #
-    # Row 6 is the innermost, and that placement is the point: it runs INSIDE
+    # Row 7 is the innermost, and that placement is the point: it runs INSIDE
     # authentication, so it reads an already-verified principal rather than trusting a
     # request header (§4.3, §6.7, D-35). Registered FIRST because Starlette reverses
     # the order.
-    app.add_middleware(TenantContextMiddleware)  # executes 6th, innermost
+    app.add_middleware(TenantContextMiddleware)  # executes 7th, innermost
+    app.add_middleware(CatchAllExceptionsMiddleware)  # executes 6th, inside CORS to guarantee CORS headers on 500
     cors_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
+    for default_origin in [
+        "http://localhost:13000",
+        "http://127.0.0.1:13000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]:
+        if default_origin not in cors_origins:
+            cors_origins.append(default_origin)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,

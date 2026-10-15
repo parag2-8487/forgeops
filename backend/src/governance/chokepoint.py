@@ -2611,7 +2611,11 @@ class GovernanceChokepoint:
         calls to this method along each path, which is a property a reader can check. Six call
         sites with their own draft construction would not be.
         """
-        actor_kind = "system" if principal is None else ("agent" if principal.kind == "device" else "user")
+        actor_kind = (
+            "system"
+            if (principal is None or principal.kind == "service")
+            else ("agent" if principal.kind == "device" else "user")
+        )
         draft = AuditDraft(
             action=str(action),
             resource_kind=resource_kind,

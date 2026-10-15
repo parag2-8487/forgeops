@@ -1280,6 +1280,7 @@ async def clone_project_repository(
         branch=str(settings.get("repo_default_branch") or ""),
         credential=token,
         reason=f"requested by {principal.email or principal.user_id}",
+        environment="dev",
     )
 
     # `cloning` while the command is in flight, so a second click does not look like a first one and a
