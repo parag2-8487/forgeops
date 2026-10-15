@@ -116,7 +116,7 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "NEVER write bare unquoted COPY with spaces (e.g. NEVER write `COPY live classroom/... ./live classroom/`), "
         "because Docker splits on spaces and treats 'live' as a separate missing source file.",
         "MONOREPO WORKDIR ORDER: Always declare `WORKDIR /app` BEFORE copying package manifests and installing dependencies. "
-        "First declare `WORKDIR /app`, then copy the root `package*.json ./`, then copy workspace manifests, then run `npm ci`.",
+        "First declare `WORKDIR /app`, then copy root package manifests, then copy workspace manifests, then install dependencies.",
         "For Next.js applications (framework 'Next.js' or having `next` in dependencies): "
         "Next.js outputs to `.next` (not `dist`). Multi-stage Dockerfiles must copy the built application "
         '(e.g. `COPY --from=builder /app ./`) and start with `CMD ["npm", "run", "start"]` '
@@ -126,9 +126,9 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "can find package.json. Better yet, serve the built static directory with a lightweight static server "
         "(e.g. `npx serve -s dist -l $PORT`) or copy `package*.json` so `npm` commands do not fail with ENOENT.",
         "For monorepos or repositories with workspace packages (e.g. package.json `workspaces` or nested packages), "
-        "you MUST copy BOTH the root `package*.json` AND every workspace package manifest (e.g. `COPY <workspace>/package*.json ./<workspace>/`) "
-        "BEFORE executing `RUN npm ci` or `RUN npm install`. Running install before copying workspace manifests fails with missing executables "
-        "and ENOENT errors because workspace dependencies cannot be resolved.",
+        "you MUST copy BOTH the root package manifests AND every workspace package manifest "
+        "BEFORE executing dependency installation commands. Running install before copying workspace manifests fails with missing executables "
+        "and resolution errors because workspace dependencies cannot be resolved.",
         "Install with the package manager this repository's lockfile names, using that manager's own "
         "install command. Do not invent flags it does not have, and never run an install command whose "
         "lockfile is absent from section 1.",

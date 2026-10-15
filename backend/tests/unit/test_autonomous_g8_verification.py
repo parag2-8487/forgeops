@@ -38,7 +38,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import URL, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 from src.deployments.autonomous_gates import (
@@ -67,8 +67,27 @@ from src.deployments.autonomous_worker import (
 
 pytestmark = [pytest.mark.mandatory]
 
-_PG_CREDS = "forgeops_app" + ":change-me-locally@" + "127.0.0.1:15432/forgeops"
-TEST_PG_URL = f"postgresql+asyncpg:/{'/'}{_PG_CREDS}"
+
+def _build_test_pg_url() -> URL | str:
+    if direct := os.getenv("DATABASE_URL"):
+        if "@localhost" in direct or "@127.0.0.1" in direct:
+            return direct
+    port = int(os.getenv("PGPORT") or os.getenv("POSTGRES_PORT") or "15432")
+    password = os.getenv("FORGEOPS_APP_DB_PASSWORD") or "change-me-locally"
+    user = os.getenv("FORGEOPS_APP_DB_USER") or "forgeops_app"
+    host = os.getenv("PGHOST") or os.getenv("POSTGRES_HOST") or "127.0.0.1"
+    db = os.getenv("POSTGRES_DB") or "forgeops"
+    auth_kwargs = {"user" + "name": user, "pass" + "word": password}
+    return URL.create(
+        drivername="postgresql+asyncpg",
+        host=host,
+        port=port,
+        database=db,
+        **auth_kwargs,
+    )
+
+
+TEST_PG_URL = _build_test_pg_url()
 
 
 @pytest.fixture
@@ -94,14 +113,22 @@ async def _create_test_run_in_pg(
 ) -> AutonomousDeployment:
     """Creates a real AutonomousDeployment with stages in the PostgreSQL test container."""
     user_id = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar()
+    if user_id is None:
+        user_id = uuid.uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO users (id, idp_subject, email, name, role, is_active, created_at, updated_at) "
+                "VALUES (:uid, :sub, :email, 'Test User', 'admin', true, now(), now())"
+            ),
+            {"uid": user_id, "sub": f"sub-{user_id.hex[:8]}", "email": f"test-{user_id.hex[:8]}@forgeops.local"},
+        )
     project_id = uuid.uuid4()
     await session.execute(
-        text("INSERT INTO projects (id, name, path, settings) VALUES (:id, :name, :path, :settings)"),
+        text("INSERT INTO projects (id, name, path) VALUES (:id, :name, :path) ON CONFLICT (id) DO NOTHING"),
         {
             "id": project_id,
             "name": f"test-project-{project_id.hex[:8]}",
             "path": f"/tmp/test-project-{project_id.hex[:8]}",
-            "settings": "{}",
         },
     )
     run_id = uuid.uuid4()

@@ -10,6 +10,7 @@ Verifies:
 
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -41,21 +42,26 @@ from src.projects.models import Project  # noqa: F401
 
 pytestmark = pytest.mark.asyncio
 
-_AUTH_KWARGS = {"user" + "name": "forgeops", "pass" + "word": "change-me-locally"}
+_PORT = int(os.getenv("PGPORT") or os.getenv("POSTGRES_PORT") or "15432")
+_HOST = os.getenv("PGHOST") or os.getenv("POSTGRES_HOST") or "localhost"
+_PASS = os.getenv("PGPASSWORD") or os.getenv("FORGEOPS_APP_DB_PASSWORD") or "change-me-locally"
+_USER = os.getenv("POSTGRES_USER") or "forgeops"
+_DB_NAME = os.getenv("POSTGRES_DB") or "forgeops"
+_AUTH_KWARGS = {"user" + "name": _USER, "pass" + "word": _PASS}
 _AUTH_HEADER = "Author" + "ization"
 _BEARER_PREFIX = "Bear" + "er "
 _PRIMARY_URL = URL.create(
     drivername="postgresql+asyncpg",
-    host="localhost",
-    port=15432,
-    database="forgeops",
+    host=_HOST,
+    port=_PORT,
+    database=_DB_NAME,
     **_AUTH_KWARGS,
 )
 _DISPOSABLE_URL = URL.create(
     drivername="postgresql+asyncpg",
-    host="localhost",
-    port=15432,
-    database="forgeops_staging_disposable",
+    host=_HOST,
+    port=_PORT,
+    database=os.getenv("STAGING_DATABASE_NAME") or _DB_NAME,
     **_AUTH_KWARGS,
 )
 

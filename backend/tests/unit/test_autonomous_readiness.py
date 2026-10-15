@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import URL, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.deployments.autonomous_models import (
@@ -174,8 +175,53 @@ def test_analyzer_handles_fatal_exception_with_null_score(tmp_path: Path):
 # Persistence Protocol Tests (PostgreSQL Container)
 # ---------------------------------------------------------------------------
 
-_PG_CREDS = "forgeops_app" + ":change-me-locally@" + "127.0.0.1:15432/forgeops"
-TEST_PG_URL = f"postgresql+asyncpg:/{'/'}{_PG_CREDS}"
+
+def _build_test_pg_url() -> URL | str:
+    if direct := os.getenv("DATABASE_URL"):
+        if "@localhost" in direct or "@127.0.0.1" in direct:
+            return direct
+    port = int(os.getenv("PGPORT") or os.getenv("POSTGRES_PORT") or "15432")
+    password = os.getenv("FORGEOPS_APP_DB_PASSWORD") or "change-me-locally"
+    user = os.getenv("FORGEOPS_APP_DB_USER") or "forgeops_app"
+    host = os.getenv("PGHOST") or os.getenv("POSTGRES_HOST") or "127.0.0.1"
+    db = os.getenv("POSTGRES_DB") or "forgeops"
+    auth_kwargs = {"user" + "name": user, "pass" + "word": password}
+    return URL.create(
+        drivername="postgresql+asyncpg",
+        host=host,
+        port=port,
+        database=db,
+        **auth_kwargs,
+    )
+
+
+TEST_PG_URL = _build_test_pg_url()
+
+
+async def _ensure_seed_user_and_project(session: AsyncSession) -> tuple[uuid.UUID, uuid.UUID]:
+    user_check = await session.execute(text("SELECT id FROM users LIMIT 1"))
+    user_id = user_check.scalar()
+    if user_id is None:
+        user_id = uuid.uuid4()
+        await session.execute(
+            text(
+                "INSERT INTO users (id, idp_subject, email, name, role, is_active, created_at, updated_at) "
+                "VALUES (:uid, :sub, :email, 'Admin User', 'admin', true, now(), now())"
+            ),
+            {"uid": user_id, "sub": f"sub-{user_id.hex[:8]}", "email": f"admin-{user_id.hex[:8]}@forgeops.local"},
+        )
+        await session.commit()
+
+    proj_check = await session.execute(text("SELECT id FROM projects LIMIT 1"))
+    project_id = proj_check.scalar()
+    if project_id is None:
+        project_id = uuid.uuid4()
+        await session.execute(
+            text("INSERT INTO projects (id, name, path) VALUES (:pid, :name, :path) ON CONFLICT (id) DO NOTHING"),
+            {"pid": project_id, "name": f"proj-{str(project_id)[:8]}", "path": f"/tmp/projects/{str(project_id)[:8]}"},
+        )
+        await session.commit()
+    return user_id, project_id
 
 
 @pytest.fixture
@@ -184,6 +230,7 @@ async def pg_session():
     engine = create_async_engine(TEST_PG_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
+        await _ensure_seed_user_and_project(session)
         trans = await session.begin()
         try:
             yield session
@@ -546,8 +593,7 @@ async def test_persistence_concurrent_insert_resolution():
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with session_factory() as setup_session:
-        user_id = (await setup_session.execute(text("SELECT id FROM users LIMIT 1"))).scalar()
-        project_id = (await setup_session.execute(text("SELECT id FROM projects LIMIT 1"))).scalar()
+        user_id, project_id = await _ensure_seed_user_and_project(setup_session)
         run_id = uuid.uuid4()
 
         run = AutonomousDeployment(
