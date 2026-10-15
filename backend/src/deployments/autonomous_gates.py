@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Mapping, Sequence
 import contextlib
 import fnmatch
 import hashlib
@@ -32,6 +31,7 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -139,8 +139,6 @@ def get_project_slug(val: Any) -> str:
     return cleaned[:32] or "project"
 
 
-
-
 async def persist_operation_intent(
     session: AsyncSession,
     stage: AutonomousDeploymentStage,
@@ -178,7 +176,7 @@ async def capture_authoritative_readiness_checkpoint(
     from src.auth.models import UserRole
     from src.projects.models import Project
     from src.projects.routes import get_project_readiness
-    from .autonomous_models import AutonomousDeploymentOutbox, ReadinessCheckpoint
+
     from .readiness import ReadinessCheckResult, save_readiness_checkpoint
 
     report = None
@@ -212,6 +210,7 @@ async def capture_authoritative_readiness_checkpoint(
                     if proj.tenant_id is None:
                         raise ValueError(f"Project {run.project_id} has no tenant_id context.")
                     from ..auth.service_account import get_or_create_autonomous_service_user
+
                     svc_user = await get_or_create_autonomous_service_user(session, tenant_id=proj.tenant_id)
                     principal = Principal.for_service(
                         service_id=svc_user.id,
@@ -234,15 +233,8 @@ async def capture_authoritative_readiness_checkpoint(
         score = report.score
         level = report.level
         dim_scores = report.categories or {}
-        blockers = [
-            getattr(c, "id", str(c))
-            for c in (report.checks or [])
-            if not getattr(c, "passed", True)
-        ]
-        warnings = [
-            getattr(r, "action", getattr(r, "title", str(r)))
-            for r in (report.recommendations or [])
-        ]
+        blockers = [getattr(c, "id", str(c)) for c in (report.checks or []) if not getattr(c, "passed", True)]
+        warnings = [getattr(r, "action", getattr(r, "title", str(r))) for r in (report.recommendations or [])]
 
         if not report.indexed:
             status = "unready"
@@ -252,11 +244,7 @@ async def capture_authoritative_readiness_checkpoint(
             status = "needs_remediation"
 
         detected_stack = "generic"
-        all_ev = " ".join(
-            getattr(c, "evidence", "")
-            for c in (report.checks or [])
-            if getattr(c, "evidence", "")
-        )
+        all_ev = " ".join(getattr(c, "evidence", "") for c in (report.checks or []) if getattr(c, "evidence", ""))
         if any(k in all_ev for k in ("package.json", "node_modules", "npm", "yarn", "pnpm")):
             detected_stack = "nodejs_react"
         elif any(k in all_ev for k in ("requirements.txt", "pyproject.toml", "Pipfile", "poetry.lock")):
@@ -265,7 +253,7 @@ async def capture_authoritative_readiness_checkpoint(
             detected_stack = "golang"
 
         artifacts_detected = []
-        for c in (report.checks or []):
+        for c in report.checks or []:
             if getattr(c, "id", "") == "dockerfile_present" and getattr(c, "passed", False):
                 artifacts_detected.append("Dockerfile")
             elif getattr(c, "id", "") == "compose_present" and getattr(c, "passed", False):
@@ -603,7 +591,9 @@ def resolve_intended_runtime_port(
     # Tier 1: Container runtime logs
     if container_logs:
         # Check loopback-only binding
-        if re.search(r"(?:127\.0\.0\.1|localhost):(\d+)", container_logs) and not re.search(r"0\.0\.0\.0:(\d+)", container_logs):
+        if re.search(r"(?:127\.0\.0\.1|localhost):(\d+)", container_logs) and not re.search(
+            r"0\.0\.0\.0:(\d+)", container_logs
+        ):
             if "0.0.0.0" not in container_logs and "Network:" not in container_logs:
                 m_loop = re.search(r"127\.0\.0\.1:(\d+)", container_logs)
                 if m_loop:
@@ -717,7 +707,9 @@ def resolve_intended_runtime_port(
             if reqs.exists() or pyp.exists():
                 txt = ""
                 with contextlib.suppress(Exception):
-                    txt = (reqs.read_text(encoding="utf-8") if reqs.exists() else "") + (pyp.read_text(encoding="utf-8") if pyp.exists() else "")
+                    txt = (reqs.read_text(encoding="utf-8") if reqs.exists() else "") + (
+                        pyp.read_text(encoding="utf-8") if pyp.exists() else ""
+                    )
                 if "fastapi" in txt or "uvicorn" in txt:
                     detected_port = 8000
                     detected_source = "framework_fastapi"
@@ -888,7 +880,6 @@ class DockerEngineClient:
         log_callback: Any = None,
         build_info: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
-        import io
         import json
         import os
         import tarfile
@@ -944,7 +935,9 @@ class DockerEngineClient:
             captured_id = None
             output_lines: list[str] = []
             build_timeout_s = float(os.getenv("FORGEOPS_DOCKER_BUILD_TIMEOUT_SECONDS", "1500.0"))
-            async with httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=self.uds), timeout=build_timeout_s) as client:
+            async with httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(uds=self.uds), timeout=build_timeout_s
+            ) as client:
                 async with client.stream(
                     "POST",
                     f"http://docker/build?t={quote(image_tag, safe='')}",
@@ -953,7 +946,10 @@ class DockerEngineClient:
                 ) as resp:
                     if resp.status_code != 200:
                         body = await resp.aread()
-                        return False, f"Docker build returned HTTP {resp.status_code}: {body.decode('utf-8', 'replace')[-300:]}"
+                        return (
+                            False,
+                            f"Docker build returned HTTP {resp.status_code}: {body.decode('utf-8', 'replace')[-300:]}",
+                        )
                     captured_docker_error: str | None = None
                     async for chunk in resp.aiter_lines():
                         if not chunk:
@@ -1125,6 +1121,7 @@ class DockerEngineClient:
             if not resolved_network and (os.path.exists("/.dockerenv") or Path("/run/.containerenv").exists()):
                 try:
                     import socket
+
                     my_hostname = socket.gethostname()
                     my_insp = await self.inspect_container(my_hostname)
                     if my_insp:
@@ -1137,9 +1134,7 @@ class DockerEngineClient:
                     resolved_network = "forgeops_default"
 
             if resolved_network:
-                create_payload["NetworkingConfig"] = {
-                    "EndpointsConfig": {resolved_network: {}}
-                }
+                create_payload["NetworkingConfig"] = {"EndpointsConfig": {resolved_network: {}}}
 
             async with httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(uds=self.uds), timeout=30.0) as client:
                 # Clean up any prior running container for this project to free up host ports
@@ -1149,15 +1144,18 @@ class DockerEngineClient:
                         for old_c in list_resp.json():
                             old_labels = old_c.get("Labels", {})
                             is_same_proj = (
-                                (project_id and old_labels.get("forgeops.project_id") == str(project_id))
-                                or (proj_slug and old_labels.get("com.docker.compose.project") == f"forgeops-{proj_slug}")
-                            )
+                                project_id and old_labels.get("forgeops.project_id") == str(project_id)
+                            ) or (proj_slug and old_labels.get("com.docker.compose.project") == f"forgeops-{proj_slug}")
                             old_cid = old_c.get("Id", "")
                             old_names = old_c.get("Names", [])
                             if is_same_proj and old_cid:
-                                is_target_name = any(f"/{container_name}" == n or container_name == n for n in old_names)
+                                is_target_name = any(
+                                    f"/{container_name}" == n or container_name == n for n in old_names
+                                )
                                 if not is_target_name:
-                                    logger.info("Cleaning up prior container %s for project %s", old_cid[:12], proj_slug)
+                                    logger.info(
+                                        "Cleaning up prior container %s for project %s", old_cid[:12], proj_slug
+                                    )
                                     await client.delete(f"http://docker/containers/{old_cid}?force=true")
                 except Exception as cleanup_err:
                     logger.debug("Failed cleaning prior containers for project: %s", cleanup_err)
@@ -1468,7 +1466,7 @@ def _apply_run_local_artifacts(
         raise ValueError(f"Workspace root cannot be a symlink: {workspace_path}")
 
     items: list[tuple[str, str]] = []
-    if isinstance(artifacts, (dict, Mapping)):
+    if isinstance(artifacts, dict | Mapping):
         for k, v in artifacts.items():
             items.append((str(k), str(v)))
     else:
@@ -1477,7 +1475,7 @@ def _apply_run_local_artifacts(
             c = getattr(item, "content", None)
             if p is not None and c is not None:
                 items.append((str(p), str(c)))
-            elif isinstance(item, (tuple, list)) and len(item) == 2:
+            elif isinstance(item, tuple | list) and len(item) == 2:
                 items.append((str(item[0]), str(item[1])))
             else:
                 raise ValueError(f"Unsupported artifact item type: {type(item)}")
@@ -1506,8 +1504,8 @@ def _apply_run_local_artifacts(
 
         try:
             target_file.relative_to(workspace_resolved)
-        except ValueError:
-            raise ValueError(f"Path escapes isolated workspace directory: {rel_raw}")
+        except ValueError as err:
+            raise ValueError(f"Path escapes isolated workspace directory: {rel_raw}") from err
 
         curr = target_file
         while curr != workspace_resolved and curr != curr.parent:
@@ -1539,6 +1537,7 @@ def _is_dockerfile_reusable(workspace_path: Path, df_path: Path) -> bool:
         root_pkg = workspace_path / "package.json"
         if root_pkg.exists():
             import json
+
             pkg_data = json.loads(root_pkg.read_text(encoding="utf-8"))
             ws_entry = pkg_data.get("workspaces")
             workspace_dirs: list[str] = []
@@ -1551,11 +1550,17 @@ def _is_dockerfile_reusable(workspace_path: Path, df_path: Path) -> bool:
                 copied_workspaces = False
                 for line in lines:
                     s = line.strip()
-                    if s.startswith("RUN ") and any(cmd in s for cmd in ["npm install", "npm ci", "pnpm install", "yarn install"]):
+                    if s.startswith("RUN ") and any(
+                        cmd in s for cmd in ["npm install", "npm ci", "pnpm install", "yarn install"]
+                    ):
                         install_seen = True
                         break
                     if s.startswith("COPY "):
-                        if any(ws in s for ws in workspace_dirs) or s.startswith("COPY . .") or s.startswith("COPY . /"):
+                        if (
+                            any(ws in s for ws in workspace_dirs)
+                            or s.startswith("COPY . .")
+                            or s.startswith("COPY . /")
+                        ):
                             copied_workspaces = True
                 if install_seen and not copied_workspaces:
                     return False
@@ -1640,7 +1645,11 @@ async def evaluate_g2_existing_artifacts(
                     f"G2 Generation prerequisite failed: source preparation status is '{src_status or 'missing'}' "
                     f"(expected 'source_ready'). Source workspace must be prepared and verified before generation."
                 ),
-                details={"action": "SYNTHESIZE", "error": "source_prep_not_ready", "source_preparation_status": src_status},
+                details={
+                    "action": "SYNTHESIZE",
+                    "error": "source_prep_not_ready",
+                    "source_preparation_status": src_status,
+                },
             )
 
         recorded_ws = source_prep.get("workspace_path")
@@ -1697,7 +1706,11 @@ async def evaluate_g2_existing_artifacts(
                             f"G2 Generation prerequisite failed: no codebase index exists in file_tree "
                             f"for project '{run.project_id}'. Canonical indexing must complete before G2."
                         ),
-                        details={"action": "SYNTHESIZE", "error": "canonical_index_missing", "project_id": str(run.project_id)},
+                        details={
+                            "action": "SYNTHESIZE",
+                            "error": "canonical_index_missing",
+                            "project_id": str(run.project_id),
+                        },
                     )
             except Exception as idx_err:
                 logger.warning("G2 canonical index check query error: %s", idx_err)
@@ -1710,7 +1723,11 @@ async def evaluate_g2_existing_artifacts(
                     c_txt = chart_yaml.read_text(encoding="utf-8", errors="replace")
                     if "apiVersion: v2" in c_txt and "version: " in c_txt:
                         import shutil
-                        logger.info("Removing stale run-generated chart directory invalid for docker_only strategy: %s", charts_dir)
+
+                        logger.info(
+                            "Removing stale run-generated chart directory invalid for docker_only strategy: %s",
+                            charts_dir,
+                        )
                         shutil.rmtree(charts_dir, ignore_errors=True)
                         break
                 except Exception as c_err:
@@ -1721,10 +1738,15 @@ async def evaluate_g2_existing_artifacts(
         if _is_dockerfile_reusable(workspace_path, workspace_path / "Dockerfile"):
             reusable_df = str(workspace_path / "Dockerfile")
         else:
-            logger.info("Existing Dockerfile at %s is invalid or incomplete for workspace; forcing generation.", workspace_path / "Dockerfile")
+            logger.info(
+                "Existing Dockerfile at %s is invalid or incomplete for workspace; forcing generation.",
+                workspace_path / "Dockerfile",
+            )
     reusable_compose = _get_ctx(context, "reusable_compose")
-    if not reusable_compose and workspace_path.exists() and (
-        (workspace_path / "docker-compose.yml").exists() or (workspace_path / "compose.yaml").exists()
+    if (
+        not reusable_compose
+        and workspace_path.exists()
+        and ((workspace_path / "docker-compose.yml").exists() or (workspace_path / "compose.yaml").exists())
     ):
         reusable_compose = str(
             workspace_path / "docker-compose.yml"
@@ -1736,8 +1758,13 @@ async def evaluate_g2_existing_artifacts(
     evidence_paths: list[str] = []
     evidence_contents: dict[str, str] = {}
     evidence_inv: dict[str, Any] = {}
-    if session and getattr(run, "project_id", None) and (not is_sim_or_mock or _get_ctx(context, "force_real_generation", False)):
+    if (
+        session
+        and getattr(run, "project_id", None)
+        and (not is_sim_or_mock or _get_ctx(context, "force_real_generation", False))
+    ):
         from src.core.index_evidence import load_index_evidence
+
         try:
             ev_call = load_index_evidence(session, project_id=run.project_id)
             evidence = await ev_call if inspect.isawaitable(ev_call) else ev_call
@@ -1761,6 +1788,7 @@ async def evaluate_g2_existing_artifacts(
             ]
 
     from src.generation.prompt_compiler import analyze_project_architecture
+
     arch = analyze_project_architecture(evidence_paths, evidence_contents, evidence_inv)
     strat_lower = strategy_str.lower()
     requires_compose = arch.is_multi_service or "compose" in strat_lower
@@ -1793,8 +1821,11 @@ async def evaluate_g2_existing_artifacts(
             owns_client = True
 
         gen_service = _get_ctx(context, "generation_service")
-        if gen_service is not None or (_get_ctx(context, "force_real_generation", False) and client is None and app is None):
+        if gen_service is not None or (
+            _get_ctx(context, "force_real_generation", False) and client is None and app is None
+        ):
             from src.generation.routes import _compile_generation_plan
+
             compiled = None
             try:
                 target_checks = ["dockerfile_present"]
@@ -1823,14 +1854,20 @@ async def evaluate_g2_existing_artifacts(
 
             if gen_service is not None:
                 from src.generation.service import GenerationOutcome
+
                 outcome = GenerationOutcome(run_id=run.id)
                 proj_info = None
                 retrieval_ctx = None
                 with contextlib.suppress(Exception):
                     from src.generation.routes import _load_project_for_generation, retrieve_generation_context
+
                     proj_call = _load_project_for_generation(session, run.project_id)
                     proj_info = await proj_call if inspect.isawaitable(proj_call) else proj_call
-                    retrieval_call = retrieve_generation_context(session, project_id=run.project_id, query=getattr(compiled, "text", "Generate deployment artifacts"))
+                    retrieval_call = retrieve_generation_context(
+                        session,
+                        project_id=run.project_id,
+                        query=getattr(compiled, "text", "Generate deployment artifacts"),
+                    )
                     retrieval_ctx = await retrieval_call if inspect.isawaitable(retrieval_call) else retrieval_call
 
                 try:
@@ -1906,9 +1943,9 @@ async def evaluate_g2_existing_artifacts(
 
         if use_canonical and client is None and gen_service is None and not is_mock_env:
             try:
-                from .worker_app import get_or_create_worker_app, create_worker_asgi_client
-                from ..auth.principal import Principal
                 from ..auth.models import UserRole
+                from ..auth.principal import Principal
+                from .worker_app import create_worker_asgi_client, get_or_create_worker_app
 
                 app = await get_or_create_worker_app()
                 acting_user_id = getattr(run, "created_by", None) or uuid.uuid4()
@@ -1925,8 +1962,8 @@ async def evaluate_g2_existing_artifacts(
                 logger.warning("Could not initialize worker ASGI client for canonical generation: %s", w_app_err)
 
         if use_canonical and client is not None and gen_service is None:
-            from .canonical_generation_client import stream_canonical_generation
             from .autonomous_governance import approve_and_materialize_generation_change_set
+            from .canonical_generation_client import stream_canonical_generation
 
             target_check_ids = ["dockerfile_present"]
             if requires_compose:
@@ -2025,12 +2062,17 @@ async def evaluate_g2_existing_artifacts(
                     passed=False,
                     status="failed",
                     message="Multi-service architecture requires Docker Compose manifest ('compose.yaml' or 'docker-compose.yml'), but none was delivered.",
-                    details={"action": "SYNTHESIZE", "error": "missing_compose_manifest", "is_multi_service": arch.is_multi_service},
+                    details={
+                        "action": "SYNTHESIZE",
+                        "error": "missing_compose_manifest",
+                        "is_multi_service": arch.is_multi_service,
+                    },
                 )
         else:
             artifacts_provenance = "deterministic_template"
             if workspace_path.exists():
                 from src.generation.project_hygiene_renderers import compose_file
+
                 pkg_json = workspace_path / "package.json"
                 requirements = workspace_path / "requirements.txt"
                 go_mod = workspace_path / "go.mod"
@@ -2049,12 +2091,28 @@ async def evaluate_g2_existing_artifacts(
                         pkg_data = json.loads(pkg_json.read_text(encoding="utf-8"))
                         all_deps = {**pkg_data.get("dependencies", {}), **pkg_data.get("devDependencies", {})}
                         scripts = pkg_data.get("scripts", {})
-                        is_vite = "vite" in all_deps or "vite" in str(scripts.get("dev", "")) or "vite" in str(scripts.get("build", ""))
+                        is_vite = (
+                            "vite" in all_deps
+                            or "vite" in str(scripts.get("dev", ""))
+                            or "vite" in str(scripts.get("build", ""))
+                        )
                         ws_entry = pkg_data.get("workspaces")
                         if isinstance(ws_entry, list):
-                            ws_dirs = [w for w in ws_entry if isinstance(w, str) and "*" not in w and (workspace_path / w / "package.json").exists()]
+                            ws_dirs = [
+                                w
+                                for w in ws_entry
+                                if isinstance(w, str)
+                                and "*" not in w
+                                and (workspace_path / w / "package.json").exists()
+                            ]
                         elif isinstance(ws_entry, dict) and "packages" in ws_entry:
-                            ws_dirs = [w for w in ws_entry["packages"] if isinstance(w, str) and "*" not in w and (workspace_path / w / "package.json").exists()]
+                            ws_dirs = [
+                                w
+                                for w in ws_entry["packages"]
+                                if isinstance(w, str)
+                                and "*" not in w
+                                and (workspace_path / w / "package.json").exists()
+                            ]
                     except Exception:
                         pass
 
@@ -2065,7 +2123,9 @@ async def evaluate_g2_existing_artifacts(
                         else:
                             ws_copies.append(f"COPY {w}/package*.json ./{w}/")
                     ws_copy_str = "".join(f"{c}\n" for c in ws_copies)
-                    has_lock = (workspace_path / "package-lock.json").exists() or (workspace_path / "npm-shrinkwrap.json").exists()
+                    has_lock = (workspace_path / "package-lock.json").exists() or (
+                        workspace_path / "npm-shrinkwrap.json"
+                    ).exists()
                     npm_install_str = "RUN npm ci\n" if has_lock else "RUN npm install\n"
 
                     if is_vite:
@@ -2086,7 +2146,7 @@ async def evaluate_g2_existing_artifacts(
                             "COPY --from=builder --chown=node:node /app ./\n"
                             "USER node\n"
                             f"EXPOSE {vite_cp}\n"
-                            f"CMD [\"npm\", \"run\", \"preview\", \"--\", \"--host\", \"0.0.0.0\", \"--port\", \"{vite_cp}\"]\n"
+                            f'CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "{vite_cp}"]\n'
                         )
                     else:
                         node_cp = target_cp or 3000
@@ -2110,7 +2170,7 @@ async def evaluate_g2_existing_artifacts(
                             "COPY --from=builder --chown=node:node /app ./\n"
                             "USER node\n"
                             f"EXPOSE {node_cp}\n"
-                            "CMD [\"npm\", \"start\"]\n"
+                            'CMD ["npm", "start"]\n'
                         )
                 elif requirements.exists() or (workspace_path / "pyproject.toml").exists():
                     py_cp = target_cp or 8000
@@ -2126,7 +2186,7 @@ async def evaluate_g2_existing_artifacts(
                         "COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages\n"
                         "COPY . .\n"
                         f"EXPOSE {py_cp}\n"
-                        "CMD [\"python\", \"main.py\"]\n"
+                        'CMD ["python", "main.py"]\n'
                     )
                 elif go_mod.exists():
                     go_cp = target_cp or 8080
@@ -2143,7 +2203,7 @@ async def evaluate_g2_existing_artifacts(
                         f"ENV PORT={go_cp}\n"
                         "COPY --from=builder /app/server ./\n"
                         f"EXPOSE {go_cp}\n"
-                        "CMD [\"./server\"]\n"
+                        'CMD ["./server"]\n'
                     )
                 else:
                     base_cp = target_cp or 8080
@@ -2153,7 +2213,7 @@ async def evaluate_g2_existing_artifacts(
                         "WORKDIR /app\n"
                         "COPY . .\n"
                         f"EXPOSE {base_cp}\n"
-                        "CMD [\"sh\", \"-c\", \"echo 'Running ForgeOps workload'; sleep infinity\"]\n"
+                        'CMD ["sh", "-c", "echo \'Running ForgeOps workload\'; sleep infinity"]\n'
                     )
 
                 with contextlib.suppress(Exception):
@@ -2172,7 +2232,11 @@ async def evaluate_g2_existing_artifacts(
                         (workspace_path / "docker-compose.yml").write_text(compose_body, encoding="utf-8")
                         reusable_compose = str(workspace_path / "docker-compose.yml")
 
-            elif _is_simulation_mode(session, run, context) or _get_ctx(context, "mock_source_prep", False) or _get_ctx(context, "skip_source_prep", False):
+            elif (
+                _is_simulation_mode(session, run, context)
+                or _get_ctx(context, "mock_source_prep", False)
+                or _get_ctx(context, "skip_source_prep", False)
+            ):
                 reusable_df = "Dockerfile"
                 if requires_compose:
                     reusable_compose = "docker-compose.yml"
@@ -2315,11 +2379,11 @@ async def evaluate_g3_consistency(
             compose_path = workspace_path / "compose.yaml"
         if df_path.exists():
             try:
-                from src.validation.consistency_gate import verify_consistency_gate
                 from src.blueprint.models import ProjectBlueprint
+                from src.validation.consistency_gate import verify_consistency_gate
             except ImportError:
-                from backend.src.validation.consistency_gate import verify_consistency_gate
                 from backend.src.blueprint.models import ProjectBlueprint
+                from backend.src.validation.consistency_gate import verify_consistency_gate
 
             bp = None
             if run.configuration and isinstance(run.configuration.get("blueprint"), dict):
@@ -2506,7 +2570,9 @@ async def evaluate_g4_build(
                         workspace_path, image_tag, log_callback=_on_build_log, build_info=build_info
                     )
                 elif hasattr(docker_client, "build_image"):
-                    build_ok, build_err = await docker_client.build_image(df_path.read_text(encoding="utf-8"), image_tag)
+                    build_ok, build_err = await docker_client.build_image(
+                        df_path.read_text(encoding="utf-8"), image_tag
+                    )
                 else:
                     build_ok, build_err = False, "Docker client lacks build capability"
             finally:
@@ -2580,7 +2646,9 @@ async def evaluate_g4_build(
                 },
             )
 
-        err_msg = err_detail or f"image '{image_tag}' not found in Docker daemon and Dockerfile not found at '{df_path}'"
+        err_msg = (
+            err_detail or f"image '{image_tag}' not found in Docker daemon and Dockerfile not found at '{df_path}'"
+        )
         return GateResult(
             gate_id="G4",
             passed=False,
@@ -2644,6 +2712,7 @@ async def evaluate_g5_apply(
     if not project_name and session and hasattr(run, "project_id") and run.project_id:
         with contextlib.suppress(Exception):
             from src.projects.models import Project
+
             proj = await session.get(Project, run.project_id)
             if proj:
                 project_name = proj.name
@@ -2661,7 +2730,9 @@ async def evaluate_g5_apply(
     target_image_id = _get_ctx(context, "image_id") or (g4_meta.get("image_id") if isinstance(g4_meta, dict) else None)
     target_image = target_image_id or image_tag
 
-    project_slug = get_project_slug(project_name or (str(run.project_id)[:8] if hasattr(run, "project_id") and run.project_id else "run"))
+    project_slug = get_project_slug(
+        project_name or (str(run.project_id)[:8] if hasattr(run, "project_id") and run.project_id else "run")
+    )
     container_name = docker_cfg.get("container_name") or f"forgeops-{project_slug}-{str(run.id)[:8]}"
     is_sim = _is_simulation_mode(session, run, context)
 
@@ -2669,6 +2740,7 @@ async def evaluate_g5_apply(
     if not workspace_path and session and hasattr(run, "project_id") and run.project_id:
         with contextlib.suppress(Exception):
             from src.projects.models import Project
+
             proj = await session.get(Project, run.project_id)
             if proj and proj.local_path:
                 workspace_path = resolve_workspace_path(proj.local_path)
@@ -2742,7 +2814,8 @@ async def evaluate_g5_apply(
                     "port_bindings": port_bindings,
                     "container_port": resolved_ports.container_port,
                     "host_port": resolved_ports.host_port,
-                    "configured_container_port": resolved_ports.configured_container_port or resolved_ports.container_port,
+                    "configured_container_port": resolved_ports.configured_container_port
+                    or resolved_ports.container_port,
                     "configured_host_port": resolved_ports.configured_host_port or resolved_ports.host_port,
                     "port_conflict": resolved_ports.port_conflict,
                     "port_source": resolved_ports.port_source,
@@ -2866,6 +2939,7 @@ async def evaluate_g6_workload(
     if not project_name and session and hasattr(run, "project_id") and run.project_id:
         with contextlib.suppress(Exception):
             from src.projects.models import Project
+
             proj = await session.get(Project, run.project_id)
             if proj:
                 project_name = proj.name
@@ -2874,7 +2948,9 @@ async def evaluate_g6_workload(
         if "/" in sp_repo:
             project_name = sp_repo.split("/")[-1]
 
-    project_slug = get_project_slug(project_name or (str(run.project_id)[:8] if hasattr(run, "project_id") and run.project_id else "run"))
+    project_slug = get_project_slug(
+        project_name or (str(run.project_id)[:8] if hasattr(run, "project_id") and run.project_id else "run")
+    )
     container_name = docker_cfg.get("container_name") or f"forgeops-{project_slug}-{str(run.id)[:8]}"
 
     docker_client = _get_ctx(context, "docker_client") or DockerEngineClient()
@@ -2938,6 +3014,7 @@ async def evaluate_g6_workload(
         if workload_type == "batch":
             max_batch_wait = 30.0
             import time
+
             t_batch_start = time.perf_counter()
             while time.perf_counter() - t_batch_start < max_batch_wait:
                 insp = await docker_client.inspect_container(container_name) or {}
@@ -2991,6 +3068,7 @@ async def evaluate_g6_workload(
         if not workspace_path and session and hasattr(run, "project_id") and run.project_id:
             with contextlib.suppress(Exception):
                 from src.projects.models import Project
+
                 proj = await session.get(Project, run.project_id)
                 if proj and proj.local_path:
                     workspace_path = resolve_workspace_path(proj.local_path)
@@ -3007,12 +3085,8 @@ async def evaluate_g6_workload(
         )
 
         # Determine configured and target ports using resolved_ports
-        configured_container_port = str(
-            resolved_ports.configured_container_port or resolved_ports.container_port
-        )
-        configured_host_port = (
-            resolved_ports.configured_host_port or resolved_ports.host_port
-        )
+        configured_container_port = str(resolved_ports.configured_container_port or resolved_ports.container_port)
+        configured_host_port = resolved_ports.configured_host_port or resolved_ports.host_port
 
         target_container_port = str(resolved_ports.container_port)
         target_host_port = resolved_ports.host_port
@@ -3024,7 +3098,9 @@ async def evaluate_g6_workload(
             or {}
         )
         if isinstance(actual_port_bindings, dict) and actual_port_bindings and not is_sim:
-            bindings_for_cp = actual_port_bindings.get(f"{target_container_port}/tcp") or actual_port_bindings.get(target_container_port)
+            bindings_for_cp = actual_port_bindings.get(f"{target_container_port}/tcp") or actual_port_bindings.get(
+                target_container_port
+            )
             if not isinstance(bindings_for_cp, list) or not bindings_for_cp:
                 return GateResult(
                     gate_id="G6",
@@ -3067,11 +3143,7 @@ async def evaluate_g6_workload(
 
         is_in_container = os.path.exists("/.dockerenv") or Path("/run/.containerenv").exists()
         networks = insp.get("NetworkSettings", {}).get("Networks", {})
-        container_ips = [
-            net_data.get("IPAddress")
-            for net_data in networks.values()
-            if net_data.get("IPAddress")
-        ]
+        container_ips = [net_data.get("IPAddress") for net_data in networks.values() if net_data.get("IPAddress")]
         top_ip = insp.get("NetworkSettings", {}).get("IPAddress")
         if top_ip and top_ip not in container_ips:
             container_ips.append(top_ip)
@@ -3093,6 +3165,7 @@ async def evaluate_g6_workload(
 
         probe_http_client = _get_ctx(context, "http_client")
         import time
+
         start_time = time.perf_counter()
         max_wait_seconds = float(_get_ctx(context, "g6_probe_timeout", 30.0))
         poll_interval = float(_get_ctx(context, "g6_poll_interval", 1.5))
@@ -3120,7 +3193,11 @@ async def evaluate_g6_workload(
             if health_state == "healthy":
                 probe_passed = True
                 probe_status = 200
-                successful_url = candidate_urls[0] if candidate_urls else f"http://{container_name}:{target_container_port}{health_path}"
+                successful_url = (
+                    candidate_urls[0]
+                    if candidate_urls
+                    else f"http://{container_name}:{target_container_port}{health_path}"
+                )
                 probe_error = None
                 break
 
@@ -3146,13 +3223,15 @@ async def evaluate_g6_workload(
                         probe_error = None
                         last_exception = None
                         iteration_passed = True
-                        attempted_probes.append({
-                            "url": test_url,
-                            "status": resp_status,
-                            "latency_ms": t_lat,
-                            "exception": None,
-                            "error": None,
-                        })
+                        attempted_probes.append(
+                            {
+                                "url": test_url,
+                                "status": resp_status,
+                                "latency_ms": t_lat,
+                                "exception": None,
+                                "error": None,
+                            }
+                        )
                         break
                     else:
                         last_exception = None
@@ -3162,23 +3241,27 @@ async def evaluate_g6_workload(
                             probe_error = f"HTTP {resp_status} Server Error for {test_url}"
                         else:
                             probe_error = f"HTTP {resp_status} Client Error for {test_url}"
-                        attempted_probes.append({
-                            "url": test_url,
-                            "status": resp_status,
-                            "latency_ms": t_lat,
-                            "exception": None,
-                            "error": probe_error,
-                        })
+                        attempted_probes.append(
+                            {
+                                "url": test_url,
+                                "status": resp_status,
+                                "latency_ms": t_lat,
+                                "exception": None,
+                                "error": probe_error,
+                            }
+                        )
                 except Exception as exc:
                     last_exception = exc
                     probe_error = str(exc)
-                    attempted_probes.append({
-                        "url": test_url,
-                        "status": None,
-                        "latency_ms": None,
-                        "exception": exc,
-                        "error": str(exc),
-                    })
+                    attempted_probes.append(
+                        {
+                            "url": test_url,
+                            "status": None,
+                            "latency_ms": None,
+                            "exception": exc,
+                            "error": str(exc),
+                        }
+                    )
 
             if iteration_passed or probe_passed:
                 break
@@ -3210,8 +3293,18 @@ async def evaluate_g6_workload(
         container_restarting = bool(state.get("Restarting", False)) if has_valid_state else False
         exit_code = state.get("ExitCode") if has_valid_state else None
         oom_killed = bool(state.get("OOMKilled", False)) if has_valid_state else False
-        health_status = state.get("Health", {}).get("Status") if (has_valid_state and isinstance(state.get("Health"), dict)) else None
-        exposed_ports = list((insp or {}).get("Config", {}).get("ExposedPorts", {}).keys()) if insp and isinstance(insp.get("Config"), dict) and isinstance(insp.get("Config", {}).get("ExposedPorts"), dict) else []
+        health_status = (
+            state.get("Health", {}).get("Status")
+            if (has_valid_state and isinstance(state.get("Health"), dict))
+            else None
+        )
+        exposed_ports = (
+            list((insp or {}).get("Config", {}).get("ExposedPorts", {}).keys())
+            if insp
+            and isinstance(insp.get("Config"), dict)
+            and isinstance(insp.get("Config", {}).get("ExposedPorts"), dict)
+            else []
+        )
 
         if probe_passed:
             docker_uds = getattr(docker_client, "uds", "/var/run/docker.sock")
@@ -3251,7 +3344,7 @@ async def evaluate_g6_workload(
             if exc is not None:
                 curr: BaseException | None = exc
                 while curr:
-                    if isinstance(curr, (ConnectionRefusedError, ConnectionResetError)):
+                    if isinstance(curr, ConnectionRefusedError | ConnectionResetError):
                         return True
                     if isinstance(curr, OSError):
                         if getattr(curr, "errno", None) in (111, 61, 10061) or getattr(curr, "winerror", None) == 10061:
@@ -3299,7 +3392,7 @@ async def evaluate_g6_workload(
             if exc is not None:
                 curr: BaseException | None = exc
                 while curr:
-                    if isinstance(curr, (httpx.TimeoutException, TimeoutError)):
+                    if isinstance(curr, httpx.TimeoutException | TimeoutError):
                         return True
                     name = curr.__class__.__name__.lower()
                     if "timeout" in name:
@@ -3391,7 +3484,9 @@ async def evaluate_g6_workload(
                     )
                 else:
                     error_category = "PORT_CONNECTION_REFUSED"
-                    exposed_str = f" (detected exposed ports in image: {', '.join(exposed_ports)})" if exposed_ports else ""
+                    exposed_str = (
+                        f" (detected exposed ports in image: {', '.join(exposed_ports)})" if exposed_ports else ""
+                    )
                     configured_str = (
                         f" (configured container port: {configured_container_port})"
                         if configured_container_port and str(configured_container_port) != str(target_container_port)
@@ -3429,7 +3524,9 @@ async def evaluate_g6_workload(
                     )
                 else:
                     error_category = "PORT_CONNECTION_REFUSED"
-                    exposed_str = f" (detected exposed ports in image: {', '.join(exposed_ports)})" if exposed_ports else ""
+                    exposed_str = (
+                        f" (detected exposed ports in image: {', '.join(exposed_ports)})" if exposed_ports else ""
+                    )
                     configured_str = (
                         f" (configured container port: {configured_container_port})"
                         if configured_container_port and str(configured_container_port) != str(target_container_port)
@@ -3686,7 +3783,9 @@ async def evaluate_g7_verification(
                                 bound_ports = (insp.get("HostConfig", {}) or {}).get("PortBindings") or {}
                                 if req_container_port:
                                     expected_key = f"{req_container_port}/tcp"
-                                    c_bindings = bound_ports.get(expected_key) or bound_ports.get(str(req_container_port))
+                                    c_bindings = bound_ports.get(expected_key) or bound_ports.get(
+                                        str(req_container_port)
+                                    )
                                     if not isinstance(c_bindings, list) or not c_bindings:
                                         target_results["docker"] = "failed"
                                     else:
@@ -3771,7 +3870,8 @@ async def evaluate_g7_verification(
                                                 real_files = [
                                                     item.get("path")
                                                     for item in tree_entries
-                                                    if item.get("path") not in ("forgeops-autonomous-deploy.txt", "README.md", ".gitignore")
+                                                    if item.get("path")
+                                                    not in ("forgeops-autonomous-deploy.txt", "README.md", ".gitignore")
                                                 ]
                                                 if real_files:
                                                     target_results["github"] = "verified"
@@ -3822,7 +3922,8 @@ async def evaluate_g7_verification(
                                                 real_files = [
                                                     item.get("path")
                                                     for item in tree_entries
-                                                    if item.get("path") not in ("forgeops-autonomous-deploy.txt", "README.md", ".gitignore")
+                                                    if item.get("path")
+                                                    not in ("forgeops-autonomous-deploy.txt", "README.md", ".gitignore")
                                                 ]
                                                 if real_files:
                                                     target_results["github"] = "verified"
@@ -3890,10 +3991,13 @@ async def evaluate_g7_verification(
             v_meta: dict[str, Any] = {}
             if stage_vercel:
                 v_meta = (
-                    getattr(stage_vercel, "stage_metadata", None) or getattr(stage_vercel, "metadata_payload", None) or {}
+                    getattr(stage_vercel, "stage_metadata", None)
+                    or getattr(stage_vercel, "metadata_payload", None)
+                    or {}
                 )
                 dep_id = v_meta.get("deployment_id")
             if live_vercel_token and dep_id:
+
                 async def _run_g7_vercel_verification(client: httpx.AsyncClient) -> None:
                     nonlocal vercel_verified_url
                     v_resp = await client.get(
@@ -3963,6 +4067,7 @@ async def evaluate_g7_verification(
                                     continue
                                 if loc:
                                     from urllib.parse import urljoin
+
                                     redir_url = urljoin(cand_url, loc)
                                     try:
                                         probe_resp = await client.get(redir_url)
@@ -4104,33 +4209,37 @@ class TargetPackagingLimits:
 TARGET_PACKAGING_LIMITS: dict[str, TargetPackagingLimits] = {
     "vercel": TargetPackagingLimits(
         target="vercel",
-        max_single_file_bytes=100 * 1024 * 1024,  # 100 MB per file (provider limit for Hobby total sources / recommended individual file ceiling)
-        max_total_bytes=250 * 1024 * 1024,        # 250 MB total (ForgeOps internal safety policy aligned with Vercel Function uncompressed limit)
-        max_file_count=10_000,                    # 10,000 files per deployment (ForgeOps internal safety policy)
+        max_single_file_bytes=100
+        * 1024
+        * 1024,  # 100 MB per file (provider limit for Hobby total sources / recommended individual file ceiling)
+        max_total_bytes=250
+        * 1024
+        * 1024,  # 250 MB total (ForgeOps internal safety policy aligned with Vercel Function uncompressed limit)
+        max_file_count=10_000,  # 10,000 files per deployment (ForgeOps internal safety policy)
         single_file_enforced_by_provider=True,
         total_bytes_enforced_by_provider=False,
     ),
     "github": TargetPackagingLimits(
         target="github",
         max_single_file_bytes=100 * 1024 * 1024,  # 100 MB per blob (documented GitHub hard limit without Git LFS)
-        max_total_bytes=500 * 1024 * 1024,        # 500 MB total repository sync (ForgeOps internal safety policy)
-        max_file_count=25_000,                    # 25,000 files per tree (ForgeOps internal safety policy)
+        max_total_bytes=500 * 1024 * 1024,  # 500 MB total repository sync (ForgeOps internal safety policy)
+        max_file_count=25_000,  # 25,000 files per tree (ForgeOps internal safety policy)
         single_file_enforced_by_provider=True,
         total_bytes_enforced_by_provider=False,
     ),
     "docker": TargetPackagingLimits(
         target="docker",
         max_single_file_bytes=500 * 1024 * 1024,  # 500 MB per file (ForgeOps internal resource safety policy)
-        max_total_bytes=1024 * 1024 * 1024,       # 1 GB context tarball limit (ForgeOps internal resource safety policy)
-        max_file_count=50_000,                    # 50,000 files (ForgeOps internal safety policy)
+        max_total_bytes=1024 * 1024 * 1024,  # 1 GB context tarball limit (ForgeOps internal resource safety policy)
+        max_file_count=50_000,  # 50,000 files (ForgeOps internal safety policy)
         single_file_enforced_by_provider=False,
         total_bytes_enforced_by_provider=False,
     ),
     "generic": TargetPackagingLimits(
         target="generic",
-        max_single_file_bytes=10 * 1024 * 1024,   # 10 MB default single file limit (ForgeOps internal baseline policy)
-        max_total_bytes=50 * 1024 * 1024,         # 50 MB default total workspace payload (ForgeOps internal baseline policy)
-        max_file_count=5_000,                     # 5,000 files (ForgeOps internal baseline policy)
+        max_single_file_bytes=10 * 1024 * 1024,  # 10 MB default single file limit (ForgeOps internal baseline policy)
+        max_total_bytes=50 * 1024 * 1024,  # 50 MB default total workspace payload (ForgeOps internal baseline policy)
+        max_file_count=5_000,  # 5,000 files (ForgeOps internal baseline policy)
         single_file_enforced_by_provider=False,
         total_bytes_enforced_by_provider=False,
     ),
@@ -4223,6 +4332,7 @@ def resolve_application_root(
         return candidates[0]
 
     return workspace_path
+
 
 IGNORED_DIRS_FOR_SYNC: set[str] = {
     ".git",
@@ -4383,7 +4493,7 @@ class GitIgnoreRule:
                     parts.append(re.escape("["))
                     i += 1
                 else:
-                    group = pat[i + 1:j].replace("\\", "\\\\")
+                    group = pat[i + 1 : j].replace("\\", "\\\\")
                     i = j + 1
                     if group[0] in ("!", "^"):
                         group = "^" + group[1:]
@@ -4491,8 +4601,10 @@ def check_ignored_path(
     # Evaluate .gitignore / .vercelignore specs
     if active_specs:
         for base_prefix, spec in reversed(active_specs):
-            path_for_spec = posix_rel if not base_prefix else (
-                posix_rel[len(base_prefix) + 1:] if posix_rel.startswith(base_prefix + "/") else ""
+            path_for_spec = (
+                posix_rel
+                if not base_prefix
+                else (posix_rel[len(base_prefix) + 1 :] if posix_rel.startswith(base_prefix + "/") else "")
             )
             if not path_for_spec:
                 continue
@@ -4622,8 +4734,10 @@ def scan_workspace_manifest(
             is_ign_dir = False
             dir_posix = rel_sub.as_posix()
             for base_prefix, spec in reversed(active_specs):
-                path_for_spec = dir_posix if not base_prefix else (
-                    dir_posix[len(base_prefix) + 1:] if dir_posix.startswith(base_prefix + "/") else ""
+                path_for_spec = (
+                    dir_posix
+                    if not base_prefix
+                    else (dir_posix[len(base_prefix) + 1 :] if dir_posix.startswith(base_prefix + "/") else "")
                 )
                 if not path_for_spec:
                     continue
@@ -4666,7 +4780,11 @@ def scan_workspace_manifest(
             else:
                 is_ign, reason = check_ignored_path(rel_file, active_specs)
             if is_ign:
-                if reason in ("sensitive_key_or_cert_pattern", "sensitive_credentials_file_pattern", "environment_file"):
+                if reason in (
+                    "sensitive_key_or_cert_pattern",
+                    "sensitive_credentials_file_pattern",
+                    "environment_file",
+                ):
                     logger.info("Excluding sensitive workspace file: %s (reason: %s)", posix_path, reason)
                 continue
 
@@ -4686,7 +4804,9 @@ def scan_workspace_manifest(
                 size_mb = st.st_size / (1024 * 1024)
                 max_mb = effective_max_file / (1024 * 1024)
                 extra_hint = " Track with Git LFS or exclude via .gitignore." if target_key == "github" else ""
-                policy_type = "provider-enforced limit" if limits.single_file_enforced_by_provider else "ForgeOps safety policy"
+                policy_type = (
+                    "provider-enforced limit" if limits.single_file_enforced_by_provider else "ForgeOps safety policy"
+                )
                 raise WorkspacePackagingError(
                     f"Workspace file '{posix_path}' ({size_mb:.2f} MB) exceeds maximum allowed individual file size "
                     f"({policy_type}: {max_mb:.1f} MB) for target '{target_key}'.{extra_hint} Large binary assets, "
@@ -4696,7 +4816,9 @@ def scan_workspace_manifest(
             if total_size + st.st_size > effective_max_total:
                 curr_total_mb = (total_size + st.st_size) / (1024 * 1024)
                 max_total_mb = effective_max_total / (1024 * 1024)
-                policy_type = "provider-enforced limit" if limits.total_bytes_enforced_by_provider else "ForgeOps safety policy"
+                policy_type = (
+                    "provider-enforced limit" if limits.total_bytes_enforced_by_provider else "ForgeOps safety policy"
+                )
                 raise WorkspacePackagingError(
                     f"Total workspace size ({curr_total_mb:.2f} MB) exceeds maximum allowed limit "
                     f"({policy_type}: {max_total_mb:.1f} MB) for target '{target_key}' while processing '{posix_path}'. "
@@ -4805,12 +4927,14 @@ async def _create_git_commit_tree(
             is_text = False
 
         if is_text and len(content_bytes) <= 100 * 1024:
-            tree_items.append({
-                "path": rel_path,
-                "mode": "100644",
-                "type": "blob",
-                "content": text_content,
-            })
+            tree_items.append(
+                {
+                    "path": rel_path,
+                    "mode": "100644",
+                    "type": "blob",
+                    "content": text_content,
+                }
+            )
         else:
             blob_resp = await client.post(
                 f"{repo_url}/git/blobs",
@@ -4822,12 +4946,14 @@ async def _create_git_commit_tree(
             )
             if blob_resp.status_code in (200, 201):
                 blob_sha = blob_resp.json().get("sha")
-                tree_items.append({
-                    "path": rel_path,
-                    "mode": "100644",
-                    "type": "blob",
-                    "sha": blob_sha,
-                })
+                tree_items.append(
+                    {
+                        "path": rel_path,
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_sha,
+                    }
+                )
             else:
                 clean_err = redact_secrets(blob_resp.text)
                 raise RuntimeError(
@@ -5446,7 +5572,11 @@ async def execute_github_release(
                         if src_sha != base_sha:
                             tip_commit_url = f"{repo_url}/commits/{src_sha}"
                             tip_resp = await client.get(tip_commit_url, headers=headers)
-                            tip_msg = tip_resp.json().get("commit", {}).get("message", "") if tip_resp.status_code == 200 else ""
+                            tip_msg = (
+                                tip_resp.json().get("commit", {}).get("message", "")
+                                if tip_resp.status_code == 200
+                                else ""
+                            )
                             if f"feat(deploy): autonomous deployment run {str(run.id)[:8]}" in tip_msg:
                                 commit_sha = src_sha
                             else:
@@ -5819,7 +5949,9 @@ async def execute_vercel_deploy(
             # Phase 1: Upload files via POST /v2/files with SHA-1 digest and streaming chunks
             async def _upload_one_file(item: WorkspaceFileMetadata) -> None:
                 async with sem:
-                    if getattr(run, "status", None) in ("cancelling", "cancelled") or _get_ctx(context, "cancellation_requested", False):
+                    if getattr(run, "status", None) in ("cancelling", "cancelled") or _get_ctx(
+                        context, "cancellation_requested", False
+                    ):
                         raise asyncio.CancelledError("Deployment cancelled during file upload")
 
                     digest = item.sha1 or compute_file_sha1(item.full_path)
@@ -5831,7 +5963,9 @@ async def execute_vercel_deploy(
                     }
                     max_attempts = 3
                     for attempt in range(max_attempts):
-                        if getattr(run, "status", None) in ("cancelling", "cancelled") or _get_ctx(context, "cancellation_requested", False):
+                        if getattr(run, "status", None) in ("cancelling", "cancelled") or _get_ctx(
+                            context, "cancellation_requested", False
+                        ):
                             raise asyncio.CancelledError("Deployment cancelled during file upload")
                         chunk_gen = _stream_file_chunks(item.full_path)
                         try:
@@ -5858,7 +5992,11 @@ async def execute_vercel_deploy(
                                     is_existing = True
 
                                 if is_existing:
-                                    logger.debug("Vercel file '%s' (%s) already exists on server, skipping upload", item.rel_path, item.sha1)
+                                    logger.debug(
+                                        "Vercel file '%s' (%s) already exists on server, skipping upload",
+                                        item.rel_path,
+                                        item.sha1,
+                                    )
                                     return
 
                                 clean_err = redact_secrets(resp.text)
@@ -5867,7 +6005,7 @@ async def execute_vercel_deploy(
                                 )
                             if resp.status_code in (429, 500, 502, 503, 504):
                                 if attempt < max_attempts - 1:
-                                    sleep_sec = 0.25 * (2 ** attempt)
+                                    sleep_sec = 0.25 * (2**attempt)
                                     if resp.status_code == 429:
                                         ra = resp.headers.get("Retry-After")
                                         if ra:
@@ -5882,7 +6020,7 @@ async def execute_vercel_deploy(
                             )
                         except (httpx.TransportError, httpx.TimeoutException) as net_err:
                             if attempt < max_attempts - 1:
-                                await asyncio.sleep(0.25 * (2 ** attempt))
+                                await asyncio.sleep(0.25 * (2**attempt))
                                 continue
                             raise RuntimeError(
                                 f"Vercel file upload network error for '{item.rel_path}' after {max_attempts} attempts: {type(net_err).__name__}"
@@ -5986,19 +6124,28 @@ async def execute_vercel_deploy(
             # Phase 4: Bounded Polling for Ready State
             env_poll_timeout = os.getenv("FORGEOPS_VERCEL_POLL_TIMEOUT_SECONDS")
             try:
-                default_poll_timeout = float(env_poll_timeout) if env_poll_timeout and env_poll_timeout.strip() else 600.0
+                default_poll_timeout = (
+                    float(env_poll_timeout) if env_poll_timeout and env_poll_timeout.strip() else 600.0
+                )
             except ValueError:
                 default_poll_timeout = 600.0
-            poll_timeout = float(v_cfg.get("poll_timeout_seconds", _get_ctx(context, "vercel_poll_timeout", default_poll_timeout)))
-            base_poll_interval = float(os.getenv("FORGEOPS_VERCEL_POLL_INTERVAL_SECONDS", str(_get_ctx(context, "vercel_poll_interval", 3.0))))
+            poll_timeout = float(
+                v_cfg.get("poll_timeout_seconds", _get_ctx(context, "vercel_poll_timeout", default_poll_timeout))
+            )
+            base_poll_interval = float(
+                os.getenv("FORGEOPS_VERCEL_POLL_INTERVAL_SECONDS", str(_get_ctx(context, "vercel_poll_interval", 3.0)))
+            )
             poll_interval = base_poll_interval
             import time
+
             start_poll = time.monotonic()
             final_data = dep_data
 
             while True:
                 # 1. Cancellation check
-                if getattr(run, "status", None) in ("cancelling", "cancelled") or _get_ctx(context, "cancellation_requested", False):
+                if getattr(run, "status", None) in ("cancelling", "cancelled") or _get_ctx(
+                    context, "cancellation_requested", False
+                ):
                     if stage_vercel:
                         stage_vercel.stage_metadata = {
                             **(stage_vercel.stage_metadata or {}),
@@ -6137,10 +6284,16 @@ async def execute_vercel_deploy(
                         except (ValueError, TypeError):
                             retry_after = 5.0
                         poll_interval = min(30.0, max(base_poll_interval, retry_after))
-                        logger.warning("Vercel polling rate-limited (HTTP 429). Backing off for %.1fs (Retry-After)", poll_interval)
+                        logger.warning(
+                            "Vercel polling rate-limited (HTTP 429). Backing off for %.1fs (Retry-After)", poll_interval
+                        )
                     elif poll_resp.status_code in (500, 502, 503, 504):
                         poll_interval = min(15.0, max(base_poll_interval, poll_interval * 1.5))
-                        logger.warning("Vercel polling received transient HTTP %d; backing off for %.1fs", poll_resp.status_code, poll_interval)
+                        logger.warning(
+                            "Vercel polling received transient HTTP %d; backing off for %.1fs",
+                            poll_resp.status_code,
+                            poll_interval,
+                        )
                     else:
                         logger.warning("Vercel polling received HTTP %d", poll_resp.status_code)
                 except (httpx.TransportError, httpx.TimeoutException) as poll_err:

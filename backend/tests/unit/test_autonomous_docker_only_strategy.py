@@ -14,12 +14,16 @@ Verifies:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
-
+from src.deployments.autonomous_gates import (
+    _active_targets_for_strategy,
+    evaluate_g7_final_verification,
+)
+from src.deployments.autonomous_models import AutonomousDeployment
 from src.deployments.autonomous_schemas import (
     CreateAutonomousRunRequest,
     DeploymentStrategy,
@@ -41,18 +45,10 @@ from src.deployments.autonomous_service import (
 )
 from src.deployments.autonomous_worker import (
     DEFAULT_STRATEGY_WEIGHTS,
-    calculate_progress,
 )
-from src.deployments.autonomous_recovery import CompensationRollback
-from src.deployments.autonomous_gates import (
-    _active_targets_for_strategy,
-    evaluate_g7_final_verification,
-)
-from src.deployments.autonomous_models import AutonomousDeployment, AutonomousDeploymentStage
 from src.generation.prompt_compiler import (
     ReadinessCheck,
     compile_prompt,
-    analyze_project_architecture,
 )
 
 
@@ -319,8 +315,8 @@ class TestDockerOnlyRemediationAndSafeguards:
 
     def test_docker_only_multi_service_vs_single_service_compose(self) -> None:
         """Multi-service docker_only projects receive compose while single-service without compose does not."""
-        from src.generation.service import GenerationService
         from src.generation.prompt_compiler import ProjectArchitecture, ServiceSpec
+        from src.generation.service import GenerationService
 
         service = GenerationService()
 
@@ -353,8 +349,6 @@ class TestDockerOnlyRemediationAndSafeguards:
     def test_g8_repair_and_ai_recovery_cannot_reintroduce_k8s_or_helm(self) -> None:
         """G8 repair prompts and AI recovery cannot emit or accept k8s or helm manifests for docker_only."""
         from src.generation.prompt_compiler import compile_repair_prompts
-        from src.recovery.ai_resolver import resolve_failure_with_ai_async
-        from src.diagnostics.bundle import DiagnosticBundle
 
         failing_checks = [
             ReadinessCheck(
@@ -404,8 +398,8 @@ class TestDockerOnlyRemediationAndSafeguards:
     @pytest.mark.asyncio
     async def test_ai_recovery_filters_unauthorized_k8s_and_helm_manifests(self) -> None:
         """resolve_failure_with_ai_async strictly strips k8s/helm artifacts for docker_only runs."""
-        from src.recovery.ai_resolver import resolve_failure_with_ai_async
         from src.diagnostics.bundle import DiagnosticBundle
+        from src.recovery.ai_resolver import resolve_failure_with_ai_async
 
         mock_client = AsyncMock()
         mock_resp = MagicMock()
@@ -423,7 +417,7 @@ class TestDockerOnlyRemediationAndSafeguards:
                             "RUN npm ci\n"
                             "COPY . .\n"
                             "USER 10001\n"
-                            "CMD [\"npm\", \"start\"]\n"
+                            'CMD ["npm", "start"]\n'
                             "```\n\n"
                             "### FILE: charts/test-app/Chart.yaml\n"
                             "```\n"
@@ -542,4 +536,3 @@ class TestDockerOnlyRemediationAndSafeguards:
             assert res.passed is False
             assert "no codebase index was found" in res.message
             assert res.details.get("error") == "index_empty"
-

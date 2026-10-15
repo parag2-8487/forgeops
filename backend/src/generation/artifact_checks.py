@@ -117,7 +117,10 @@ def validate_dockerfile(content: str) -> list[str]:
                 "Dockerfile uses relative path in COPY --from=... (e.g. './dist'). "
                 "Use absolute path from builder WORKDIR (e.g. '/app/dist') to avoid '/dist: not found' build failures."
             )
-        if re.search(r"(?i)RUN\s+.*(npm run build|next build|go build|cargo build|gradle build|mvn package|pip install|npm install|npm ci|yarn install|pnpm install)\s+.*\|\|\s*(true|:|exit\s+0)\b", stripped):
+        if re.search(
+            r"(?i)RUN\s+.*(npm run build|next build|go build|cargo build|gradle build|mvn package|pip install|npm install|npm ci|yarn install|pnpm install)\s+.*\|\|\s*(true|:|exit\s+0)\b",
+            stripped,
+        ):
             findings.append(
                 "Dockerfile suppresses build or install failure with '|| true' or '|| exit 0'. "
                 "Build errors must return a non-zero exit code to prevent deploying broken artifacts."
@@ -145,12 +148,12 @@ def validate_dockerfile(content: str) -> list[str]:
             )
     # Check workspace package installation ordering
     lines = content.splitlines()
-    has_workspace_build = any(
-        re.search(r"--workspace[=\s]|workspaces\b", line, re.IGNORECASE) for line in lines
-    )
+    has_workspace_build = any(re.search(r"--workspace[=\s]|workspaces\b", line, re.IGNORECASE) for line in lines)
     has_ws_copy = any(
-        (re.search(r"COPY\s+.*package.*\.json\s+.*(/\w+|\./\w+)", line, re.IGNORECASE)
-         or re.search(r"COPY\s+\[\s*\"[^\"]+package[^\"]*\.json\"\s*,\s*\"[^\"]+\"\s*\]", line, re.IGNORECASE))
+        (
+            re.search(r"COPY\s+.*package.*\.json\s+.*(/\w+|\./\w+)", line, re.IGNORECASE)
+            or re.search(r"COPY\s+\[\s*\"[^\"]+package[^\"]*\.json\"\s*,\s*\"[^\"]+\"\s*\]", line, re.IGNORECASE)
+        )
         and not line.strip().startswith("COPY --from=")
         for line in lines
     )
@@ -159,7 +162,9 @@ def validate_dockerfile(content: str) -> list[str]:
         first_ws_copy_idx = -1
         for idx, line in enumerate(lines):
             s = line.strip()
-            if s.startswith("RUN ") and any(cmd in s for cmd in ["npm ci", "npm install", "yarn install", "pnpm install"]):
+            if s.startswith("RUN ") and any(
+                cmd in s for cmd in ["npm ci", "npm install", "yarn install", "pnpm install"]
+            ):
                 if install_line_idx == -1:
                     install_line_idx = idx
             if s.startswith("COPY ") and not s.startswith("COPY --from="):
@@ -510,8 +515,7 @@ def _is_infrastructure_service(svc_name: str, svc_data: Mapping[str, Any]) -> bo
     """Checks whether a service is an auxiliary/infrastructure container."""
     name_clean = svc_name.lower().replace("-", "").replace("_", "")
     if any(
-        infra in name_clean
-        for infra in ("postgres", "postgresql", "redis", "mysql", "mariadb", "mongo", "mongodb")
+        infra in name_clean for infra in ("postgres", "postgresql", "redis", "mysql", "mariadb", "mongo", "mongodb")
     ):
         return True
     if svc_name.lower() in _INFRASTRUCTURE_SERVICE_NAMES:
@@ -790,11 +794,7 @@ def validate_cross_artifact_consistency(files: Sequence[Any]) -> list[str]:
             all_app_ports.update(svc_data["ports"])
 
         for df_path, df_ports in dockerfiles.items():
-            df_dir = (
-                df_path.rsplit("/Dockerfile", 1)[0].replace("\\", "/").lower()
-                if "/Dockerfile" in df_path
-                else "."
-            )
+            df_dir = df_path.rsplit("/Dockerfile", 1)[0].replace("\\", "/").lower() if "/Dockerfile" in df_path else "."
 
             matched_svc_ports: set[int] | None = None
             if len(services) == 1:
@@ -806,8 +806,7 @@ def validate_cross_artifact_consistency(files: Sequence[Any]) -> list[str]:
                     s_name_norm = svc_name.lower().replace("-", "").replace("_", "")
                     dir_norm = df_dir.replace("-", "").replace("_", "").lower()
                     if ctx == df_dir or (
-                        df_dir != "."
-                        and (ctx.endswith(df_dir) or dir_norm in s_name_norm or s_name_norm in dir_norm)
+                        df_dir != "." and (ctx.endswith(df_dir) or dir_norm in s_name_norm or s_name_norm in dir_norm)
                     ):
                         matched_svc_ports = svc_data["ports"]
                         break
@@ -885,7 +884,9 @@ def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None 
                     copied_all = False
                     for idx, line in enumerate(df_lines):
                         s = line.strip()
-                        if s.startswith("RUN ") and any(cmd in s for cmd in ["npm ci", "npm install", "yarn install", "pnpm install"]):
+                        if s.startswith("RUN ") and any(
+                            cmd in s for cmd in ["npm ci", "npm install", "yarn install", "pnpm install"]
+                        ):
                             if install_idx == -1:
                                 install_idx = idx
                         if s.startswith("COPY ") and not s.startswith("COPY --from="):
@@ -893,7 +894,11 @@ def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None 
                                 if install_idx == -1:
                                     copied_all = True
                             for w in ws_dirs:
-                                if (w in s or f'"{w}' in s) and "package" in s.lower() and (install_idx == -1 or idx < install_idx):
+                                if (
+                                    (w in s or f'"{w}' in s)
+                                    and "package" in s.lower()
+                                    and (install_idx == -1 or idx < install_idx)
+                                ):
                                     copied_workspaces.add(w)
 
                     if install_idx != -1 and not copied_all and len(copied_workspaces) < len(ws_dirs):

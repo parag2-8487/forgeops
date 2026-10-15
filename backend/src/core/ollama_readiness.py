@@ -11,10 +11,11 @@ Separates:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -227,19 +228,14 @@ async def ensure_ollama_model_ready(
             ) from exc
         except asyncio.CancelledError:
             logger.info("Ollama model '%s' warm-up cancelled by caller.", model)
-            raise OllamaClientCancelledError(
-                f"Ollama warm-up for model '{model}' was cancelled."
-            ) from None
+            raise OllamaClientCancelledError(f"Ollama warm-up for model '{model}' was cancelled.") from None
         except Exception as exc:
             if isinstance(exc, OllamaError):
                 raise
-            raise OllamaUnavailableError(
-                f"Ollama model '{model}' warm-up encountered connection error: {exc}"
-            ) from exc
+            raise OllamaUnavailableError(f"Ollama model '{model}' warm-up encountered connection error: {exc}") from exc
 
     if http_client is not None:
         await _execute_warmup(http_client)
     else:
         async with httpx.AsyncClient(timeout=warmup_timeout_seconds) as client:
             await _execute_warmup(client)
-

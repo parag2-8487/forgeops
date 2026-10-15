@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,7 +67,9 @@ async def approve_and_materialize_generation_change_set(
 
     # 2. Strategy artifact check
     items_res = await session.execute(
-        text("SELECT file_path, action, new_content, new_hash FROM change_items WHERE change_set_id = :id ORDER BY ordinal"),
+        text(
+            "SELECT file_path, action, new_content, new_hash FROM change_items WHERE change_set_id = :id ORDER BY ordinal"
+        ),
         {"id": change_set_id},
     )
     items = items_res.mappings().all()
@@ -115,11 +117,16 @@ async def approve_and_materialize_generation_change_set(
         dev_rows = dev_res.fetchall()
     for dev_row in dev_rows:
         dev_id = getattr(dev_row, "id", None) if hasattr(dev_row, "id") else (dev_row[0] if dev_row else None)
-        dev_enc = getattr(dev_row, "envelope_key_enc", None) if hasattr(dev_row, "envelope_key_enc") else (dev_row[1] if len(dev_row) > 1 else None)
+        dev_enc = (
+            getattr(dev_row, "envelope_key_enc", None)
+            if hasattr(dev_row, "envelope_key_enc")
+            else (dev_row[1] if len(dev_row) > 1 else None)
+        )
         if dev_id is not None and dev_enc is None:
             pepper = getattr(chokepoint, "_pepper", None)
             if pepper:
                 from ..auth.devices import DeviceService
+
                 await DeviceService(pepper=pepper).provision_envelope_key(session, dev_id)
                 await session.flush()
 
@@ -132,7 +139,6 @@ async def approve_and_materialize_generation_change_set(
             expected_version=int(row["version"]),
         )
     except Exception as exc:
-        from ..core.errors import ProblemException
         prob = getattr(exc, "problem", None)
         prob_type = getattr(prob, "type", "") if prob else ""
         prob_title = getattr(prob, "title", str(exc)) if prob else str(exc)

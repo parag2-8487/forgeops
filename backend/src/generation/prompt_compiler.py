@@ -119,7 +119,7 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "First declare `WORKDIR /app`, then copy the root `package*.json ./`, then copy workspace manifests, then run `npm ci`.",
         "For Next.js applications (framework 'Next.js' or having `next` in dependencies): "
         "Next.js outputs to `.next` (not `dist`). Multi-stage Dockerfiles must copy the built application "
-        "(e.g. `COPY --from=builder /app ./`) and start with `CMD [\"npm\", \"run\", \"start\"]` "
+        '(e.g. `COPY --from=builder /app ./`) and start with `CMD ["npm", "run", "start"]` '
         "or standalone output (`node server.js`). Never use `npx serve -s dist` for Next.js applications.",
         "For frontend client applications (Vite, React, Vue, Svelte, static web apps) without a backend server, "
         "if you run `npm start` in the final image, you MUST also `COPY package*.json ./` to the final stage so npm "
@@ -329,6 +329,7 @@ def _detect_grounded_databases(
 ) -> list[str]:
     """Detects database/cache services only when grounded evidence exists in dependencies, environment, or compose."""
     import json
+
     databases: set[str] = set()
 
     # 1. Environment evidence (.env, .env.example, etc.)
@@ -968,7 +969,10 @@ def compile_repair_prompts(
             continue
         if not is_k8s_strategy and explanation.artifact in ("k8s", "helm"):
             continue
-        if (strat in ("docker_only", "docker") or "docker_only" in strat) and explanation.artifact in ("opentofu", "github_workflow"):
+        if (strat in ("docker_only", "docker") or "docker_only" in strat) and explanation.artifact in (
+            "opentofu",
+            "github_workflow",
+        ):
             continue
         by_kind.setdefault(explanation.artifact, []).append(check.id)
 
@@ -1049,7 +1053,10 @@ def compile_prompt(
             )
             continue
 
-        if (strat in ("docker_only", "docker") or "docker_only" in strat) and explanation.artifact in ("opentofu", "github_workflow"):
+        if (strat in ("docker_only", "docker") or "docker_only" in strat) and explanation.artifact in (
+            "opentofu",
+            "github_workflow",
+        ):
             unaddressable.append(
                 f"{check.id}: target deployment strategy '{target_strategy}' is local Docker-only; external infrastructure/workflow manifests omitted"
             )
@@ -1095,6 +1102,7 @@ def compile_prompt(
             if root_pkg:
                 with contextlib.suppress(Exception):
                     import json
+
                     pdata = json.loads(root_pkg)
                     ws_val = pdata.get("workspaces")
                     if isinstance(ws_val, list):
@@ -1121,17 +1129,25 @@ def compile_prompt(
                     + "\nBEFORE executing `RUN npm ci` or `RUN npm install`. Running install before workspace manifests are copied fails."
                 )
 
-            main_port = arch.services[0].port if arch.services else (3000 if any("node" in str(l).lower() for l in inventory.get("languages", [])) else 8000)
+            main_port = (
+                arch.services[0].port
+                if arch.services
+                else (3000 if any("node" in str(lang).lower() for lang in inventory.get("languages", [])) else 8000)
+            )
             fault_list.append(
                 f"LISTEN PORT: The application service listens on container port {main_port}. "
                 f"You MUST declare `EXPOSE {main_port}` in Dockerfile and configure `ENV PORT={main_port}`."
             )
 
         if artifact == "compose":
-            main_port = arch.services[0].port if arch.services else (3000 if any("node" in str(l).lower() for l in inventory.get("languages", [])) else 8000)
+            main_port = (
+                arch.services[0].port
+                if arch.services
+                else (3000 if any("node" in str(lang).lower() for lang in inventory.get("languages", [])) else 8000)
+            )
             fault_list.append(
                 f"PORT ALIGNMENT: The application service listens on container port {main_port}. "
-                f"The compose service port mapping MUST target container port {main_port} (e.g. `\"{main_port}:{main_port}\"`) "
+                f'The compose service port mapping MUST target container port {main_port} (e.g. `"{main_port}:{main_port}"`) '
                 f"to match the Dockerfile EXPOSE {main_port} directive."
             )
             if arch.is_multi_service:

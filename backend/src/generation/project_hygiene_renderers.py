@@ -26,7 +26,7 @@ then measure a fiction. The reachable-score contract reports that honestly rathe
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final
 
 #: Chosen from the readiness engine's `_LINT_CONFIGS`, one per runtime. The file has to be a name the
 #: check actually looks for AND a real configuration for the language, so `.ruff.toml` for Python and
@@ -352,14 +352,10 @@ def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = N
                 df_str = "Dockerfile"
             else:
                 context_str = svc.directory
-                df_str = svc.dockerfile_path.split('/')[-1]
+                df_str = svc.dockerfile_path.split("/")[-1]
 
             cmd_block = ""
-            if (
-                architecture.has_workspaces
-                and context_str == "."
-                and svc.directory != "."
-            ):
+            if architecture.has_workspaces and context_str == "." and svc.directory != ".":
                 cmd_block = f'\n    command: ["npm", "run", "start", "--workspace={svc.directory}"]'
 
             services_lines.append(f"""  {s_slug}:

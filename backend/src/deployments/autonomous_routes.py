@@ -550,6 +550,7 @@ async def reconcile_run_endpoint(
         )
 
     from .autonomous_recovery import reconcile_and_verify_run
+
     redis = getattr(request.app.state, "redis", None)
     context = {"redis": redis}
     ok, msg = await reconcile_and_verify_run(session, run, context=context)

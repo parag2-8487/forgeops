@@ -38,11 +38,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-logger = logging.getLogger(__name__)
-
 from src.secrets.redaction import RedactedPrompt
 
 from .contract_version import GENERATION_CONTRACT_VERSION
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

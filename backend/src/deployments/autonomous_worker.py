@@ -22,11 +22,10 @@ import os
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import and_, or_, select, update
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from src.core.logging import redact_secrets
 
@@ -324,7 +323,7 @@ class PipelineHeartbeat:
         while not self.stop_event.is_set():
             try:
                 await asyncio.wait_for(self.stop_event.wait(), timeout=self.interval_seconds)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 pass
             if self.stop_event.is_set():
                 break
@@ -345,8 +344,7 @@ class PipelineHeartbeat:
                             self.run.lease_expires_at = datetime.now(UTC) + timedelta(seconds=LEASE_DURATION_SECONDS)
                     else:
                         logger.error(
-                            "Heartbeat renewal rejected for run %s (fence_token=%s): "
-                            "Lease lost or token superseded.",
+                            "Heartbeat renewal rejected for run %s (fence_token=%s): Lease lost or token superseded.",
                             self.run_id,
                             self.fence_token,
                         )
@@ -1323,7 +1321,10 @@ async def run_pipeline(
 
             if stage_passed:
                 if isinstance(details, dict) and "deployment_receipt" in details:
-                    run.configuration = {**(run.configuration or {}), "deployment_receipt": details["deployment_receipt"]}
+                    run.configuration = {
+                        **(run.configuration or {}),
+                        "deployment_receipt": details["deployment_receipt"],
+                    }
                     session.add(run)
                 # Append success log
                 await service.append_logs(
@@ -1413,10 +1414,12 @@ async def run_pipeline(
 
                     try:
                         from src.diagnostics.bundle import DiagnosticBundle
-                        from src.recovery.ai_resolver import resolve_failure_with_ai, resolve_failure_with_ai_async
+                        from src.recovery.ai_resolver import resolve_failure_with_ai_async
                     except ImportError:
                         from backend.src.diagnostics.bundle import DiagnosticBundle
-                        from backend.src.recovery.ai_resolver import resolve_failure_with_ai, resolve_failure_with_ai_async
+                        from backend.src.recovery.ai_resolver import (
+                            resolve_failure_with_ai_async,
+                        )
 
                     ws_resolved = resolve_workspace_path(workspace_dir_val)
 
@@ -1459,6 +1462,7 @@ async def run_pipeline(
                         )
 
                         from .autonomous_gates import _is_simulation_mode
+
                         is_sim = _is_simulation_mode(session, run, context)
 
                         manifests_differ = False
@@ -1479,8 +1483,12 @@ async def run_pipeline(
                         elif has_manifest_remedies:
                             manifests_differ = True
 
-                        if not has_blueprint_remedies and (not has_manifest_remedies or (not manifests_differ and not is_sim)):
-                            halt_reason = "IDENTICAL_MANIFEST_PROPOSED" if has_manifest_remedies else "NO_ACTIONABLE_REMEDY"
+                        if not has_blueprint_remedies and (
+                            not has_manifest_remedies or (not manifests_differ and not is_sim)
+                        ):
+                            halt_reason = (
+                                "IDENTICAL_MANIFEST_PROPOSED" if has_manifest_remedies else "NO_ACTIONABLE_REMEDY"
+                            )
                             halt_msg = (
                                 f"G8 AI Recovery halted ({plan.root_cause_category}): Proposed recovery manifests are identical to existing workspace manifests. "
                                 f"Halting to prevent ineffective retry loop."
@@ -1527,7 +1535,9 @@ async def run_pipeline(
                                 except ImportError:
                                     from backend.src.deployments.autonomous_gates import _apply_run_local_artifacts
                                 try:
-                                    _apply_run_local_artifacts(ws_resolved, plan.suggested_manifests, run_id=target_run_id)
+                                    _apply_run_local_artifacts(
+                                        ws_resolved, plan.suggested_manifests, run_id=target_run_id
+                                    )
                                 except Exception as apply_exc:
                                     logger.warning("G8 recovery could not apply manifests safely: %s", apply_exc)
 

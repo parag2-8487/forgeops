@@ -17,11 +17,11 @@ Test scenarios:
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 import json
-from pathlib import Path
 import tempfile
 import uuid
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -35,13 +35,14 @@ from src.deployments.autonomous_worker import (
     AutonomousWorker,
     PipelineHeartbeat,
 )
+from src.generation.project_hygiene_renderers import compose_file
 from src.generation.prompt_compiler import (
     ProjectArchitecture,
     ServiceSpec,
     analyze_project_architecture,
     compile_prompt,
 )
-from src.generation.project_hygiene_renderers import compose_file
+
 from tests.unit.test_autonomous_gates import MockAsyncSession
 
 pytestmark = [pytest.mark.mandatory]
@@ -236,7 +237,7 @@ async def test_g2_provenance_tracking() -> None:
         (ws / "Dockerfile").write_text(
             "FROM node:20-alpine AS builder\nWORKDIR /app\nCOPY . .\n"
             "FROM node:20-alpine\nWORKDIR /app\nCOPY --from=builder /app /app\n"
-            "USER node\nEXPOSE 3000\nCMD [\"npm\", \"start\"]\n",
+            'USER node\nEXPOSE 3000\nCMD ["npm", "start"]\n',
             encoding="utf-8",
         )
 

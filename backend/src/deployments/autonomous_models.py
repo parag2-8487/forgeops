@@ -25,8 +25,10 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
-    inspect as sa_inspect,
     text,
+)
+from sqlalchemy import (
+    inspect as sa_inspect,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -416,7 +418,8 @@ class AutonomousDeployment(SQLModel, table=True):
     @property
     def post_generation_readiness(self) -> Optional["ReadinessCheckpoint"]:
         matching = [
-            cp for cp in self._get_loaded_checkpoints()
+            cp
+            for cp in self._get_loaded_checkpoints()
             if cp.checkpoint_type in ("post_generation_r1", "post_generation_readiness")
         ]
         if not matching:

@@ -11,7 +11,6 @@ Verifies:
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,31 +18,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-
-from src.core.model_port import ArtifactModelPort, ModelCompletion
-from src.diagnostics.bundle import DiagnosticBundle
+from src.core.model_port import ModelCompletion
 from src.deployments.autonomous_gates import (
     _apply_run_local_artifacts,
     evaluate_g2_existing_artifacts,
 )
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
-    AutonomousDeploymentStage,
 )
 from src.deployments.autonomous_schemas import (
     DeploymentStrategy,
 )
 from src.deployments.autonomous_source import (
-    establish_codebase_index,
     scan_workspace_to_report,
 )
+from src.diagnostics.bundle import DiagnosticBundle
 from src.generation.artifact_checks import validate_artifacts
-from src.generation.prompt_compiler import compile_prompt, CompiledPrompt
+from src.generation.prompt_compiler import CompiledPrompt, compile_prompt
 from src.generation.service import GeneratedFile, GenerationOutcome, GenerationService
-from src.governance.chokepoint import Submission
 from src.projects.readiness import IndexEvidence, ReadinessEngine
 from src.recovery.ai_resolver import (
-    RecoveryPlan,
     _FileArtifact,
     resolve_failure_with_ai,
     resolve_failure_with_ai_async,
@@ -138,7 +132,9 @@ class TestDirectWorkspaceIndexingAndReadiness:
         )
 
         vite_config = tmp_path / "vite.config.ts"
-        vite_config.write_text("import { defineConfig } from 'vite';\nexport default defineConfig({});\n", encoding="utf-8")
+        vite_config.write_text(
+            "import { defineConfig } from 'vite';\nexport default defineConfig({});\n", encoding="utf-8"
+        )
 
         report = scan_workspace_to_report(tmp_path)
         file_paths = tuple(f.path for f in report.files)
@@ -156,8 +152,7 @@ class TestDirectWorkspaceIndexingAndReadiness:
         inventory_dict = {
             "languages": list(report.inventory.languages),
             "frameworks": [
-                {"name": f.name} if hasattr(f, "name") else {"name": str(f)}
-                for f in report.inventory.frameworks
+                {"name": f.name} if hasattr(f, "name") else {"name": str(f)} for f in report.inventory.frameworks
             ],
         }
         compiled = compile_prompt(
@@ -224,8 +219,10 @@ class TestG2InProcessGenerationExecution:
             },
         )
 
-        with patch("src.core.index_evidence.load_index_evidence") as mock_evidence, \
-             patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile:
+        with (
+            patch("src.core.index_evidence.load_index_evidence") as mock_evidence,
+            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,
+        ):
             mock_evidence.return_value = MagicMock(paths=["package.json"])
             mock_compile.return_value = (None, {}, [])
             gate_res = await evaluate_g2_existing_artifacts(
@@ -253,7 +250,7 @@ class TestG2InProcessGenerationExecution:
             "COPY --from=builder /app/dist ./dist\n"
             "USER node\n"
             "EXPOSE 8080\n"
-            "CMD [\"node\", \"dist/index.js\"]\n"
+            'CMD ["node", "dist/index.js"]\n'
         )
         valid_dockerignore = "node_modules\n.git\n.env\n"
         model_output = (
@@ -339,15 +336,10 @@ class TestG2InProcessGenerationExecution:
             "COPY --from=builder /app/dist ./dist\n"
             "USER node\n"
             "EXPOSE 8080\n"
-            "CMD [\"node\", \"dist/index.js\"]\n"
+            'CMD ["node", "dist/index.js"]\n'
         )
         valid_compose = (
-            "name: demo-service\n"
-            "services:\n"
-            "  demo-service:\n"
-            "    build: .\n"
-            "    ports:\n"
-            "      - \"8080:8080\"\n"
+            'name: demo-service\nservices:\n  demo-service:\n    build: .\n    ports:\n      - "8080:8080"\n'
         )
         model_output = (
             "### FILE: Dockerfile\n"
@@ -372,11 +364,12 @@ class TestG2InProcessGenerationExecution:
             write_targets=("Dockerfile", "docker-compose.yml"),
         )
 
-        with patch("src.core.index_evidence.load_index_evidence") as mock_evidence, \
-             patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile, \
-             patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj, \
-             patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval:
-
+        with (
+            patch("src.core.index_evidence.load_index_evidence") as mock_evidence,
+            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,
+            patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj,
+            patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval,
+        ):
             mock_evidence.return_value = MagicMock(paths=["package.json"])
             mock_compile.return_value = (compiled_prompt, {}, {})
             mock_proj.return_value = {"id": proj_id, "name": "demo-service", "settings": {"port": 8080}}
@@ -497,11 +490,12 @@ class TestG2InProcessGenerationExecution:
             write_targets=("Dockerfile",),
         )
 
-        with patch("src.core.index_evidence.load_index_evidence") as mock_evidence, \
-             patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile, \
-             patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj, \
-             patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval:
-
+        with (
+            patch("src.core.index_evidence.load_index_evidence") as mock_evidence,
+            patch("src.generation.routes._compile_generation_plan", new_callable=AsyncMock) as mock_compile,
+            patch("src.generation.routes._load_project_for_generation", new_callable=AsyncMock) as mock_proj,
+            patch("src.generation.routes.retrieve_generation_context", new_callable=AsyncMock) as mock_retrieval,
+        ):
             mock_evidence.return_value = MagicMock(paths=["package.json"])
             mock_compile.return_value = (compiled_prompt, {}, {})
             mock_proj.return_value = {"id": run.project_id, "name": "failing-service"}
@@ -583,7 +577,7 @@ class TestG8OllamaRecoveryPipeline:
             "COPY --from=builder /app/dist ./dist\n"
             "USER node\n"
             "EXPOSE 8080\n"
-            "CMD [\"node\", \"dist/index.js\"]\n"
+            'CMD ["node", "dist/index.js"]\n'
         )
         valid_dockerignore = "node_modules\n.git\n.env\n"
 
@@ -643,18 +637,8 @@ class TestG8OllamaRecoveryPipeline:
     @pytest.mark.asyncio
     async def test_resolve_failure_with_ai_async_rejects_invalid_dockerfile_without_user(self, tmp_path: Path) -> None:
         """Verify manifests missing USER instruction fail validation and truthfully halt with HALTED_MODEL_INVALID_CORRECTION."""
-        invalid_dockerfile = (
-            "FROM node:20-alpine\n"
-            "WORKDIR /app\n"
-            "COPY . .\n"
-            "CMD [\"npm\", \"start\"]\n"
-        )
-        model_response_content = (
-            "### FILE: Dockerfile\n"
-            "```dockerfile\n"
-            f"{invalid_dockerfile}\n"
-            "```\n"
-        )
+        invalid_dockerfile = 'FROM node:20-alpine\nWORKDIR /app\nCOPY . .\nCMD ["npm", "start"]\n'
+        model_response_content = f"### FILE: Dockerfile\n```dockerfile\n{invalid_dockerfile}\n```\n"
 
         mock_transport = httpx.MockTransport(
             lambda request: httpx.Response(
@@ -701,6 +685,7 @@ class TestG8OllamaRecoveryPipeline:
     @pytest.mark.asyncio
     async def test_resolve_failure_with_ai_async_truthfully_halts_on_timeout(self, tmp_path: Path) -> None:
         """Verify Ollama timeout returns truthful HALTED_MODEL_TIMEOUT rather than substituting static templates."""
+
         def timeout_handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("Request timed out after 180s")
 
@@ -731,6 +716,7 @@ class TestG8OllamaRecoveryPipeline:
     @pytest.mark.asyncio
     async def test_resolve_failure_with_ai_async_truthfully_halts_on_connection_error(self, tmp_path: Path) -> None:
         """Verify Ollama connection failure returns truthful HALTED_MODEL_UNAVAILABLE."""
+
         def error_handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("Failed to connect to Ollama daemon")
 
@@ -818,7 +804,7 @@ class TestG8OllamaRecoveryPipeline:
                 "WORKDIR /app\n"
                 "USER node\n"
                 "EXPOSE 8080\n"
-                "CMD [\"node\", \"dist/index.js\"]\n"
+                'CMD ["node", "dist/index.js"]\n'
                 "```\n"
             )
             return httpx.Response(
@@ -881,7 +867,7 @@ class TestG8OllamaRecoveryPipeline:
             "COPY --from=builder /app/dist ./dist\n"
             "USER node\n"
             "EXPOSE 8080\n"
-            "CMD [\"node\", \"dist/index.js\"]\n"
+            'CMD ["node", "dist/index.js"]\n'
         )
         valid_dockerignore = "node_modules\n.git\n.env\n"
         model_reply = (
@@ -932,7 +918,9 @@ class TestG8OllamaRecoveryPipeline:
             disk_df = tmp_path / "Dockerfile"
             assert disk_df.exists()
             assert "USER node" in disk_df.read_text(encoding="utf-8")
-            findings = validate_artifacts([_FileArtifact(path="Dockerfile", content=disk_df.read_text(encoding="utf-8"))])
+            findings = validate_artifacts(
+                [_FileArtifact(path="Dockerfile", content=disk_df.read_text(encoding="utf-8"))]
+            )
             assert len(findings) == 0
 
     def test_recovery_halts_on_exhausted_retry_limit(self) -> None:
@@ -978,11 +966,21 @@ class TestG8OllamaRecoveryPipeline:
 
         # Config parameter override semantics
         captured_urls: list[str] = []
+
         def handler(req: httpx.Request) -> httpx.Response:
             captured_urls.append(str(req.url))
             return httpx.Response(
                 status_code=200,
-                json={"choices": [{"message": {"role": "assistant", "content": "### FILE: Dockerfile\n```\nFROM alpine\nUSER app\n```"}}]},
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "### FILE: Dockerfile\n```\nFROM alpine\nUSER app\n```",
+                            }
+                        }
+                    ]
+                },
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -1003,7 +1001,9 @@ class TestG8OllamaRecoveryPipeline:
         pkg_json.write_text(json.dumps({"name": "root-repo", "workspaces": ["code-review"]}), encoding="utf-8")
         ws_dir = tmp_path / "code-review"
         ws_dir.mkdir()
-        (ws_dir / "package.json").write_text(json.dumps({"name": "code-review", "dependencies": {"next": "15.0.0"}}), encoding="utf-8")
+        (ws_dir / "package.json").write_text(
+            json.dumps({"name": "code-review", "dependencies": {"next": "15.0.0"}}), encoding="utf-8"
+        )
 
         bundle = DiagnosticBundle(
             gate_identifier="G4",
@@ -1031,15 +1031,27 @@ class TestG8OllamaRecoveryPipeline:
         pkg_json.write_text(json.dumps({"name": "root-repo", "workspaces": ["code-review"]}), encoding="utf-8")
         ws_dir = tmp_path / "code-review"
         ws_dir.mkdir()
-        (ws_dir / "package.json").write_text(json.dumps({"name": "code-review-app", "scripts": {"build": "next build"}}), encoding="utf-8")
+        (ws_dir / "package.json").write_text(
+            json.dumps({"name": "code-review-app", "scripts": {"build": "next build"}}), encoding="utf-8"
+        )
 
         captured_requests: list[dict[str, Any]] = []
+
         def handler(req: httpx.Request) -> httpx.Response:
             payload = json.loads(req.read().decode("utf-8"))
             captured_requests.append(payload)
             return httpx.Response(
                 status_code=200,
-                json={"choices": [{"message": {"role": "assistant", "content": "### FILE: Dockerfile\n```\nFROM node:20-alpine\nWORKDIR /app\nUSER node\n```"}}]},
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "### FILE: Dockerfile\n```\nFROM node:20-alpine\nWORKDIR /app\nUSER node\n```",
+                            }
+                        }
+                    ]
+                },
             )
 
         bundle = DiagnosticBundle(
@@ -1080,7 +1092,7 @@ class TestG8OllamaRecoveryPipeline:
 
         broken_df = tmp_path / "Dockerfile"
         broken_df.write_text(
-            "FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nCMD [\"npm\", \"start\"]\n",
+            'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nCMD ["npm", "start"]\n',
             encoding="utf-8",
         )
 
@@ -1090,7 +1102,7 @@ class TestG8OllamaRecoveryPipeline:
         # Dockerfile with workspace copy should return True
         valid_df = tmp_path / "Dockerfile.valid"
         valid_df.write_text(
-            "FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nCOPY code-review/package*.json ./code-review/\nRUN npm ci\nCOPY . .\nCMD [\"npm\", \"start\"]\n",
+            'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nCOPY code-review/package*.json ./code-review/\nRUN npm ci\nCOPY . .\nCMD ["npm", "start"]\n',
             encoding="utf-8",
         )
         assert _is_dockerfile_reusable(tmp_path, valid_df) is True
@@ -1109,7 +1121,7 @@ class TestG8OllamaRecoveryPipeline:
 
         df = tmp_path / "Dockerfile"
         df.write_text(
-            "FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nCMD [\"npm\", \"start\"]\n",
+            'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nCMD ["npm", "start"]\n',
             encoding="utf-8",
         )
 
@@ -1123,13 +1135,16 @@ class TestG8OllamaRecoveryPipeline:
 
         res = await evaluate_g3_consistency(session=mock_session, run=run)
         assert res.passed is False
-        assert any("Workspace repository runs dependency installation before copying workspace package manifests" in err for err in res.details.get("errors", []))
+        assert any(
+            "Workspace repository runs dependency installation before copying workspace package manifests" in err
+            for err in res.details.get("errors", [])
+        )
 
     @pytest.mark.asyncio
     async def test_source_preparation_clears_stale_errors(self, tmp_path: Path) -> None:
         """Verify _mark_source_ready clears stale error keys and primary_error from previous failed attempts."""
-        from src.deployments.autonomous_source import _mark_source_ready
         from src.deployments.autonomous_models import AutonomousDeployment
+        from src.deployments.autonomous_source import _mark_source_ready
 
         run = AutonomousDeployment(
             id=uuid.uuid4(),
@@ -1171,7 +1186,7 @@ class TestG8OllamaRecoveryPipeline:
             "COPY --from=builder /app ./\n"
             "USER node\n"
             "EXPOSE 3000\n"
-            "CMD [\"npm\", \"start\"]\n"
+            'CMD ["npm", "start"]\n'
         )
         df_path = tmp_path / "Dockerfile"
         df_path.write_text(existing_dockerfile, encoding="utf-8")
@@ -1190,7 +1205,16 @@ class TestG8OllamaRecoveryPipeline:
         mock_transport = httpx.MockTransport(
             lambda req: httpx.Response(
                 status_code=200,
-                json={"choices": [{"message": {"role": "assistant", "content": f"### FILE: Dockerfile\n```\n{existing_dockerfile}\n```"}}]},
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": f"### FILE: Dockerfile\n```\n{existing_dockerfile}\n```",
+                            }
+                        }
+                    ]
+                },
             )
         )
 
@@ -1239,6 +1263,6 @@ class TestG8OllamaRecoveryPipeline:
         assert "--workspace=code-review" in content
 
         lines = content.splitlines()
-        ws_copy_idx = next(i for i, l in enumerate(lines) if "COPY code-review/package*.json" in l)
-        run_install_idx = next(i for i, l in enumerate(lines) if "RUN npm" in l)
+        ws_copy_idx = next(i for i, line in enumerate(lines) if "COPY code-review/package*.json" in line)
+        run_install_idx = next(i for i, line in enumerate(lines) if "RUN npm" in line)
         assert ws_copy_idx < run_install_idx

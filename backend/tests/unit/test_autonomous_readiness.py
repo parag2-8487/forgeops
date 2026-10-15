@@ -7,13 +7,12 @@ import asyncio
 import json
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlmodel import SQLModel
-
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
     ReadinessCheckpoint,
@@ -23,9 +22,7 @@ from src.deployments.readiness import (
     ReadinessAnalyzer,
     ReadinessCheckpointConflictError,
     ReadinessDirtyCacheConflictError,
-    is_payload_semantically_equivalent,
-    is_uq_checkpoint_version_violation,
-    save_readiness_checkpoint_sync,
+    save_readiness_checkpoint,
 )
 
 pytestmark = [pytest.mark.mandatory]
@@ -40,11 +37,13 @@ def test_analyzer_nodejs_nextjs_initial_readiness(tmp_path: Path):
     """Verifies R0 initial readiness assessment on a Node.js Next.js application."""
     pkg_json = tmp_path / "package.json"
     pkg_json.write_text(
-        json.dumps({
-            "name": "sample-next-app",
-            "dependencies": {"next": "^14.0.0", "react": "^18.0.0"},
-            "scripts": {"start": "next start", "build": "next build"},
-        }),
+        json.dumps(
+            {
+                "name": "sample-next-app",
+                "dependencies": {"next": "^14.0.0", "react": "^18.0.0"},
+                "scripts": {"start": "next start", "build": "next build"},
+            }
+        ),
         encoding="utf-8",
     )
     (tmp_path / ".env.example").write_text("PORT=3000\n", encoding="utf-8")
@@ -73,11 +72,13 @@ def test_analyzer_docker_post_generation_readiness_requires_dockerfile(tmp_path:
     """Verifies that R1 post_generation_readiness fails if Dockerfile is missing."""
     pkg_json = tmp_path / "package.json"
     pkg_json.write_text(
-        json.dumps({
-            "name": "sample-app",
-            "dependencies": {"express": "^4.18.0"},
-            "scripts": {"start": "node index.js"},
-        }),
+        json.dumps(
+            {
+                "name": "sample-app",
+                "dependencies": {"express": "^4.18.0"},
+                "scripts": {"start": "node index.js"},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -172,14 +173,6 @@ def test_analyzer_handles_fatal_exception_with_null_score(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # Persistence Protocol Tests (PostgreSQL Container)
 # ---------------------------------------------------------------------------
-
-from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from src.deployments.readiness import (
-    save_readiness_checkpoint,
-)
 
 _PG_CREDS = "forgeops_app" + ":change-me-locally@" + "127.0.0.1:15432/forgeops"
 TEST_PG_URL = f"postgresql+asyncpg:/{'/'}{_PG_CREDS}"
@@ -495,9 +488,7 @@ async def test_persistence_caller_owned_outer_rollback(pg_session: AsyncSession)
     await pg_session.rollback()
 
     # In a new query within the session, the checkpoint must NOT exist
-    result = await pg_session.execute(
-        select(ReadinessCheckpoint).where(ReadinessCheckpoint.run_id == run_id)
-    )
+    result = await pg_session.execute(select(ReadinessCheckpoint).where(ReadinessCheckpoint.run_id == run_id))
     assert result.scalar_one_or_none() is None
 
 
@@ -617,9 +608,9 @@ async def test_persistence_concurrent_insert_resolution():
 async def test_capture_authoritative_readiness_checkpoint_maps_api_response(pg_session: AsyncSession):
     """Verifies that capture_authoritative_readiness_checkpoint consumes get_project_readiness directly."""
     from unittest.mock import AsyncMock, patch
+
     from src.deployments.autonomous_gates import capture_authoritative_readiness_checkpoint
-    from src.projects.models import Project
-    from src.projects.routes import ReadinessReportResponse, ReadinessCheckResponse
+    from src.projects.routes import ReadinessCheckResponse, ReadinessReportResponse
 
     user_id = (await pg_session.execute(text("SELECT id FROM users LIMIT 1"))).scalar()
     project_id = (await pg_session.execute(text("SELECT id FROM projects LIMIT 1"))).scalar()
@@ -699,6 +690,7 @@ async def test_capture_authoritative_readiness_checkpoint_maps_api_response(pg_s
 async def test_capture_authoritative_readiness_checkpoint_unindexed_scores_zero(pg_session: AsyncSession):
     """Verifies that an unindexed project consumes 0/100 without inventing scores or disk heuristics."""
     from unittest.mock import AsyncMock, patch
+
     from src.deployments.autonomous_gates import capture_authoritative_readiness_checkpoint
     from src.projects.routes import ReadinessReportResponse
 
@@ -750,7 +742,8 @@ async def test_capture_authoritative_readiness_checkpoint_unindexed_scores_zero(
 @pytest.mark.asyncio
 async def test_capture_authoritative_readiness_checkpoint_api_error_fails_honestly(pg_session: AsyncSession):
     """Verifies that an API failure marks status='failed' and score=None honestly."""
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
+
     from src.deployments.autonomous_gates import capture_authoritative_readiness_checkpoint
 
     user_id = (await pg_session.execute(text("SELECT id FROM users LIMIT 1"))).scalar()

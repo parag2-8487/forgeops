@@ -25,7 +25,9 @@ have nothing to render.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import replace
@@ -39,15 +41,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
+from ..core import index_evidence
 from ..core.db import get_session
 from ..core.errors import forbidden_problem
-from ..core import index_evidence
 from ..core.readiness import ReadinessEngine
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from ..governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, MutationRequest
 from .prompt_compiler import CompiledPrompt, compile_prompt, compile_repair_prompts
 from .retrieval import retrieve_generation_context
 from .service import GenerationOutcome, GenerationService
+
+logger = logging.getLogger(__name__)
+
 
 #: The two event types that end a stream (§7.4). Anything after one of these is unreachable by a
 #: client that closed on it, which is why exactly one may be emitted.
@@ -303,7 +308,9 @@ async def create_generation_run(
         # prohibitions that describe how generated infrastructure goes wrong. A model asked for "a
         # Dockerfile" with no facts has to guess the language, the entry point and the port, and a guess
         # that reads plausibly is indistinguishable from a fact until it fails.
-        effective_strat = body.target_strategy or ((project_row.get("settings") or {}).get("deployment_strategy") if project_row else None)
+        effective_strat = body.target_strategy or (
+            (project_row.get("settings") or {}).get("deployment_strategy") if project_row else None
+        )
         compiled, existing_contents, repair_prompts = await _compile_generation_plan(
             session,
             project_id=body.project_id,
@@ -548,9 +555,9 @@ async def _compile_generation_plan(
             )
             proj_row = proj_res.mappings().first()
             if proj_row and proj_row.get("path"):
+                from ..analysis.indexer import persist_scan_report
                 from ..deployments.autonomous_gates import resolve_workspace_path
                 from ..deployments.autonomous_source import scan_workspace_to_report
-                from ..analysis.indexer import persist_scan_report
 
                 ws_path = resolve_workspace_path(proj_row["path"])
                 if ws_path.exists() and ws_path.is_dir():

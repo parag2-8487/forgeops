@@ -226,77 +226,77 @@ RESERVED_DOCKER_ENV_PREFIX: str = "FORGEOPS_"
 # Canonical list of ports restricted by Chromium and the WHATWG Fetch standard (ERR_UNSAFE_PORT)
 BROWSER_RESTRICTED_PORTS: frozenset[int] = frozenset(
     {
-        1,      # tcpmux
-        7,      # echo
-        9,      # discard
-        11,     # systat
-        13,     # daytime
-        15,     # netstat
-        17,     # qotd
-        19,     # chargen
-        20,     # ftp-data
-        21,     # ftp
-        22,     # ssh
-        23,     # telnet
-        25,     # smtp
-        37,     # time
-        42,     # name
-        43,     # nicname
-        53,     # domain
-        77,     # rje
-        79,     # finger
-        87,     # link
-        95,     # supdup
-        101,    # hostriame
-        102,    # iso-tsap
-        103,    # gppitnp
-        104,    # acr-nema
-        109,    # pop2
-        110,    # pop3
-        111,    # sunrpc
-        113,    # auth
-        115,    # sftp
-        117,    # uucp-path
-        119,    # nntp
-        123,    # ntp
-        135,    # epmap
-        137,    # netbios-ns
-        139,    # netbios-ssn
-        143,    # imap
-        179,    # bgp
-        389,    # ldap
-        427,    # svrloc
-        465,    # smtps
-        512,    # print / exec
-        513,    # login
-        514,    # shell
-        515,    # printer
-        526,    # tempo
-        530,    # courier
-        531,    # chat
-        532,    # netnews
-        540,    # uucp
-        548,    # afp
-        556,    # remotefs
-        563,    # nntps
-        587,    # submission
-        601,    # syslog-conn
-        636,    # ldaps
-        993,    # imaps
-        995,    # pop3s
-        2049,   # nfs
-        3659,   # apple-sasl
-        4045,   # lockd / nfs-lock
-        5060,   # sip
-        5061,   # sips
+        1,  # tcpmux
+        7,  # echo
+        9,  # discard
+        11,  # systat
+        13,  # daytime
+        15,  # netstat
+        17,  # qotd
+        19,  # chargen
+        20,  # ftp-data
+        21,  # ftp
+        22,  # ssh
+        23,  # telnet
+        25,  # smtp
+        37,  # time
+        42,  # name
+        43,  # nicname
+        53,  # domain
+        77,  # rje
+        79,  # finger
+        87,  # link
+        95,  # supdup
+        101,  # hostriame
+        102,  # iso-tsap
+        103,  # gppitnp
+        104,  # acr-nema
+        109,  # pop2
+        110,  # pop3
+        111,  # sunrpc
+        113,  # auth
+        115,  # sftp
+        117,  # uucp-path
+        119,  # nntp
+        123,  # ntp
+        135,  # epmap
+        137,  # netbios-ns
+        139,  # netbios-ssn
+        143,  # imap
+        179,  # bgp
+        389,  # ldap
+        427,  # svrloc
+        465,  # smtps
+        512,  # print / exec
+        513,  # login
+        514,  # shell
+        515,  # printer
+        526,  # tempo
+        530,  # courier
+        531,  # chat
+        532,  # netnews
+        540,  # uucp
+        548,  # afp
+        556,  # remotefs
+        563,  # nntps
+        587,  # submission
+        601,  # syslog-conn
+        636,  # ldaps
+        993,  # imaps
+        995,  # pop3s
+        2049,  # nfs
+        3659,  # apple-sasl
+        4045,  # lockd / nfs-lock
+        5060,  # sip
+        5061,  # sips
         *range(6000, 6064),  # x11 (6000-6063)
-        6566,   # sane
-        6665,   # irc
-        6666,   # irc
-        6667,   # irc
-        6668,   # irc
-        6669,   # irc
-        6697,   # ircs
+        6566,  # sane
+        6665,  # irc
+        6666,  # irc
+        6667,  # irc
+        6668,  # irc
+        6669,  # irc
+        6697,  # ircs
         10080,  # amanda
     }
 )
@@ -346,7 +346,7 @@ class DockerConfigRequest(BaseModel):
     @field_validator("port_bindings")
     @classmethod
     def validate_port_bindings(cls, v: dict[str, int]) -> dict[str, int]:
-        for c_port, h_port in v.items():
+        for _c_port, h_port in v.items():
             if isinstance(h_port, int):
                 validate_browser_safe_host_port(h_port)
         return v
@@ -529,19 +529,29 @@ class AutonomousRunPublicResponse(BaseModel):
             cps = data.get("readiness_checkpoints") or []
             if "initial_readiness" not in data or data["initial_readiness"] is None:
                 for cp in cps:
-                    cp_type = cp.get("checkpoint_type") if isinstance(cp, dict) else getattr(cp, "checkpoint_type", None)
+                    cp_type = (
+                        cp.get("checkpoint_type") if isinstance(cp, dict) else getattr(cp, "checkpoint_type", None)
+                    )
                     if cp_type in ("initial_r0", "initial_readiness"):
                         data["initial_readiness"] = cp
                         break
             if "post_generation_readiness" not in data or data["post_generation_readiness"] is None:
                 matching = []
                 for cp in cps:
-                    cp_type = cp.get("checkpoint_type") if isinstance(cp, dict) else getattr(cp, "checkpoint_type", None)
+                    cp_type = (
+                        cp.get("checkpoint_type") if isinstance(cp, dict) else getattr(cp, "checkpoint_type", None)
+                    )
                     if cp_type in ("post_generation_r1", "post_generation_readiness"):
                         matching.append(cp)
                 if matching:
+
                     def _get_ver(x: Any) -> int:
-                        return x.get("assessment_version", 0) if isinstance(x, dict) else getattr(x, "assessment_version", 0)
+                        return (
+                            x.get("assessment_version", 0)
+                            if isinstance(x, dict)
+                            else getattr(x, "assessment_version", 0)
+                        )
+
                     data["post_generation_readiness"] = max(matching, key=_get_ver)
             return data
 

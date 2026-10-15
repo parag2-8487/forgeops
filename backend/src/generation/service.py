@@ -25,8 +25,6 @@ import contextlib
 import logging
 import time
 import uuid
-
-logger = logging.getLogger(__name__)
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -76,6 +74,8 @@ from .project_hygiene_renderers import (
 )
 from .prompt_compiler import CompiledPrompt
 from .retrieval import RetrievalContext, render_context_section
+
+logger = logging.getLogger(__name__)
 
 
 class RunRecord(BaseModel):
@@ -770,10 +770,17 @@ class GenerationService:
             passed, gate_findings = self._validate(files, existing)
             if compiled is not None and compiled.write_targets:
                 produced_paths = {artifact.path for artifact in files}
-                missing_essential = [t for t in compiled.write_targets if t in ("Dockerfile", "docker-compose.yml") and t not in produced_paths]
+                missing_essential = [
+                    t
+                    for t in compiled.write_targets
+                    if t in ("Dockerfile", "docker-compose.yml") and t not in produced_paths
+                ]
                 if missing_essential:
                     passed = False
-                    gate_findings = (*gate_findings, *(f"{t}: required artifact was not produced" for t in missing_essential))
+                    gate_findings = (
+                        *gate_findings,
+                        *(f"{t}: required artifact was not produced" for t in missing_essential),
+                    )
             yield format_event(
                 SSEEventType.VALIDATION,
                 {
@@ -821,9 +828,9 @@ class GenerationService:
                     # Dockerfile carries more of the score than a `.gitleaks.toml`. `repair_prompts` is
                     # keyed by write target, so a path with no repair prompt is one no artifact instruction
                     # claims and there is nothing narrower to ask.
-                    def _repair_priority(p: str) -> tuple[int, int]:
+                    def _repair_priority(p: str, current_findings: Sequence[str] = gate_findings) -> tuple[int, int]:
                         is_df = 0 if p == "Dockerfile" or p.endswith("/Dockerfile") else 1
-                        has_direct_finding = 0 if any(f.startswith(f"{p}: ") for f in gate_findings) else 1
+                        has_direct_finding = 0 if any(f.startswith(f"{p}: ") for f in current_findings) else 1
                         return (is_df, has_direct_finding)
 
                     candidates = sorted(
@@ -1021,15 +1028,23 @@ class GenerationService:
             # among them would make the delivered order disagree with the compiled order for no gain.
             # The model's own compose file still wins when it produced a usable one — this is a floor,
             # not a requirement, and requiring it would discard a whole attempt over one optional file.
-            arch = getattr(prompt, "architecture", None) or (getattr(compiled, "architecture", None) if compiled is not None else None)
+            arch = getattr(prompt, "architecture", None) or (
+                getattr(compiled, "architecture", None) if compiled is not None else None
+            )
             is_multi = getattr(arch, "is_multi_service", False)
             existing_compose = getattr(arch, "existing_compose_path", None)
-            write_targets = getattr(prompt, "write_targets", ()) or (getattr(compiled, "write_targets", ()) if compiled is not None else ())
+            write_targets = getattr(prompt, "write_targets", ()) or (
+                getattr(compiled, "write_targets", ()) if compiled is not None else ()
+            )
             strat_l = (
                 str(
                     getattr(compiled, "target_strategy", "")
                     or getattr(prompt, "target_strategy", "")
-                    or ((project.get("target_strategy") or project.get("strategy")) if isinstance(project, Mapping) else "")
+                    or (
+                        (project.get("target_strategy") or project.get("strategy"))
+                        if isinstance(project, Mapping)
+                        else ""
+                    )
                     or ""
                 )
             ).lower()
@@ -1040,7 +1055,9 @@ class GenerationService:
                 or any("compose" in t for t in write_targets)
                 or not isinstance(prompt, CompiledPrompt)
             )
-            if wants_compose and not any(f.path in ("docker-compose.yml", "compose.yaml", "compose.yml") for f in files):
+            if wants_compose and not any(
+                f.path in ("docker-compose.yml", "compose.yaml", "compose.yml") for f in files
+            ):
                 resolved_port = None
                 for f in files:
                     if f.path == "Dockerfile":
@@ -1335,7 +1352,7 @@ class GenerationService:
 
         # Detect workspaces if manifests contain package.json files in subdirectories
         ref_paths = getattr(compiled, "referenced_paths", ()) or ()
-        candidate_manifests = list(inventory.get("manifests") or []) + [
+        candidate_manifests: list[str] = list(inventory.get("manifests") or []) + [
             str(p).replace("\\", "/") for p in ref_paths if str(p).endswith("package.json")
         ]
         declared_ws_dirs: list[str] = []
@@ -1402,9 +1419,9 @@ class GenerationService:
                 has_npm_lockfile = True
         if not has_npm_lockfile:
             all_manifest_keys: list[str] = []
-            if isinstance(candidate_manifests, (list, tuple, set)):
+            if isinstance(candidate_manifests, list | tuple | set):
                 all_manifest_keys.extend(str(m).replace("\\", "/") for m in candidate_manifests)
-            if isinstance(inv_manifests, (list, tuple, set)):
+            if isinstance(inv_manifests, list | tuple | set):
                 all_manifest_keys.extend(str(m).replace("\\", "/") for m in inv_manifests)
             if isinstance(existing, Mapping):
                 all_manifest_keys.extend(str(k).replace("\\", "/") for k in existing.keys())
@@ -1567,8 +1584,7 @@ class GenerationService:
                 "COPY go.mod go.sum* ./",
                 "RUN go mod download",
                 "COPY . .",
-                "RUN CGO_ENABLED=0 go build -o /app/server . "
-                "|| CGO_ENABLED=0 go build -o /app/server ./cmd/...",
+                "RUN CGO_ENABLED=0 go build -o /app/server . || CGO_ENABLED=0 go build -o /app/server ./cmd/...",
             ]
             copy_forward = ["COPY --from=builder /app/server /app/server"]
             health = (
@@ -1841,7 +1857,10 @@ class GenerationService:
             aligned_project["name"] = aligned_name
         aligned_project["settings"] = aligned_settings
 
-        floor = {item.path: item.content for item in self._render(prompt, aligned_project, compiled=compiled, existing=existing)}
+        floor = {
+            item.path: item.content
+            for item in self._render(prompt, aligned_project, compiled=compiled, existing=existing)
+        }
         candidates: dict[str, str] = {}
         for path in rejected:
             body = floor.get(path)

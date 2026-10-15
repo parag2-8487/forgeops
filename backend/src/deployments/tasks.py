@@ -62,6 +62,7 @@ async def execute_autonomous_deploy_task(payload: dict[str, Any]) -> dict[str, A
                 # Ensure run does NOT remain indefinitely stuck in 'running'
                 try:
                     from datetime import UTC, datetime
+
                     from sqlalchemy import func, select, update
                     from src.deployments.autonomous_models import (
                         AutonomousDeployment,
@@ -73,7 +74,11 @@ async def execute_autonomous_deploy_task(payload: dict[str, Any]) -> dict[str, A
 
                     fail_now = datetime.now(UTC)
                     is_cancelled = isinstance(exc, asyncio.CancelledError)
-                    is_timeout = is_cancelled or isinstance(exc, (asyncio.TimeoutError, TimeoutError)) or "timeout" in str(exc).lower()
+                    is_timeout = (
+                        is_cancelled
+                        or isinstance(exc, asyncio.TimeoutError | TimeoutError)
+                        or "timeout" in str(exc).lower()
+                    )
                     if is_cancelled:
                         error_msg = "Worker pipeline cancelled or timed out (ARQ Task Cancellation)"
                     elif is_timeout:
@@ -81,9 +86,7 @@ async def execute_autonomous_deploy_task(payload: dict[str, Any]) -> dict[str, A
                     else:
                         error_msg = f"Worker pipeline failed: {type(exc).__name__}: {str(exc)}"
 
-                    res = await session.execute(
-                        select(AutonomousDeployment).where(AutonomousDeployment.id == run_id)
-                    )
+                    res = await session.execute(select(AutonomousDeployment).where(AutonomousDeployment.id == run_id))
                     db_run = res.scalars().first()
 
                     next_seq = 1
@@ -92,10 +95,16 @@ async def execute_autonomous_deploy_task(payload: dict[str, Any]) -> dict[str, A
                         project_id_str = str(db_run.project_id)
                         # Idempotency: if run is already in terminal state, do not overwrite
                         if db_run.status in ("failed", "succeeded", "cancelled", "rolled_back"):
-                            logger.info("Run %s is already terminal (%s); skipping failure transition", run_id, db_run.status)
+                            logger.info(
+                                "Run %s is already terminal (%s); skipping failure transition", run_id, db_run.status
+                            )
                             if is_cancelled:
                                 raise
-                            return {"status": db_run.status, "run_id": str(db_run.id), "progress_pct": db_run.progress_pct}
+                            return {
+                                "status": db_run.status,
+                                "run_id": str(db_run.id),
+                                "progress_pct": db_run.progress_pct,
+                            }
 
                         # Worker fencing: check if another worker holds an active lease
                         if (
@@ -113,7 +122,11 @@ async def execute_autonomous_deploy_task(payload: dict[str, Any]) -> dict[str, A
                             )
                             if is_cancelled:
                                 raise
-                            return {"status": db_run.status, "run_id": str(db_run.id), "progress_pct": db_run.progress_pct}
+                            return {
+                                "status": db_run.status,
+                                "run_id": str(db_run.id),
+                                "progress_pct": db_run.progress_pct,
+                            }
 
                         if db_run.status in ("pending", "running"):
                             db_run.status = "failed"

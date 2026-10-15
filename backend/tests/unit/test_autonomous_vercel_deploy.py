@@ -11,11 +11,8 @@ from typing import Any
 
 import httpx
 import pytest
-
 from src.deployments.autonomous_gates import (
     STAGE_VERCEL_DEPLOY,
-    TARGET_PACKAGING_LIMITS,
-    WorkspaceFileMetadata,
     WorkspacePackagingError,
     check_ignored_path,
     collect_workspace_files,
@@ -23,15 +20,11 @@ from src.deployments.autonomous_gates import (
     detect_vercel_framework,
     execute_github_release,
     execute_vercel_deploy,
-    is_ignored_path,
     resolve_application_root,
     scan_workspace_manifest,
 )
-from src.deployments.autonomous_models import (
-    AutonomousDeployment,
-    AutonomousDeploymentStage,
-)
 from src.deployments.autonomous_schemas import DeploymentStrategy
+
 from tests.unit.test_autonomous_gates import MockAsyncSession, _create_test_run
 
 
@@ -347,6 +340,7 @@ async def test_vercel_worker_cancellation_during_polling(tmp_path: Path) -> None
 async def test_guarded_update_no_missing_greenlet() -> None:
     """guarded_update does not trigger MissingGreenlet on expired ORM models in identity map."""
     from datetime import UTC, datetime, timedelta
+
     from src.deployments.autonomous_worker import AutonomousWorker
 
     session = MockAsyncSession()
@@ -433,7 +427,7 @@ def test_workspace_packaging_sensitive_files_defense_in_depth(tmp_path: Path) ->
     (ws / "cert.pem").write_text("CERTIFICATE", encoding="utf-8")
     (ws / "id_rsa").write_text("SSH KEY", encoding="utf-8")
     (ws / "id_ed25519").write_text("SSH KEY", encoding="utf-8")
-    (ws / "credentials.json").write_text('{"' + 'api' + '_key": "123"}', encoding="utf-8")
+    (ws / "credentials.json").write_text('{"' + "api" + '_key": "123"}', encoding="utf-8")
     (ws / cs_filename).write_text('{"secret": "123"}', encoding="utf-8")
     (ws / "service-account-prod.json").write_text('{"sa": "123"}', encoding="utf-8")
     (ws / ".env.production").write_text("SECRET=123", encoding="utf-8")
@@ -830,6 +824,7 @@ def test_compute_file_sha1_matches_standard_hashlib(tmp_path: Path) -> None:
     sample.write_bytes(payload)
 
     import hashlib
+
     expected = hashlib.sha1(payload).hexdigest()
     computed = compute_file_sha1(sample)
     assert computed == expected
@@ -1045,14 +1040,17 @@ async def test_vercel_file_upload_cancellation_during_streaming(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_docker_context_disk_storage_temp_tarball_and_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_docker_context_disk_storage_temp_tarball_and_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """DockerEngineClient.build_image_from_context uses disk storage tarball and unlinks temp file upon completion."""
     import tarfile
+
     from src.deployments.autonomous_gates import DockerEngineClient
 
     ws = tmp_path / "docker_service"
     ws.mkdir()
-    (ws / "Dockerfile").write_text("FROM alpine\nCMD [\"echo\", \"ok\"]\n", encoding="utf-8")
+    (ws / "Dockerfile").write_text('FROM alpine\nCMD ["echo", "ok"]\n', encoding="utf-8")
     (ws / "app.py").write_text("print('running')\n", encoding="utf-8")
     (ws / ".dockerignore").write_text("ignore.me\n", encoding="utf-8")
     (ws / "ignore.me").write_text("should not be included", encoding="utf-8")
@@ -1095,6 +1093,7 @@ async def test_docker_context_disk_storage_temp_tarball_and_cleanup(tmp_path: Pa
 
     # Verify tar structure without in-memory leaks
     import io
+
     with tarfile.open(fileobj=io.BytesIO(captured_tar_bytes), mode="r") as tar:
         names = tar.getnames()
         assert "Dockerfile" in names
@@ -1608,12 +1607,15 @@ async def test_g7_verification_follows_internal_redirects_and_rejects_sso() -> N
             url = str(request.url)
             # 1. Deployment status check
             if "/v13/deployments/dpl_redirect_test" in url:
-                return httpx.Response(200, json={
-                    "id": "dpl_redirect_test",
-                    "readyState": "READY",
-                    "alias": ["test-app.vercel.app"],
-                    "url": "test-preview.vercel.app",
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "dpl_redirect_test",
+                        "readyState": "READY",
+                        "alias": ["test-app.vercel.app"],
+                        "url": "test-preview.vercel.app",
+                    },
+                )
             # 2. Main alias redirects to /login
             if url == "https://test-app.vercel.app":
                 return httpx.Response(307, headers={"Location": "/login"})
@@ -1633,7 +1635,3 @@ async def test_g7_verification_follows_internal_redirects_and_rejects_sso() -> N
         assert res.passed is True
         assert res.details["targets"]["vercel"] == "verified"
         assert stage_v.stage_metadata.get("verified_url") == "https://test-app.vercel.app"
-
-
-
-

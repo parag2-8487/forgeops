@@ -44,7 +44,7 @@ async def get_or_create_worker_app(settings: Settings | None = None) -> FastAPI:
         effective_settings = settings or get_settings()
         from src.main import create_app, lifespan
 
-        app = create_app()
+        app = create_app(settings=effective_settings)
         cm = lifespan(app)
         await cm.__aenter__()
         _worker_lifespan_cm = cm
@@ -78,6 +78,7 @@ def create_worker_asgi_client(
     satisfying require_principal and TenantContextMiddleware without global dependency
     overrides or concurrency crosstalk.
     """
+
     async def auth_asgi_app(scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope["type"] == "http":
             if "state" not in scope:

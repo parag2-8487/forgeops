@@ -19,11 +19,11 @@ import hashlib
 import json
 import logging
 import os
-from pathlib import Path
 import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
@@ -250,9 +250,12 @@ async def clone_repository_to_workspace(
 
     try:
         cmd = [
-            "git", "clone",
-            "--depth", "1",
-            "--branch", branch,
+            "git",
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            branch,
             auth_url,
             str(clean_target),
         ]
@@ -267,7 +270,9 @@ async def clone_repository_to_workspace(
             return False, None, f"Git clone failed (exit code {proc.returncode}): {err_msg}"
 
         sha_proc = await asyncio.create_subprocess_exec(
-            "git", "rev-parse", "HEAD",
+            "git",
+            "rev-parse",
+            "HEAD",
             cwd=str(clean_target),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -476,18 +481,37 @@ def scan_workspace_to_report(workspace_path: Path) -> Any:
                     if "pip" not in package_managers:
                         package_managers.append("pip")
                     if "fastapi" in content_str.lower():
-                        frameworks.append(ScanFrameworkIn(name="FastAPI", kind="web", confidence="declared", evidence=rel_path))
+                        frameworks.append(
+                            ScanFrameworkIn(name="FastAPI", kind="web", confidence="declared", evidence=rel_path)
+                        )
                     if "django" in content_str.lower():
-                        frameworks.append(ScanFrameworkIn(name="Django", kind="web", confidence="declared", evidence=rel_path))
+                        frameworks.append(
+                            ScanFrameworkIn(name="Django", kind="web", confidence="declared", evidence=rel_path)
+                        )
                     if "flask" in content_str.lower():
-                        frameworks.append(ScanFrameworkIn(name="Flask", kind="web", confidence="declared", evidence=rel_path))
+                        frameworks.append(
+                            ScanFrameworkIn(name="Flask", kind="web", confidence="declared", evidence=rel_path)
+                        )
                 elif p_name == "go.mod":
                     if "go" not in package_managers:
                         package_managers.append("go")
                     if "gin-gonic" in content_str.lower():
-                        frameworks.append(ScanFrameworkIn(name="Gin", kind="web", confidence="declared", evidence=rel_path))
+                        frameworks.append(
+                            ScanFrameworkIn(name="Gin", kind="web", confidence="declared", evidence=rel_path)
+                        )
 
-                if p_name in ("main.py", "app.py", "src/main.py", "index.js", "src/index.ts", "main.go", "src/App.tsx", "src/main.tsx", "server.js", "server.ts"):
+                if p_name in (
+                    "main.py",
+                    "app.py",
+                    "src/main.py",
+                    "index.js",
+                    "src/index.ts",
+                    "main.go",
+                    "src/App.tsx",
+                    "src/main.tsx",
+                    "server.js",
+                    "server.ts",
+                ):
                     entry_points.append(rel_path)
 
     inv = ScanInventoryIn(
@@ -652,7 +676,11 @@ async def establish_codebase_index(
         cfg = dict(run.configuration or {})
         sp = dict(cfg.get("source_preparation") or {})
         sp["indexed_at"] = datetime.now(UTC).isoformat()
-        sp["indexed_file_count"] = count if "count" in locals() and count else (len(report.files) if "report" in locals() and hasattr(report, "files") else 1)
+        sp["indexed_file_count"] = (
+            count
+            if "count" in locals() and count
+            else (len(report.files) if "report" in locals() and hasattr(report, "files") else 1)
+        )
         sp["indexed_workspace_path"] = resolved_ws_str
         sp["indexed_project_id"] = str(run.project_id)
         sp["canonical_index_status"] = "ready"

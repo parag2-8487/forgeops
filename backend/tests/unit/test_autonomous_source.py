@@ -1126,7 +1126,9 @@ class TestWorkspaceResolutionAndDualPathExecution:
         assert res.status == "source_ready"
         assert len(captured_targets) == 1
         expected_suffix = f".forgeops/workspaces/{run.project_id}/{run.id}".replace("/", "\\")
-        assert expected_suffix in str(captured_targets[0]) or expected_suffix.replace("\\", "/") in str(captured_targets[0])
+        assert expected_suffix in str(captured_targets[0]) or expected_suffix.replace("\\", "/") in str(
+            captured_targets[0]
+        )
 
     async def test_case_c_connected_agent_does_not_assume_missing_workspace_exists(self, tmp_path: Path) -> None:
         """Case C: Connected paired agent does not cause the system to assume workspace exists.
@@ -1236,7 +1238,11 @@ class TestWorkspaceResolutionAndDualPathExecution:
         session.execute = AsyncMock(side_effect=mock_exec)
 
         async def mock_failing_clone(**kwargs: Any) -> tuple[bool, str | None, str | None]:
-            return False, None, "Git clone failed (exit code 128): fatal: repository 'https://github.com/parag8487/FailingRepo.git' not found"
+            return (
+                False,
+                None,
+                "Git clone failed (exit code 128): fatal: repository 'https://github.com/parag8487/FailingRepo.git' not found",
+            )
 
         with patch("src.deployments.autonomous_source.clone_repository_to_workspace", side_effect=mock_failing_clone):
             res = await prepare_source_workspace(
@@ -1264,7 +1270,7 @@ class TestWorkspaceResolutionAndDualPathExecution:
         mock_proc.communicate = AsyncMock(
             return_value=(
                 b"",
-                f"fatal: could not read Username for '{fake_clone_dsn}': No such device or address".encode("utf-8"),
+                f"fatal: could not read Username for '{fake_clone_dsn}': No such device or address".encode(),
             )
         )
 
@@ -1281,4 +1287,3 @@ class TestWorkspaceResolutionAndDualPathExecution:
         assert err is not None
         assert secret_token not in err
         assert "REDACTED" in err
-

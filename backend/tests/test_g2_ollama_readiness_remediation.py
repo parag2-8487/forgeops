@@ -8,30 +8,23 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from typing import Any
+
 import httpx
 import pytest
-
 from src.core.ollama_readiness import (
-    OllamaClientCancelledError,
-    OllamaModelNotFoundError,
     OllamaWarmupTimeoutError,
     check_ollama_model_available,
-    ensure_ollama_model_ready,
     is_ollama_model_resident,
 )
 from src.core.readiness_cross_checks import env_example_matches_the_deployment
 from src.diagnostics.bundle import DiagnosticBundle
 from src.generation.artifact_checks import (
-    _extract_compose_container_ports,
     validate_cross_artifact_consistency,
 )
 from src.generation.project_hygiene_renderers import compose_file, env_example
 from src.generation.prompt_compiler import (
     ProjectArchitecture,
     ServiceSpec,
-    _detect_grounded_databases,
-    _detect_service_port,
-    _slugify,
     analyze_project_architecture,
 )
 from src.recovery.ai_resolver import resolve_failure_with_ai_async
@@ -112,21 +105,17 @@ async def test_worker_heartbeat_maintenance_during_model_loading() -> None:
         nonlocal heartbeat_ticks
         heartbeat_ticks += 1
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        url = str(request.url)
-        if url.endswith("/api/tags"):
-            return httpx.Response(200, json={"models": [{"name": "qwen2.5-coder:7b"}]})
-        elif url.endswith("/api/ps"):
-            return httpx.Response(200, json={"models": []})
-        elif url.endswith("/api/generate"):
-            return httpx.Response(200, json={"done": True})
-        return httpx.Response(404)
-
-    transport = httpx.MockTransport(handler)
-
     # Fast poll interval to verify tick invocation
     with pytest.MonkeyPatch.context() as mp:
-        async def mock_wait_warmup(base_url: str, model: str, *, warmup_timeout_seconds: float = 360.0, poll_interval: float = 0.05, heartbeat_callback: Any = None) -> None:
+
+        async def mock_wait_warmup(
+            base_url: str,
+            model: str,
+            *,
+            warmup_timeout_seconds: float = 360.0,
+            poll_interval: float = 0.05,
+            heartbeat_callback: Any = None,
+        ) -> None:
             for _ in range(3):
                 await asyncio.sleep(0.01)
                 if heartbeat_callback:
@@ -258,7 +247,7 @@ def test_cross_artifact_validation_infrastructure_ports_excluded() -> None:
     """
     df = _DummyArtifact(
         path="Dockerfile",
-        content="FROM node:20-alpine\nWORKDIR /app\nEXPOSE 3000\nUSER node\nCMD [\"npm\", \"start\"]\n",
+        content='FROM node:20-alpine\nWORKDIR /app\nEXPOSE 3000\nUSER node\nCMD ["npm", "start"]\n',
     )
     compose = _DummyArtifact(
         path="docker-compose.yml",
@@ -288,11 +277,11 @@ def test_cross_artifact_validation_multiservice_distinct_ports() -> None:
     """Verifies that distinct microservices in multi-service configurations legitimately listen on different ports."""
     df_fe = _DummyArtifact(
         path="frontend/Dockerfile",
-        content="FROM node:20-alpine\nEXPOSE 3000\nUSER node\nCMD [\"npm\", \"start\"]\n",
+        content='FROM node:20-alpine\nEXPOSE 3000\nUSER node\nCMD ["npm", "start"]\n',
     )
     df_be = _DummyArtifact(
         path="backend/Dockerfile",
-        content="FROM python:3.11-slim\nEXPOSE 8000\nUSER nobody\nCMD [\"python\", \"main.py\"]\n",
+        content='FROM python:3.11-slim\nEXPOSE 8000\nUSER nobody\nCMD ["python", "main.py"]\n',
     )
     compose = _DummyArtifact(
         path="docker-compose.yml",
@@ -325,8 +314,16 @@ def test_compose_and_env_example_variable_reconciliation() -> None:
     arch = ProjectArchitecture(
         is_multi_service=True,
         services=(
-            ServiceSpec(name="code-review", directory="code-review", dockerfile_path="Dockerfile", port=3000, host_port=3000),
-            ServiceSpec(name="live-classroom", directory="live-classroom", dockerfile_path="Dockerfile", port=3000, host_port=3001),
+            ServiceSpec(
+                name="code-review", directory="code-review", dockerfile_path="Dockerfile", port=3000, host_port=3000
+            ),
+            ServiceSpec(
+                name="live-classroom",
+                directory="live-classroom",
+                dockerfile_path="Dockerfile",
+                port=3000,
+                host_port=3001,
+            ),
         ),
         databases=("postgres", "redis"),
     )
@@ -366,8 +363,16 @@ def test_monorepo_service_build_contexts() -> None:
     arch = ProjectArchitecture(
         is_multi_service=True,
         services=(
-            ServiceSpec(name="code-review", directory="code-review", dockerfile_path="Dockerfile", port=3000, host_port=3000),
-            ServiceSpec(name="live-classroom", directory="live-classroom", dockerfile_path="Dockerfile", port=3000, host_port=3001),
+            ServiceSpec(
+                name="code-review", directory="code-review", dockerfile_path="Dockerfile", port=3000, host_port=3000
+            ),
+            ServiceSpec(
+                name="live-classroom",
+                directory="live-classroom",
+                dockerfile_path="Dockerfile",
+                port=3000,
+                host_port=3001,
+            ),
         ),
         databases=(),
     )
@@ -410,6 +415,7 @@ def test_template_fallback_truthful_provenance() -> None:
     with served_from='template' and never claim to be AI provider-generated.
     """
     import uuid
+
     from src.generation.service import GenerationOutcome
 
     outcome = GenerationOutcome(run_id=uuid.uuid4())
@@ -421,4 +427,3 @@ def test_template_fallback_truthful_provenance() -> None:
     outcome.served_from = "template" if delivered and delivered <= set(substituted) else "provider"
     assert outcome.served_from == "template"
     assert outcome.served_from != "provider"
-

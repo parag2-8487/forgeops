@@ -9,15 +9,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
     AutonomousDeploymentOutbox,
-    AutonomousDeploymentStage,
 )
 from src.deployments.autonomous_worker import (
     LEASE_DURATION_SECONDS,
@@ -44,14 +41,6 @@ async def test_execute_task_transitions_run_to_failed_on_unhandled_error() -> No
         strategy="docker_github_vercel",
         attempt_number=1,
         progress_pct=45,
-    )
-    mock_stage = AutonomousDeploymentStage(
-        id=uuid.uuid4(),
-        run_id=run_id,
-        stage_name="G6_workload",
-        position=6,
-        status="running",
-        progress_pct=50,
     )
 
     # Mock DB session
@@ -99,10 +88,12 @@ async def test_execute_task_transitions_run_to_failed_on_unhandled_error() -> No
         mock_engine.return_value = engine_mock
 
         with pytest.raises(WorkerFencingLostError):
-            await execute_autonomous_deploy_task({
-                "run_id": str(run_id),
-                "worker_id": "test-worker-1",
-            })
+            await execute_autonomous_deploy_task(
+                {
+                    "run_id": str(run_id),
+                    "worker_id": "test-worker-1",
+                }
+            )
 
         # Verify that terminal update was executed
         assert len(executed_statements) > 0
@@ -118,17 +109,6 @@ async def test_execute_task_transitions_run_to_failed_on_unhandled_error() -> No
 async def test_worker_heartbeat_renewal_extends_lease() -> None:
     """Verify that worker renew_heartbeat updates lease_expires_at while fence token is valid."""
     run_id = uuid.uuid4()
-    now = datetime.now(UTC)
-    run = AutonomousDeployment(
-        id=run_id,
-        project_id=uuid.uuid4(),
-        status="running",
-        strategy="docker_github_vercel",
-        attempt_number=1,
-        fence_token=1,
-        lease_expires_at=now + timedelta(seconds=20),
-        worker_id="test-worker-1",
-    )
 
     mock_session = AsyncMock()
     mock_result = MagicMock()
@@ -185,7 +165,6 @@ async def test_stale_worker_cannot_revive_expired_lease() -> None:
 async def test_second_worker_takeover_blocks_first_worker_writes() -> None:
     """Verify that when worker 2 claims after expiry, worker 1 cannot corrupt run or stage state."""
     run_id = uuid.uuid4()
-    now = datetime.now(UTC)
 
     # Worker 1 attempts guarded update with superseded fence_token=1
     mock_session = AsyncMock()
@@ -206,7 +185,6 @@ async def test_second_worker_takeover_blocks_first_worker_writes() -> None:
 @pytest.mark.asyncio
 async def test_long_running_stage_heartbeat_renewal_preserves_custody() -> None:
     """Verify that during a long-running stage probe exceeding 30s, background heartbeats keep lease active."""
-    import asyncio
     run_id = uuid.uuid4()
     heartbeat_count = 0
 
@@ -235,6 +213,7 @@ async def test_long_running_stage_heartbeat_renewal_preserves_custody() -> None:
 async def test_outbox_sequence_allocation_is_consecutive_and_monotonic() -> None:
     """Verify that multiple state transitions generate strictly consecutive outbox sequence numbers."""
     from src.deployments.autonomous_models import AutonomousDeployment
+
     run = AutonomousDeployment(
         id=uuid.uuid4(),
         project_id=uuid.uuid4(),

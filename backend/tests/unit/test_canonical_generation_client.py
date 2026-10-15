@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: FSL-1.1-ALv2
 """Unit tests for canonical generation SSE stream consumer."""
 
-import json
 import uuid
+
 import pytest
 from src.deployments.canonical_generation_client import (
-    CanonicalGenerationResult,
     GenerationStreamError,
     consume_generation_sse_stream,
 )

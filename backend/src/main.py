@@ -48,7 +48,7 @@ from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
 from .core.config import Settings, get_settings
 from .core.db import create_db_engine, create_sessionmaker
-from .core.errors import PROBLEM_CONTENT_TYPE, ProblemDetail, TYPE_BASE, _render, install_problem_handlers
+from .core.errors import PROBLEM_CONTENT_TYPE, TYPE_BASE, ProblemDetail, _render, install_problem_handlers
 from .core.logging import configure_logging
 from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
 from .core.tenancy import TenantContextMiddleware

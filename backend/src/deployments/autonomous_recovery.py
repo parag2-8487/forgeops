@@ -785,10 +785,12 @@ class AutonomousRecoverySweeper:
                     if dep_id:
                         try:
                             from .autonomous_credentials import resolve_deployment_credentials
+
                             creds = await resolve_deployment_credentials(session, run)
                             v_tok = creds.get("vercel_token") or _get_ctx(context, "vercel_token")
                             if v_tok:
                                 import httpx
+
                                 async with httpx.AsyncClient(timeout=15.0) as client:
                                     resp = await client.get(
                                         f"https://api.vercel.com/v13/deployments/{dep_id}",
@@ -808,7 +810,9 @@ class AutonomousRecoverySweeper:
                                             }
                                         elif r_state in ("ERROR", "FAILED", "CANCELED"):
                                             vercel_status = "failed"
-                                            errors.append(f"Vercel deployment {dep_id} in terminal failure state: {v_data.get('errorMessage') or r_state}")
+                                            errors.append(
+                                                f"Vercel deployment {dep_id} in terminal failure state: {v_data.get('errorMessage') or r_state}"
+                                            )
                                         else:
                                             vercel_status = "building"
                                             details["vercel"] = {"status": r_state, "deployment_id": dep_id}
@@ -964,12 +968,14 @@ async def reconcile_and_verify_run(
         ready_state = v_data.get("readyState", "READY")
     else:
         from .autonomous_credentials import resolve_deployment_credentials
+
         creds = await resolve_deployment_credentials(session, run)
         v_tok = creds.get("vercel_token") or _get_ctx(context, "vercel_token")
         if not v_tok:
             return False, "Cannot resolve Vercel access token to query deployment status."
 
         import httpx
+
         http_client = client or _get_ctx(context, "http_client")
         if http_client is not None:
             resp = await http_client.get(
@@ -1005,18 +1011,20 @@ async def reconcile_and_verify_run(
     raw_url = v_data.get("url") or ""
     deployment_url = f"https://{raw_url}" if raw_url and not raw_url.startswith("http") else raw_url
 
-    v_meta.update({
-        "ready_state": "READY",
-        "url": raw_url,
-        "deployment_url": deployment_url,
-        "alias": primary_alias,
-        "aliases": raw_aliases,
-        "reconciled": True,
-        "reconciled_at": now.isoformat(),
-        "timed_out": False,
-        "is_provider_timeout": False,
-        "provider_build_error": False,
-    })
+    v_meta.update(
+        {
+            "ready_state": "READY",
+            "url": raw_url,
+            "deployment_url": deployment_url,
+            "alias": primary_alias,
+            "aliases": raw_aliases,
+            "reconciled": True,
+            "reconciled_at": now.isoformat(),
+            "timed_out": False,
+            "is_provider_timeout": False,
+            "provider_build_error": False,
+        }
+    )
     stage_vercel.stage_metadata = v_meta
     stage_vercel.status = "succeeded"
     stage_vercel.progress_pct = 100
@@ -1057,6 +1065,7 @@ async def reconcile_and_verify_run(
         stage_g7.started_at = now
         run.current_stage = "G7_verification"
         from .autonomous_gates import evaluate_g7_verification
+
         g7_ctx = dict(context or {}) if isinstance(context, dict) else {}
         if "vercel_token" not in g7_ctx and v_tok:
             g7_ctx["vercel_token"] = v_tok

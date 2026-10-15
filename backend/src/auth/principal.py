@@ -190,4 +190,3 @@ class Principal:
             device_id=None,
             blast_radius=blast_radius_for_role(role),
         )
-

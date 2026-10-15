@@ -282,7 +282,6 @@ class TestDockerHostPortValidation:
         assert "ERR_UNSAFE_PORT" in str(exc_info.value)
 
 
-
 # ---------------------------------------------------------------------------
 # 3. Schema Serialization & Internal Field Exclusion Tests
 # ---------------------------------------------------------------------------
@@ -736,4 +735,3 @@ class TestAutonomousRunPublicResponseReadinessSerialization:
         assert validated.post_generation_readiness is not None
         assert validated.post_generation_readiness.checkpoint_type == "post_generation_r1"
         assert validated.post_generation_readiness.score == 95
-

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+
 import pytest
 from src.auth.models import User, UserRole
 from src.auth.principal import Principal

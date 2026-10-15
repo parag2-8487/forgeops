@@ -22,9 +22,12 @@ Tests:
 
 from __future__ import annotations
 
+import base64
+import json
 import operator
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -525,7 +528,10 @@ class TestIndividualGateEvaluations:
 
         class MockInaccessibleDockerClient:
             def socket_status(self) -> tuple[bool, str | None]:
-                return False, "Permission denied accessing Docker daemon socket at '/var/run/docker.sock' (check container user/group permissions)"
+                return (
+                    False,
+                    "Permission denied accessing Docker daemon socket at '/var/run/docker.sock' (check container user/group permissions)",
+                )
 
             def is_available(self) -> bool:
                 return False
@@ -533,7 +539,12 @@ class TestIndividualGateEvaluations:
         res = await evaluate_g4_build(
             session,
             run,
-            context={"docker_client": MockInaccessibleDockerClient(), "dry_run": False, "simulation_mode": False, "live": True},
+            context={
+                "docker_client": MockInaccessibleDockerClient(),
+                "dry_run": False,
+                "simulation_mode": False,
+                "live": True,
+            },
         )
         assert res.passed is False
         assert res.status == "failed"
@@ -562,7 +573,12 @@ class TestIndividualGateEvaluations:
         res = await evaluate_g4_build(
             session,
             run,
-            context={"docker_client": MockNotFoundDockerClient(), "dry_run": False, "simulation_mode": False, "live": True},
+            context={
+                "docker_client": MockNotFoundDockerClient(),
+                "dry_run": False,
+                "simulation_mode": False,
+                "live": True,
+            },
         )
         assert res.passed is False
         assert res.status == "failed"
@@ -979,6 +995,7 @@ class MockDockerEngineClient:
             build_info["image_id"] = "sha256:freshbuild12345"
         if log_callback:
             import inspect
+
             if inspect.iscoroutinefunction(log_callback):
                 await log_callback("Step 1/3 : FROM node:20-alpine")
             else:
@@ -998,9 +1015,7 @@ class MockDockerEngineClient:
     async def inspect_container(self, container_name: str) -> dict[str, Any] | None:
         return self.inspect_data
 
-    async def inspect_container_with_status(
-        self, container_name: str
-    ) -> tuple[dict[str, Any] | None, str | None]:
+    async def inspect_container_with_status(self, container_name: str) -> tuple[dict[str, Any] | None, str | None]:
         if self.inspect_error:
             return None, self.inspect_error
         if self.inspect_data is None:
@@ -1045,9 +1060,7 @@ class TestG5G6DiagnosticVerification:
     async def test_g5_startup_success_does_not_claim_unverified_healthcheck_convergence(self) -> None:
         session = MockAsyncSession()
         run = await _create_test_run(session, DeploymentStrategy.DOCKER_GITHUB)
-        docker_client = MockDockerEngineClient(
-            run_res={"status": "running", "container_id": "b296781d34d7"}
-        )
+        docker_client = MockDockerEngineClient(run_res={"status": "running", "container_id": "b296781d34d7"})
 
         res = await evaluate_g5_apply(
             session,
@@ -1078,9 +1091,7 @@ class TestG5G6DiagnosticVerification:
                 "Config": {"ExposedPorts": {"3000/tcp": {}, "4000/tcp": {}}},
             }
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("All connection attempts failed")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectError("All connection attempts failed"))
 
         res = await evaluate_g6_workload(
             session,
@@ -1171,9 +1182,7 @@ class TestG5G6DiagnosticVerification:
             }
         )
 
-        dns_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("[Errno -2] Name or service not known")
-        )
+        dns_client = MockProbeHttpClient(exception=httpx.ConnectError("[Errno -2] Name or service not known"))
         res_dns = await evaluate_g6_workload(
             session,
             run,
@@ -1184,9 +1193,7 @@ class TestG5G6DiagnosticVerification:
         assert res_dns.details.get("error_category") == "DNS_RESOLUTION_FAILURE"
         assert "dns" in res_dns.message.lower() or "resolution" in res_dns.message.lower()
 
-        timeout_client = MockProbeHttpClient(
-            exception=httpx.ReadTimeout("The read operation timed out")
-        )
+        timeout_client = MockProbeHttpClient(exception=httpx.ReadTimeout("The read operation timed out"))
         res_timeout = await evaluate_g6_workload(
             session,
             run,
@@ -1203,7 +1210,9 @@ class TestG5G6DiagnosticVerification:
         run = await _create_test_run(
             session,
             DeploymentStrategy.DOCKER_GITHUB,
-            config_overrides={"docker_config": {"container_name": "c_running_refused", "port_bindings": {"4000": 18189}}},
+            config_overrides={
+                "docker_config": {"container_name": "c_running_refused", "port_bindings": {"4000": 18189}}
+            },
         )
         docker_client = MockDockerEngineClient(
             inspect_data={
@@ -1215,8 +1224,12 @@ class TestG5G6DiagnosticVerification:
         # 127.0.0.1 and localhost actively refuse connection; fallback container hostname fails getaddrinfo
         http_client = MockProbeHttpClient(
             url_handlers={
-                "127.0.0.1": httpx.ConnectError("[WinError 10061] No connection could be made because the target machine actively refused it"),
-                "localhost": httpx.ConnectError("[WinError 10061] No connection could be made because the target machine actively refused it"),
+                "127.0.0.1": httpx.ConnectError(
+                    "[WinError 10061] No connection could be made because the target machine actively refused it"
+                ),
+                "localhost": httpx.ConnectError(
+                    "[WinError 10061] No connection could be made because the target machine actively refused it"
+                ),
                 "c_running_refused": httpx.ConnectError("[Errno 11001] getaddrinfo failed"),
             }
         )
@@ -1249,9 +1262,7 @@ class TestG5G6DiagnosticVerification:
                 "State": {"Running": True, "ExitCode": 0, "Restarting": False},
             }
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("[Errno 11001] getaddrinfo failed")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectError("[Errno 11001] getaddrinfo failed"))
 
         res = await evaluate_g6_workload(
             session,
@@ -1276,9 +1287,7 @@ class TestG5G6DiagnosticVerification:
                 "State": {"Running": True, "ExitCode": 0, "Restarting": False},
             }
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectTimeout("Connection timed out after 3.0s")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectTimeout("Connection timed out after 3.0s"))
 
         res = await evaluate_g6_workload(
             session,
@@ -1303,9 +1312,7 @@ class TestG5G6DiagnosticVerification:
                 "State": {"Running": True, "ExitCode": 0, "Restarting": False, "Status": "running"},
             }
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("[Errno 111] Connection refused")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectError("[Errno 111] Connection refused"))
 
         res = await evaluate_g6_workload(
             session,
@@ -1395,9 +1402,7 @@ class TestG5G6DiagnosticVerification:
                 "Config": {"ExposedPorts": {"3000/tcp": {}}},
             }
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("All connection attempts failed")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectError("All connection attempts failed"))
 
         res = await evaluate_g6_workload(
             session,
@@ -1595,7 +1600,7 @@ class TestDockerFreshnessAndG5Pinning:
             "WORKDIR /app\n"
             "COPY --from=builder /app ./\n"
             "USER 1001\n"
-            "CMD [\"npm\", \"start\"]\n",
+            'CMD ["npm", "start"]\n',
             encoding="utf-8",
         )
 
@@ -1832,9 +1837,7 @@ class TestPortDeterminationAndG6Diagnostics:
                 "Config": {"ExposedPorts": {"3000/tcp": {}, "5000/tcp": {}}},
             }
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("Connection refused")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectError("Connection refused"))
         res = await evaluate_g6_workload(
             session,
             run,
@@ -1858,9 +1861,7 @@ class TestPortDeterminationAndG6Diagnostics:
                 "Config": {"Cmd": ["sleep", "infinity"]},
             }
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("Connection refused")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectError("Connection refused"))
         res = await evaluate_g6_workload(
             session,
             run,
@@ -1883,9 +1884,7 @@ class TestPortDeterminationAndG6Diagnostics:
             },
             logs_data="Server running on http://127.0.0.1:3000 (loopback only)\nReady for requests.",
         )
-        http_client = MockProbeHttpClient(
-            exception=httpx.ConnectError("All connection attempts failed")
-        )
+        http_client = MockProbeHttpClient(exception=httpx.ConnectError("All connection attempts failed"))
         res = await evaluate_g6_workload(
             session,
             run,
@@ -2126,11 +2125,14 @@ class TestPortDeterminationAndG6Diagnostics:
     async def test_g2_blueprint_synthesizes_dockerfile_with_declared_container_port(self, tmp_path: Path) -> None:
         """G2 synthesizes Dockerfile configuring CMD and EXPOSE with declared container_port=8080."""
         import json
+
         session = MockAsyncSession()
         ws = tmp_path / "vite_app"
         ws.mkdir()
         (ws / "package.json").write_text(
-            json.dumps({"name": "vite-portfolio", "dependencies": {"vite": "^5.0.0"}, "scripts": {"preview": "vite preview"}}),
+            json.dumps(
+                {"name": "vite-portfolio", "dependencies": {"vite": "^5.0.0"}, "scripts": {"preview": "vite preview"}}
+            ),
             encoding="utf-8",
         )
         run = await _create_test_run(
@@ -2455,11 +2457,11 @@ class TestPortDeterminationAndG6Diagnostics:
                     return httpx.Response(404)
                 return httpx.Response(200, json={})
 
-        async with httpx.AsyncClient(transport=MockGitHubTransport()) as client:
-            res = await execute_github_release(
+        async with httpx.AsyncClient(transport=MockGitHubTransport()):
+            _res = await execute_github_release(
                 session,
                 run,
-                context={"github_token": "gh" + "p_mock_token", "workspace_path": str(tmp_path)},
+                context={"github_token": "".join(["gh", "p_mock_token"]), "workspace_path": str(tmp_path)},
             )
             # When httpx is instantiated inside execute_github_release, verify function works with mock context
         assert len(created_trees) == 0 or len(created_trees) > 0  # verifies test structure
@@ -2567,21 +2569,24 @@ class TestPortDeterminationAndG6Diagnostics:
                 elif "/contents/forgeops-autonomous-deploy.txt" in url:
                     return httpx.Response(200, json={"content": base64.b64encode(b"manifest").decode("ascii")})
                 elif "/git/trees/" in url:
-                    return httpx.Response(200, json={
-                        "tree": [
-                            {"path": "README.md", "type": "blob"},
-                            {"path": "forgeops-autonomous-deploy.txt", "type": "blob"},
-                        ]
-                    })
+                    return httpx.Response(
+                        200,
+                        json={
+                            "tree": [
+                                {"path": "README.md", "type": "blob"},
+                                {"path": "forgeops-autonomous-deploy.txt", "type": "blob"},
+                            ]
+                        },
+                    )
                 return httpx.Response(404)
 
-        async with httpx.AsyncClient(transport=MockPlaceholderGitHubTransport()) as client:
+        async with httpx.AsyncClient(transport=MockPlaceholderGitHubTransport()):
             res = await evaluate_g7_final_verification(
                 session,
                 run,
                 context={
                     "live": True,
-                    "github_token": "gh" + "p_mock",
+                    "github_token": "".join(["gh", "p_mock"]),
                     "verify_live_github": True,
                     "target_overrides": {"docker": "verified"},
                 },
@@ -2674,7 +2679,9 @@ class TestPortDeterminationAndG6Diagnostics:
                 elif "portfolio-test2-b9yp88ffd.vercel.app" in url:
                     return httpx.Response(
                         302,
-                        headers={"Location": "https://vercel.com/sso-api?url=https%3A%2F%2Fportfolio-test2-b9yp88ffd.vercel.app"},
+                        headers={
+                            "Location": "https://vercel.com/sso-api?url=https%3A%2F%2Fportfolio-test2-b9yp88ffd.vercel.app"
+                        },
                     )
                 return httpx.Response(404)
 
@@ -2934,7 +2941,9 @@ class TestPortDeterminationAndG6Diagnostics:
         assert receipt["strategy"] == "docker_github_vercel"
 
     @pytest.mark.asyncio
-    async def test_github_blob_creation_failure_halts_release_before_ref_update(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_github_blob_creation_failure_halts_release_before_ref_update(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Blob upload failure in _create_git_commit_tree raises an error and halts release before ref mutation."""
         from src.deployments.autonomous_gates import execute_github_release
 
@@ -2955,7 +2964,7 @@ class TestPortDeterminationAndG6Diagnostics:
         ws.mkdir()
         # Binary file > 100 KB forces blob creation endpoint (/git/blobs)
         large_bin = ws / "binary.dat"
-        large_bin.write_bytes(b"\x00\xFF" * (60 * 1024))  # 120 KB binary
+        large_bin.write_bytes(b"\x00\xff" * (60 * 1024))  # 120 KB binary
 
         ref_updated = False
 
@@ -2975,7 +2984,9 @@ class TestPortDeterminationAndG6Diagnostics:
                 return httpx.Response(404)
 
         real_async_client = httpx.AsyncClient
-        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=MockBlobFailureTransport()))
+        monkeypatch.setattr(
+            httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=MockBlobFailureTransport())
+        )
 
         res = await execute_github_release(
             session,
@@ -2992,10 +3003,13 @@ class TestPortDeterminationAndG6Diagnostics:
 
 
 @pytest.mark.asyncio
-async def test_docker_build_error_extraction_with_npm_etimedout_diagnostics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_docker_build_error_extraction_with_npm_etimedout_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Ensure Docker JSON error output and preceding npm ETIMEDOUT context are truthfully extracted."""
-    from src.deployments.autonomous_gates import DockerEngineClient
     import json
+
+    from src.deployments.autonomous_gates import DockerEngineClient
 
     client = DockerEngineClient(uds="/fake/docker.sock")
     df = tmp_path / "Dockerfile"
@@ -3007,10 +3021,15 @@ async def test_docker_build_error_extraction_with_npm_etimedout_diagnostics(tmp_
         json.dumps({"stream": "\x1b[91mnpm error syscall read\n\x1b[0m"}),
         json.dumps({"stream": "\x1b[91mnpm error network read ETIMEDOUT\n\x1b[0m"}),
         json.dumps({"stream": "\x1b[91mnpm error network This is a problem related to network connectivity.\n\x1b[0m"}),
-        json.dumps({
-            "error": "The command '/bin/sh -c npm ci --prefer-offline --no-audit' returned a non-zero code: 146",
-            "errorDetail": {"code": 146, "message": "The command '/bin/sh -c npm ci --prefer-offline --no-audit' returned a non-zero code: 146"}
-        }),
+        json.dumps(
+            {
+                "error": "The command '/bin/sh -c npm ci --prefer-offline --no-audit' returned a non-zero code: 146",
+                "errorDetail": {
+                    "code": 146,
+                    "message": "The command '/bin/sh -c npm ci --prefer-offline --no-audit' returned a non-zero code: 146",
+                },
+            }
+        ),
     ]
 
     class MockDockerBuildTransport(httpx.AsyncBaseTransport):
@@ -3032,8 +3051,9 @@ async def test_docker_build_error_extraction_with_npm_etimedout_diagnostics(tmp_
 @pytest.mark.asyncio
 async def test_docker_build_error_redacts_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure sensitive credentials and tokens are redacted from build error output."""
-    from src.deployments.autonomous_gates import DockerEngineClient
     import json
+
+    from src.deployments.autonomous_gates import DockerEngineClient
 
     client = DockerEngineClient(uds="/fake/docker.sock")
     df = tmp_path / "Dockerfile"
@@ -3042,10 +3062,12 @@ async def test_docker_build_error_redacts_tokens(tmp_path: Path, monkeypatch: py
     sample_ghp = "".join(["gh", "p_", "123456789012345678901234567890123456"])
     chunks = [
         json.dumps({"stream": f"Error: npm ERR! token: {sample_ghp}\n"}),
-        json.dumps({
-            "error": "Build failed with authorization: " + "".join(["Bear", "er ", "super_secret_pass_123"]),
-            "errorDetail": {"code": 1, "message": "Build failed"}
-        }),
+        json.dumps(
+            {
+                "error": "Build failed with authorization: " + "".join(["Bear", "er ", "super_secret_pass_123"]),
+                "errorDetail": {"code": 1, "message": "Build failed"},
+            }
+        ),
     ]
 
     class MockDockerBuildTransport(httpx.AsyncBaseTransport):
@@ -3061,7 +3083,3 @@ async def test_docker_build_error_redacts_tokens(tmp_path: Path, monkeypatch: py
     assert sample_ghp not in err_msg
     assert "super_secret_pass_123" not in err_msg
     assert "[REDACTED_TOKEN]" in err_msg or "[REDACTED]" in err_msg
-
-
-
-

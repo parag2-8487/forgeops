@@ -39,18 +39,16 @@ import os
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import insert, select, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy import insert, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from .autonomous_models import (
     READINESS_CHECKPOINT_TYPES,
-    READINESS_STATUSES,
     ReadinessCheckpoint,
 )
 from .autonomous_schemas import DeploymentStrategy
@@ -169,14 +167,22 @@ def is_uq_checkpoint_version_violation(exc: BaseException) -> bool:
         orig_msg = str(orig)
         if "uq_run_checkpoint_version" in orig_msg:
             return True
-        if "deployment_readiness_checkpoints.run_id" in orig_msg and "checkpoint_type" in orig_msg and "assessment_version" in orig_msg:
+        if (
+            "deployment_readiness_checkpoints.run_id" in orig_msg
+            and "checkpoint_type" in orig_msg
+            and "assessment_version" in orig_msg
+        ):
             return True
 
     # Fallback to string representation of SQLAlchemy IntegrityError
     err_str = str(exc)
     if "uq_run_checkpoint_version" in err_str:
         return True
-    if "deployment_readiness_checkpoints.run_id" in err_str and "checkpoint_type" in err_str and "assessment_version" in err_str:
+    if (
+        "deployment_readiness_checkpoints.run_id" in err_str
+        and "checkpoint_type" in err_str
+        and "assessment_version" in err_str
+    ):
         return True
     return False
 
@@ -216,7 +222,7 @@ def is_payload_semantically_equivalent(
             continue
 
         # Normalize JSON collections for comparison
-        if isinstance(att_val, (dict, list)) or isinstance(ext_val, (dict, list)):
+        if isinstance(att_val, dict | list) or isinstance(ext_val, dict | list):
             if json.dumps(att_val, sort_keys=True) != json.dumps(ext_val, sort_keys=True):
                 return False
         elif att_val != ext_val:
@@ -505,7 +511,9 @@ class ReadinessAnalyzer:
                 dim_explanations["configuration"] = "Valid Cargo Rust manifest"
 
             if not has_config and not blockers:
-                warnings.append("No standard runtime dependency manifest found (package.json, requirements.txt, go.mod)")
+                warnings.append(
+                    "No standard runtime dependency manifest found (package.json, requirements.txt, go.mod)"
+                )
                 config_score = 10
                 dim_explanations["configuration"] = "Non-standard or custom project structure"
 
@@ -519,7 +527,9 @@ class ReadinessAnalyzer:
             has_df = (workspace_path / "Dockerfile").exists()
             if not has_df and reusable_dockerfile:
                 reusable_path = resolve_workspace_path(reusable_dockerfile)
-                if (reusable_path.exists() and reusable_path.is_file()) or (not workspace_path.exists() and bool(reusable_dockerfile)):
+                if (reusable_path.exists() and reusable_path.is_file()) or (
+                    not workspace_path.exists() and bool(reusable_dockerfile)
+                ):
                     has_df = True
             if has_df:
                 artifact_expl.append("Dockerfile present")

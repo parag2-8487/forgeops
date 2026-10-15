@@ -10,17 +10,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from src.core.config import Settings, get_settings
+from src.core.config import Settings
 from src.deployments.autonomous_gates import evaluate_g4_build
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
-    AutonomousDeploymentLog,
-    AutonomousDeploymentOutbox,
-    AutonomousDeploymentStage,
 )
 from src.deployments.autonomous_schemas import DeploymentStrategy
 from src.deployments.tasks import execute_autonomous_deploy_task
-
 
 pytestmark = pytest.mark.mandatory
 
@@ -119,10 +115,12 @@ class TestWorkerTaskTimeoutAndFencing:
             mock_pub.drain_run_events = AsyncMock()
 
             with pytest.raises(asyncio.CancelledError):
-                await execute_autonomous_deploy_task({
-                    "run_id": str(run_id),
-                    "worker_id": "worker-test-1",
-                })
+                await execute_autonomous_deploy_task(
+                    {
+                        "run_id": str(run_id),
+                        "worker_id": "worker-test-1",
+                    }
+                )
 
             assert db_run.status == "failed"
             assert "Worker pipeline cancelled or timed out" in (db_run.error_summary or "")
@@ -161,10 +159,12 @@ class TestWorkerTaskTimeoutAndFencing:
             patch("src.deployments.tasks.create_sessionmaker", return_value=mock_sessionmaker),
             patch("src.deployments.tasks.run_pipeline", side_effect=RuntimeError("Late error")),
         ):
-            res = await execute_autonomous_deploy_task({
-                "run_id": str(run_id),
-                "worker_id": "worker-test-1",
-            })
+            res = await execute_autonomous_deploy_task(
+                {
+                    "run_id": str(run_id),
+                    "worker_id": "worker-test-1",
+                }
+            )
             assert res["status"] == "failed"
             assert db_run.error_summary == "Prior failure message"
             assert db_run.completed_at == original_completed_at
@@ -199,10 +199,12 @@ class TestWorkerTaskTimeoutAndFencing:
             patch("src.deployments.tasks.create_sessionmaker", return_value=mock_sessionmaker),
             patch("src.deployments.tasks.run_pipeline", side_effect=RuntimeError("Old worker timed out")),
         ):
-            res = await execute_autonomous_deploy_task({
-                "run_id": str(run_id),
-                "worker_id": "worker-stale-old",
-            })
+            res = await execute_autonomous_deploy_task(
+                {
+                    "run_id": str(run_id),
+                    "worker_id": "worker-stale-old",
+                }
+            )
             assert res["status"] == "running"
             assert db_run.status == "running"
             assert db_run.error_summary is None

@@ -50,9 +50,7 @@ from datetime import datetime, timedelta
 try:
     from datetime import UTC
 except ImportError:  # Python < 3.11
-    from datetime import timezone
-
-    UTC = timezone.utc
+    UTC = UTC
 from typing import Final, Protocol, runtime_checkable
 
 from cryptography import x509

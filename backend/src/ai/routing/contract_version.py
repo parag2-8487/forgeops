@@ -48,4 +48,3 @@ from typing import Final
 #: 3 - Enforces monorepo workspace manifest copy ordering before install in prompt compiler,
 #:     artifact checks, and recovery resolvers, plus Next.js SSR /app build artifact copy rules.
 GENERATION_CONTRACT_VERSION: Final[int] = 3
-

@@ -8,9 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-import pytest
 
-from src.auth.models import UserRole
+import pytest
 from src.deployments.autonomous_governance import (
     ApprovalScopeError,
     MaterializationError,
@@ -40,10 +39,13 @@ class MockQueryResult:
         class _Scalars:
             def __init__(self, r):
                 self._r = r
+
             def first(self):
                 return self._r[0] if self._r else None
+
             def all(self):
                 return list(self._r)
+
         return _Scalars(self._rows)
 
 
@@ -239,7 +241,12 @@ async def test_approval_rejects_k8s_artifacts_in_docker_only(tmp_path: Path):
         "generation_run_id": gen_id,
     }
     items = [
-        {"file_path": "k8s/deployment.yaml", "action": "create", "new_content": "apiVersion: apps/v1", "new_hash": "abc"}
+        {
+            "file_path": "k8s/deployment.yaml",
+            "action": "create",
+            "new_content": "apiVersion: apps/v1",
+            "new_hash": "abc",
+        }
     ]
     session = MockGovernanceSession(change_set=cs, items=items)
     with pytest.raises(ApprovalScopeError, match="forbids Kubernetes/IaC"):
@@ -272,9 +279,7 @@ async def test_materialization_path_traversal_refused(tmp_path: Path):
         "origin": "generation",
         "generation_run_id": gen_id,
     }
-    items = [
-        {"file_path": "../../etc/passwd", "action": "create", "new_content": "bad", "new_hash": "abc"}
-    ]
+    items = [{"file_path": "../../etc/passwd", "action": "create", "new_content": "bad", "new_hash": "abc"}]
     session = MockGovernanceSession(change_set=cs, items=items)
     chokepoint = MagicMock()
     chokepoint.approve = AsyncMock()
@@ -314,7 +319,12 @@ async def test_successful_approval_and_materialization(tmp_path: Path):
     }
     items = [
         {"file_path": "Dockerfile", "action": "create", "new_content": "FROM node:20-alpine\n", "new_hash": "h1"},
-        {"file_path": "docker-compose.yml", "action": "create", "new_content": "services:\n  app:\n    build: .\n", "new_hash": "h2"},
+        {
+            "file_path": "docker-compose.yml",
+            "action": "create",
+            "new_content": "services:\n  app:\n    build: .\n",
+            "new_hash": "h2",
+        },
     ]
     session = MockGovernanceSession(change_set=cs, items=items)
     chokepoint = MagicMock()

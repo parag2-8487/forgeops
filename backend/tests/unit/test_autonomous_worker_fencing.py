@@ -1215,4 +1215,3 @@ class TestPipelineHeartbeatLifecycle:
             assert faulty_hb.renewal_count >= 1
         finally:
             await faulty_hb.stop()
-

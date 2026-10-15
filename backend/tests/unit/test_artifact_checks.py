@@ -569,7 +569,10 @@ USER 10001
 CMD ["npm", "start"]
 """
     findings = validate_dockerfile(bad_df)
-    assert any("runs dependency installation (`RUN npm ci` or `install`) before copying workspace package manifests" in f for f in findings)
+    assert any(
+        "runs dependency installation (`RUN npm ci` or `install`) before copying workspace package manifests" in f
+        for f in findings
+    )
 
 
 def test_dockerfile_with_correct_workspace_install_ordering_passes() -> None:
@@ -602,11 +605,12 @@ COPY --from=builder /app ./
 USER 10001
 CMD ["npm", "start"]
 """
-    existing = {
-        "package.json": '{"name": "root", "workspaces": ["code-review", "live classroom"]}'
-    }
+    existing = {"package.json": '{"name": "root", "workspaces": ["code-review", "live classroom"]}'}
     findings = validate_artifacts([_Artifact("Dockerfile", df_omitting_workspaces)], existing=existing)
-    assert any("Workspace repository runs dependency installation before copying workspace package manifests" in f for f in findings)
+    assert any(
+        "Workspace repository runs dependency installation before copying workspace package manifests" in f
+        for f in findings
+    )
 
     df_with_all_workspaces = """FROM node:20-alpine AS builder
 WORKDIR /app
@@ -708,6 +712,3 @@ CMD ["npm", "start"]
 """
     findings = validate_dockerfile(bad_df)
     assert any("Dockerfile suppresses build or install failure" in f for f in findings)
-
-
-

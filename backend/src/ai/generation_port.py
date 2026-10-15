@@ -15,6 +15,8 @@ how a run ends with the database refusing `L1_exact` after everything else succe
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..core.model_port import ModelCompletion, TokenSink
 from ..secrets.redaction import RedactedPrompt
 from .routing.endpoints import CompletionRequest
@@ -230,12 +232,14 @@ def create_artifact_model_from_settings(
     import logging
     import os
     from pathlib import Path
+
     import httpx
+
     from ..core.config import get_settings
+    from .routing.cache import TieredSemanticCache
+    from .routing.circuit_breaker import CircuitBreaker
     from .routing.credentials import EnvKeyResolver, LayeredKeyResolver
     from .routing.endpoints import EndpointRegistry
-    from .routing.circuit_breaker import CircuitBreaker
-    from .routing.cache import TieredSemanticCache
     from .routing.tiers import load_tier_config
 
     logger = logging.getLogger(__name__)
@@ -274,4 +278,3 @@ def create_artifact_model_from_settings(
         tier_config=tier_config,
         tier_name=settings.generation_tier,
     )
-

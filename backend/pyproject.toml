@@ -180,6 +180,8 @@ ignore = [
     # framework evaluates it per request, so the usual mutable-default hazard the
     # rule guards against does not apply.
     "B008",
+    # E501 line length: ruff format enforces layout; long strings and comments are preserved.
+    "E501",
 ]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
@@ -309,6 +311,8 @@ ignore = [
 "src/incidents/**/*.py" = ["TID251"]
 # 2.13. A domain reaching its own namespace, as above.
 "src/learning/**/*.py" = ["TID251"]
+"src/deployments/**/*.py" = ["TID251"]
+"src/recovery/**/*.py" = ["TID251"]
 
 # `src/auth` is exempted FILE BY FILE rather than by glob, which is the narrower form
 # of the rule above. Only `routes.py` composes the flow — it is the one module that must

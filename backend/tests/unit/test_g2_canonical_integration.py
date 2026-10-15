@@ -3,18 +3,15 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+
 import httpx
 import pytest
-
-from src.auth.models import UserRole
 from src.deployments.autonomous_gates import evaluate_g2_existing_artifacts
 from src.deployments.autonomous_models import AutonomousDeployment
-from src.deployments.canonical_generation_client import CanonicalGenerationResult
 
 
 class MockScalars:
@@ -90,6 +87,7 @@ async def test_g2_synthesizes_via_canonical_generation(tmp_path: Path):
     )
 
     mock_client = MagicMock(spec=httpx.AsyncClient)
+
     # Stream returns complete event
     async def mock_stream_chunks():
         yield f'event: progress\ndata: {{"run_id":"{gen_run_id}"}}\n\n'.encode()
@@ -97,10 +95,13 @@ async def test_g2_synthesizes_via_canonical_generation(tmp_path: Path):
 
     class MockStreamResponse:
         status_code = 200
+
         def aiter_bytes(self):
             return mock_stream_chunks()
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *args):
             pass
 
@@ -122,13 +123,24 @@ async def test_g2_synthesizes_via_canonical_generation(tmp_path: Path):
     }
     items = [
         {"file_path": "Dockerfile", "action": "create", "new_content": "FROM node:20-alpine\n", "new_hash": "h1"},
-        {"file_path": "docker-compose.yml", "action": "create", "new_content": "services:\n  app:\n    build: .\n", "new_hash": "h2"},
+        {
+            "file_path": "docker-compose.yml",
+            "action": "create",
+            "new_content": "services:\n  app:\n    build: .\n",
+            "new_hash": "h2",
+        },
     ]
 
     class MockG2Session:
-        def add(self, entity): pass
-        async def flush(self): pass
-        async def commit(self): pass
+        def add(self, entity):
+            pass
+
+        async def flush(self):
+            pass
+
+        async def commit(self):
+            pass
+
         async def execute(self, stmt, params=None, **kwargs):
             sql = str(getattr(stmt, "text", stmt))
             if "FROM change_sets" in sql:

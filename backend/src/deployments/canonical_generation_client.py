@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import uuid
-import inspect
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,7 +36,7 @@ class CanonicalGenerationResult:
 
 
 async def consume_generation_sse_stream(
-    stream: AsyncGenerator[bytes, None],
+    stream: AsyncGenerator[bytes],
     *,
     heartbeat_pulse: Callable[[], None] | None = None,
 ) -> CanonicalGenerationResult:
@@ -158,7 +158,5 @@ async def fetch_canonical_readiness(
         timeout=httpx.Timeout(30.0, connect=10.0),
     )
     if response.status_code != 200:
-        raise GenerationStreamError(
-            f"Readiness check failed with HTTP {response.status_code}: {response.text}"
-        )
+        raise GenerationStreamError(f"Readiness check failed with HTTP {response.status_code}: {response.text}")
     return response.json()

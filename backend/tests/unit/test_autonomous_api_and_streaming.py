@@ -1007,16 +1007,23 @@ class TestStreamingBridgeAndReplayProtocol:
                 # Tick 2: Resumed build logs from worker
                 return {
                     "channel": channel,
-                    "data": json.dumps({
-                        "event_seq": 2,
-                        "event_type": "log_batch",
-                        "run_id": str(run_id),
-                        "payload": {
-                            "logs": [
-                                {"log_seq": 10, "stage_name": "G4_build", "level": "INFO", "message": "npm ci completed in 2m"}
-                            ]
-                        },
-                    }),
+                    "data": json.dumps(
+                        {
+                            "event_seq": 2,
+                            "event_type": "log_batch",
+                            "run_id": str(run_id),
+                            "payload": {
+                                "logs": [
+                                    {
+                                        "log_seq": 10,
+                                        "stage_name": "G4_build",
+                                        "level": "INFO",
+                                        "message": "npm ci completed in 2m",
+                                    }
+                                ]
+                            },
+                        }
+                    ),
                 }
 
             ps.get_message = _instrumented_get_msg
@@ -1051,7 +1058,7 @@ class TestStreamingBridgeAndReplayProtocol:
             },
         )
         run_id = uuid.UUID(create_resp.json()["id"])
-        channel = get_autonomous_event_channel(run_id)
+        _ = get_autonomous_event_channel(run_id)
 
         unsubscribed = False
 
@@ -1124,4 +1131,3 @@ class TestStreamingBridgeAndReplayProtocol:
             assert "event_type" in data
             assert "run_id" in data
             assert data["run_id"] == str(run_id)
-

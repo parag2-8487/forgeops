@@ -41,35 +41,22 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
-
 from src.deployments.autonomous_gates import (
     GateResult,
-    evaluate_g1_blueprint,
-    evaluate_g2_existing_artifacts,
-    evaluate_g3_consistency,
-    evaluate_g4_build,
-    evaluate_g5_apply,
-    evaluate_g6_workload,
-    evaluate_g7_final_verification,
 )
 from src.deployments.autonomous_models import (
     AutonomousDeployment,
-    AutonomousDeploymentLog,
     AutonomousDeploymentOutbox,
     AutonomousDeploymentStage,
     ReadinessCheckpoint,
 )
-from src.deployments.autonomous_recovery import CompensationRollback
 from src.deployments.autonomous_schemas import DeploymentStrategy
 from src.deployments.autonomous_service import (
     STAGE_G1_BLUEPRINT,
-    STAGE_G2_ARTIFACT,
-    STAGE_G3_CONSISTENCY,
     STAGE_G4_BUILD,
     STAGE_G5_APPLY,
     STAGE_G6_WORKLOAD,
     STAGE_G7_VERIFICATION,
-    AutonomousDeploymentService,
     build_stage_graph,
 )
 from src.deployments.autonomous_worker import (
@@ -77,8 +64,6 @@ from src.deployments.autonomous_worker import (
     WorkerFencingLostError,
     run_pipeline,
 )
-from src.deployments.readiness import ReadinessAnalyzer, save_readiness_checkpoint
-from src.recovery.ai_resolver import RecoveryPlan, resolve_failure_with_ai
 
 pytestmark = [pytest.mark.mandatory]
 
@@ -111,10 +96,7 @@ async def _create_test_run_in_pg(
     user_id = (await session.execute(text("SELECT id FROM users LIMIT 1"))).scalar()
     project_id = uuid.uuid4()
     await session.execute(
-        text(
-            "INSERT INTO projects (id, name, path, settings) "
-            "VALUES (:id, :name, :path, :settings)"
-        ),
+        text("INSERT INTO projects (id, name, path, settings) VALUES (:id, :name, :path, :settings)"),
         {
             "id": project_id,
             "name": f"test-project-{project_id.hex[:8]}",
@@ -185,11 +167,13 @@ async def test_full_gate_sequence_with_readiness_checkpoints(pg_session: AsyncSe
     workspace.mkdir(parents=True, exist_ok=True)
     pkg_json = workspace / "package.json"
     pkg_json.write_text(
-        json.dumps({
-            "name": "full-gate-app",
-            "dependencies": {"express": "^4.19.0"},
-            "scripts": {"start": "node index.js"},
-        }),
+        json.dumps(
+            {
+                "name": "full-gate-app",
+                "dependencies": {"express": "^4.19.0"},
+                "scripts": {"start": "node index.js"},
+            }
+        ),
         encoding="utf-8",
     )
     (workspace / "index.js").write_text("console.log('App running');\n", encoding="utf-8")
@@ -367,12 +351,9 @@ async def test_g8_recoverable_gate_failure_with_manifest_remediation(pg_session:
     assert attempt_counter["g4_calls"] == 2
 
     # 2. R_rec1 recovery checkpoint persisted in PostgreSQL
-    stmt = (
-        select(ReadinessCheckpoint)
-        .where(
-            ReadinessCheckpoint.run_id == run.id,
-            ReadinessCheckpoint.checkpoint_type == "recovery_recheck",
-        )
+    stmt = select(ReadinessCheckpoint).where(
+        ReadinessCheckpoint.run_id == run.id,
+        ReadinessCheckpoint.checkpoint_type == "recovery_recheck",
     )
     res = await pg_session.execute(stmt)
     rec_checkpoint = res.scalar_one_or_none()
@@ -380,12 +361,9 @@ async def test_g8_recoverable_gate_failure_with_manifest_remediation(pg_session:
     assert rec_checkpoint.assessment_version == 1
 
     # 3. Outbox emitted 'recovery_attempted' event
-    stmt_outbox = (
-        select(AutonomousDeploymentOutbox)
-        .where(
-            AutonomousDeploymentOutbox.run_id == run.id,
-            AutonomousDeploymentOutbox.event_type == "recovery_attempted",
-        )
+    stmt_outbox = select(AutonomousDeploymentOutbox).where(
+        AutonomousDeploymentOutbox.run_id == run.id,
+        AutonomousDeploymentOutbox.event_type == "recovery_attempted",
     )
     res_outbox = await pg_session.execute(stmt_outbox)
     rec_outbox = res_outbox.scalar_one_or_none()
@@ -477,12 +455,9 @@ async def test_g8_unrecoverable_failure_application_code(pg_session: AsyncSessio
     assert stages_by_name[STAGE_G7_VERIFICATION].status == "skipped"
 
     # 4. Outbox recorded run_failed
-    stmt_outbox = (
-        select(AutonomousDeploymentOutbox)
-        .where(
-            AutonomousDeploymentOutbox.run_id == run.id,
-            AutonomousDeploymentOutbox.event_type == "run_failed",
-        )
+    stmt_outbox = select(AutonomousDeploymentOutbox).where(
+        AutonomousDeploymentOutbox.run_id == run.id,
+        AutonomousDeploymentOutbox.event_type == "run_failed",
     )
     res_outbox = await pg_session.execute(stmt_outbox)
     fail_outbox = res_outbox.scalar_one_or_none()
@@ -563,12 +538,9 @@ async def test_g8_exhausted_recovery_attempts(pg_session: AsyncSession, tmp_path
     assert result_run.status in ("failed", "rolled_back")
 
     # 3. Check recovery checkpoints count <= 3
-    stmt = (
-        select(ReadinessCheckpoint)
-        .where(
-            ReadinessCheckpoint.run_id == run.id,
-            ReadinessCheckpoint.checkpoint_type == "recovery_recheck",
-        )
+    stmt = select(ReadinessCheckpoint).where(
+        ReadinessCheckpoint.run_id == run.id,
+        ReadinessCheckpoint.checkpoint_type == "recovery_recheck",
     )
     res = await pg_session.execute(stmt)
     rec_checkpoints = res.scalars().all()
