@@ -12,9 +12,6 @@ WORKDIR /app
 COPY requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
-COPY .cache/ ./.cache/
-RUN (pip install --no-index --find-links=./.cache/wheels hatchling editables 2>/dev/null || pip install --default-timeout=120 hatchling editables)
-
 # Copy source for the editable install
 COPY pyproject.toml ./
 COPY src/ ./src/
@@ -28,7 +25,7 @@ COPY config/ ./config/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 
-RUN pip install --no-build-isolation --no-deps -e .
+RUN pip install --default-timeout=120 hatchling editables && pip install --no-build-isolation --no-deps -e .
 
 # ---------- Stage 2: runtime ----------
 FROM python:3.13-slim AS runtime
