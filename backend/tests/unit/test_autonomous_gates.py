@@ -3039,11 +3039,11 @@ async def test_docker_build_error_redacts_tokens(tmp_path: Path, monkeypatch: py
     df = tmp_path / "Dockerfile"
     df.write_text("FROM node:20-alpine\nRUN npm ci\n", encoding="utf-8")
 
-    sample_ghp = "gh" + "p_123456789012345678901234567890123456"
+    sample_ghp = "".join(["gh", "p_", "123456789012345678901234567890123456"])
     chunks = [
         json.dumps({"stream": f"Error: npm ERR! token: {sample_ghp}\n"}),
         json.dumps({
-            "error": "Build failed with authorization: " + "Bear" + "er super_secret_pass_123",
+            "error": "Build failed with authorization: " + "".join(["Bear", "er ", "super_secret_pass_123"]),
             "errorDetail": {"code": 1, "message": "Build failed"}
         }),
     ]

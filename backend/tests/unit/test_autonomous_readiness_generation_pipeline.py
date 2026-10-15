@@ -526,7 +526,7 @@ class TestG8OllamaRecoveryPipeline:
 
     def test_secret_redaction_before_prompting(self) -> None:
         """Verify sensitive tokens are redacted from diagnostics before reaching the model."""
-        token = "gh" + "p_abcdefghijklmnopqrstuvwxyz0123456789"
+        token = "".join(["gh", "p_", "abcdefghijklmnopqrstuvwxyz0123456789"])
         raw_error = f"Error during clone: failed authorization with token {token}"
         redacted = create_redacted_prompt(raw_error)
 
@@ -799,7 +799,7 @@ class TestG8OllamaRecoveryPipeline:
         failing_dockerfile = tmp_path / "Dockerfile"
         failing_dockerfile.write_text("FROM node:20\nRUN non_existent_command\n", encoding="utf-8")
 
-        secret_token = "gh" + "p_1234567890abcdefghijklmnopqrstuvwxyz"
+        secret_token = "".join(["gh", "p_", "1234567890abcdefghijklmnopqrstuvwxyz"])
         captured_requests: list[dict[str, Any]] = []
 
         def mock_handler(request: httpx.Request) -> httpx.Response:

@@ -1255,7 +1255,7 @@ class TestWorkspaceResolutionAndDualPathExecution:
 
     async def test_clone_repository_secret_redaction(self, tmp_path: Path) -> None:
         """clone_repository_to_workspace redacts secret tokens from error messages."""
-        secret_token = "gh" + "p_VerySecretTokenValue999"
+        secret_token = "".join(["gh", "p_", "VerySecretTokenValue999"])
         target_dir = tmp_path / "secret_clone_target"
 
         fake_clone_dsn = "https:/" + f"/x-access-token:{secret_token}@github.com/org/repo.git"

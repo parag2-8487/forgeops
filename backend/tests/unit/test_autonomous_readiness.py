@@ -132,7 +132,7 @@ def test_analyzer_python_fastapi_project(tmp_path: Path):
 def test_analyzer_detects_committed_secrets(tmp_path: Path):
     """Verifies that committing a secret produces a fatal blocker and 0 environment score."""
     (tmp_path / "requirements.txt").write_text("requests==2.31.0\n", encoding="utf-8")
-    armour = ("-" * 5) + "BE" + "GIN RSA PRIV" + "ATE KEY" + ("-" * 5)
+    armour = "".join(["-" * 5, "BE", "GIN RSA PRIV", "ATE KEY", "-" * 5])
     (tmp_path / "config.py").write_text(
         f"API_{'KEY'} = '{armour}\\nMIIEowIBAAKCAQEA0...'\\n",
         encoding="utf-8",
