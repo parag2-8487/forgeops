@@ -351,6 +351,8 @@ services:
       args:
         GIT_COMMIT: "${GIT_COMMIT:-unknown}"
     env_file: *service-env
+    environment:
+      AGENT_TLS_HOST_PORT: "${AGENT_TLS_HOST_PORT:-18443}"
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:

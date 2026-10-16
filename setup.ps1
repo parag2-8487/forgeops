@@ -288,7 +288,7 @@ if (-not $engine.Ok) {
         (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'),
         (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
         (Join-Path ${env:ProgramFiles(x86)} 'Docker\Docker\Docker Desktop.exe'),
-        (if ($env:ProgramW6432) { Join-Path $env:ProgramW6432 'Docker\Docker\Docker Desktop.exe' })
+        $(if ($env:ProgramW6432) { Join-Path $env:ProgramW6432 'Docker\Docker\Docker Desktop.exe' })
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 
     $ddProcess = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue

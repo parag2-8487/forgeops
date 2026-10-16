@@ -202,3 +202,61 @@ func TestScanSubmit_IndexIncrementalAndFilesAndConfiguredURL(t *testing.T) {
 		t.Fatalf("IndexFull: %v", err)
 	}
 }
+
+func TestResolveSubmitOrigin_ReconcilesPortsAndSchemes(t *testing.T) {
+	tests := []struct {
+		name       string
+		stored     string
+		configured string
+		want       string
+	}{
+		{
+			name:       "Shifted backend port 18000 with unreconciled stored 8443",
+			stored:     "wss://localhost:8443/api/v1/ws/agent",
+			configured: "ws://localhost:18000/api/v1/ws/agent",
+			want:       "https://localhost:18443",
+		},
+		{
+			name:       "Shifted backend port 18000 with empty stored",
+			stored:     "",
+			configured: "ws://localhost:18000/api/v1/ws/agent",
+			want:       "https://localhost:18443",
+		},
+		{
+			name:       "Default backend port 8000 with empty stored",
+			stored:     "",
+			configured: "ws://localhost:8000/api/v1/ws/agent",
+			want:       "https://localhost:8443",
+		},
+		{
+			name:       "Properly reconciled stored 18443",
+			stored:     "wss://localhost:18443/api/v1/ws/agent",
+			configured: "ws://localhost:18000/api/v1/ws/agent",
+			want:       "https://localhost:18443",
+		},
+		{
+			name:       "Container network backend-agent on port 8443",
+			stored:     "wss://backend-agent:8443/api/v1/ws/agent",
+			configured: "wss://backend-agent:8443/api/v1/ws/agent",
+			want:       "https://backend-agent:8443",
+		},
+		{
+			name:       "Test plaintext server preserved",
+			stored:     "",
+			configured: "http://127.0.0.1:45678",
+			want:       "http://127.0.0.1:45678",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveSubmitOrigin(tt.stored, tt.configured)
+			if err != nil {
+				t.Fatalf("resolveSubmitOrigin(%q, %q) returned error: %v", tt.stored, tt.configured, err)
+			}
+			if got != tt.want {
+				t.Errorf("resolveSubmitOrigin(%q, %q) = %q, want %q", tt.stored, tt.configured, got, tt.want)
+			}
+		})
+	}
+}

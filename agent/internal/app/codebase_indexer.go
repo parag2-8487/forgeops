@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,12 +38,11 @@ const scanSubmitTimeout = 15 * time.Minute
 // and the failure that produces — an agent that scans one tree and uploads to another backend — is
 // silent until somebody reads the index.
 func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
-	// The credential store is opened here rather than passed in, because `forgeops-agent scan`
-	// has no session to take one from. `session.NewStore` is idempotent — it opens the same
-	// on-disk store `Session` uses, so the two cannot read different credentials.
+	// The credential store is retrieved from the memoised instance so that repeated
+	// keychain probing does not oscillate or fail across stages.
 	//
 	// OPENED BEFORE THE ORIGIN IS DERIVED, because the origin now comes out of the credential.
-	store, err := session.NewStore(a.cfg.Session.StateDir, a.cfg.Session.CredentialStore)
+	store, err := a.CredentialStore()
 	if err != nil {
 		return nil, fmt.Errorf("agent: credential store: %w", err)
 	}
@@ -67,11 +68,7 @@ func (a *App) codebaseIndexer() (*codebaseIndexer, error) {
 	if creds, loadErr := store.Load(context.Background()); loadErr == nil {
 		stored = creds.SessionWSURL
 	}
-	endpoint, err := session.SessionURL(stored, a.cfg.BackendWSSURL)
-	if err != nil {
-		return nil, fmt.Errorf("agent: backend origin: %w", err)
-	}
-	origin, err := session.HTTPOrigin(endpoint)
+	origin, err := resolveSubmitOrigin(stored, a.cfg.BackendWSSURL)
 	if err != nil {
 		return nil, fmt.Errorf("agent: backend origin: %w", err)
 	}
@@ -216,12 +213,12 @@ func (c *codebaseIndexer) submit(
 		return executor.IndexSummary{}, errors.New("the scanner produced no report")
 	}
 	if c.store != nil {
-		if creds, err := c.store.Load(ctx); err == nil && strings.TrimSpace(creds.SessionWSURL) != "" {
-			if endpoint, serr := session.SessionURL(creds.SessionWSURL, c.configuredURL); serr == nil {
-				if origin, oerr := session.HTTPOrigin(endpoint); oerr == nil && origin != "" {
-					c.submitter.BaseURL = origin
-				}
-			}
+		stored := ""
+		if creds, err := c.store.Load(ctx); err == nil {
+			stored = creds.SessionWSURL
+		}
+		if origin, oerr := resolveSubmitOrigin(stored, c.configuredURL); oerr == nil && origin != "" {
+			c.submitter.BaseURL = origin
 		}
 	}
 	result, err := c.submitter.Submit(ctx, projectID, report)
@@ -304,4 +301,57 @@ func newCodebaseIndexer(
 			Tokens: tokens,
 		},
 	}, nil
+}
+
+// resolveSubmitOrigin resolves the HTTP/HTTPS origin for codebase scan submission.
+// Scan submission requires mTLS authentication with the device certificate and token.
+// When connecting to an mTLS listener, the origin scheme must be https://, and the port
+// must match the published mTLS listener port (e.g. 18443 when backend is on 18000).
+func resolveSubmitOrigin(storedWSURL, configuredURL string) (string, error) {
+	stored := strings.TrimSpace(storedWSURL)
+	cfg := strings.TrimSpace(configuredURL)
+
+	endpoint, err := session.SessionURL(stored, cfg)
+	if err != nil {
+		return "", err
+	}
+	origin, err := session.HTTPOrigin(endpoint)
+	if err != nil {
+		return "", err
+	}
+
+	parsedOrigin, err := url.Parse(origin)
+	if err != nil {
+		return origin, nil
+	}
+
+	// Check if configured backend is shifted from default 8000 (e.g. 18000 on Ubuntu)
+	if cfg != "" {
+		if parsedCfg, cerr := url.Parse(cfg); cerr == nil {
+			// Only adjust WebSocket/WSS endpoints pointing to the ForgeOps backend, not plain HTTP test servers
+			if parsedCfg.Scheme == "ws" || parsedCfg.Scheme == "wss" {
+				cfgPort := parsedCfg.Port()
+				if cfgPort != "" && cfgPort != "8000" && cfgPort != "8443" {
+					if pInt, perr := strconv.Atoi(cfgPort); perr == nil {
+						// If the origin's port is either the unauthenticated backend port (e.g. 18000)
+						// or un-reconciled default 8443, shift it to the mTLS host port (e.g. 18443).
+						expectedTLSPort := strconv.Itoa(pInt + 443)
+						if parsedOrigin.Port() == cfgPort || parsedOrigin.Port() == "8443" {
+							parsedOrigin.Host = net.JoinHostPort(parsedOrigin.Hostname(), expectedTLSPort)
+							parsedOrigin.Scheme = "https"
+							return parsedOrigin.String(), nil
+						}
+					}
+				}
+				// If origin is http:// on default port 8000, point to mTLS port 8443
+				if parsedOrigin.Scheme == "http" && parsedOrigin.Port() == "8000" {
+					parsedOrigin.Host = net.JoinHostPort(parsedOrigin.Hostname(), "8443")
+					parsedOrigin.Scheme = "https"
+					return parsedOrigin.String(), nil
+				}
+			}
+		}
+	}
+
+	return origin, nil
 }

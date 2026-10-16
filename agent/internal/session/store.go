@@ -189,6 +189,8 @@ type publicPart struct {
 	// Also not a secret: the project id is in every URL the operator already sees, and the
 	// certificate is what authorises anything, not knowledge of the identifier.
 	ProjectID string `json:"project_id,omitempty"`
+	// WorkspaceRoot is the local directory of the project this device serves.
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
 func split(c Credentials) (secretPart, publicPart) {
@@ -204,6 +206,7 @@ func split(c Credentials) (secretPart, publicPart) {
 			PolicyBundleDigest: c.PolicyBundleDigest,
 			SessionWSURL:       c.SessionWSURL,
 			ProjectID:          c.ProjectID,
+			WorkspaceRoot:      c.WorkspaceRoot,
 		}
 }
 
@@ -217,6 +220,7 @@ func join(s secretPart, p publicPart) Credentials {
 		CABundle:           p.CABundle,
 		SessionWSURL:       p.SessionWSURL,
 		ProjectID:          p.ProjectID,
+		WorkspaceRoot:      p.WorkspaceRoot,
 		PolicyBundle:       p.PolicyBundle,
 		PolicyBundleDigest: p.PolicyBundleDigest,
 	}

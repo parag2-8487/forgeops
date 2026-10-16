@@ -933,6 +933,11 @@ class Settings(BaseSettings):
             if custom_origins not in self.cors_allow_origins:
                 self.cors_allow_origins = f"{self.cors_allow_origins},{custom_origins}"
 
+        # Reconcile agent_tls_host_port if backend_port is non-default (e.g. 18000 on Ubuntu)
+        # and agent_tls_host_port is still at its default 8443.
+        if self.backend_port != 8000 and self.agent_tls_host_port == 8443:
+            self.agent_tls_host_port = self.backend_port + 443
+
         return self
 
     @property

@@ -67,7 +67,7 @@ func (unavailableKeyring) Delete(string, string) error { return errors.New("no s
 
 func syntheticCredentials() Credentials {
 	marker := []byte("test-only-not-a-real-secret")
-	return Credentials{
+	c := Credentials{
 		DeviceID:    "01JBQ8Z0000000000000000000",
 		DeviceToken: append([]byte("token-"), marker...),
 		EnvelopeKey: append([]byte("envkey-"), marker...),
@@ -75,6 +75,8 @@ func syntheticCredentials() Credentials {
 		ClientKey:   append([]byte("not-a-real-key-"), marker...),
 		CABundle:    []byte("-----BEGIN CERT" + "IFICATE-----\nnot-a-real-ca\n"),
 	}
+	c.WorkspaceRoot = "/home/user/workspace"
+	return c
 }
 
 // ─── backend selection and the degraded-mode report ─────────────────────────
@@ -199,7 +201,8 @@ func TestStore_RoundTripOnBothBackends(t *testing.T) {
 				string(got.EnvelopeKey) != string(want.EnvelopeKey) ||
 				string(got.ClientCert) != string(want.ClientCert) ||
 				string(got.ClientKey) != string(want.ClientKey) ||
-				string(got.CABundle) != string(want.CABundle) {
+				string(got.CABundle) != string(want.CABundle) ||
+				got.WorkspaceRoot != want.WorkspaceRoot {
 				t.Errorf("round trip lost data:\n got %+v\nwant %+v", got, want)
 			}
 
