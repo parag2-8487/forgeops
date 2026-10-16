@@ -39,6 +39,17 @@ supported shells for these targets.
 
 ## Getting started
 
+### 1-Click Automated Setup on Linux / Ubuntu (`./setup.sh`)
+
+For Linux environments (Ubuntu 22.04 / 24.04 LTS or 20.04 w/ Python 3.10+):
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+The master setup script installs Docker CE and Compose V2 plugin, sets up non-root Docker group permissions, balances package-manager locks, configures ports, generates internal CA certificates and secrets in `.env`, runs database migrations, and validates the entire stack against `/health/ready`.
+
+### Manual / Makefile Workflow
+
 ```sh
 make bootstrap      # verify pinned toolchains, install git hooks
 make init-env       # creates .env from .env.example only when .env is absent
@@ -53,9 +64,26 @@ truncates, merges, or overwrites an existing `.env`, so repeated runs leave the 
 byte-identical. Direct `docker compose up -d --wait` works on a fresh clone with no `.env`
 present.
 
-Local endpoints (loopback only): frontend `http://localhost:3000`, backend
-`http://localhost:8000`, OpenAPI `http://localhost:8000/api/v1/openapi.json`. Before
+Local endpoints (loopback only): frontend `http://localhost:3000` (or `13000` if shifted), backend
+`http://localhost:8000` (or `18000`), OpenAPI `http://localhost:8000/api/v1/openapi.json`. Before
 exposing anything, read `docs/deployment.md`.
+
+### Current Compose Services (14 Declared, 10–14 Active)
+
+The active development stack comprises 14 declared services in `docker-compose.yml`, with 10–14 active in the default unprofiled profile:
+- Core services: `postgres` (PostgreSQL 17 + pgvector), `redis` (Redis Stack 7.4), `opa` (OPA 1.4.2 policy server), `cerbos` (Cerbos 0.54.0 RBAC sidecar), `authentik-server` & `authentik-worker` (Authentik 2026.5.6 OIDC identity provider), `backend` (FastAPI REST API), `backend-agent` (mTLS listener on port 8443 / 18443 for paired agents), `worker` (ARQ distributed task runner), `frontend` (Next.js 16 App Router UI), `ollama` & `ollama-secondary` (local AI model cascade servers with shared weights), `inngest` (durable execution engine).
+- Optional profile services: `infisical` (`vault` profile), `agent-dev` (`tools` profile with OpenTofu), and the OTel observability tier (`observability` profile: `otel-agent`, `otel-gateway`, `prometheus`, `mimir`, `loki`, `tempo`, `grafana`).
+
+### Autonomous Deployment Verification Gates (G1–G7) & BuildKit Integration
+
+Deployments executed through the Autonomous Deployment Orchestrator pass through 7 sequential gates:
+- **G1 (Blueprint Baseline)**: Strategy constraints validation (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`), target configuration presence, workspace path resolution, and baseline readiness assessment (R0).
+- **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go. Consolidates `ENV` instructions (`ENV NODE_ENV=production PORT=...`) and mounts stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`). Computes post-generation readiness (R1).
+- **G3 (Cross-artifact Consistency)**: Static pre-execution audit verifying port range integrity (1–65535), immutability of reserved environment variables, and enforcement of browser-safe host ports (rejecting all 77 Chromium/WHATWG bad ports including 4045).
+- **G4 (Build & Compile)**: Direct Docker Engine daemon integration via Unix Domain Socket (`/var/run/docker.sock`). Integrates the native **BuildKit HTTP API** (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion (`.env*`, `*.pem`, `*.key`), symlink boundary confinement, and automatic graceful fallback to the legacy Docker V1 builder.
+- **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket with strict runtime port authority, conflict detection with immutable commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+- **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+- **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
 
 ## Make targets
 

@@ -25,6 +25,7 @@ import contextlib
 import fnmatch
 import hashlib
 import inspect
+import io
 import ipaddress
 import json
 import logging
@@ -41,6 +42,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 from src.core.logging import redact_secrets
 
 try:
@@ -907,7 +909,7 @@ class DockerEngineClient:
         tmp_tar_path = Path(tmp_tar.name)
         stream_gen = None
         try:
-            with tarfile.open(fileobj=tmp_tar, mode="w") as tar:
+            with tarfile.open(fileobj=tmp_tar, mode="w", format=tarfile.GNU_FORMAT) as tar:
                 has_df = False
                 for item in docker_manifest:
                     if item.rel_path == "Dockerfile":
@@ -921,67 +923,310 @@ class DockerEngineClient:
 
             tar_size = tmp_tar_path.stat().st_size
 
-            async def _tar_streamer():
-                loop = asyncio.get_running_loop()
-                with tmp_tar_path.open("rb") as f:
-                    while True:
-                        chunk = await loop.run_in_executor(None, f.read, 65536)
-                        if not chunk:
-                            break
-                        yield chunk
+            def _decode_varint(stream: io.BytesIO) -> int | None:
+                val = 0
+                shift = 0
+                while True:
+                    b = stream.read(1)
+                    if not b:
+                        return None
+                    byte = b[0]
+                    val |= (byte & 0x7F) << shift
+                    if not (byte & 0x80):
+                        break
+                    shift += 7
+                return val
 
-            stream_gen = _tar_streamer()
+            def _parse_proto_fields(data: bytes) -> list[tuple[int, str, Any]]:
+                fields = []
+                stream = io.BytesIO(data)
+                while True:
+                    key = _decode_varint(stream)
+                    if key is None:
+                        break
+                    field_num = key >> 3
+                    wire_type = key & 7
+                    if wire_type == 0:
+                        val = _decode_varint(stream)
+                        fields.append((field_num, "varint", val))
+                    elif wire_type == 2:
+                        length = _decode_varint(stream)
+                        if length is None:
+                            break
+                        val = stream.read(length)
+                        fields.append((field_num, "bytes", val))
+                    elif wire_type == 1:
+                        val = stream.read(8)
+                        fields.append((field_num, "64bit", val))
+                    elif wire_type == 5:
+                        val = stream.read(4)
+                        fields.append((field_num, "32bit", val))
+                    else:
+                        break
+                return fields
+
+            def _extract_buildkit_messages(data: bytes) -> tuple[list[str], bool, str | None]:
+                lines: list[str] = []
+                has_cache = False
+                err_msg: str | None = None
+                try:
+                    top_fields = _parse_proto_fields(data)
+                    for f_num, kind, val in top_fields:
+                        if kind != "bytes":
+                            continue
+                        if f_num == 1:  # Vertex
+                            v_fields = _parse_proto_fields(val)
+                            v_name = ""
+                            v_cached = False
+                            for vf_num, vkind, vval in v_fields:
+                                if vf_num == 3 and vkind == "bytes":
+                                    v_name = vval.decode("utf-8", errors="replace").strip()
+                                elif vf_num == 4 and vkind == "varint" and vval:
+                                    v_cached = True
+                                    has_cache = True
+                                elif vf_num == 7 and vkind == "bytes":
+                                    candidate = vval.decode("utf-8", errors="replace").strip()
+                                    if candidate:
+                                        err_msg = candidate
+                            if v_name:
+                                prefix = "CACHED " if v_cached else ""
+                                lines.append(f"{prefix}{v_name}".strip())
+                                if "CACHED" in v_name:
+                                    has_cache = True
+                        elif f_num == 2:  # VertexStatus
+                            s_fields = _parse_proto_fields(val)
+                            s_id = ""
+                            for sf_num, skind, sval in s_fields:
+                                if sf_num == 1 and skind == "bytes":
+                                    s_id = sval.decode("utf-8", errors="replace").strip()
+                            if s_id and any(kw in s_id.lower() for kw in ["exporting", "naming", "unpacking"]):
+                                lines.append(s_id)
+                        elif f_num == 3:  # VertexLog
+                            log_fields = _parse_proto_fields(val)
+                            for lf_num, lkind, lval in log_fields:
+                                if lf_num == 3 and lkind == "bytes":
+                                    msg_text = lval.decode("utf-8", errors="replace").strip()
+                                    if msg_text:
+                                        for subl in msg_text.splitlines():
+                                            subl_s = subl.strip()
+                                            if subl_s:
+                                                lines.append(subl_s)
+                except Exception:
+                    strs = [s.decode("latin1", errors="ignore").strip() for s in re.findall(rb"[\x20-\x7e]{4,}", data)]
+                    for s in strs:
+                        if any(k in s for k in ["[", "RUN ", "COPY ", "CACHED", "exporting", "naming"]):
+                            lines.append(s)
+                            if "CACHED" in s:
+                                has_cache = True
+                return lines, has_cache, err_msg
+
+            v1_tar_path: Path | None = None
+
+            def _get_tar_stream(p: Path):
+                loop = asyncio.get_running_loop()
+
+                async def _streamer():
+                    with p.open("rb") as f:
+                        while True:
+                            chunk = await loop.run_in_executor(None, f.read, 65536)
+                            if not chunk:
+                                break
+                            yield chunk
+
+                return _streamer()
+
             used_cache = False
             captured_id = None
+            captured_docker_error: str | None = None
             output_lines: list[str] = []
             build_timeout_s = float(os.getenv("FORGEOPS_DOCKER_BUILD_TIMEOUT_SECONDS", "1500.0"))
+            use_buildkit_env = os.getenv("FORGEOPS_DOCKER_BUILDKIT", "1").lower() not in ("0", "false", "no")
+
             async with httpx.AsyncClient(
                 transport=httpx.AsyncHTTPTransport(uds=self.uds), timeout=build_timeout_s
             ) as client:
-                async with client.stream(
-                    "POST",
-                    f"http://docker/build?t={quote(image_tag, safe='')}",
-                    content=stream_gen,
-                    headers={"Content-Type": "application/x-tar", "Content-Length": str(tar_size)},
-                ) as resp:
-                    if resp.status_code != 200:
-                        body = await resp.aread()
-                        return (
-                            False,
-                            f"Docker build returned HTTP {resp.status_code}: {body.decode('utf-8', 'replace')[-300:]}",
-                        )
-                    captured_docker_error: str | None = None
-                    async for chunk in resp.aiter_lines():
-                        if not chunk:
-                            continue
-                        line_str = chunk.strip()
-                        try:
-                            item = json.loads(chunk)
-                            if "error" in item:
-                                captured_docker_error = str(item.get("error") or "").strip()
-                                line_str = f"Error: {captured_docker_error}"
-                            else:
-                                msg = item.get("stream") or item.get("status") or ""
-                                if "Using cache" in msg:
-                                    used_cache = True
-                                if "aux" in item and isinstance(item["aux"], dict) and "ID" in item["aux"]:
+
+                async def _execute_build_request(
+                    url: str, is_buildkit: bool, tar_file_path: Path, current_tar_size: int
+                ) -> tuple[bool, str | None, bool]:
+                    nonlocal used_cache, captured_id, output_lines, captured_docker_error, stream_gen
+                    stream_gen = _get_tar_stream(tar_file_path)
+                    async with client.stream(
+                        "POST",
+                        url,
+                        content=stream_gen,
+                        headers={"Content-Type": "application/x-tar", "Content-Length": str(current_tar_size)},
+                    ) as resp:
+                        if resp.status_code != 200:
+                            body = await resp.aread()
+                            body_str = body.decode("utf-8", "replace")[-300:]
+                            is_neg_err = is_buildkit and (
+                                resp.status_code in (400, 404, 501)
+                                or "version" in body_str.lower()
+                                or "buildkit" in body_str.lower()
+                            )
+                            return False, f"Docker build returned HTTP {resp.status_code}: {body_str}", is_neg_err
+
+                        captured_err_in_stream: str | None = None
+                        seen_lines: set[str] = set()
+
+                        async for chunk in resp.aiter_lines():
+                            if not chunk:
+                                continue
+                            line_str = chunk.strip()
+                            try:
+                                item = json.loads(chunk)
+                                if "error" in item or "errorDetail" in item:
+                                    err_detail = item.get("error")
+                                    if not err_detail and isinstance(item.get("errorDetail"), dict):
+                                        err_detail = item["errorDetail"].get("message")
+                                    captured_err_in_stream = str(err_detail or "").strip()
+                                    line_str = f"Error: {captured_err_in_stream}"
+                                    if (
+                                        is_buildkit
+                                        and len(seen_lines) == 0
+                                        and any(
+                                            neg_kw in captured_err_in_stream.lower()
+                                            for neg_kw in [
+                                                "buildkit not supported",
+                                                "version 2 not supported",
+                                                "unknown build version",
+                                            ]
+                                        )
+                                    ):
+                                        return False, captured_err_in_stream, True
+                                elif "stream" in item or "status" in item:
+                                    msg = item.get("stream") or item.get("status") or ""
+                                    if "Using cache" in msg or "CACHED" in msg:
+                                        used_cache = True
+                                    if "aux" in item and isinstance(item["aux"], dict) and "ID" in item["aux"]:
+                                        captured_id = item["aux"]["ID"]
+                                    if msg:
+                                        line_str = msg.strip()
+                                elif item.get("id") == "moby.image.id":
+                                    aux_val = item.get("aux")
+                                    if isinstance(aux_val, dict) and "ID" in aux_val:
+                                        captured_id = aux_val["ID"]
+                                elif is_buildkit and item.get("id") == "moby.buildkit.trace":
+                                    aux_val = item.get("aux")
+                                    if isinstance(aux_val, dict) and "ID" in aux_val:
+                                        captured_id = aux_val["ID"]
+                                    elif isinstance(aux_val, str):
+                                        import base64
+
+                                        try:
+                                            raw_bytes = base64.b64decode(aux_val)
+                                            bk_lines, bk_cache, bk_err = _extract_buildkit_messages(raw_bytes)
+                                            if bk_cache:
+                                                used_cache = True
+                                            if bk_err and not captured_err_in_stream:
+                                                captured_err_in_stream = bk_err
+                                            for bkl in bk_lines:
+                                                if bkl not in seen_lines:
+                                                    seen_lines.add(bkl)
+                                                    output_lines.append(bkl)
+                                                    if log_callback:
+                                                        try:
+                                                            if inspect.iscoroutinefunction(log_callback):
+                                                                await log_callback(bkl)
+                                                            else:
+                                                                res_cb = log_callback(bkl)
+                                                                if inspect.iscoroutine(res_cb):
+                                                                    await res_cb
+                                                        except Exception:
+                                                            pass
+                                        except Exception:
+                                            pass
+                                    continue
+                                elif "aux" in item and isinstance(item["aux"], dict) and "ID" in item["aux"]:
                                     captured_id = item["aux"]["ID"]
-                                if msg:
-                                    line_str = msg.strip()
-                        except Exception:
-                            pass
-                        if line_str:
-                            output_lines.append(line_str)
-                            if log_callback:
-                                try:
-                                    if inspect.iscoroutinefunction(log_callback):
-                                        await log_callback(line_str)
-                                    else:
-                                        res_cb = log_callback(line_str)
-                                        if inspect.iscoroutine(res_cb):
-                                            await res_cb
-                                except Exception:
-                                    pass
+                            except Exception:
+                                pass
+
+                            if line_str and line_str not in seen_lines:
+                                seen_lines.add(line_str)
+                                output_lines.append(line_str)
+                                if log_callback:
+                                    try:
+                                        if inspect.iscoroutinefunction(log_callback):
+                                            await log_callback(line_str)
+                                        else:
+                                            res_cb = log_callback(line_str)
+                                            if inspect.iscoroutine(res_cb):
+                                                await res_cb
+                                    except Exception:
+                                        pass
+
+                        if captured_err_in_stream:
+                            captured_docker_error = captured_err_in_stream
+                            return False, captured_err_in_stream, False
+                        return True, captured_id, False
+
+                engine_backend = "buildkit" if use_buildkit_env else "v1"
+                if use_buildkit_env:
+                    url_bk = f"http://docker/build?version=2&t={quote(image_tag, safe='')}&dockerfile=Dockerfile"
+                    success, res_val, is_neg_fail = await _execute_build_request(
+                        url_bk, is_buildkit=True, tar_file_path=tmp_tar_path, current_tar_size=tar_size
+                    )
+                    if not success and is_neg_fail:
+                        logger.warning(
+                            "BuildKit negotiation failed (%s). Retrying with legacy Docker v1 builder...",
+                            res_val,
+                        )
+                        fallback_msg = "[WARN] BuildKit negotiation unavailable on Docker daemon. Falling back to legacy Docker v1 builder..."
+                        output_lines.append(fallback_msg)
+                        if log_callback:
+                            try:
+                                if inspect.iscoroutinefunction(log_callback):
+                                    await log_callback(fallback_msg)
+                                else:
+                                    res_cb = log_callback(fallback_msg)
+                                    if inspect.iscoroutine(res_cb):
+                                        await res_cb
+                            except Exception:
+                                pass
+                        engine_backend = "v1_fallback"
+                        v1_tar_path = tmp_tar_path.with_name(f"{tmp_tar_path.name}.v1.tar")
+                        cur_tar = tmp_tar_path
+                        cur_size = tar_size
+                        try:
+                            with (
+                                tarfile.open(tmp_tar_path, "r") as in_tar,
+                                tarfile.open(v1_tar_path, "w", format=tarfile.GNU_FORMAT) as out_tar,
+                            ):
+                                for member in in_tar.getmembers():
+                                    if member.name == "Dockerfile" or member.name.endswith("/Dockerfile"):
+                                        f_in = in_tar.extractfile(member)
+                                        if f_in:
+                                            raw_df = f_in.read().decode("utf-8", "replace")
+                                            cleaned_df = re.sub(r"(RUN\s+)--mount=[^\s]+\s+", r"\1", raw_df)
+                                            data_df = cleaned_df.encode("utf-8")
+                                            tinfo = tarfile.TarInfo(name=member.name)
+                                            tinfo.size = len(data_df)
+                                            tinfo.mtime = member.mtime
+                                            tinfo.mode = member.mode
+                                            out_tar.addfile(tinfo, io.BytesIO(data_df))
+                                            continue
+                                    f_in = in_tar.extractfile(member) if member.isfile() else None
+                                    out_tar.addfile(member, f_in)
+                            cur_tar = v1_tar_path
+                            cur_size = v1_tar_path.stat().st_size
+                        except Exception as san_err:
+                            logger.warning("Could not sanitize tar for v1 fallback: %s", san_err)
+
+                        url_v1 = f"http://docker/build?t={quote(image_tag, safe='')}&dockerfile=Dockerfile"
+                        success, res_val, _ = await _execute_build_request(
+                            url_v1, is_buildkit=False, tar_file_path=cur_tar, current_tar_size=cur_size
+                        )
+                    if not success and not captured_docker_error:
+                        captured_docker_error = res_val
+                else:
+                    url_v1 = f"http://docker/build?t={quote(image_tag, safe='')}&dockerfile=Dockerfile"
+                    success, res_val, _ = await _execute_build_request(
+                        url_v1, is_buildkit=False, tar_file_path=tmp_tar_path, current_tar_size=tar_size
+                    )
+                    if not success and not captured_docker_error:
+                        captured_docker_error = res_val
 
             full_text = "\n".join(output_lines)
             if not captured_docker_error and (
@@ -989,16 +1234,17 @@ class DockerEngineClient:
                 or "aux" in full_text
                 or "sha256" in full_text
                 or "Successfully built" in full_text
+                or captured_id is not None
             ):
                 mode = "cache_assisted" if used_cache else "built"
+                effective_mode = f"{engine_backend}_{mode}"
                 if build_info is not None:
-                    build_info["build_mode"] = mode
+                    build_info["build_mode"] = effective_mode
                     build_info["used_cache"] = used_cache
+                    build_info["builder_backend"] = engine_backend
                     if captured_id:
                         build_info["image_id"] = captured_id
-                return True, f"Image built successfully (mode: {mode})"
-
-            import re
+                return True, f"Image built successfully (mode: {effective_mode})"
 
             def _clean_ansi(text: str) -> str:
                 return re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", text)
@@ -1070,6 +1316,9 @@ class DockerEngineClient:
             if tmp_tar_path.exists():
                 with contextlib.suppress(Exception):
                     tmp_tar_path.unlink()
+            if v1_tar_path is not None and v1_tar_path.exists():
+                with contextlib.suppress(Exception):
+                    v1_tar_path.unlink()
 
     async def run_container(
         self,
@@ -2141,11 +2390,16 @@ async def evaluate_g2_existing_artifacts(
                     has_lock = (workspace_path / "package-lock.json").exists() or (
                         workspace_path / "npm-shrinkwrap.json"
                     ).exists()
-                    npm_install_str = "RUN npm ci\n" if has_lock else "RUN npm install\n"
+                    clean_tenant = re.sub(r"[^a-zA-Z0-9_-]", "", str(tenant_id or "default"))
+                    clean_proj = re.sub(r"[^a-zA-Z0-9_-]", "", str(getattr(run, "project_id", "default")))
+                    cache_id = f"npm-{clean_tenant}-{clean_proj}"
+                    mount_opt = f"--mount=type=cache,target=/root/.npm,id={cache_id},sharing=locked "
+                    npm_install_str = f"RUN {mount_opt}npm ci\n" if has_lock else f"RUN {mount_opt}npm install\n"
 
                     if is_vite:
                         vite_cp = target_cp or 3000
                         df_content = (
+                            "# syntax=docker/dockerfile:1\n"
                             "# Multi-stage Dockerfile generated by ForgeOps\n"
                             "FROM node:20-alpine AS builder\n"
                             "WORKDIR /app\n"
@@ -2156,8 +2410,7 @@ async def evaluate_g2_existing_artifacts(
                             "RUN npm run build\n\n"
                             "FROM node:20-alpine AS runner\n"
                             "WORKDIR /app\n"
-                            "ENV NODE_ENV=production\n"
-                            f"ENV PORT={vite_cp}\n"
+                            f"ENV NODE_ENV=production PORT={vite_cp}\n"
                             "COPY --from=builder --chown=node:node /app ./\n"
                             "USER node\n"
                             f"EXPOSE {vite_cp}\n"
@@ -2170,6 +2423,7 @@ async def evaluate_g2_existing_artifacts(
                             has_build_script = True
                         build_step = "RUN npm run build\n\n" if has_build_script else ""
                         df_content = (
+                            "# syntax=docker/dockerfile:1\n"
                             "# Multi-stage Dockerfile generated by ForgeOps\n"
                             "FROM node:20-alpine AS builder\n"
                             "WORKDIR /app\n"
@@ -2180,8 +2434,7 @@ async def evaluate_g2_existing_artifacts(
                             f"{build_step}"
                             "FROM node:20-alpine AS runner\n"
                             "WORKDIR /app\n"
-                            "ENV NODE_ENV=production\n"
-                            f"ENV PORT={node_cp}\n"
+                            f"ENV NODE_ENV=production PORT={node_cp}\n"
                             "COPY --from=builder --chown=node:node /app ./\n"
                             "USER node\n"
                             f"EXPOSE {node_cp}\n"
@@ -2515,6 +2768,7 @@ async def evaluate_g4_build(
         clean_tag = "app"
         if project_name:
             import re
+
             clean_tag = re.sub(r"[^a-zA-Z0-9_.-]", "-", str(project_name).lower().strip()).strip(".-_") or "app"
         image_tag = f"{clean_tag}:0.1.0"
     is_sim = _is_simulation_mode(session, run, context)
@@ -2771,6 +3025,7 @@ async def evaluate_g5_apply(
         clean_tag = "app"
         if project_name:
             import re
+
             clean_tag = re.sub(r"[^a-zA-Z0-9_.-]", "-", str(project_name).lower().strip()).strip(".-_") or "app"
         image_tag = f"{clean_tag}:0.1.0"
 

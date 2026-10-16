@@ -425,6 +425,32 @@ class TestIndividualGateEvaluations:
         assert result.details["action"] == "SYNTHESIZE"
 
     @pytest.mark.asyncio
+    async def test_evaluate_g2_deterministic_dockerfile_template_cache_and_env(self, tmp_path: Path) -> None:
+        session = MockAsyncSession()
+        run = await _create_test_run(session, DeploymentStrategy.DOCKER_GITHUB)
+        run.project_id = uuid.uuid4()
+        tenant_id = uuid.uuid4()
+
+        pkg_json = tmp_path / "package.json"
+        pkg_json.write_text(json.dumps({"name": "test-app", "scripts": {"build": "next build"}}), encoding="utf-8")
+        (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+
+        result = await evaluate_g2_existing_artifacts(
+            session,
+            run,
+            context={"workspace_path": str(tmp_path), "tenant_id": tenant_id, "use_canonical": False},
+        )
+
+        assert result.passed is True
+        df_file = tmp_path / "Dockerfile"
+        assert df_file.exists()
+        content = df_file.read_text(encoding="utf-8")
+        assert "# syntax=docker/dockerfile:1" in content
+        assert f"npm-{tenant_id}-{run.project_id}" in content
+        assert "--mount=type=cache,target=/root/.npm" in content
+        assert "ENV NODE_ENV=production PORT=3000" in content
+
+    @pytest.mark.asyncio
     async def test_evaluate_g2_existing_artifacts_not_required_cloud_only(self) -> None:
         session = MockAsyncSession()
         run = await _create_test_run(session, DeploymentStrategy.VERCEL_ONLY)
@@ -3083,3 +3109,207 @@ async def test_docker_build_error_redacts_tokens(tmp_path: Path, monkeypatch: py
     assert sample_ghp not in err_msg
     assert "super_secret_pass_123" not in err_msg
     assert "[REDACTED_TOKEN]" in err_msg or "[REDACTED]" in err_msg
+
+
+@pytest.mark.asyncio
+async def test_docker_buildkit_success_parsing_and_image_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify BuildKit trace parsing extracts cached steps, progress, and aux image ID."""
+    import base64
+    import json
+
+    from src.deployments.autonomous_gates import DockerEngineClient
+
+    client = DockerEngineClient(uds="/fake/docker.sock")
+    df = tmp_path / "Dockerfile"
+    df.write_text("FROM node:20-alpine\nRUN echo ok\n", encoding="utf-8")
+
+    # Construct protobuf vertex message:
+    # Field 1 (bytes) -> Inner: Field 3 (name bytes), Field 4 (varint 1 for cached)
+    name_bytes = b"[builder 2/2] RUN npm run build"
+    inner = bytes([0x1A, len(name_bytes)]) + name_bytes + bytes([0x20, 0x01])
+    vertex = bytes([0x0A, len(inner)]) + inner
+    b64_trace = base64.b64encode(vertex).decode("ascii")
+
+    logged_lines: list[str] = []
+
+    async def capture_log(line: str) -> None:
+        logged_lines.append(line)
+
+    chunks = [
+        json.dumps({"id": "moby.buildkit.trace", "aux": b64_trace}),
+        json.dumps({"aux": {"ID": "sha256:buildkit_test_image_id_abcdef123456"}}),
+    ]
+
+    class MockBuildKitTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.requests: list[httpx.Request] = []
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            content = "\n".join(chunks).encode("utf-8")
+            return httpx.Response(200, content=content)
+
+    real_async_client = httpx.AsyncClient
+    transport = MockBuildKitTransport()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=transport))
+
+    build_info: dict[str, Any] = {}
+    ok, msg = await client.build_image_from_context(
+        tmp_path, "test:buildkit-success", build_info=build_info, log_callback=capture_log
+    )
+
+    assert ok is True
+    assert "Image built successfully" in msg
+    assert len(transport.requests) == 1
+    assert "version=2" in str(transport.requests[0].url)
+    assert build_info.get("builder_backend") == "buildkit"
+    assert build_info.get("used_cache") is True
+    assert build_info.get("image_id") == "sha256:buildkit_test_image_id_abcdef123456"
+    assert any("CACHED [builder 2/2] RUN npm run build" in line for line in logged_lines)
+
+
+@pytest.mark.asyncio
+async def test_docker_buildkit_negotiation_failure_triggers_v1_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify BuildKit negotiation failure (HTTP 400/501) cleanly falls back to legacy V1 builder."""
+    import json
+
+    from src.deployments.autonomous_gates import DockerEngineClient
+
+    client = DockerEngineClient(uds="/fake/docker.sock")
+    df = tmp_path / "Dockerfile"
+    df.write_text("FROM node:20-alpine\nRUN npm ci\n", encoding="utf-8")
+
+    class MockFallbackTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.requests: list[httpx.Request] = []
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            if "version=2" in str(request.url):
+                # Simulate daemon not supporting BuildKit version 2 negotiation
+                return httpx.Response(400, content=b"client version 2 is not supported")
+            # Legacy V1 builder succeeds
+            v1_chunks = [
+                json.dumps({"stream": "Step 1/2 : FROM node:20-alpine\n"}),
+                json.dumps({"stream": "Step 2/2 : RUN npm ci\n"}),
+                json.dumps({"stream": "Successfully built legacy_v1_img_999\n"}),
+                json.dumps({"stream": "Successfully tagged test:fallback-v1\n"}),
+            ]
+            return httpx.Response(200, content="\n".join(v1_chunks).encode("utf-8"))
+
+    real_async_client = httpx.AsyncClient
+    transport = MockFallbackTransport()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=transport))
+
+    build_info: dict[str, Any] = {}
+    ok, msg = await client.build_image_from_context(tmp_path, "test:fallback-v1", build_info=build_info)
+
+    assert ok is True
+    assert "Image built successfully" in msg
+    assert len(transport.requests) == 2
+    assert "version=2" in str(transport.requests[0].url)
+    assert "version=2" not in str(transport.requests[1].url)
+    assert build_info.get("builder_backend") == "v1_fallback"
+
+
+@pytest.mark.asyncio
+async def test_docker_buildkit_real_build_failure_does_not_retry_v1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify genuine build failure inside BuildKit container fails immediately without retrying V1."""
+    import json
+
+    from src.deployments.autonomous_gates import DockerEngineClient
+
+    client = DockerEngineClient(uds="/fake/docker.sock")
+    df = tmp_path / "Dockerfile"
+    df.write_text("FROM node:20-alpine\nRUN npm run build\n", encoding="utf-8")
+
+    class MockBuildFailureTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.requests: list[httpx.Request] = []
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            chunks = [
+                json.dumps({"stream": "executor failed running [/bin/sh -c npm run build]: exit code: 1\n"}),
+                json.dumps({"error": "executor failed running [/bin/sh -c npm run build]: exit code: 1"}),
+            ]
+            return httpx.Response(200, content="\n".join(chunks).encode("utf-8"))
+
+    real_async_client = httpx.AsyncClient
+    transport = MockBuildFailureTransport()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=transport))
+
+    build_info: dict[str, Any] = {}
+    ok, msg = await client.build_image_from_context(tmp_path, "test:real-failure", build_info=build_info)
+
+    assert ok is False
+    assert "exit code: 1" in msg
+    # Crucial assertion: Must NOT have attempted a second request to V1
+    assert len(transport.requests) == 1
+    assert "version=2" in str(transport.requests[0].url)
+
+
+@pytest.mark.asyncio
+async def test_docker_buildkit_sanitizes_cache_mount_on_v1_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify Dockerfile with --mount=type=cache is sanitized when falling back to V1 builder."""
+    import io
+    import json
+    import tarfile
+
+    from src.deployments.autonomous_gates import DockerEngineClient
+
+    client = DockerEngineClient(uds="/fake/docker.sock")
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        "# syntax=docker/dockerfile:1\n"
+        "FROM node:20-alpine\n"
+        "RUN --mount=type=cache,target=/root/.npm,id=npm-cache-test,sharing=locked npm ci\n"
+        'CMD ["npm", "start"]\n',
+        encoding="utf-8",
+    )
+
+    received_tar_contents: list[bytes] = []
+
+    class MockSanitizingTransport(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.requests: list[httpx.Request] = []
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.requests.append(request)
+            if "version=2" in str(request.url):
+                return httpx.Response(501, content=b"BuildKit not supported")
+
+            body = await request.aread()
+            received_tar_contents.append(body)
+
+            v1_chunks = [
+                json.dumps({"stream": "Step 1/3 : FROM node:20-alpine\n"}),
+                json.dumps({"stream": "Successfully built legacy_v1_clean\n"}),
+                json.dumps({"stream": "Successfully tagged test:sanitized-v1\n"}),
+            ]
+            return httpx.Response(200, content="\n".join(v1_chunks).encode("utf-8"))
+
+    real_async_client = httpx.AsyncClient
+    transport = MockSanitizingTransport()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_async_client(transport=transport))
+
+    ok, msg = await client.build_image_from_context(tmp_path, "test:sanitized-v1")
+
+    assert ok is True
+    assert len(transport.requests) == 2
+    assert len(received_tar_contents) == 1
+
+    # Verify that in the tar delivered to V1, the --mount flag was cleanly stripped
+    with tarfile.open(fileobj=io.BytesIO(received_tar_contents[0]), mode="r") as tar:
+        df_member = tar.getmember("Dockerfile")
+        f = tar.extractfile(df_member)
+        assert f is not None
+        v1_df_text = f.read().decode("utf-8")
+        assert "--mount=" not in v1_df_text
+        assert "RUN npm ci" in v1_df_text

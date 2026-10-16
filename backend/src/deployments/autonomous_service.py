@@ -631,11 +631,7 @@ class AutonomousDeploymentService:
             ProblemException (status 404, type "deployment-absent") if run does not exist.
             ProblemException (status 409, type "autonomous-run-conflict") on fence token mismatch.
         """
-        stmt = (
-            select(AutonomousDeployment)
-            .where(AutonomousDeployment.id == run_id)
-            .with_for_update()
-        )
+        stmt = select(AutonomousDeployment).where(AutonomousDeployment.id == run_id).with_for_update()
         result = await session.execute(stmt)
         run = result.scalars().first()
         if run is None:
@@ -651,9 +647,7 @@ class AutonomousDeploymentService:
         try:
             if not hasattr(session, "runs"):
                 max_log_res = await session.execute(
-                    select(func.max(AutonomousDeploymentLog.log_seq)).where(
-                        AutonomousDeploymentLog.run_id == run_id
-                    )
+                    select(func.max(AutonomousDeploymentLog.log_seq)).where(AutonomousDeploymentLog.run_id == run_id)
                 )
                 if hasattr(max_log_res, "scalar"):
                     highest_db_log_seq = max_log_res.scalar() or 0

@@ -104,11 +104,11 @@ exists only under the `tools` profile to carry OpenTofu for IaC integration test
 
 ## What runs after `docker compose up -d --wait`
 
-Compose project name is `forgeops`. The unprofiled default set is exactly five services:
-`postgres`, `redis`, `opa`, `backend`, `frontend`. Optional profiles are separate and are
-verified only after their owning implementation exists: `vault` (Infisical) and `tools`
-(`agent-dev` with OpenTofu). Every service loads the committed `.env.example` as required
-and an optional `.env` as an override, so a fresh clone starts without any manual step.
+Compose project name is `forgeops`. In the current implementation, **14 services are declared** in `docker-compose.yml`, with **10–14 active** in the default unprofiled set without requiring manual flags:
+- Core services: `postgres` (PostgreSQL 17 + pgvector), `redis` (Redis Stack 7.4), `opa` (OPA 1.4.2 policy server), `cerbos` (Cerbos 0.54.0 RBAC sidecar), `authentik-server` & `authentik-worker` (Authentik 2026.5.6 OIDC identity provider), `backend` (FastAPI REST API), `backend-agent` (mTLS listener on port 8443 / 18443 for paired agents), `worker` (ARQ distributed task runner), `frontend` (Next.js 16 App Router UI), `ollama` & `ollama-secondary` (local AI model cascade servers with shared weights), `inngest` (durable execution engine).
+- Optional profiles are separate: `vault` (`infisical`), `tools` (`agent-dev` with OpenTofu), and the OTel monitoring tier (`observability` profile: `otel-agent`, `otel-gateway`, `prometheus`, `mimir`, `loki`, `tempo`, `grafana`).
+
+Every service loads the committed `.env.example` as required and an optional `.env` as an override, so a fresh clone starts without any manual step. For Linux/Ubuntu systems, the automated 1-click `./setup.sh` master script installs prerequisites, Docker Engine, sets non-root docker group permissions, handles package locks, and provisions the entire stack.
 
 ## Health versus readiness
 
@@ -268,14 +268,22 @@ stops a row being declared without one.
 
 ## Phase 2 additions — Autonomous Deployment Engine
 
-Phase 2 adds the end-to-end Autonomous Deployment Engine on top of the Phase 0 foundation and Phase 1 MVP core.
+Phase 2 adds the end-to-end Autonomous Deployment Engine on top of the Phase 0 foundation and Phase 1 MVP core, executing deployments across Docker, GitHub, and Vercel.
 
 Key architectural components implemented:
 
-- **Autonomous Deployment Orchestrator & Gates G1–G7**: Located in [`backend/src/autonomous/autonomous_orchestrator.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/autonomous/autonomous_orchestrator.py) and [`backend/src/autonomous/autonomous_gates.py`](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/backend/src/autonomous/autonomous_gates.py). Gates enforce strict verification: G1 Workspace, G2 Runtime Config, G3 Security & Port Validation, G4 Build/Staging, G5 Apply/Deploy, G6 Workload Verification, and G7 Final Sign-off.
+- **Sequential Verification Gates (G1–G7)**:
+  - **G1 (Blueprint Baseline)**: Strategy constraints validation (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`), required target config, workspace path resolution, and R0 baseline readiness assessment.
+  - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go with consolidated `ENV` declarations (`ENV NODE_ENV=production PORT=...`), stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and R1 post-generation readiness assessment.
+  - **G3 (Cross-artifact Consistency)**: Static pre-execution consistency audit verifying port ranges (1–65535), immutability of reserved environment variables, and enforcement of browser-safe host ports (rejecting all 77 Chromium/WHATWG bad ports including 4045).
+  - **G4 (Build & Compile)**: Direct Docker Engine daemon integration via Unix Domain Socket (`/var/run/docker.sock`) utilizing native **BuildKit HTTP API** (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion (`.env*`, `*.pem`, `*.key`), symlink boundary confinement, and automatic graceful fallback to the legacy Docker V1 builder if BuildKit negotiation fails.
+  - **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket with strict runtime port authority, conflict detection with immutable startup commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+  - **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+  - **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
 - **Port Authority Hierarchy & Browser Safety**: User-configured container ports take absolute authority over inferred ports. Host ports are validated against a 77-entry browser-restricted port list (preventing `ERR_UNSAFE_PORT` blocks such as port 4045).
-- **G8 Bounded Self-Healing Engine**: Automated failure classification and bounded retries without source code mutation.
+- **G8 Bounded Self-Healing Engine**: Automated failure classification and bounded retries (maximum 3 iterations) without application source code mutation.
 - **Multi-Target Deployment Strategies**: Supports Docker (local daemon / UDS), GitHub (Git Data API low-level objects), and Vercel (REST API v13 deployment and v9 alias assignment).
+- **Active Topology**: 14 Compose services declared (10–14 active: `postgres`, `redis`, `opa`, `cerbos`, `authentik-server`, `authentik-worker`, `backend`, `backend-agent`, `worker`, `frontend`, `ollama`, `ollama-secondary`, `inngest`).
 - **Comprehensive Master Reference**: See [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md).
 
 ## Reference documents

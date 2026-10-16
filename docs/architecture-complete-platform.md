@@ -232,20 +232,30 @@ graph TB
 
 ### Phase status — authoritative
 
-Source: `PROGRESS.md` phase-status table.
+Source: `PROGRESS.md` phase-status table & `FORGEOPS_PROJECT_MASTER_DOCUMENT.md`.
 
 | Phase | Name                                      | Status           | Criteria |
 | :---- | :---------------------------------------- | :--------------- | :------- |
 | **0** | Foundation & Project Scaffolding          | 🟩 `completed`   | 18 / 18  |
-| **1** | MVP Core — Analysis, Generation, Approval | 🟨 `in-progress` | 13 / 14  |
-| **2** | Deploy, Manage & Command                  | ⬜ `not-started` | —        |
+| **1** | MVP Core — Analysis, Generation, Approval | 🟩 `completed`   | 14 / 14  |
+| **2** | Autonomous Deployment Engine & Management | 🟩 `implemented` | active on `phase-2-implementation` |
 | **3** | Observe, Troubleshoot & Self-Heal         | ⬜ `not-started` | —        |
 | **4** | Scale, Collaborate & Polish               | ⬜ `not-started` | —        |
 | **5** | Advanced & Ecosystem                      | ⬜ `not-started` | —        |
 
-Phase 2's directories exist in the tree (`backend/src/deployment/`, `incidents/`,
-`monitoring/`, `notifications/`) but hold **only a `README.md`** — no routers, no services.
-They are structural placeholders mandated by the layout, not partial implementations.
+Phase 2 Autonomous Deployment Engine is fully implemented on `phase-2-implementation`.
+It implements:
+- **Sequential Verification Gates (G1–G7)**:
+  - **G1 (Blueprint Baseline)**: Strategy constraints validation (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`), required target config, workspace path resolution, and R0 readiness assessment.
+  - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go with consolidated `ENV` declarations, stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and post-generation readiness assessment (R1).
+  - **G3 (Cross-artifact Consistency)**: Static pre-execution audit verifying port range integrity (1–65535), immutability of reserved environment variables, and enforcement of browser-safe host ports (rejecting all 77 Chromium/WHATWG bad ports including 4045).
+  - **G4 (Build & Compile)**: Direct Docker Engine daemon integration via Unix Domain Socket (`/var/run/docker.sock`). Integrates native **BuildKit HTTP API** (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion (`.env*`, `*.pem`, `*.key`), symlink boundary confinement, and automatic graceful fallback to the legacy Docker V1 builder.
+  - **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket with strict runtime port authority, conflict detection with immutable startup commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+  - **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+  - **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
+- **G8 Bounded Self-Healing**: Automated crash recovery sweeper with monotonic worker fencing tokens and AI incident remediation bounded to 3 iterations with zero application source code mutation.
+- **Active Topology**: Operates across 14 declared Compose services (10–14 active: `postgres`, `redis`, `opa`, `cerbos`, `authentik-server`, `authentik-worker`, `backend`, `backend-agent`, `worker`, `frontend`, `ollama`, `ollama-secondary`, `inngest`).
+- **Automated Ubuntu Setup**: Automated 1-click provisioning via `./setup.sh` on Ubuntu 22.04 / 24.04 LTS (and 20.04 w/ Python 3.10+).
 
 ---
 

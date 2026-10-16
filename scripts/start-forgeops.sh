@@ -4,7 +4,7 @@
 #
 # The counterpart to scripts/start-forgeops.ps1, doing the same work in the same order:
 # install what is missing, generate the secrets the application refuses to boot without, pick free
-# ports, start the nine services in dependency order, provision the identity provider, migrate, then
+# ports, start the thirteen services in dependency order, provision the identity provider, migrate, then
 # PROVE the result by reading /health/ready rather than by trusting that `up` returned zero.
 #
 # Safe to run repeatedly. Every step checks the state it wants before changing anything, and no
@@ -24,6 +24,8 @@
 # note at that step for why those two are separated.
 
 set -Eeuo pipefail
+
+ORIGINAL_ARGS=("$@")
 
 FRESH=0
 FORCE=0
@@ -213,10 +215,18 @@ if [ "$docker_ok" -eq 0 ]; then
         info_ "adding $CURRENT_USER to the 'docker' group (note: grants root-equivalent Docker access)"
         sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
       fi
+      if have_ sg && sg docker -c "docker info" >/dev/null 2>&1; then
+        info_ "activating 'docker' group token via sg and resuming launcher..."
+        if [ "${#ORIGINAL_ARGS[@]}" -gt 0 ]; then
+          exec sg docker -c "$REPO_ROOT/scripts/start-forgeops.sh ${ORIGINAL_ARGS[*]}"
+        else
+          exec sg docker -c "$REPO_ROOT/scripts/start-forgeops.sh"
+        fi
+      fi
       if id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
         die_ "you are in the 'docker' group, but this shell session has not loaded the group token." \
           "Run 'newgrp docker' or start a new shell session, then rerun:" \
-          "    $0 $*"
+          "    $0 ${ORIGINAL_ARGS[*]}"
       else
         die_ "your user is not in the 'docker' group and cannot reach the Docker socket." \
           "To grant access securely without weakening socket permissions, run:" \
@@ -598,13 +608,19 @@ CERBOS_HTTP_PORT_V="$(resolve_port_ CERBOS_HTTP_PORT 13592 cerbos)"
 AUTHENTIK_PORT_V="$(resolve_port_ AUTHENTIK_PORT 19000 authentik)"
 FRONTEND_PORT_V="$(resolve_port_ FRONTEND_PORT 13000 frontend)"
 BACKEND_PORT_V="$(resolve_port_ BACKEND_PORT 18000 backend)"
+AGENT_TLS_HOST_PORT_V="$(resolve_port_ AGENT_TLS_HOST_PORT 18443 agent_tls)"
+INNGEST_PORT_V="$(resolve_port_ INNGEST_PORT 8288 inngest)"
+OLLAMA_PORT_V="$(resolve_port_ OLLAMA_PORT 11434 ollama)"
+OLLAMA_SECONDARY_PORT_V="$(resolve_port_ OLLAMA_SECONDARY_PORT 11435 ollama_secondary)"
 
 for pair in "POSTGRES_PORT $POSTGRES_PORT_V" "REDIS_PORT $REDIS_PORT_V" "OPA_PORT $OPA_PORT_V" \
             "CERBOS_HTTP_PORT $CERBOS_HTTP_PORT_V" "AUTHENTIK_PORT $AUTHENTIK_PORT_V" \
-            "FRONTEND_PORT $FRONTEND_PORT_V" "BACKEND_PORT $BACKEND_PORT_V"; do
+            "FRONTEND_PORT $FRONTEND_PORT_V" "BACKEND_PORT $BACKEND_PORT_V" \
+            "AGENT_TLS_HOST_PORT $AGENT_TLS_HOST_PORT_V" "INNGEST_PORT $INNGEST_PORT_V" \
+            "OLLAMA_PORT $OLLAMA_PORT_V" "OLLAMA_SECONDARY_PORT $OLLAMA_SECONDARY_PORT_V"; do
   # Split explicitly rather than letting the shell word-split an unquoted expansion. The unquoted
   # form worked, but it depends on IFS being untouched and reads as an accident.
-  ok_ "$(printf '%-17s %s' "${pair%% *}" "${pair##* }")"
+  ok_ "$(printf '%-23s %s' "${pair%% *}" "${pair##* }")"
 done
 
 # ─── .env ────────────────────────────────────────────────────────────────────────────────────────
@@ -658,6 +674,10 @@ env_set_ CERBOS_HTTP_PORT "$CERBOS_HTTP_PORT_V"
 env_set_ AUTHENTIK_PORT   "$AUTHENTIK_PORT_V"
 env_set_ FRONTEND_PORT    "$FRONTEND_PORT_V"
 env_set_ BACKEND_PORT     "$BACKEND_PORT_V"
+env_set_ AGENT_TLS_HOST_PORT "$AGENT_TLS_HOST_PORT_V"
+env_set_ INNGEST_PORT     "$INNGEST_PORT_V"
+env_set_ OLLAMA_PORT      "$OLLAMA_PORT_V"
+env_set_ OLLAMA_SECONDARY_PORT "$OLLAMA_SECONDARY_PORT_V"
 
 env_set_ NEXT_PUBLIC_API_BASE_URL "$API_BASE_URL"
 env_set_ CORS_ALLOW_ORIGINS       "http://localhost:${FRONTEND_PORT_V}"
@@ -725,7 +745,7 @@ fi
 # ─── Images ──────────────────────────────────────────────────────────────────────────────────────
 
 head_ 'Build and start'
-step_ 'Building the backend, worker, frontend and agent images'
+step_ 'Building the backend, backend-agent, worker, frontend and agent images'
 
 NEED_BUILD=0
 [ "$REBUILD" -eq 1 ] && NEED_BUILD=1
@@ -755,7 +775,7 @@ fi
 
 if [ "$NEED_BUILD" -eq 1 ]; then
   info_ 'this takes several minutes on a first run'
-  dc build backend worker frontend agent || die_ 'the image build failed.' \
+  dc build backend backend-agent worker frontend agent || die_ 'the image build failed.' \
     'If the output above mentions no space left on device, free disk space and retry.'
   ok_ 'images built'
 else
@@ -764,11 +784,27 @@ fi
 
 # ─── Infrastructure ──────────────────────────────────────────────────────────────────────────────
 
-step_ 'Starting postgres, redis, opa and cerbos'
-dc up -d --wait postgres redis opa cerbos \
+step_ 'Starting postgres, redis, opa, cerbos and inngest'
+dc up -d --wait postgres redis opa cerbos inngest \
   || die_ 'the infrastructure services did not become healthy.' \
        "Inspect one with:  docker compose ${COMPOSE_FILES[*]} logs postgres"
-ok_ 'postgres, redis, opa and cerbos are healthy'
+ok_ 'postgres, redis, opa, cerbos and inngest are healthy'
+
+step_ 'Starting the model servers (ollama and ollama-secondary)'
+info_ 'starting ollama primary model server'
+if dc up -d --wait ollama 2>/dev/null; then
+  ok_ 'the ollama model server is ready and its models are pulled'
+  info_ 'starting ollama secondary model server'
+  if dc up -d --wait ollama-secondary 2>/dev/null; then
+    ok_ 'ollama-secondary model server is ready'
+  else
+    warn_ 'ollama-secondary did not become healthy; continuing'
+  fi
+else
+  warn_ 'the model server did not become healthy; generation will use the template library'
+  warn_ "    docker compose ${COMPOSE_FILES[*]} logs ollama"
+  dc up -d ollama ollama-secondary >/dev/null 2>&1 || true
+fi
 
 step_ "Ensuring Authentik's database exists"
 # scripts/postgres-init/20-authentik-database.sh is mounted into /docker-entrypoint-initdb.d, so a
@@ -1073,7 +1109,7 @@ ok_ 'the schema is at head'
 
 # ─── Application ─────────────────────────────────────────────────────────────────────────────────
 
-step_ 'Starting the backend, worker, frontend and agent'
+step_ 'Starting the backend, backend-agent, worker, frontend and agent'
 
 # THE WORKER IS STARTED TOO, and leaving it out is not a cosmetic omission. `.env.example` sets
 # `TASK_DISPATCHER=arq`, so the API enqueues jobs onto Redis and something has to run them.
@@ -1091,7 +1127,7 @@ if [ "$ENV_HASH_AFTER" != "$ENV_HASH_BEFORE" ]; then
   RECREATE='--force-recreate'
 fi
 # shellcheck disable=SC2086  # RECREATE is a single optional flag or empty, and must not be one word
-dc up -d --wait $RECREATE backend worker frontend agent \
+dc up -d --wait $RECREATE backend backend-agent worker frontend agent \
   || warn_ 'compose reported a problem; checking readiness directly'
 
 # ─── Prove it ────────────────────────────────────────────────────────────────────────────────────

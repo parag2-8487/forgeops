@@ -351,7 +351,7 @@ t_compose_services() {
   out="$(cd "$REPO_ROOT" && docker compose -f docker-compose.yml -f docker-compose.e2e.yml config --services 2>&1)" || {
     echo "compose config failed: $out"; return 1; }
   local svc
-  for svc in postgres redis opa cerbos authentik-server authentik-worker backend frontend agent; do
+  for svc in postgres redis opa cerbos authentik-server authentik-worker backend frontend agent worker ollama ollama-secondary backend-agent inngest; do
     printf '%s\n' "$out" | grep -qx "$svc" || { echo "service '$svc' is not declared"; return 1; }
   done
 }

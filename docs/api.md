@@ -14,8 +14,18 @@
 > <http://localhost:8000/api/v1/docs> and `openapi.json` beside it â€” because it is produced from the
 > routers themselves and cannot drift from them.
 >
-> **Phase 2 Autonomous Deployment API (2026-10-13):**
-> Phase 2 adds `/api/v1/autonomous/deployments` for triggering deployments, tracking lifecycle stages, evaluating G1–G7 verification gates, retrieving real-time event logs, and reading operational artifacts. For complete schemas, endpoints, request/response models, and error behaviors, consult:
+> **Phase 2 Autonomous Deployment API & G1–G7 Verification Gates:**
+> Phase 2 adds `/api/v1/projects/{project_id}/autonomous-deploy` and its associated routes for orchestrating multi-target deployments across Docker, GitHub, and Vercel. Autonomous deployments transition through 7 sequential verification gates:
+> - **G1 (Blueprint Baseline)**: Strategy constraints validation, required target configuration checks, workspace path verification, and R0 readiness assessment.
+> - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis, consolidated `ENV` instructions (`ENV NODE_ENV=production PORT=...`), stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and post-generation readiness (R1).
+> - **G3 (Cross-artifact Consistency)**: Static pre-execution consistency audit verifying port ranges (1–65535), immutability of reserved environment variables, and rejection of all 77 Chromium/WHATWG browser-restricted host ports (such as `4045` with `ERR_UNSAFE_PORT`).
+> - **G4 (Build & Compile)**: Direct Docker Engine daemon integration via Unix Domain Socket (`/var/run/docker.sock`) utilizing the native **BuildKit HTTP API** (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion (`.env*`, `*.pem`, `*.key`), symlink boundary confinement, and automatic graceful fallback to the legacy Docker V1 builder if BuildKit negotiation fails.
+> - **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket with strict runtime port authority, conflict detection with immutable startup commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+> - **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+> - **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
+>
+> Executions run on the active 14-service compose topology (10–14 active: `postgres`, `redis`, `opa`, `cerbos`, `authentik-server`, `authentik-worker`, `backend`, `backend-agent`, `worker`, `frontend`, `ollama`, `ollama-secondary`, `inngest`).
+> For complete schemas, endpoints, request/response models, and error behaviors, consult:
 > - Master Reference: [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md)
 > - OpenAPI interactive documentation: <http://localhost:8000/api/v1/docs>
 

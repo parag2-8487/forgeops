@@ -11,6 +11,14 @@
 
 ---
 
+## Canonical System Architecture (Comprehensive Unified Flowchart)
+
+For the complete, system-wide canonical architecture diagram unifying all eight subsystems (UI, Security/Governance, FastAPI Backend, ARQ/Redis State Plane, Autonomous Deployment Orchestration with G1–G7 verification gates, Docker Engine UDS & BuildKit v2, External Targets, and Automated Host Setup), refer to:
+
+👉 [**`docs/architecture/FORGEOPS_CANONICAL_ARCHITECTURE.md`**](docs/architecture/FORGEOPS_CANONICAL_ARCHITECTURE.md)
+
+---
+
 ## How to view and export these
 
 The diagrams are [Mermaid](https://mermaid.js.org). Three ways to render them:

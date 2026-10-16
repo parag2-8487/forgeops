@@ -1319,8 +1319,6 @@ async def run_pipeline(
             details = getattr(result, "details", {})
             message = getattr(result, "message", "")
 
-
-
             if stage_passed:
                 if isinstance(details, dict) and "deployment_receipt" in details:
                     run.configuration = {

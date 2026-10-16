@@ -84,33 +84,46 @@ chmod +x scripts/*.sh 2>/dev/null || true
 
 msg_step "Verifying system package manager and core tools"
 
-# Make apt WAIT for the package lock instead of failing on it. A fresh Ubuntu desktop boots into
-# `unattended-upgrades`, which holds the dpkg lock while it applies security updates; without this,
-# every install below fails silently and setup dies later blaming Docker. The rationale and the
-# version guard live in the helper, shared with the launcher.
-apt_configure_lock_timeout "$SUDO_CMD"
+# Check if essential tools and container runtimes already exist to make rerun idempotent and fast
+need_pkg_install=0
+for tool in curl git jq; do
+  if ! have "$tool"; then need_pkg_install=1; break; fi
+done
+if ! have docker || ! docker compose version --short >/dev/null 2>&1; then
+  need_pkg_install=1
+fi
 
-if have apt-get; then
-  msg_info "Updating apt package cache..."
-  if ! $SUDO_CMD apt-get update -qq; then
-    msg_warn "apt-get update did not succeed; continuing with the existing package lists"
-  fi
+if [ "$need_pkg_install" -eq 1 ]; then
+  # Make apt WAIT for the package lock instead of failing on it. A fresh Ubuntu desktop boots into
+  # `unattended-upgrades`, which holds the dpkg lock while it applies security updates; without this,
+  # every install below fails silently and setup dies later blaming Docker. The rationale and the
+  # version guard live in the helper, shared with the launcher.
+  apt_configure_lock_timeout "$SUDO_CMD"
 
-  msg_info "Installing core utility packages..."
-  if ! apt_install_quiet "$SUDO_CMD" \
-    ca-certificates curl gnupg lsb-release software-properties-common \
-    git jq netcat-openbsd build-essential libssl-dev libffi-dev; then
-    msg_warn "some core packages could not be installed; each is checked again before it is used"
+  if have apt-get; then
+    msg_info "Updating apt package cache..."
+    if ! $SUDO_CMD apt-get update -qq; then
+      msg_warn "apt-get update did not succeed; continuing with the existing package lists"
+    fi
+
+    msg_info "Installing core utility packages..."
+    if ! apt_install_quiet "$SUDO_CMD" \
+      ca-certificates curl gnupg lsb-release software-properties-common \
+      git jq netcat-openbsd build-essential libssl-dev libffi-dev; then
+      msg_warn "some core packages could not be installed; each is checked again before it is used"
+    fi
+    msg_ok "Core utilities installed"
+  elif have dnf; then
+    msg_info "Installing core packages with dnf..."
+    $SUDO_CMD dnf install -y -q curl git jq nc gcc openssl-devel libffi-devel >/dev/null 2>&1 || true
+  elif have pacman; then
+    msg_info "Installing core packages with pacman..."
+    $SUDO_CMD pacman -Sy --noconfirm curl git jq openbsd-netcat base-devel >/dev/null 2>&1 || true
+  else
+    msg_warn "No recognized apt, dnf, or pacman package manager. Continuing with existing tools."
   fi
-  msg_ok "Core utilities installed"
-elif have dnf; then
-  msg_info "Installing core packages with dnf..."
-  $SUDO_CMD dnf install -y -q curl git jq nc gcc openssl-devel libffi-devel >/dev/null 2>&1 || true
-elif have pacman; then
-  msg_info "Installing core packages with pacman..."
-  $SUDO_CMD pacman -Sy --noconfirm curl git jq openbsd-netcat base-devel >/dev/null 2>&1 || true
 else
-  msg_warn "No recognized apt, dnf, or pacman package manager. Continuing with existing tools."
+  msg_ok "Core utilities and container tools already present"
 fi
 
 # ─── Docker Engine & Compose V2 Installation ─────────────────────────────────────────────────────
@@ -200,7 +213,7 @@ fi
 # Verify Docker engine response with bounded timeout
 docker_ready=0
 for _ in $(seq 1 30); do
-  if docker info >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1 || (have sg && sg docker -c "docker info" >/dev/null 2>&1); then
     docker_ready=1
     break
   fi
@@ -252,8 +265,8 @@ msg_ok "Docker Compose v$(docker compose version --short) is ready"
 msg_step "Checking Python interpreter and prerequisites"
 
 ensure_python() {
-  # Prefer Python 3.13 if already present
-  if have python3.13; then
+  # Prefer Python 3.13 if already present with venv
+  if have python3.13 && python3.13 -c 'import venv' >/dev/null 2>&1; then
     msg_ok "Python 3.13 is available: $(python3.13 --version)"
     return 0
   fi
@@ -263,7 +276,11 @@ ensure_python() {
     local py_ver
     py_ver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo '')"
     if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-      msg_ok "Using host Python $py_ver for launcher tooling (the backend runs containerized Python 3.13)"
+      if python3 -c 'import venv' >/dev/null 2>&1; then
+        msg_ok "Using host Python $py_ver with venv for launcher tooling (the backend runs containerized Python 3.13)"
+        return 0
+      fi
+      msg_info "Host Python $py_ver found; ensuring venv module is installed..."
       if have apt-get; then
         $SUDO_CMD apt-get install -y -qq python3-venv python3-dev >/dev/null 2>&1 || true
       fi
@@ -370,9 +387,18 @@ if [ "$(id -u)" -eq 0 ] && [ "$ACTUAL_USER" != "root" ]; then
     LAUNCH_CMD="$LAUNCH_CMD $(printf '%q' "$arg")"
   done
   msg_info "Executing launcher as user: $ACTUAL_USER"
-  su - "$ACTUAL_USER" -c "cd '$REPO_ROOT' && $LAUNCH_CMD"
+  su - "$ACTUAL_USER" -c "cd '$REPO_ROOT' && if command -v sg >/dev/null 2>&1; then sg docker -c '$LAUNCH_CMD' 2>/dev/null || $LAUNCH_CMD; else $LAUNCH_CMD; fi"
 else
-  ./scripts/start-forgeops.sh ${LAUNCHER_ARGS[@]+"${LAUNCHER_ARGS[@]}"}
+  LAUNCH_CMD='./scripts/start-forgeops.sh'
+  for arg in ${LAUNCHER_ARGS[@]+"${LAUNCHER_ARGS[@]}"}; do
+    LAUNCH_CMD="$LAUNCH_CMD $(printf '%q' "$arg")"
+  done
+  if ! docker info >/dev/null 2>&1 && have sg && sg docker -c "docker info" >/dev/null 2>&1; then
+    msg_info "Executing launcher with 'docker' group permissions via sg..."
+    exec sg docker -c "$LAUNCH_CMD"
+  else
+    ./scripts/start-forgeops.sh ${LAUNCHER_ARGS[@]+"${LAUNCHER_ARGS[@]}"}
+  fi
 fi
 
 msg_head "Setup and Verification Complete"

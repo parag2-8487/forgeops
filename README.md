@@ -6,6 +6,7 @@ AI-powered DevOps automation platform.
 - **Owner:** `parag8487`
 - **Go module path (agent):** `github.com/parag8487/ForgeOps/agent`
 - **Master Technical Document:** For the complete, authoritative specification covering the full architecture, problem statement, objectives, feature catalogue, G1–G7 gate workflows, G8 recovery, port authority, testing evidence, and evaluation guide, see [`FORGEOPS_PROJECT_MASTER_DOCUMENT.md`](FORGEOPS_PROJECT_MASTER_DOCUMENT.md).
+- **Canonical Architecture & System Diagrams:** For the complete, unified architectural flowchart and subsystem breakdown (UI, Security/Governance, FastAPI, ARQ/Redis queues, G1–G7 verification gates, Docker UDS/BuildKit v2, multi-target execution, and automated host setup), see [`docs/architecture/FORGEOPS_CANONICAL_ARCHITECTURE.md`](docs/architecture/FORGEOPS_CANONICAL_ARCHITECTURE.md) and [`ARCHITECTURE-DIAGRAMS.md`](ARCHITECTURE-DIAGRAMS.md).
 - **Status:** **Phase 2 Autonomous Deployment Engine Implemented.**
   Phase 0 (foundation scaffolding) and Phase 1 (MVP core analysis, generation, and approval) are complete. Phase 2 (Autonomous Deployment Orchestrator, multi-target deployment strategies across Docker, GitHub, and Vercel, G1–G7 verification gates, deterministic port authority, and G8 bounded self-healing recovery) is active and implemented on the `phase-2-implementation` branch.
 
@@ -129,6 +130,23 @@ If a port was already taken on your machine, the script will have moved that ser
 the new value. The URLs above are also written into `.env`, and the final summary repeats the
 addresses actually in use.
 
+**Compose Services Topology (14 services declared, 10–14 active):**
+The platform declares 14 containerized services in `docker-compose.yml`, with 10–14 active in the default profile without requiring manual flags:
+1. `postgres`: PostgreSQL 17 with `pgvector` extension for relational data and semantic vector embeddings.
+2. `redis`: Redis Stack Server 7.4 providing L1/L2 semantic caching, rate limiting, and task queues.
+3. `opa`: Open Policy Agent 1.4.2 policy engine evaluating Rego rules for gateway and governance control.
+4. `cerbos`: Cerbos 0.54.0 RBAC sidecar enforcing principal resource permissions for backend requests.
+5. `authentik-server`: Authentik 2026.5.6 enterprise identity provider for OIDC/OAuth 2.1 authentication.
+6. `authentik-worker`: Background asynchronous worker process for Authentik identity tasks.
+7. `backend`: FastAPI Python 3.13 REST API control plane and SSE streaming engine.
+8. `backend-agent`: Dedicated mTLS listener (ports 8443 / 18443) terminating client certificates from paired agents.
+9. `worker`: Asynchronous ARQ task worker executing background jobs and autonomous deployment pipelines.
+10. `frontend`: Next.js 16 (React 19) App Router web dashboard.
+11. `ollama`: Primary local model server serving completion models (`qwen3-coder-next`) and embeddings (`bge-m3:567m`).
+12. `ollama-secondary`: Secondary model server providing live cascade failover (`glm-5.2`) using shared weights.
+13. `inngest`: Durable execution engine coordinating multi-step deployment pipelines and events.
+14. Optional profile services: `infisical` (`--profile vault`), `agent-dev` (`--profile tools`), and the OTel observability tier (`--profile observability`: `otel-agent`, `otel-gateway`, `prometheus`, `mimir`, `loki`, `tempo`, `grafana`).
+
 ---
 
 ## Core Features & Capabilities
@@ -158,14 +176,14 @@ addresses actually in use.
 - **Multi-Target Strategies**: Orchestrates unified deployments across Docker, GitHub, and Vercel (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`).
 - **Deterministic Port Authority**: Enforces user-declared container ports (e.g. `8080`) over framework defaults, injecting runtime `PORT` and `HOST=0.0.0.0` environment variables and configuring Dockerfile synthesis.
 - **Browser Port Safety**: Protects operators by strictly rejecting browser-restricted host ports (such as `4045` with `ERR_UNSAFE_PORT`) during schema validation and G3.
-- **Sequential Gate Verification**:
-  - **G1**: Blueprint baseline validation and R0 readiness assessment.
-  - **G2**: Existing artifact reuse or multi-stage Dockerfile synthesis, and R1 readiness.
-  - **G3**: Pre-execution consistency, port range, and browser bad ports audit.
-  - **G4**: Secure Docker image building with symlink confinement and secret exclusion.
-  - **G5**: Container launch via Docker Engine API over Unix Domain Socket with runtime port binding.
-  - **G6**: Container inspect publication check and live HTTP readiness probing.
-  - **G7**: Multi-target final verification (exact `8080/tcp -> 18080` port bindings, GitHub remote branch commit verification, and Vercel assigned production alias verification with SSO bypass).
+- **Sequential Gate Verification (G1–G7)**:
+  - **G1 (Blueprint Baseline)**: Strategy constraints, required configuration presence, workspace path resolution, and baseline readiness assessment (R0).
+  - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go with consolidated `ENV` declarations, stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and post-generation readiness assessment (R1).
+  - **G3 (Cross-artifact Consistency)**: Static pre-execution audit verifying port range integrity (1–65535), immutability of reserved environment variables, and enforcement of browser-safe host ports (rejecting all 77 Chromium/WHATWG bad ports).
+  - **G4 (Build & Compile)**: Direct Docker Engine daemon integration featuring the native BuildKit HTTP API (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion, symlink boundary confinement, and automatic graceful fallback to legacy Docker V1 builder.
+  - **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket (`/var/run/docker.sock`) with strict runtime port authority, conflict detection with immutable commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+  - **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+  - **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
 - **G8 Bounded Self-Healing**: Automated crash recovery sweeper with monotonic worker fencing tokens and AI incident remediation bounded to 3 iterations with zero application source code mutation.
 
 ### 5. Zero-Trust Local Agent & Governance Chokepoint

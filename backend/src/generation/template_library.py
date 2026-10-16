@@ -30,9 +30,7 @@ DEFAULT_TEMPLATES = {
             "RUN npm run build\n"
             "FROM node:20-alpine\n"
             "WORKDIR /app\n"
-            "ENV NODE_ENV=production\n"
-            "ENV PORT={{PORT}}\n"
-            'ENV HOSTNAME="0.0.0.0"\n'
+            'ENV NODE_ENV=production PORT={{PORT}} HOSTNAME="0.0.0.0"\n'
             "COPY --from=builder /app ./\n"
             "EXPOSE {{PORT}}\n"
             "USER 10001\n"
