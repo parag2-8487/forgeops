@@ -529,9 +529,7 @@ class Settings(BaseSettings):
     agent_release_tag: str = Field(default="v0.1.1")
 
     #: Where the signed archives live.
-    agent_download_base_url: str = Field(
-        default="https://github.com/parag8487/ForgeOps/releases/download"
-    )
+    agent_download_base_url: str = Field(default="https://github.com/parag8487/ForgeOps/releases/download")
     session_cookie_name: str = Field(default="forgeops_session")
     session_ttl_seconds: int = Field(default=3600, ge=60, le=86_400)
     refresh_ttl_seconds: int = Field(default=1_209_600, ge=3600)
