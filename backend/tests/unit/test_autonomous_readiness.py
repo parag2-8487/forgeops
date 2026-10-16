@@ -231,6 +231,8 @@ async def pg_session():
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:
         await _ensure_seed_user_and_project(session)
+        if session.in_transaction():
+            await session.commit()
         trans = await session.begin()
         try:
             yield session

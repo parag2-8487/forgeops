@@ -2378,7 +2378,7 @@ async def evaluate_g2_existing_artifacts(
                     clean_tenant = re.sub(r"[^a-zA-Z0-9_-]", "", str(tenant_id or "default"))
                     clean_proj = re.sub(r"[^a-zA-Z0-9_-]", "", str(getattr(run, "project_id", "default")))
                     cache_id = f"npm-{clean_tenant}-{clean_proj}"
-                    mount_opt = f"--mount=type=cache,target=/root/.npm,id={cache_id},sharing=locked "
+                    mount_opt = f"--mount=type=cache,target=/root/.npm,id={cache_id} "
                     npm_install_str = f"RUN {mount_opt}npm ci\n" if has_lock else f"RUN {mount_opt}npm install\n"
 
                     if is_vite:
@@ -2421,7 +2421,7 @@ async def evaluate_g2_existing_artifacts(
                             "FROM node:20-alpine AS runner\n"
                             "WORKDIR /app\n"
                             f"ENV PORT={node_cp}\n"
-                            "ENV NODE_ENV=production\n"
+                            f"ENV NODE_ENV=production PORT={node_cp}\n"
                             "COPY --from=builder --chown=node:node /app ./\n"
                             "USER node\n"
                             f"EXPOSE {node_cp}\n"
@@ -2794,6 +2794,9 @@ async def evaluate_g4_build(
             log_batch: list[str] = []
             loop = asyncio.get_running_loop()
             last_flush_time = loop.time()
+            last_activity_time = loop.time()
+            last_heartbeat_time = loop.time()
+            active_step_desc = "Building container image"
             batch_lock = asyncio.Lock()
 
             async def _flush_log_batch() -> None:
@@ -2838,13 +2841,39 @@ async def evaluate_g4_build(
                         logger.warning("G4: failed to flush build log batch: %s", ex)
 
             async def _on_build_log(line: str) -> None:
+                nonlocal last_activity_time, active_step_desc
+                last_activity_time = loop.time()
+                clean = line.strip()
+                if clean.startswith("[") or clean.startswith("RUN ") or clean.startswith("Step "):
+                    active_step_desc = clean[:80]
                 async with batch_lock:
                     log_batch.append(line)
                     now_t = loop.time()
                     if len(log_batch) >= 10 or (now_t - last_flush_time) >= 1.0:
                         await _flush_log_batch()
 
+            async def _flusher_loop() -> None:
+                nonlocal last_heartbeat_time
+                try:
+                    while True:
+                        await asyncio.sleep(1.0)
+                        async with batch_lock:
+                            if log_batch:
+                                await _flush_log_batch()
+                        now_t = loop.time()
+                        if now_t - last_heartbeat_time >= 15.0:
+                            elapsed = int(now_t - last_activity_time)
+                            if elapsed >= 10:
+                                heartbeat = f"[heartbeat] {active_step_desc} in progress ({elapsed}s elapsed)..."
+                                async with batch_lock:
+                                    log_batch.append(heartbeat)
+                                    await _flush_log_batch()
+                            last_heartbeat_time = now_t
+                except asyncio.CancelledError:
+                    pass
+
             logger.info("G4: Building container image %s from workspace %s", image_tag, workspace_path)
+            flusher_task = asyncio.create_task(_flusher_loop())
             try:
                 if hasattr(docker_client, "build_image_from_context"):
                     build_ok, build_err = await docker_client.build_image_from_context(
@@ -2857,6 +2886,9 @@ async def evaluate_g4_build(
                 else:
                     build_ok, build_err = False, "Docker client lacks build capability"
             finally:
+                flusher_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await flusher_task
                 async with batch_lock:
                     with contextlib.suppress(Exception):
                         await _flush_log_batch()
