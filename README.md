@@ -12,18 +12,32 @@ AI-powered DevOps automation platform.
 
 ## Running on Linux / Ubuntu (1-Click Master Setup)
 
-For Linux systems — especially **fresh installations such as college lab computers** running
+For Linux systems — especially **fresh installations such as college lab computers or cloud VMs** running
 Ubuntu 22.04 LTS or 24.04 LTS (or Ubuntu 20.04 LTS with Python 3.10+ installed) that have **no Docker**,
 missing build tools, or stopped services — use the master setup script. It installs everything the stack
-needs and then starts and verifies it.
+needs, configures the environment, and then starts and verifies the entire platform.
+
+### Step-by-Step: From Cloning to Running Platform
+
+Open your Ubuntu terminal and execute the following commands:
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/parag2-8487/forgeops.git
+cd forgeops
+
+# 2. Switch to the active implementation branch
+git checkout phase-2-implementation
+
+# 3. Grant execute permissions to the setup script
 chmod +x setup.sh
+
+# 4. Run the 1-click master setup
 ./setup.sh
 ```
 
-That is the whole install. No arguments are required, and none of the steps below need to be run
-by hand.
+That is the whole install. No manual installation of Docker, PostgreSQL, Redis, or Node.js is required.
+Once the script completes, all 10–14 microservices will be healthy, and you can open your browser at **<http://localhost:13000>** to access the platform.
 
 ### Before you start
 
