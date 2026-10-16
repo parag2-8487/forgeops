@@ -10,11 +10,12 @@
 
 ## 1. Executive Summary & Architectural Overview
 
-ForgeOps is an autonomous, self-healing DevOps automation platform and control plane that provisions, verifies, containerizes, and deploys fullstack web applications to local container engines, GitHub cloud repositories, and Vercel edge infrastructure. 
+ForgeOps is an autonomous, self-healing DevOps automation platform and control plane that provisions, verifies, containerizes, and deploys fullstack web applications to local container engines, GitHub cloud repositories, and Vercel edge infrastructure.
 
 Unlike traditional CI/CD engines that execute unstructured, imperative shell scripts with superficial success indicators, ForgeOps operates as an **immutable, state-machine driven autonomous deployment orchestrator**. Every mutating operation passes through a six-stage **Governance Chokepoint** governed by Open Policy Agent (OPA) and Cerbos ABAC, ensuring that neither autonomous AI generators nor rogue actors can execute unauthorized operations.
 
 The runtime architecture guarantees:
+
 1. **Deterministic Port Authority**: The operator's explicitly declared container port (e.g. `8080`) overrides all framework defaults (such as Vite's `3000`), with runtime injection of `PORT={container_port}` and `HOST=0.0.0.0`.
 2. **Browser Port Safety Guard**: Host ports matching the Chromium/WHATWG 77 restricted bad-port list (such as `4045` `ERR_UNSAFE_PORT`) are rejected at schema validation and G3 static audit.
 3. **Native BuildKit v2 Tar Streaming**: The Docker Engine client communicates directly with `/var/run/docker.sock` over Unix Domain Sockets (UDS) using BuildKit HTTP API `version=2`, protobuf trace demuxing (`moby.buildkit.trace`), and stable scoped cache mounts (`id=npm-{tenant}-{proj}`), with automatic fallback to the legacy Docker V1 builder.
@@ -84,7 +85,7 @@ flowchart TB
     subgraph ORCH_SYS["5. Autonomous Deployment Orchestration Pipeline"]
         READINESS_ENG["<b>ReadinessEngine & Scanner</b><br/>5 operational pillars (0-100 score)<br/>Pre-G1 AST dependency index"]
         GEN_SERVICE["<b>GenerationService & Synthesizer</b><br/>Multi-stage Dockerfile synthesis<br/>Kubernetes manifests & OpenTofu plans"]
-        
+
         subgraph GATES_PIPELINE["Strict Sequential Gate Pipeline (G1-G7) & G8 Recovery"]
             G1_GATE["<b>G1: Blueprint Baseline</b><br/>Strategy constraints & R0 score"]
             G2_GATE["<b>G2: Synthesis & Template</b><br/>Vite, Node, Py, Go blueprints & R1 score"]
@@ -213,6 +214,7 @@ flowchart TB
 ## 3. Subsystem Architectural Deep-Dives
 
 ### 3.1 Subsystem 1: User Entry Points & UI Layer
+
 - **Technology**: Next.js 16 (React 19 App Router), Tailwind CSS, TanStack Query, Zustand.
 - **Port Mapping**: Host port `13000` (container internal `3000`).
 - **Core Responsibilities**:
@@ -222,12 +224,14 @@ flowchart TB
   - **Visual Verification Badges**: Dynamically updates G1 through G7 execution state chips and renders the plain-language readiness radar breakdown.
 
 ### 3.2 Subsystem 2: Security, Auth & Governance
+
 - **Identity Provider (Authentik 2026.5.6)**: Pinned at port `19000` (`authentik-server` + `authentik-worker`). Evaluates OIDC scopes, issuing RSA-256 tokens with verified user identity, roles, and tenant metadata.
-- **Cerbos ABAC Sidecar (v0.54.0)**: Pinned at port `3592`. Evaluates YAML-defined Attribute-Based Access Control policies (`policies/cerbos/`), answering: *"May principal P perform action A on resource R within tenant T?"* Denies by default on network disconnect.
+- **Cerbos ABAC Sidecar (v0.54.0)**: Pinned at port `3592`. Evaluates YAML-defined Attribute-Based Access Control policies (`policies/cerbos/`), answering: _"May principal P perform action A on resource R within tenant T?"_ Denies by default on network disconnect.
 - **Open Policy Agent (OPA 1.4.2)**: Evaluates high-integrity Rego policies (`policies/agent/governance.rego` and `policies/mcp/`) at port `18182`. Calculates mutation blast radius and verifies scheduled execution windows.
 - **Governance Chokepoint (`src/governance/chokepoint.py`)**: Architectural choke through which every mutating operation must pass. Verified by property test Q-03 to be mathematically unbypassable. Mints tamper-evident HMAC-SHA256 signed command envelopes.
 
 ### 3.3 Subsystem 3: Backend API & Core Services
+
 - **Technology**: FastAPI 0.139 / Python 3.13 running via Uvicorn. Pinned at port `18000` (internal `8000`).
 - **REST Routing Domains**: Exposes 27 structured application domains across 135+ route handlers (`/api/v1/auth`, `/projects`, `/analysis`, `/deployments`, `/autonomous`, `/approvals`, `/audit`, `/policies`, `/secrets`).
 - **Transactional Outbox Engine (`src/deployments/autonomous_service.py`)**: Prevents distributed race conditions between state mutations and streaming notifications. Writes events into the PostgreSQL outbox table within the same database transaction as the state transition.
@@ -235,13 +239,16 @@ flowchart TB
 - **SSE Stream Broadcaster**: Long-polling asynchronous event pump delivering strictly ordered lifecycle events to connected browsers.
 
 ### 3.4 Subsystem 4: Async Processing, Task Queues & State Plane
+
 - **Distributed Job Queue (ARQ 0.26.3 & Redis Stack 7.4)**: Redis pinned at port `16379`. Offloads long-running deployment orchestration jobs (`autonomous_deploy_run`) to background worker processes, preventing HTTP request timeouts.
 - **Worker Custody & Fencing Tokens**: Autonomous worker instances acquire 60-second database leases. Monotonic integer fence tokens prevent split-brain execution across worker restarts.
 - **Relational Storage (PostgreSQL 17 + pgvector 0.3.6)**: Pinned at port `15432`. Stores relational models for projects, runs, stages, change sets, immutable audit trails, and HNSW cosine vector embeddings.
 - **Semantic Vector & AI Cluster (Ollama 0.12.6)**: Primary Ollama server (`port 11434`) hosting `qwen3-coder-next` (code synthesis) and `bge-m3:567m` (embeddings). A secondary standby container (`port 11435`) shares weights and provides automated cross-endpoint circuit breaker failover.
 
 ### 3.5 Subsystem 5: Autonomous Deployment Orchestration (G1–G7 & G8)
+
 The core deployment engine executes an immutable state machine where each run sequentially traverses verification gates:
+
 - **G1 (Blueprint Baseline)**: Validates strategy configuration, checks directory traversal safety, and calculates baseline operational readiness ($R_0$).
 - **G2 (Synthesis & Template Library)**: Synthesizes production-grade multi-stage Dockerfiles (configuring `PORT`, `HOST=0.0.0.0`, `EXPOSE`, and startup commands) or reuses validated existing manifests. Measures post-generation readiness ($R_1$).
 - **G3 (Consistency & Browser Port Audit)**: Enforces numeric port boundaries ($1 \le \text{port} \le 65535$) and checks against all 77 Chromium/WHATWG browser-restricted ports (rejecting ports like `4045`, `6000`, `6666`).
@@ -255,6 +262,7 @@ The core deployment engine executes an immutable state machine where each run se
 - **G8 (Bounded Self-Healing & Crash Sweeper)**: Bounded AI remediation loop (max 3 iterations) that resolves non-code failures (port collisions, configuration errors) while strictly forbidding application code modifications. A background sweeper reclaims orphaned worker leases.
 
 ### 3.6 Subsystem 6: Docker Engine Integration & BuildKit Pipeline
+
 - **Native UDS Transport**: Backend and workers communicate with `/var/run/docker.sock` using `httpx.AsyncHTTPTransport(uds="/var/run/docker.sock")`, eliminating insecure shell subprocesses (`exec("docker build")`).
 - **BuildKit v2 HTTP Streaming**: Initiates builds via `POST /v1.47/build?version=2`. Builds an in-memory tar stream of workspace files, streaming bytes directly to the engine without temporary disk bloat.
 - **Protobuf Trace Demuxer (`moby.buildkit.trace`)**: Demultiplexes binary BuildKit trace streams, extracting live step statuses, cache hits, layer IDs, and compile errors into clean user logs.
@@ -262,12 +270,14 @@ The core deployment engine executes an immutable state machine where each run se
 - **Graceful V1 Fallback**: Automatically catches BuildKit negotiation errors or unsupported daemon flags, seamlessly falling back to Docker Engine V1 tar builder without failing the deployment.
 
 ### 3.7 Subsystem 7: External Targets & Integrations
+
 - **Local Container Target**: Directly managed bridge network container publishing `127.0.0.1:{host_port}:{container_port}`.
 - **GitHub Target**: Pure API-driven synchronization using GitHub Git Data API (Blobs $\rightarrow$ Trees $\rightarrow$ Commits $\rightarrow$ Refs). Does not require local `git` binary.
 - **Vercel Target**: Direct edge deployment via Vercel REST API (`POST /v13/deployments`) with automated SPA routing injection (`vercel.json` rewrite rule) and production alias resolution.
 - **Go Local Agent**: Static Go binary on developer host connected via outbound-only WSS. Executes whitelisted local file operations and AST scans with zero external open ports.
 
 ### 3.8 Subsystem 8: Automated Ubuntu Host Environment
+
 - **`setup.sh` Launcher**: Single-click shell bootstrapper supporting Ubuntu 22.04 LTS, 24.04 LTS, and 20.04 LTS.
 - **Lock & Package Management**: Waits up to 5 minutes for Ubuntu `unattended-upgrades` to release `dpkg` locks before provisioning Docker CE, containerd, and plugins.
 - **Rootless-Safe Permissions**: Automatically configures the `docker` user group (`usermod -aG docker`) without ever opening insecure world-writable socket permissions (`chmod 666`).
@@ -278,20 +288,20 @@ The core deployment engine executes an immutable state machine where each run se
 
 ## 4. End-to-End Control, Data & Artifact Flow
 
-| Step | Initiator | Receiver | Transport | Payload / Operation | Verification Guarantee |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **1. Login** | User Browser | Authentik IdP | HTTPS / OIDC | Authorization code + PKCE challenge | Issues signed RSA-256 JWT with tenant claims. |
-| **2. Deploy Init** | User Browser | FastAPI API | HTTPS POST | Strategy, Host/Container Port, Project ID | Validates browser-safe ports; returns Run ID. |
-| **3. Dispatch** | FastAPI API | ARQ / Redis | Redis Stream | Enqueue `autonomous_deploy_run` job | Atomic outbox entry written in same DB transaction. |
-| **4. G1 Check** | ARQ Worker | File System | Local Disk / AST | Read project files, verify strategy constraints | Asserts $R_0$ baseline readiness. |
-| **5. G2 Synth** | ARQ Worker | GenerationSvc | In-Process / Ollama | Synthesize Dockerfile / manifests with `PORT` | Asserts $R_1 \ge R_0$ readiness progression. |
-| **6. G3 Audit** | ARQ Worker | Validator | In-Process | Audit port ranges and 77 unsafe browser ports | Strictly rejects forbidden ports (e.g. `4045`). |
-| **7. G4 Build** | ARQ Worker | Docker UDS | BuildKit v2 HTTP | Stream tarball context over `/var/run/docker.sock` | BuildKit trace demuxed; caches mounted. |
-| **8. G5 Apply** | ARQ Worker | Docker UDS | Engine API POST | Container create & start with `HostConfig.PortBindings` | Container running with `PORT` and `HOST=0.0.0.0`. |
-| **9. G6 Probe** | ARQ Worker | Container | HTTP GET Probe | Poll `http://127.0.0.1:{host_port}/` every 1.5s | Live HTTP 200 response verified. |
-| **10. Cloud Sync** | ARQ Worker | GitHub / Vercel | HTTPS REST | Git Data API tree commit; Vercel asset upload | Remote commit SHA and assigned alias captured. |
-| **11. G7 Verify** | ARQ Worker | Multi-Target | HTTP / Inspection | Cross-verify physical bindings, SHA, alias HTTP 200 | All active targets verified; receipt minted. |
-| **12. Receipt** | ARQ Worker | PostgreSQL | SQLModel Async | Persist signed Operational Artifacts receipt | Run marked `succeeded`; SSE terminal completes. |
+| Step               | Initiator    | Receiver        | Transport           | Payload / Operation                                     | Verification Guarantee                              |
+| :----------------- | :----------- | :-------------- | :------------------ | :------------------------------------------------------ | :-------------------------------------------------- |
+| **1. Login**       | User Browser | Authentik IdP   | HTTPS / OIDC        | Authorization code + PKCE challenge                     | Issues signed RSA-256 JWT with tenant claims.       |
+| **2. Deploy Init** | User Browser | FastAPI API     | HTTPS POST          | Strategy, Host/Container Port, Project ID               | Validates browser-safe ports; returns Run ID.       |
+| **3. Dispatch**    | FastAPI API  | ARQ / Redis     | Redis Stream        | Enqueue `autonomous_deploy_run` job                     | Atomic outbox entry written in same DB transaction. |
+| **4. G1 Check**    | ARQ Worker   | File System     | Local Disk / AST    | Read project files, verify strategy constraints         | Asserts $R_0$ baseline readiness.                   |
+| **5. G2 Synth**    | ARQ Worker   | GenerationSvc   | In-Process / Ollama | Synthesize Dockerfile / manifests with `PORT`           | Asserts $R_1 \ge R_0$ readiness progression.        |
+| **6. G3 Audit**    | ARQ Worker   | Validator       | In-Process          | Audit port ranges and 77 unsafe browser ports           | Strictly rejects forbidden ports (e.g. `4045`).     |
+| **7. G4 Build**    | ARQ Worker   | Docker UDS      | BuildKit v2 HTTP    | Stream tarball context over `/var/run/docker.sock`      | BuildKit trace demuxed; caches mounted.             |
+| **8. G5 Apply**    | ARQ Worker   | Docker UDS      | Engine API POST     | Container create & start with `HostConfig.PortBindings` | Container running with `PORT` and `HOST=0.0.0.0`.   |
+| **9. G6 Probe**    | ARQ Worker   | Container       | HTTP GET Probe      | Poll `http://127.0.0.1:{host_port}/` every 1.5s         | Live HTTP 200 response verified.                    |
+| **10. Cloud Sync** | ARQ Worker   | GitHub / Vercel | HTTPS REST          | Git Data API tree commit; Vercel asset upload           | Remote commit SHA and assigned alias captured.      |
+| **11. G7 Verify**  | ARQ Worker   | Multi-Target    | HTTP / Inspection   | Cross-verify physical bindings, SHA, alias HTTP 200     | All active targets verified; receipt minted.        |
+| **12. Receipt**    | ARQ Worker   | PostgreSQL      | SQLModel Async      | Persist signed Operational Artifacts receipt            | Run marked `succeeded`; SSE terminal completes.     |
 
 ---
 
@@ -309,7 +319,9 @@ Declared Container Port (e.g. 8080)
 ```
 
 ### Browser-Restricted Ports Rejected at Schema Validation & G3
+
 The system strictly rejects all 77 Chromium and WHATWG bad ports, including:
+
 - `1` (tcpmux), `7` (echo), `9` (discard), `11` (systat), `13` (daytime), `15` (netstat), `17` (qotd), `19` (chargen), `20` (ftp data), `21` (ftp control), `22` (ssh), `23` (telnet), `25` (smtp), `37` (time), `42` (name), `43` (nicname), `53` (domain), `77` (rje), `79` (finger), `87` (ttylink), `95` (supdup), `101` (hostriame), `102` (iso-tsap), `103` (gppitnp), `104` (acr-nema), `109` (pop2), `110` (pop3), `111` (sunrpc), `113` (auth), `115` (sftp), `117` (uucp-path), `119` (nntp), `123` (ntp), `135` (epmap), `139` (netbios), `143` (imap2), `179` (bgp), `389` (ldap), `465` (smtp submission), `512` (biff), `513` (who), `514` (syslog), `515` (printer), `526` (tempo), `530` (courier), `531` (conference), `532` (netnews), `540` (uucp), `556` (remotefs), `563` (nntp-ssl), `587` (submission), `601` (syslog), `636` (ldap-ssl), `993` (imap-ssl), `995` (pop-ssl), `2049` (nfs), `3659` (apple-sasl), `4045` (lockd/nfs), `6000` (x11), `6665-6669` (irc), `6697` (irc-ssl).
 
 ---

@@ -42,7 +42,6 @@ from urllib.parse import quote, urlsplit
 import httpx
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 from src.core.logging import redact_secrets
 
 try:
@@ -1886,35 +1885,20 @@ async def evaluate_g2_existing_artifacts(
 
     if not is_sim_or_mock:
         if src_status != "source_ready":
-            resolved_cand = resolve_workspace_path(
-                source_prep.get("workspace_path")
-                or (run.configuration or {}).get("workspace_path")
-                or workspace_dir_raw
+            return GateResult(
+                gate_id="G2",
+                passed=False,
+                status="failed",
+                message=(
+                    f"G2 Generation prerequisite failed: source preparation status is '{src_status or 'missing'}' "
+                    f"(expected 'source_ready'). Source workspace must be prepared and verified before generation."
+                ),
+                details={
+                    "action": "SYNTHESIZE",
+                    "error": "source_prep_not_ready",
+                    "source_preparation_status": src_status,
+                },
             )
-            if resolved_cand.exists() and any(resolved_cand.iterdir()):
-                src_status = "source_ready"
-                source_prep["status"] = "source_ready"
-                source_prep["status_label"] = "Source ready"
-                source_prep["workspace_path"] = str(resolved_cand)
-                cfg = dict(run.configuration or {})
-                cfg["source_preparation"] = source_prep
-                run.configuration = cfg
-                flag_modified(run, "configuration")
-            else:
-                return GateResult(
-                    gate_id="G2",
-                    passed=False,
-                    status="failed",
-                    message=(
-                        f"G2 Generation prerequisite failed: source preparation status is '{src_status or 'missing'}' "
-                        f"(expected 'source_ready'). Source workspace must be prepared and verified before generation."
-                    ),
-                    details={
-                        "action": "SYNTHESIZE",
-                        "error": "source_prep_not_ready",
-                        "source_preparation_status": src_status,
-                    },
-                )
 
         recorded_ws = source_prep.get("workspace_path")
         if not recorded_ws:
@@ -2410,7 +2394,8 @@ async def evaluate_g2_existing_artifacts(
                             "RUN npm run build\n\n"
                             "FROM node:20-alpine AS runner\n"
                             "WORKDIR /app\n"
-                            f"ENV NODE_ENV=production PORT={vite_cp}\n"
+                            f"ENV PORT={vite_cp}\n"
+                            "ENV NODE_ENV=production\n"
                             "COPY --from=builder --chown=node:node /app ./\n"
                             "USER node\n"
                             f"EXPOSE {vite_cp}\n"
@@ -2434,7 +2419,8 @@ async def evaluate_g2_existing_artifacts(
                             f"{build_step}"
                             "FROM node:20-alpine AS runner\n"
                             "WORKDIR /app\n"
-                            f"ENV NODE_ENV=production PORT={node_cp}\n"
+                            f"ENV PORT={node_cp}\n"
+                            "ENV NODE_ENV=production\n"
                             "COPY --from=builder --chown=node:node /app ./\n"
                             "USER node\n"
                             f"EXPOSE {node_cp}\n"

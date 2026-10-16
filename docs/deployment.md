@@ -48,6 +48,7 @@ exactly `http://localhost:3000` with no wildcard, so a hostile page cannot drive
 from the developer's browser.
 
 Optional profiles are never part of the default startup and are exercised separately:
+
 - `docker compose --profile vault up -d --wait` for Infisical secret management.
 - `docker compose --profile tools up -d --wait` for the `agent-dev` container carrying OpenTofu 1.12.5.
 - `docker compose --profile observability up -d --wait` for the OTel monitoring tier (`otel-agent`, `otel-gateway`, `prometheus`, `mimir`, `loki`, `tempo`, `grafana`).
@@ -64,6 +65,7 @@ chmod +x setup.sh
 ```
 
 ### Prerequisites
+
 - **Operating System**: Ubuntu 22.04 LTS or 24.04 LTS (Ubuntu 20.04 LTS requires Python 3.10+ package).
 - **Disk Space**: At least ~10 GB free space for Docker base layers and models.
 - **Memory**: ~4 GB RAM minimum (a 2 GB safe swapfile is created automatically on low-RAM machines if filesystem allows).

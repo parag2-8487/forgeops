@@ -42,10 +42,12 @@ supported shells for these targets.
 ### 1-Click Automated Setup on Linux / Ubuntu (`./setup.sh`)
 
 For Linux environments (Ubuntu 22.04 / 24.04 LTS or 20.04 w/ Python 3.10+):
+
 ```bash
 chmod +x setup.sh
 ./setup.sh
 ```
+
 The master setup script installs Docker CE and Compose V2 plugin, sets up non-root Docker group permissions, balances package-manager locks, configures ports, generates internal CA certificates and secrets in `.env`, runs database migrations, and validates the entire stack against `/health/ready`.
 
 ### Manual / Makefile Workflow
@@ -71,12 +73,14 @@ exposing anything, read `docs/deployment.md`.
 ### Current Compose Services (14 Declared, 10–14 Active)
 
 The active development stack comprises 14 declared services in `docker-compose.yml`, with 10–14 active in the default unprofiled profile:
+
 - Core services: `postgres` (PostgreSQL 17 + pgvector), `redis` (Redis Stack 7.4), `opa` (OPA 1.4.2 policy server), `cerbos` (Cerbos 0.54.0 RBAC sidecar), `authentik-server` & `authentik-worker` (Authentik 2026.5.6 OIDC identity provider), `backend` (FastAPI REST API), `backend-agent` (mTLS listener on port 8443 / 18443 for paired agents), `worker` (ARQ distributed task runner), `frontend` (Next.js 16 App Router UI), `ollama` & `ollama-secondary` (local AI model cascade servers with shared weights), `inngest` (durable execution engine).
 - Optional profile services: `infisical` (`vault` profile), `agent-dev` (`tools` profile with OpenTofu), and the OTel observability tier (`observability` profile: `otel-agent`, `otel-gateway`, `prometheus`, `mimir`, `loki`, `tempo`, `grafana`).
 
 ### Autonomous Deployment Verification Gates (G1–G7) & BuildKit Integration
 
 Deployments executed through the Autonomous Deployment Orchestrator pass through 7 sequential gates:
+
 - **G1 (Blueprint Baseline)**: Strategy constraints validation (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`), target configuration presence, workspace path resolution, and baseline readiness assessment (R0).
 - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go. Consolidates `ENV` instructions (`ENV NODE_ENV=production PORT=...`) and mounts stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`). Computes post-generation readiness (R1).
 - **G3 (Cross-artifact Consistency)**: Static pre-execution audit verifying port range integrity (1–65535), immutability of reserved environment variables, and enforcement of browser-safe host ports (rejecting all 77 Chromium/WHATWG bad ports including 4045).

@@ -132,6 +132,7 @@ addresses actually in use.
 
 **Compose Services Topology (14 services declared, 10–14 active):**
 The platform declares 14 containerized services in `docker-compose.yml`, with 10–14 active in the default profile without requiring manual flags:
+
 1. `postgres`: PostgreSQL 17 with `pgvector` extension for relational data and semantic vector embeddings.
 2. `redis`: Redis Stack Server 7.4 providing L1/L2 semantic caching, rate limiting, and task queues.
 3. `opa`: Open Policy Agent 1.4.2 policy engine evaluating Rego rules for gateway and governance control.

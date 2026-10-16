@@ -347,12 +347,18 @@ def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = N
                 dep_items = "\n".join(f"      - {d}" for d in sorted(set(deps)))
                 depends_block = f"\n    depends_on:\n{dep_items}"
 
-            if getattr(svc, "dockerfile_path", "") in ("Dockerfile", "./Dockerfile"):
+            if getattr(architecture, "has_workspaces", False) and getattr(svc, "dockerfile_path", "") in (
+                "Dockerfile",
+                "./Dockerfile",
+            ):
                 context_str = "."
                 df_str = "Dockerfile"
-            else:
+            elif getattr(svc, "directory", None) and svc.directory != ".":
                 context_str = svc.directory
-                df_str = svc.dockerfile_path.split("/")[-1]
+                df_str = svc.dockerfile_path.split("/")[-1] if getattr(svc, "dockerfile_path", "") else "Dockerfile"
+            else:
+                context_str = "."
+                df_str = svc.dockerfile_path.split("/")[-1] if getattr(svc, "dockerfile_path", "") else "Dockerfile"
 
             cmd_block = ""
             if architecture.has_workspaces and context_str == "." and svc.directory != ".":

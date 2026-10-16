@@ -234,17 +234,18 @@ graph TB
 
 Source: `PROGRESS.md` phase-status table & `FORGEOPS_PROJECT_MASTER_DOCUMENT.md`.
 
-| Phase | Name                                      | Status           | Criteria |
-| :---- | :---------------------------------------- | :--------------- | :------- |
-| **0** | Foundation & Project Scaffolding          | 🟩 `completed`   | 18 / 18  |
-| **1** | MVP Core — Analysis, Generation, Approval | 🟩 `completed`   | 14 / 14  |
+| Phase | Name                                      | Status           | Criteria                           |
+| :---- | :---------------------------------------- | :--------------- | :--------------------------------- |
+| **0** | Foundation & Project Scaffolding          | 🟩 `completed`   | 18 / 18                            |
+| **1** | MVP Core — Analysis, Generation, Approval | 🟩 `completed`   | 14 / 14                            |
 | **2** | Autonomous Deployment Engine & Management | 🟩 `implemented` | active on `phase-2-implementation` |
-| **3** | Observe, Troubleshoot & Self-Heal         | ⬜ `not-started` | —        |
-| **4** | Scale, Collaborate & Polish               | ⬜ `not-started` | —        |
-| **5** | Advanced & Ecosystem                      | ⬜ `not-started` | —        |
+| **3** | Observe, Troubleshoot & Self-Heal         | ⬜ `not-started` | —                                  |
+| **4** | Scale, Collaborate & Polish               | ⬜ `not-started` | —                                  |
+| **5** | Advanced & Ecosystem                      | ⬜ `not-started` | —                                  |
 
 Phase 2 Autonomous Deployment Engine is fully implemented on `phase-2-implementation`.
 It implements:
+
 - **Sequential Verification Gates (G1–G7)**:
   - **G1 (Blueprint Baseline)**: Strategy constraints validation (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`), required target config, workspace path resolution, and R0 readiness assessment.
   - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go with consolidated `ENV` declarations, stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and post-generation readiness assessment (R1).

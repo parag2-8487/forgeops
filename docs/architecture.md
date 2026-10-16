@@ -105,6 +105,7 @@ exists only under the `tools` profile to carry OpenTofu for IaC integration test
 ## What runs after `docker compose up -d --wait`
 
 Compose project name is `forgeops`. In the current implementation, **14 services are declared** in `docker-compose.yml`, with **10–14 active** in the default unprofiled set without requiring manual flags:
+
 - Core services: `postgres` (PostgreSQL 17 + pgvector), `redis` (Redis Stack 7.4), `opa` (OPA 1.4.2 policy server), `cerbos` (Cerbos 0.54.0 RBAC sidecar), `authentik-server` & `authentik-worker` (Authentik 2026.5.6 OIDC identity provider), `backend` (FastAPI REST API), `backend-agent` (mTLS listener on port 8443 / 18443 for paired agents), `worker` (ARQ distributed task runner), `frontend` (Next.js 16 App Router UI), `ollama` & `ollama-secondary` (local AI model cascade servers with shared weights), `inngest` (durable execution engine).
 - Optional profiles are separate: `vault` (`infisical`), `tools` (`agent-dev` with OpenTofu), and the OTel monitoring tier (`observability` profile: `otel-agent`, `otel-gateway`, `prometheus`, `mimir`, `loki`, `tempo`, `grafana`).
 
