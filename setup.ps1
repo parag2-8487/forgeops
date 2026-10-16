@@ -399,8 +399,8 @@ if (-not (Test-Path -LiteralPath $startScript)) {
     Stop-WithAdvice -Problem ("Launcher script not found: '{0}'" -f $startScript)
 }
 
-# Forward all bound parameters and arguments to scripts/start-forgeops.ps1
-& $startScript @PSBoundParameters @args
+# Forward all bound parameters to scripts/start-forgeops.ps1
+& $startScript @PSBoundParameters
 $exitCode = $LASTEXITCODE
 if ($null -eq $exitCode) { $exitCode = 0 }
 
