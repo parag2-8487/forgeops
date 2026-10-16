@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -346,6 +347,25 @@ func resolveSubmitOrigin(storedWSURL, configuredURL string) (string, error) {
 				// If origin is http:// on default port 8000, point to mTLS port 8443
 				if parsedOrigin.Scheme == "http" && parsedOrigin.Port() == "8000" {
 					parsedOrigin.Host = net.JoinHostPort(parsedOrigin.Hostname(), "8443")
+					parsedOrigin.Scheme = "https"
+					return parsedOrigin.String(), nil
+				}
+			}
+		}
+	} else {
+		// If no explicit configured URL was passed, check ambient environment variables
+		if tlsPort := os.Getenv("AGENT_TLS_HOST_PORT"); tlsPort != "" && tlsPort != "8443" {
+			if parsedOrigin.Port() == "8443" {
+				parsedOrigin.Host = net.JoinHostPort(parsedOrigin.Hostname(), tlsPort)
+				parsedOrigin.Scheme = "https"
+				return parsedOrigin.String(), nil
+			}
+		}
+		if bPort := os.Getenv("BACKEND_PORT"); bPort != "" && bPort != "8000" {
+			if pInt, perr := strconv.Atoi(bPort); perr == nil {
+				expectedTLSPort := strconv.Itoa(pInt + 443)
+				if parsedOrigin.Port() == bPort || parsedOrigin.Port() == "8443" {
+					parsedOrigin.Host = net.JoinHostPort(parsedOrigin.Hostname(), expectedTLSPort)
 					parsedOrigin.Scheme = "https"
 					return parsedOrigin.String(), nil
 				}
