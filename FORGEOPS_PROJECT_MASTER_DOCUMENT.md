@@ -1,9 +1,9 @@
 # ForgeOps Autonomous Deployment — Master Technical Document
 
-**Authoritative Technical Reference and System Specification**  
-**Repository:** [github.com/parag8487/ForgeOps](https://github.com/parag8487/ForgeOps)  
-**Branch:** `phase-2-implementation`  
-**License:** FSL-1.1-ALv2 (Platform / Backend / Frontend) / Apache-2.0 (Agent)  
+**Authoritative Technical Reference and System Specification**
+**Repository:** [github.com/parag8487/ForgeOps](https://github.com/parag8487/ForgeOps)
+**Branch:** `phase-2-implementation`
+**License:** FSL-1.1-ALv2 (Platform / Backend / Frontend) / Apache-2.0 (Agent)
 **Document Version:** 2.4.0 (Final Autonomous Release)
 
 ---

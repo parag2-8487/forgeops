@@ -1,9 +1,9 @@
 # ForgeOps — Canonical System Architecture
 
-**Authoritative Visual Specification and Comprehensive Architecture Manual**  
-**Repository:** [github.com/parag8487/ForgeOps](https://github.com/parag8487/ForgeOps)  
-**Branch:** `phase-2-implementation`  
-**License:** FSL-1.1-ALv2 (Platform / Control Plane) / Apache-2.0 (Agent)  
+**Authoritative Visual Specification and Comprehensive Architecture Manual**
+**Repository:** [github.com/parag8487/ForgeOps](https://github.com/parag8487/ForgeOps)
+**Branch:** `phase-2-implementation`
+**License:** FSL-1.1-ALv2 (Platform / Control Plane) / Apache-2.0 (Agent)
 **Document Status:** Canonical Reference Document (Release 2.4.0)
 
 ---
