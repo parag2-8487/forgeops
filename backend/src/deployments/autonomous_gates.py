@@ -1884,6 +1884,7 @@ async def evaluate_g2_existing_artifacts(
     )
 
     if not is_sim_or_mock:
+        # G2 prerequisite invariant: Generation requires verified source_ready status before proceeding.
         if src_status != "source_ready":
             return GateResult(
                 gate_id="G2",
