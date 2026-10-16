@@ -490,13 +490,14 @@ func TestClone_DefaultsTheDirectoryNameToTheRepositoryName(t *testing.T) {
 
 func TestResolveCloneTarget_RelativeParentResolvesUnderWorkspaceRoot(t *testing.T) {
 	root := t.TempDir()
+	normRoot := normaliseDeepestExisting(root)
 
 	// Empty parent defaults to workspace root
 	gotEmpty, err := resolveCloneTarget(root, "", "myrepo")
 	if err != nil {
 		t.Fatalf("resolveCloneTarget empty parent: %v", err)
 	}
-	wantEmpty := filepath.Join(root, "myrepo")
+	wantEmpty := filepath.Join(normRoot, "myrepo")
 	if gotEmpty != wantEmpty {
 		t.Errorf("got %q, want %q", gotEmpty, wantEmpty)
 	}
@@ -506,7 +507,7 @@ func TestResolveCloneTarget_RelativeParentResolvesUnderWorkspaceRoot(t *testing.
 	if err != nil {
 		t.Fatalf("resolveCloneTarget relative parent: %v", err)
 	}
-	wantRel := filepath.Join(root, "gerg", "Portfolio")
+	wantRel := filepath.Join(normRoot, "gerg", "Portfolio")
 	if gotRel != wantRel {
 		t.Errorf("got %q, want %q", gotRel, wantRel)
 	}
@@ -517,7 +518,7 @@ func TestResolveCloneTarget_RelativeParentResolvesUnderWorkspaceRoot(t *testing.
 	if err != nil {
 		t.Fatalf("resolveCloneTarget absolute parent: %v", err)
 	}
-	wantAbs := filepath.Join(absParent, "myrepo")
+	wantAbs := filepath.Join(normaliseDeepestExisting(absParent), "myrepo")
 	if gotAbs != wantAbs {
 		t.Errorf("got %q, want %q", gotAbs, wantAbs)
 	}
