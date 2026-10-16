@@ -197,22 +197,22 @@ func validateCloneName(name string) error {
 
 // resolveCloneTarget turns the arguments into one absolute path, or refuses.
 //
-// resolveCloneTarget turns the arguments into one absolute path, or refuses.
-//
 // When a parent directory is explicitly nominated (e.g. from the project configuration approved
-// by the operator), the target is resolved under that parent. When parent is empty, it defaults
-// to the agent's current workspace root.
+// by the operator), the target is resolved under that parent. If parent is relative, it is resolved
+// relative to root. When parent is empty, it defaults to the agent's current workspace root.
 func resolveCloneTarget(root, parent, name string) (string, error) {
 	if err := validateCloneName(name); err != nil {
 		return "", err
 	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("executor: unusable workspace root %q: %w", root, err)
+	}
 	candidate := strings.TrimSpace(parent)
 	if candidate == "" {
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			return "", fmt.Errorf("executor: unusable workspace root %q: %w", root, err)
-		}
 		candidate = absRoot
+	} else if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(absRoot, candidate)
 	}
 	absParent, err := filepath.Abs(candidate)
 	if err != nil {

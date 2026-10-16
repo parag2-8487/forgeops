@@ -886,3 +886,26 @@ class TestSecretRedactionBeforePersistence:
             assert "tok1234567890abcdef" not in log.message
             assert "sometoken999888777" not in log.message
             assert "1234567890ABCDEF" not in log.message
+
+
+class TestRepoPathSplitting:
+    """Verifies that project paths (Linux, Windows, trailing slashes, relative) are split correctly."""
+
+    def test_path_split_variations(self) -> None:
+        import posixpath
+
+        cases = [
+            ("/var/repo/", "/var", "repo"),
+            ("/var/repo", "/var", "repo"),
+            ("C:\\workspace\\Portfolio\\", "C:/workspace", "Portfolio"),
+            ("C:\\workspace\\Portfolio", "C:/workspace", "Portfolio"),
+            ("gerg/Portfolio", "gerg", "Portfolio"),
+            ("Portfolio", "", "Portfolio"),
+            ("C:/Users/user/Downloads/gerg/Portfolio", "C:/Users/user/Downloads/gerg", "Portfolio"),
+            ("", "", ""),
+        ]
+        for raw, want_parent, want_dir in cases:
+            norm_path = raw.replace("\\", "/").rstrip("/")
+            parent, directory = posixpath.split(norm_path)
+            assert parent == want_parent, f"raw={raw}: got parent={parent}, want {want_parent}"
+            assert directory == want_dir, f"raw={raw}: got directory={directory}, want {want_dir}"

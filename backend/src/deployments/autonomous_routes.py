@@ -27,6 +27,7 @@ import contextlib
 import json
 import logging
 import os
+import posixpath
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -281,8 +282,8 @@ async def start_run(
             if chokepoint is not None and link_service is not None and p_settings.get("repo_full_name"):
                 try:
                     stored_path = str(proj_row.get("path") or "")
-                    directory = stored_path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-                    parent = stored_path[: len(stored_path) - len(directory)].rstrip("/\\")
+                    norm_path = stored_path.replace("\\", "/").rstrip("/")
+                    parent, directory = posixpath.split(norm_path)
                     import httpx
 
                     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
