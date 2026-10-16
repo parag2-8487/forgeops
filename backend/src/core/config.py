@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -469,6 +470,7 @@ class Settings(BaseSettings):
     #: Only ever joined with a path `_safe_next` has already reduced to a same-origin absolute
     #: path, so a hostile `next` cannot turn this into an open redirect.
     frontend_base_url: str = Field(default="http://localhost:3000")
+    frontend_port: int = Field(default=3000, ge=1, le=65_535)
 
     #: The port this backend is reachable on FROM OUTSIDE its container, and therefore the port an
     #: agent must dial.
@@ -901,6 +903,36 @@ class Settings(BaseSettings):
                 "HKDF-derived key-encryption key (D-62) would be identical in every deployment. "
                 "Set it in .env; .env.example ships a development value."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _reconcile_ports_and_urls(self) -> Settings:
+        """Reconcile default localhost URLs with configured published ports.
+
+        When BACKEND_PORT or FRONTEND_PORT are customized (e.g. on Ubuntu or staging where
+        ports 8000/3000 collide with existing host services and get remapped to 18000/13000),
+        default localhost URLs pointing to 8000 or 3000 must be reconciled to match the
+        configured ports unless an explicit non-default port was provided for a different host.
+        """
+        # Reconcile oidc_redirect_url if it points to localhost/127.0.0.1 on default port 8000
+        if self.backend_port != 8000 and self.oidc_redirect_url:
+            parts = urlsplit(self.oidc_redirect_url)
+            if parts.hostname in ("localhost", "127.0.0.1") and parts.port in (8000, None):
+                new_netloc = f"{parts.hostname}:{self.backend_port}"
+                self.oidc_redirect_url = urlunsplit((parts.scheme, new_netloc, parts.path, parts.query, parts.fragment))
+
+        # Reconcile frontend_base_url if it points to localhost/127.0.0.1 on default port 3000
+        if self.frontend_port != 3000 and self.frontend_base_url:
+            parts = urlsplit(self.frontend_base_url)
+            if parts.hostname in ("localhost", "127.0.0.1") and parts.port in (3000, None):
+                new_netloc = f"{parts.hostname}:{self.frontend_port}"
+                self.frontend_base_url = urlunsplit((parts.scheme, new_netloc, parts.path, parts.query, parts.fragment))
+
+        if self.frontend_port not in (3000, 13000):
+            custom_origins = f"http://localhost:{self.frontend_port},http://127.0.0.1:{self.frontend_port}"
+            if custom_origins not in self.cors_allow_origins:
+                self.cors_allow_origins = f"{self.cors_allow_origins},{custom_origins}"
+
         return self
 
     @property
