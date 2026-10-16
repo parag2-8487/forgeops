@@ -542,6 +542,16 @@
             ],
             "title": "Idempotency Key"
           },
+          "initial_readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadinessCheckpointPublicResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "parent_run_id": {
             "anyOf": [
               {
@@ -553,6 +563,16 @@
               }
             ],
             "title": "Parent Run Id"
+          },
+          "post_generation_readiness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadinessCheckpointPublicResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "primary_error": {
             "anyOf": [
@@ -575,6 +595,13 @@
             "format": "uuid",
             "title": "Project Id",
             "type": "string"
+          },
+          "readiness_checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessCheckpointPublicResponse"
+            },
+            "title": "Readiness Checkpoints",
+            "type": "array"
           },
           "stages": {
             "items": {
@@ -1436,6 +1463,11 @@
               }
             ]
           },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "github_config": {
             "anyOf": [
               {
@@ -1457,6 +1489,18 @@
             ],
             "title": "Idempotency Key"
           },
+          "simulation_mode": {
+            "default": false,
+            "title": "Simulation Mode",
+            "type": "boolean"
+          },
+          "stage_delays": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Stage Delays",
+            "type": "object"
+          },
           "strategy": {
             "$ref": "#/components/schemas/DeploymentStrategy"
           },
@@ -1469,6 +1513,17 @@
                 "type": "null"
               }
             ]
+          },
+          "workspace_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Path"
           }
         },
         "required": [
@@ -1711,6 +1766,7 @@
       "DeploymentStrategy": {
         "description": "Supported orchestration deployment strategies.",
         "enum": [
+          "docker_only",
           "docker_github_vercel",
           "docker_github",
           "github_only",
@@ -2006,12 +2062,38 @@
             ],
             "title": "Container Name"
           },
+          "container_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Container Port"
+          },
           "environment_overrides": {
             "additionalProperties": {
               "type": "string"
             },
             "title": "Environment Overrides",
             "type": "object"
+          },
+          "host_port": {
+            "anyOf": [
+              {
+                "maximum": 65535.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Port"
           },
           "image_tag": {
             "anyOf": [
@@ -2468,6 +2550,18 @@
               }
             ],
             "title": "Target Checks"
+          },
+          "target_strategy": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Strategy"
           }
         },
         "required": [
@@ -2671,6 +2765,12 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Repository Name",
+            "type": "string"
+          },
+          "repository_visibility": {
+            "default": "private",
+            "pattern": "^(private|public)$",
+            "title": "Repository Visibility",
             "type": "string"
           },
           "target_branch": {
@@ -4245,6 +4345,157 @@
           "why_it_matters"
         ],
         "title": "ReadinessCheckResponse",
+        "type": "object"
+      },
+      "ReadinessCheckpointPublicResponse": {
+        "description": "Public representation of an assessment readiness checkpoint.",
+        "properties": {
+          "artifacts_detected": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifacts Detected",
+            "type": "array"
+          },
+          "assessment_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assessment Error"
+          },
+          "assessment_version": {
+            "default": 1,
+            "title": "Assessment Version",
+            "type": "integer"
+          },
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "checkpoint_type": {
+            "title": "Checkpoint Type",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "detected_stack": {
+            "title": "Detected Stack",
+            "type": "string"
+          },
+          "dimension_explanations": {
+            "additionalProperties": true,
+            "title": "Dimension Explanations",
+            "type": "object"
+          },
+          "dimension_scores": {
+            "additionalProperties": true,
+            "title": "Dimension Scores",
+            "type": "object"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "max_score": {
+            "default": 100,
+            "title": "Max Score",
+            "type": "integer"
+          },
+          "new_blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "New Blockers",
+            "type": "array"
+          },
+          "resolved_blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Resolved Blockers",
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "score_delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Delta"
+          },
+          "selected_strategy": {
+            "title": "Selected Strategy",
+            "type": "string"
+          },
+          "snapshot_identity": {
+            "additionalProperties": true,
+            "title": "Snapshot Identity",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "checkpoint_type",
+          "status",
+          "selected_strategy",
+          "detected_stack",
+          "explanation"
+        ],
+        "title": "ReadinessCheckpointPublicResponse",
         "type": "object"
       },
       "ReadinessReportResponse": {
@@ -11060,6 +11311,60 @@
           }
         },
         "summary": "Cursor-paginated log retrieval strictly ordered by monotonic log_seq ASC",
+        "tags": [
+          "autonomous-deploy"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/reconcile": {
+      "post": {
+        "description": "Reconciles in-progress or timed-out cloud deployments with live provider status without redeploying.",
+        "operationId": "reconcile_run_endpoint_api_v1_projects__project_id__autonomous_deploy__run_id__reconcile_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutonomousRunPublicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconcile an existing cloud deployment stage (e.g. Vercel) and verify without redeploying",
         "tags": [
           "autonomous-deploy"
         ]

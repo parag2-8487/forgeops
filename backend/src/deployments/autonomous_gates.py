@@ -6444,9 +6444,30 @@ async def execute_vercel_deploy(
                     "live": True,
                 }
                 stage_vercel.stage_metadata = {**(stage_vercel.stage_metadata or {}), **v_meta}
+                stage_vercel.progress_pct = 30
+                from sqlalchemy.orm.attributes import flag_modified
+
+                flag_modified(stage_vercel, "stage_metadata")
+                session.add(stage_vercel)
                 with contextlib.suppress(Exception):
-                    session.add(stage_vercel)
                     await session.flush()
+                    await session.commit()
+
+            service = AutonomousDeploymentService()
+            with contextlib.suppress(Exception):
+                await service.append_logs(
+                    session,
+                    run_id=run.id,
+                    stage_name=STAGE_VERCEL_DEPLOY,
+                    entries=[
+                        (
+                            f"Vercel deployment created: ID {dep_id} ({deployment_url}). "
+                            f"Monitoring cloud build progress (initial state: {ready_state})...",
+                            "INFO",
+                        )
+                    ],
+                )
+                await session.commit()
 
             # Phase 4: Bounded Polling for Ready State
             env_poll_timeout = os.getenv("FORGEOPS_VERCEL_POLL_TIMEOUT_SECONDS")
@@ -6466,6 +6487,9 @@ async def execute_vercel_deploy(
             import time
 
             start_poll = time.monotonic()
+            last_logged_time = start_poll
+            last_logged_state = ready_state
+            last_pulse_time = start_poll
             final_data = dep_data
 
             while True:
@@ -6556,22 +6580,25 @@ async def execute_vercel_deploy(
                     )
 
                 # 5. Heartbeat callback & pipeline heartbeat pulse
-                hb_cb = _get_ctx(context, "heartbeat_callback")
-                if hb_cb is not None:
-                    try:
-                        if inspect.iscoroutinefunction(hb_cb):
-                            await hb_cb()
-                        else:
-                            hb_cb()
-                    except Exception:
-                        pass
+                now_mono = time.monotonic()
+                if now_mono - last_pulse_time >= 15.0:
+                    last_pulse_time = now_mono
+                    hb_cb = _get_ctx(context, "heartbeat_callback")
+                    if hb_cb is not None:
+                        try:
+                            if inspect.iscoroutinefunction(hb_cb):
+                                await hb_cb()
+                            else:
+                                hb_cb()
+                        except Exception:
+                            pass
 
-                pipe_hb = _get_ctx(context, "_pipeline_heartbeat")
-                if pipe_hb is not None and hasattr(pipe_hb, "pulse"):
-                    try:
-                        await pipe_hb.pulse()
-                    except Exception as pulse_err:
-                        logger.debug("Vercel polling pipeline heartbeat pulse failed: %s", pulse_err)
+                    pipe_hb = _get_ctx(context, "_pipeline_heartbeat")
+                    if pipe_hb is not None and hasattr(pipe_hb, "pulse"):
+                        try:
+                            await pipe_hb.pulse()
+                        except Exception as pulse_err:
+                            logger.debug("Vercel polling pipeline heartbeat pulse failed: %s", pulse_err)
 
                 # 6. Sleep before next poll
                 await asyncio.sleep(min(poll_interval, max(0.1, poll_timeout - elapsed)))
@@ -6593,6 +6620,19 @@ async def execute_vercel_deploy(
                             elif isinstance(poll_aliases, list):
                                 raw_aliases = poll_aliases
                             primary_alias = raw_aliases[0] if raw_aliases else None
+
+                        pct_map = {
+                            "INITIALIZING": 30,
+                            "ANALYZING": 40,
+                            "BUILDING": 60,
+                            "DEPLOYING": 80,
+                            "READY": 100,
+                        }
+                        cur_pct = pct_map.get(ready_state, 30)
+                        now_mono = time.monotonic()
+                        state_changed = ready_state != last_logged_state
+                        periodic_log = (now_mono - last_logged_time) >= 30.0
+
                         if stage_vercel:
                             stage_vercel.stage_metadata = {
                                 **(stage_vercel.stage_metadata or {}),
@@ -6600,6 +6640,33 @@ async def execute_vercel_deploy(
                                 "alias": primary_alias,
                                 "aliases": raw_aliases,
                             }
+                            stage_vercel.progress_pct = cur_pct
+                            from sqlalchemy.orm.attributes import flag_modified
+
+                            flag_modified(stage_vercel, "stage_metadata")
+                            session.add(stage_vercel)
+                            with contextlib.suppress(Exception):
+                                await session.flush()
+                                await session.commit()
+
+                        if state_changed or periodic_log:
+                            last_logged_state = ready_state
+                            last_logged_time = now_mono
+                            with contextlib.suppress(Exception):
+                                await service.append_logs(
+                                    session,
+                                    run_id=run.id,
+                                    stage_name=STAGE_VERCEL_DEPLOY,
+                                    entries=[
+                                        (
+                                            f"Vercel cloud build progress: state is '{ready_state}' "
+                                            f"({int(now_mono - start_poll)}s elapsed)...",
+                                            "INFO",
+                                        )
+                                    ],
+                                )
+                                await session.commit()
+
                         if ready_state in ("BUILDING", "INITIALIZING", "ANALYZING", "DEPLOYING"):
                             poll_interval = min(10.0, max(base_poll_interval, poll_interval * 1.25))
                         else:
@@ -6635,6 +6702,30 @@ async def execute_vercel_deploy(
                     "alias": primary_alias,
                     "aliases": raw_aliases,
                 }
+                stage_vercel.progress_pct = 100
+                from sqlalchemy.orm.attributes import flag_modified
+
+                flag_modified(stage_vercel, "stage_metadata")
+                session.add(stage_vercel)
+                with contextlib.suppress(Exception):
+                    await session.flush()
+                    await session.commit()
+
+            with contextlib.suppress(Exception):
+                await service.append_logs(
+                    session,
+                    run_id=run.id,
+                    stage_name=STAGE_VERCEL_DEPLOY,
+                    entries=[
+                        (
+                            f"Vercel cloud deployment verified as READY: {deployment_url} "
+                            f"(aliases: {', '.join(raw_aliases) or primary_alias or 'none'})",
+                            "INFO",
+                        )
+                    ],
+                )
+                await session.commit()
+
             return GateResult(
                 gate_id="",
                 passed=True,

@@ -32,6 +32,7 @@ from typing import Any
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from .autonomous_models import (
     AutonomousDeployment,
@@ -956,8 +957,6 @@ async def reconcile_and_verify_run(
 
     v_meta = dict(stage_vercel.stage_metadata or {})
     dep_id = v_meta.get("deployment_id")
-    if not dep_id:
-        return False, "No deployment ID found in 'vercel_deploy' stage metadata."
 
     # 3. Query Vercel deployment status
     v_data: dict[str, Any] = {}
@@ -966,17 +965,48 @@ async def reconcile_and_verify_run(
     if mock_data:
         v_data = mock_data
         ready_state = v_data.get("readyState", "READY")
+        if not dep_id:
+            dep_id = v_data.get("id") or "dpl_mock"
+            v_meta["deployment_id"] = dep_id
     else:
         from .autonomous_credentials import resolve_deployment_credentials
 
         creds = await resolve_deployment_credentials(session, run)
         v_tok = creds.get("vercel_token") or _get_ctx(context, "vercel_token")
         if not v_tok:
+            if not dep_id:
+                return False, "No deployment ID found in 'vercel_deploy' stage metadata."
             return False, "Cannot resolve Vercel access token to query deployment status."
 
         import httpx
 
         http_client = client or _get_ctx(context, "http_client")
+
+        # Fallback: if dep_id is missing, search Vercel deployments by project name
+        if not dep_id:
+            config = run.configuration or {}
+            v_cfg = config.get("vercel_config") or {}
+            proj_name = v_cfg.get("project_name") or run.project_name
+            if proj_name:
+                list_url = "https://api.vercel.com/v6/deployments?limit=10"
+                if http_client is not None:
+                    l_resp = await http_client.get(list_url, headers={"Authorization": f"{_AUTH_BEARER}{v_tok}"})
+                else:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as c:
+                        l_resp = await c.get(list_url, headers={"Authorization": f"{_AUTH_BEARER}{v_tok}"})
+                if l_resp.status_code == 200:
+                    deployments = l_resp.json().get("deployments", [])
+                    norm_proj = proj_name.lower().replace("_", "-")
+                    for d in deployments:
+                        d_name = (d.get("name") or "").lower().replace("_", "-")
+                        if norm_proj in d_name or d_name in norm_proj:
+                            dep_id = d.get("uid") or d.get("id")
+                            v_meta["deployment_id"] = dep_id
+                            break
+
+        if not dep_id:
+            return False, "No deployment ID found in 'vercel_deploy' stage metadata or Vercel project."
+
         if http_client is not None:
             resp = await http_client.get(
                 f"https://api.vercel.com/v13/deployments/{dep_id}",
@@ -1023,9 +1053,12 @@ async def reconcile_and_verify_run(
             "timed_out": False,
             "is_provider_timeout": False,
             "provider_build_error": False,
+            "live": True,
+            "simulated": False,
         }
     )
     stage_vercel.stage_metadata = v_meta
+    flag_modified(stage_vercel, "stage_metadata")
     stage_vercel.status = "succeeded"
     stage_vercel.progress_pct = 100
     stage_vercel.error_message = None
@@ -1081,6 +1114,7 @@ async def reconcile_and_verify_run(
                 "verified_at": datetime.now(UTC).isoformat(),
                 "reconciled": True,
             }
+            flag_modified(stage_g7, "stage_metadata")
             session.add(stage_g7)
 
             run.outbox_sequence_counter += 1
