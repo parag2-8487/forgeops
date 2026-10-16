@@ -6,7 +6,8 @@
 .DESCRIPTION
     One entry point for "make this run on that PC". It installs what is missing, generates the
     secrets the application refuses to boot without, picks ports that are actually free, starts the
-    nine services in dependency order, provisions the identity provider, applies the migrations, and
+    thirteen services in dependency order (including backend-agent, inngest, ollama and ollama-secondary),
+    provisions the identity provider, applies the migrations, and
     then PROVES the result by reading /health/ready rather than by reporting that `up` returned zero.
 
     It is safe to run repeatedly. Every step checks the state it wants before changing anything, and
@@ -57,7 +58,7 @@
     Also delete the images this project built locally, so they are rebuilt from source.
 
 .PARAMETER Rebuild
-    Force a rebuild of the backend, frontend and agent images even if they already exist.
+    Force a rebuild of the backend, backend-agent, worker, frontend and agent images even if they already exist.
 
 .EXAMPLE
     .\scripts\start-forgeops.ps1
@@ -389,19 +390,39 @@ if (-not $engine.Ok) {
         $root = Split-Path -Parent (Split-Path -Parent $binDir)        # ...\DockerDesktop
         if ($root) { $derived = Join-Path $root 'Docker Desktop.exe' }
     }
+    $regPaths = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Docker Desktop.exe',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Docker Desktop.exe'
+    )
+    $regDesktop = $null
+    foreach ($rp in $regPaths) {
+        if (Test-Path $rp) {
+            $val = (Get-ItemProperty -Path $rp -ErrorAction SilentlyContinue).'(default)'
+            if ($val -and (Test-Path -LiteralPath $val)) { $regDesktop = $val; break }
+        }
+    }
     $desktop = @(
+        $regDesktop,
         $derived,
         (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'),
         (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
-        (Join-Path ${env:ProgramFiles(x86)} 'Docker\Docker\Docker Desktop.exe')
+        (Join-Path ${env:ProgramFiles(x86)} 'Docker\Docker\Docker Desktop.exe'),
+        (if ($env:ProgramW6432) { Join-Path $env:ProgramW6432 'Docker\Docker\Docker Desktop.exe' })
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 
-    if (-not $desktop) {
+    $ddProcess = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue
+    if ($ddProcess) {
+        Write-Info 'Docker Desktop process is already active; waiting for the container engine to respond...'
+    } elseif ($desktop) {
+        Write-Info ("launching Docker Desktop from {0}..." -f $desktop)
+        Start-Process -FilePath $desktop | Out-Null
+    } else {
         Stop-WithAdvice -Problem 'the Docker engine is not running and Docker Desktop was not found.' -Advice @(
-            'Start Docker Desktop manually, wait for the whale icon to stop animating, and retry.'
+            'Start Docker Desktop manually, wait for the whale icon to stop animating, and retry.',
+            'If Docker Desktop is not installed, install it with: winget install Docker.DockerDesktop'
         )
     }
-    Start-Process -FilePath $desktop | Out-Null
+
     Write-Info 'waiting for the engine (up to 4 minutes; a cold start is slow)'
     $engineUp = $false
     for ($i = 1; $i -le 48; $i++) {
@@ -455,7 +476,7 @@ $LauncherPython = $null
 function Test-PythonHasProvisioningDeps {
     param([Parameter(Mandatory)][string]$PythonExe)
     if (-not (Test-Path -LiteralPath $PythonExe)) { return $false }
-    $probe = Invoke-Native -Command ('"{0}" -c "import httpx, pytest, pytest_asyncio, cryptography"' -f $PythonExe) -Quiet
+    $probe = Invoke-Native -Command ('"{0}" -c "import httpx, cryptography"' -f $PythonExe) -Quiet
     return $probe.Ok
 }
 
@@ -474,12 +495,12 @@ if (Test-PythonHasProvisioningDeps -PythonExe $BackendVenvPython) {
         "Ignoring <package>: markers ... require a different python version", which reads like a
         broken lock file rather than a wrong interpreter. Checking the version here says it plainly.
     #>
-    foreach ($candidate in @('py -3.13', 'python3.13', 'python', 'python3')) {
+    foreach ($candidate in @('py -3.13', 'py -3.12', 'py -3.11', 'python3.13', 'python3.12', 'python3.11', 'python', 'python3', 'py')) {
         $probe = Invoke-Native -Command ("{0} -c ""import sys; print(sys.version_info[0], sys.version_info[1])""" -f $candidate) -Quiet
         if ($probe.Ok) {
             $parts = $probe.Lines[0].Trim() -split '\s+'
-            if ([int]$parts[0] -eq 3 -and [int]$parts[1] -eq 13) { $basePython = $candidate; break }
-            Write-Info ("{0} is {1}.{2}; this project needs 3.13" -f $candidate, $parts[0], $parts[1])
+            if ([int]$parts[0] -eq 3 -and [int]$parts[1] -ge 10) { $basePython = $candidate; break }
+            Write-Info ("{0} is {1}.{2}; launcher needs Python >= 3.10" -f $candidate, $parts[0], $parts[1])
         }
     }
 
@@ -519,13 +540,28 @@ if (Test-PythonHasProvisioningDeps -PythonExe $BackendVenvPython) {
     $up = Invoke-Native -Command ('"{0}" -m pip install --quiet --upgrade pip' -f $VenvPython)
     if (-not $up.Ok) { Write-Warn2 'could not upgrade pip; continuing' }
     $req = Join-Path $RepoRoot 'backend\requirements-dev.lock'
-    $inst = Invoke-Native -Command ('"{0}" -m pip install --quiet --require-hashes -r "{1}"' -f $VenvPython, $req)
-    if (-not $inst.Ok) {
-        Stop-WithAdvice -Problem 'the pinned dependency installation failed.' -Advice @(
-            $inst.Output, '',
-            'This step needs internet access. If you are behind a proxy, set HTTPS_PROXY and retry.'
-        )
+    $lockInstalled = $false
+    $is313 = Invoke-Native -Command ('"{0}" -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)"' -f $VenvPython) -Quiet
+    if ($is313.Ok -and (Test-Path -LiteralPath $req)) {
+        $instLock = Invoke-Native -Command ('"{0}" -m pip install --quiet --require-hashes -r "{1}"' -f $VenvPython, $req)
+        if ($instLock.Ok) { $lockInstalled = $true }
     }
+    if (-not $lockInstalled) {
+        Write-Info 'installing required launcher modules (httpx, cryptography)'
+        $inst = Invoke-Native -Command ('"{0}" -m pip install --quiet httpx cryptography' -f $VenvPython)
+        if (-not $inst.Ok) {
+            Stop-WithAdvice -Problem 'the launcher dependency installation failed.' -Advice @(
+                $inst.Output, '',
+                'This step needs internet access. If you are behind a proxy, set HTTPS_PROXY and retry.'
+            )
+        }
+    }
+
+
+
+
+
+
     if (-not (Test-PythonHasProvisioningDeps -PythonExe $VenvPython)) {
         Stop-WithAdvice -Problem 'the virtual environment is missing the modules provisioning needs.'
     }
@@ -631,9 +667,13 @@ $Ports = [ordered]@{
     CERBOS_HTTP_PORT= Resolve-Port -Key 'CERBOS_HTTP_PORT'-Fallback 13592 -Label 'cerbos'
     AUTHENTIK_PORT  = Resolve-Port -Key 'AUTHENTIK_PORT'  -Fallback 19000 -Label 'authentik'
     FRONTEND_PORT   = Resolve-Port -Key 'FRONTEND_PORT'   -Fallback 13000 -Label 'frontend'
-    BACKEND_PORT    = Resolve-Port -Key 'BACKEND_PORT'    -Fallback 18000 -Label 'backend'
+    BACKEND_PORT         = Resolve-Port -Key 'BACKEND_PORT'         -Fallback 18000 -Label 'backend'
+    AGENT_TLS_HOST_PORT  = Resolve-Port -Key 'AGENT_TLS_HOST_PORT'  -Fallback 18443 -Label 'agent_tls'
+    INNGEST_PORT         = Resolve-Port -Key 'INNGEST_PORT'         -Fallback 8288  -Label 'inngest'
+    OLLAMA_PORT          = Resolve-Port -Key 'OLLAMA_PORT'          -Fallback 11434 -Label 'ollama'
+    OLLAMA_SECONDARY_PORT= Resolve-Port -Key 'OLLAMA_SECONDARY_PORT'-Fallback 11435 -Label 'ollama_secondary'
 }
-foreach ($k in $Ports.Keys) { Write-Ok ("{0,-17} {1}" -f $k, $Ports[$k]) }
+foreach ($k in $Ports.Keys) { Write-Ok ("{0,-23} {1}" -f $k, $Ports[$k]) }
 
 # --- 5. .env -------------------------------------------------------------------------------------
 
@@ -789,7 +829,7 @@ if ($caPresent) {
 # --- 7. Images -----------------------------------------------------------------------------------
 
 Write-Head 'Build and start'
-Write-Step 'Building the backend, worker, frontend and agent images'
+Write-Step 'Building the backend, backend-agent, worker, frontend and agent images'
 
 $needBuild = $Rebuild -or $apiBaseChanged
 if (-not $needBuild) {
@@ -852,7 +892,7 @@ if ($needBuild) {
     # rather than in compose so a build outside this script still records something.
     $head = (Invoke-Native -Command 'git rev-parse HEAD' -Quiet).Output
     if ($head) { $env:GIT_COMMIT = $head.Trim() }
-    $build = Invoke-Compose -Arguments 'build backend worker frontend agent'
+    $build = Invoke-Compose -Arguments 'build backend backend-agent worker frontend agent'
     if (-not $build.Ok) {
         Stop-WithAdvice -Problem 'the image build failed.' -Advice @(
             ($build.Lines | Select-Object -Last 30) -join [Environment]::NewLine
@@ -865,9 +905,9 @@ if ($needBuild) {
 
 # --- 8. Infrastructure ---------------------------------------------------------------------------
 
-Write-Step 'Starting postgres, redis, opa and cerbos'
+Write-Step 'Starting postgres, redis, opa, cerbos and inngest'
 
-$infra = Invoke-Compose -Arguments 'up -d --wait postgres redis opa cerbos'
+$infra = Invoke-Compose -Arguments 'up -d --wait postgres redis opa cerbos inngest'
 if (-not $infra.Ok) {
     Stop-WithAdvice -Problem 'the infrastructure services did not become healthy.' -Advice @(
         ($infra.Lines | Select-Object -Last 25) -join [Environment]::NewLine, '',
@@ -875,7 +915,7 @@ if (-not $infra.Ok) {
         ("    docker compose {0} logs postgres" -f $ComposeFiles)
     )
 }
-Write-Ok 'postgres, redis, opa and cerbos are healthy'
+Write-Ok 'postgres, redis, opa, cerbos and inngest are healthy'
 
 # The model server, started here rather than with the application because its first run PULLS two models
 # and the wait belongs before the parts that depend on it.
@@ -890,13 +930,22 @@ Write-Ok 'postgres, redis, opa and cerbos are healthy'
 # falls back to the template library and says so in the run row — and refusing to start over a model pull
 # would make the whole platform unavailable because one optional component could not fetch a blob. So this
 # warns and continues, which is the difference between a degraded stack and a failed one.
-Write-Step 'Starting the model server'
+Write-Step 'Starting the model servers (ollama and ollama-secondary)'
+Write-Info 'starting ollama primary model server'
 $model = Invoke-Compose -Arguments 'up -d --wait ollama' -Quiet
 if ($model.Ok) {
-    Write-Ok 'the model server is ready and its models are pulled'
+    Write-Ok 'the ollama model server is ready and its models are pulled'
+    Write-Info 'starting ollama secondary model server'
+    $modelSecondary = Invoke-Compose -Arguments 'up -d --wait ollama-secondary' -Quiet
+    if ($modelSecondary.Ok) {
+        Write-Ok 'ollama-secondary model server is ready'
+    } else {
+        Write-Warn2 'ollama-secondary did not become healthy; continuing'
+    }
 } else {
-    Write-Info 'the model server did not become healthy; generation will use the template library'
-    Write-Info ("    docker compose {0} logs ollama" -f $ComposeFiles)
+    Write-Warn2 'the model server did not become healthy; generation will use the template library'
+    Write-Warn2 ("    docker compose {0} logs ollama" -f $ComposeFiles)
+    Invoke-Compose -Arguments 'up -d ollama ollama-secondary' -Quiet | Out-Null
 }
 
 Write-Step "Ensuring Authentik's database exists"
@@ -1239,7 +1288,7 @@ Write-Ok 'the schema is at head'
 
 # --- 11. Application -----------------------------------------------------------------------------
 
-Write-Step 'Starting the backend, worker, frontend and agent'
+Write-Step 'Starting the backend, backend-agent, worker, frontend and agent'
 
 # See the note beside Get-EnvHash: Compose bakes env_file values in at CREATE time, so when .env has
 # changed during this run the containers must be REPLACED, not merely started. Without this a
@@ -1251,7 +1300,7 @@ if ($envHashAfter -ne $envHashBefore) {
     $recreate = ' --force-recreate'
 }
 
-$app = Invoke-Compose -Arguments ('up -d --wait' + $recreate + ' backend worker frontend agent')
+$app = Invoke-Compose -Arguments ('up -d --wait' + $recreate + ' backend backend-agent worker frontend agent')
 if (-not $app.Ok) {
     Write-Warn2 'compose reported a problem; checking readiness directly before giving up'
 }
@@ -1449,7 +1498,7 @@ Write-Host ''
 Write-Host '  Useful commands:' -ForegroundColor White
 Write-Host ("      stop            docker compose {0} stop" -f $ComposeFiles) -ForegroundColor DarkGray
 Write-Host ("      logs            docker compose {0} logs -f backend" -f $ComposeFiles) -ForegroundColor DarkGray
-Write-Host ("      wipe and redo   .\start.cmd -Fresh") -ForegroundColor DarkGray
+Write-Host ("      wipe and redo   .\setup.ps1 -Fresh (or .\start.cmd -Fresh)") -ForegroundColor DarkGray
 Write-Host ''
 
 if (-not $NoBrowser) {
