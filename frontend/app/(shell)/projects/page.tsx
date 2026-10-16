@@ -58,6 +58,11 @@ export default function ProjectsPage() {
     queryKey: queryKeys.projects.filtered(filters),
     queryFn: () => api.get<ProjectPage>(`/projects?${params.toString()}`),
     retry: false,
+    refetchInterval: (query) => {
+      const list = query.state.data?.projects ?? [];
+      const hasUnscanned = list.some((p) => p.indexed_file_count === 0);
+      return hasUnscanned ? 3_000 : 30_000;
+    },
   });
 
   // The tenant's whole tag vocabulary, so the filter is a set of chips rather than a free-text box

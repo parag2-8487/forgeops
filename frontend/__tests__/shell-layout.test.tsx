@@ -57,6 +57,9 @@ describe("AppSidebar", () => {
     ["/analysis", "Plan analysis"],
     ["/models", "Model tiers"],
     ["/audit", "Audit"],
+    // Settings rather than a feature: a GitHub link belongs to the person and outlives every project
+    // made with it, so it is inspected and revoked from here.
+    ["/settings/integrations", "Integrations"],
   ] as const;
 
   it("renders one navigation link per route, in order", () => {

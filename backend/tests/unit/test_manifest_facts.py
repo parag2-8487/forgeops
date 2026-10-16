@@ -405,3 +405,59 @@ def test_a_dockerfile_with_no_from_is_not_pinned() -> None:
 
 def test_a_commented_from_is_not_read() -> None:
     assert dockerfile_base_pinned("# FROM alpine\nFROM alpine:3.20\n") is True
+
+
+class TestABuildArgumentAnywhereInTheReferenceIsNotPinned:
+    """A tag supplied at build time is exactly as unpinned as a whole image supplied at build time.
+
+    HOW THIS WAS FOUND. The predicate refused `FROM $BASE_IMAGE` and was written to. It was tested by
+    asking `qwen2.5-coder:7b` for a Dockerfile and reading what SATISFIED it:
+
+        FROM node:$NODE_VERSION AS builder
+
+    which passed, because the guard was `image.startswith("$")` and here the reference starts with
+    `node:`. The gate then reported the run as accepted, so the score claimed a property the file does
+    not establish -- the failure mode that is worse than having no check, because nobody is looking.
+
+    The worst form passes the old guard too: `ARG V` with no default and `FROM node:$V` resolves to
+    `node:` and builds nothing reproducible.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "body"),
+        [
+            (
+                "a build arg in the tag",
+                "ARG NODE_VERSION=22\nFROM node:$NODE_VERSION AS builder\nRUN true\n"
+                "FROM node:$NODE_VERSION\nCOPY --from=builder /app /app\nUSER 10001\n",
+            ),
+            (
+                "a braced build arg in the tag",
+                "ARG V=22\nFROM node:${V} AS builder\nRUN true\nFROM node:${V}\nUSER 10001\n",
+            ),
+            (
+                "a build arg with no default at all",
+                "ARG V\nFROM node:$V\nUSER 10001\n",
+            ),
+            (
+                "a build arg in the repository part",
+                "ARG REG=docker.io\nFROM $REG/node:22\nUSER 10001\n",
+            ),
+        ],
+    )
+    def test_it_is_refused(self, label: str, body: str) -> None:
+        assert dockerfile_base_pinned(body) is False, label
+
+    def test_a_real_pin_is_still_accepted(self) -> None:
+        """NON-VACUITY. Refusing every `FROM` would satisfy the rows above and break the check."""
+        assert dockerfile_base_pinned(
+            "FROM node:22-slim AS builder\nRUN true\nFROM node:22-slim\nCOPY --from=builder /app /app\nUSER 10001\n"
+        )
+        assert dockerfile_base_pinned("FROM node@sha256:" + "a" * 64 + "\nUSER 10001\n")
+
+    def test_a_dollar_elsewhere_in_the_file_is_not_the_subject(self) -> None:
+        """Only the FROM reference is judged. A `$` in a RUN or CMD is ordinary shell and says nothing
+        about what the image is built on."""
+        assert dockerfile_base_pinned(
+            'FROM node:22-slim\nRUN echo "$HOME"\nUSER 10001\nCMD ["sh", "-c", "node server.js --port $PORT"]\n'
+        )

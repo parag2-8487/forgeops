@@ -24,13 +24,13 @@ RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 # CRITICAL: Both public variables MUST be declared as ARG and converted to ENV
 # BEFORE pnpm build. NEXT_PUBLIC_* is inlined into the client bundle at build
 # time — runtime-only environment variables are NOT sufficient.
-ARG NEXT_PUBLIC_API_BASE_URL
-ARG NEXT_PUBLIC_APP_NAME
+ARG NEXT_PUBLIC_API_BASE_URL="http://localhost:18000/api/v1"
+ARG NEXT_PUBLIC_APP_NAME="ForgeOps"
 
 # Convert ARG to ENV so they are visible to the `pnpm build` process.
 # This MUST happen BEFORE the build step.
-ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
-ENV NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME}
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:18000/api/v1}
+ENV NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME:-ForgeOps}
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

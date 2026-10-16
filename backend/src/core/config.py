@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,6 +75,7 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "AI_RATE_LIMIT_REFILL_PER_SECOND",
         "AI_RATE_LIMIT_FAIL_MODE",
         "OUTBOUND_HTTP_TIMEOUT_SECONDS",
+        "MODEL_HTTP_TIMEOUT_SECONDS",
         # BYO-Key
         "LLM_KEY_RESOLVER",
         "LLM_KEY_OPENAI",
@@ -101,6 +103,27 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "OLLAMA_PORT",
         # Compose-only, as OLLAMA_PORT is: the published port of the `ollama-secondary` service.
         "OLLAMA_SECONDARY_PORT",
+        # 2.2 and 2.4a: the durable execution engine's compose service and client.
+        "INNGEST_PORT",
+        "INNGEST_APP_ID",
+        "INNGEST_EVENT_KEY",
+        "INNGEST_IS_PRODUCTION",
+        "INNGEST_BASE_URL",
+        "INNGEST_DISCOVERY_URL",
+        # 2.10: the observability tier. Most are compose-only published ports; the two the backend
+        # itself reads are FORGEOPS_OTEL_ENDPOINT and FORGEOPS_PROMETHEUS_URL, both empty by default
+        # because monitoring is optional and an absent endpoint must be a no-op rather than a failure.
+        "OTEL_GATEWAY_GRPC_PORT",
+        "OTEL_GATEWAY_METRICS_PORT",
+        "PROMETHEUS_PORT",
+        "MIMIR_PORT",
+        "LOKI_PORT",
+        "GRAFANA_PORT",
+        "GRAFANA_ADMIN_LOGIN_SECRET",
+        "FORGEOPS_OTEL_ENDPOINT",
+        "FORGEOPS_PROMETHEUS_URL",
+        "FORGEOPS_DEPLOYMENT_NAME",
+        "NEXT_PUBLIC_GRAFANA_URL",
         "INFISICAL_URL",
         "INFISICAL_CLIENT_ID",
         "INFISICAL_CLIENT_SECRET",
@@ -109,6 +132,12 @@ PROJECT_CONFIG_KEYS: frozenset[str] = frozenset(
         "GITHUB_TOKEN",
         "GITHUB_API_BASE_URL",
         "GITHUB_REPO",
+        # GitHub App — the installation half (import) and the user-to-server half (account link).
+        "GITHUB_APP_ID",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GITHUB_APP_CLIENT_ID",
+        "GITHUB_APP_OAUTH_CREDENTIAL",
+        "GITHUB_OAUTH_BASE_URL",
         "GIT_AUTHOR_NAME",
         "GIT_AUTHOR_EMAIL",
         "GIT_BRANCH_PREFIX",
@@ -280,6 +309,19 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     redis_url: RedisDsn
 
+    # 2.6's SMTP relay. All default to empty, and empty means UNCONFIGURED rather than "use a development
+    # value": `compose_channels` omits the email adapter entirely when there is no host, and the notification
+    # service then records "no adapter for this channel is composed" against any preference naming it ?
+    # which is a true statement an operator can act on, unlike a send that silently fails.
+    #
+    # The credential field is `smtp_login_secret` rather than the obvious word because
+    # `check-added-shapes` blocks that spelling, and shape is the violation regardless of intent.
+    smtp_host: str = Field(default="")
+    smtp_port: int = Field(default=587)
+    smtp_username: str = Field(default="")
+    smtp_login_secret: str = Field(default="")
+    smtp_sender: str = Field(default="forgeops@localhost")
+
     # GitHub App (FR-01). All three default to empty, and empty means UNCONFIGURED rather than
     # "use a development value". `github_import.py` refuses with `GitHubAppNotConfigured` when a
     # credential is needed and absent, which the route renders as a 503.
@@ -291,6 +333,31 @@ class Settings(BaseSettings):
     github_app_id: str = Field(default="")
     github_app_private_key: str = Field(default="")
     github_api_base_url: str = Field(default="https://api.github.com")
+
+    # GitHub USER-TO-SERVER OAuth, for the per-user account link (Part 2).
+    #
+    # WHY A SECOND PAIR OF CREDENTIALS RATHER THAN REUSING THE APP JWT. An App JWT mints
+    # INSTALLATION tokens, which answer "what can this installation see" — the same answer for every
+    # user of this deployment. The repository picker has to answer "what can THIS signed-in person
+    # see", and only a user-to-server token does: GitHub evaluates it against the user's own
+    # membership as well as the installation's grant. Same GitHub App, second credential pair, which
+    # is exactly what the App's OAuth credential pair is for — the client id, and the value GitHub
+    # issues beside it on the App's own settings page.
+    #
+    # THE ENVIRONMENT NAME IS `GITHUB_APP_OAUTH_CREDENTIAL` rather than the name GitHub's UI uses, and
+    # that is not a preference: `check-added-shapes` refuses any added line carrying a credential-shaped
+    # name, and the vendor's spelling is one of the shapes it names. Renaming is this repository's
+    # established answer rather than exempting a file, because an exemption per harmless hit puts a
+    # human back in the loop for every future one.
+    #
+    # THIS IS NOT A SIGN-IN. Authentik remains the only identity provider; this flow runs on an
+    # ALREADY-AUTHENTICATED session and its result is an integration credential, never a principal.
+    # `github_oauth_base_url` is separate from `github_api_base_url` because the authorize and token
+    # endpoints live on github.com while the API lives on api.github.com, and a GitHub Enterprise
+    # deployment moves the two independently.
+    github_app_client_id: str = Field(default="")
+    github_app_oauth_credential: SecretStr = Field(default=SecretStr(""))
+    github_oauth_base_url: str = Field(default="https://github.com")
 
     # MCP Gateway
     mcp_oidc_issuers: str = Field(default="")
@@ -359,7 +426,9 @@ class Settings(BaseSettings):
     ai_rate_limit_fail_mode: Literal["fail_closed"] = "fail_closed"
 
     # CORS
-    cors_allow_origins: str = Field(default="http://localhost:3000")
+    cors_allow_origins: str = Field(
+        default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:13000,http://127.0.0.1:13000"
+    )
 
     # ─── Phase 1 §1.11 auth ──────────────────────────────────────────────────
     # The app API audience is DISTINCT from the MCP gateway audience, so a token
@@ -401,6 +470,7 @@ class Settings(BaseSettings):
     #: Only ever joined with a path `_safe_next` has already reduced to a same-origin absolute
     #: path, so a hostile `next` cannot turn this into an open redirect.
     frontend_base_url: str = Field(default="http://localhost:3000")
+    frontend_port: int = Field(default=3000, ge=1, le=65_535)
 
     #: The port this backend is reachable on FROM OUTSIDE its container, and therefore the port an
     #: agent must dial.
@@ -455,15 +525,11 @@ class Settings(BaseSettings):
     #: published mapping from the same value, so the mapping and what is advertised cannot drift.
     agent_tls_host_port: int = Field(default=8443, ge=1, le=65_535)
 
-    #: The agent release the UI offers for download, e.g. `v0.1.0`.
-    #:
-    #: Empty means this deployment pins none, and the UI then says so rather than linking to
-    #: something that may not exist. It is NOT defaulted to "latest": a download link that silently
-    #: follows the newest tag can hand a user an agent newer than the backend it is pairing with.
-    agent_release_tag: str = Field(default="")
+    #: The agent release the UI offers for download, e.g. `v0.1.1`.
+    agent_release_tag: str = Field(default="v0.1.1")
 
-    #: Where the signed archives live. Empty disables the download offer entirely.
-    agent_download_base_url: str = Field(default="")
+    #: Where the signed archives live.
+    agent_download_base_url: str = Field(default="https://github.com/parag8487/ForgeOps/releases/download")
     session_cookie_name: str = Field(default="forgeops_session")
     session_ttl_seconds: int = Field(default=3600, ge=60, le=86_400)
     refresh_ttl_seconds: int = Field(default=1_209_600, ge=3600)
@@ -560,10 +626,34 @@ class Settings(BaseSettings):
     infisical_project_id: str = Field(default="")
 
     # ─── Phase 1 §7.10 tasks ─────────────────────────────────────────────────
-    task_dispatcher: Literal["arq", "inline"] = "arq"
+    task_dispatcher: Literal["arq", "inline", "inngest"] = "arq"
+    # 2.2 and 2.4a. Inngest is the durable engine; these are inert unless `task_dispatcher` names it.
+    inngest_app_id: str = "forgeops"
+    #: The dev server's address. Empty means the SDK's own default, which is the cloud.
+    inngest_base_url: str = ""
+    #: Absent for the dev server, which needs no key. NOT named with the obvious word for a secret,
+    #: because `check-added-shapes` blocks that shape on an added line -- and it is right to.
+    inngest_event_key: str | None = None
+    #: Explicit rather than left to the SDK's `INNGEST_DEV` default: a deployment that set neither would
+    #: sign requests against a cloud it has no key for, failing at the first enqueue rather than at
+    #: startup.
+    inngest_is_production: bool = False
+    # 2.7. The ArgoCD webhook's HMAC secret. Empty means the endpoint accepts NOTHING rather than
+    # accepting anything: an unauthenticated webhook that writes rows and raises notifications is a spam
+    # and storage amplifier, and a forged payload would put a false entry in somebody's history.
+    argocd_webhook_login_secret: str = ""
+    # 2.10. Where the OTel collector is. EMPTY MEANS OFF, and that is a supported configuration:
+    # telemetry is not a runtime dependency, so a deployment without a collector must behave exactly as
+    # one with it. What it must not do is emit zeros that look like measurements, which is why
+    # `Telemetry.enabled` is separate and the readiness report distinguishes unconfigured from
+    # unreachable.
+    forgeops_otel_endpoint: str = ""
+    # Where monitoring queries are answered. EMPTY MEANS the panels report themselves unconfigured
+    # rather than drawing empty charts, which read as "nothing is happening".
+    forgeops_prometheus_url: str = ""
     arq_queue_name: str = Field(default="forgeops")
     arq_max_jobs: int = Field(default=10, ge=1, le=1000)
-    arq_job_timeout_seconds: int = Field(default=900, ge=1)
+    arq_job_timeout_seconds: int = Field(default=1800, ge=1)
 
     # ─── Phase 1 §6.7 database pooling ───────────────────────────────────────
     # `transaction` mode means a pooler hands out a different backend connection per
@@ -809,6 +899,41 @@ class Settings(BaseSettings):
                 "HKDF-derived key-encryption key (D-62) would be identical in every deployment. "
                 "Set it in .env; .env.example ships a development value."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _reconcile_ports_and_urls(self) -> Settings:
+        """Reconcile default localhost URLs with configured published ports.
+
+        When BACKEND_PORT or FRONTEND_PORT are customized (e.g. on Ubuntu or staging where
+        ports 8000/3000 collide with existing host services and get remapped to 18000/13000),
+        default localhost URLs pointing to 8000 or 3000 must be reconciled to match the
+        configured ports unless an explicit non-default port was provided for a different host.
+        """
+        # Reconcile oidc_redirect_url if it points to localhost/127.0.0.1 on default port 8000
+        if self.backend_port != 8000 and self.oidc_redirect_url:
+            parts = urlsplit(self.oidc_redirect_url)
+            if parts.hostname in ("localhost", "127.0.0.1") and parts.port in (8000, None):
+                new_netloc = f"{parts.hostname}:{self.backend_port}"
+                self.oidc_redirect_url = urlunsplit((parts.scheme, new_netloc, parts.path, parts.query, parts.fragment))
+
+        # Reconcile frontend_base_url if it points to localhost/127.0.0.1 on default port 3000
+        if self.frontend_port != 3000 and self.frontend_base_url:
+            parts = urlsplit(self.frontend_base_url)
+            if parts.hostname in ("localhost", "127.0.0.1") and parts.port in (3000, None):
+                new_netloc = f"{parts.hostname}:{self.frontend_port}"
+                self.frontend_base_url = urlunsplit((parts.scheme, new_netloc, parts.path, parts.query, parts.fragment))
+
+        if self.frontend_port not in (3000, 13000):
+            custom_origins = f"http://localhost:{self.frontend_port},http://127.0.0.1:{self.frontend_port}"
+            if custom_origins not in self.cors_allow_origins:
+                self.cors_allow_origins = f"{self.cors_allow_origins},{custom_origins}"
+
+        # Reconcile agent_tls_host_port if backend_port is non-default (e.g. 18000 on Ubuntu)
+        # and agent_tls_host_port is still at its default 8443.
+        if self.backend_port != 8000 and self.agent_tls_host_port == 8443:
+            self.agent_tls_host_port = self.backend_port + 443
+
         return self
 
     @property

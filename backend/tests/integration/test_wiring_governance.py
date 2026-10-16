@@ -31,6 +31,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.mandatory]
 
 @wires(
     "governance_chokepoint",
+    "chokepoint",
     "governance_policy",
     "command_sink",
     "envelope_sequencer",
@@ -41,6 +42,7 @@ class TestTheChokepointIsComposedFromTheRealCollaborators:
         from src.governance.chokepoint import GovernanceChokepoint
 
         assert isinstance(production_app.state.governance_chokepoint, GovernanceChokepoint)
+        assert production_app.state.chokepoint is production_app.state.governance_chokepoint
 
     async def test_it_shares_the_composed_audit_writer(self, production_app: FastAPI) -> None:  # noqa: F811
         """Not a second writer. Q-04's "same transaction" only holds if the record the chokepoint

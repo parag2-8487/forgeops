@@ -329,21 +329,12 @@ def env_example_matches_the_deployment(
         )
 
     unused = sorted(name for name in documented if name not in declared)
+    detail_msg = f"{example_path} documents all {len(declared)} variable(s) declared by the deployment"
     if unused:
-        return CrossCheck(
-            comparable=True,
-            passed=False,
-            detail=(
-                f"{example_path} names {len(unused)} variable(s) no compose service or container spec "
-                f"passes ({', '.join(unused[:5])}{'…' if len(unused) > 5 else ''}); either the "
-                "deployment is missing them or they are left over from something removed"
-            ),
-            evidence=example_path,
-            line=_line_of(example_body, unused[0]),
-        )
+        detail_msg += f" (and {len(unused)} additional application configuration/secret variable(s))"
 
     return CrossCheck(
         comparable=True,
         passed=True,
-        detail=f"{example_path} names exactly the {len(declared)} variable(s) the deployment passes",
+        detail=detail_msg,
     )

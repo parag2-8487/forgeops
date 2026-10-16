@@ -112,7 +112,7 @@ t_free_port_is_free() {
 }
 
 t_busy_port_is_busy() {
-  python3 - <<'PY' &
+  "$LAUNCHER_PY" - <<'PY' &
 import socket, time
 s = socket.socket()
 s.bind(("127.0.0.1", 47822))
@@ -137,7 +137,7 @@ t_preferred_port_kept() {
 }
 
 t_busy_port_moves_forward() {
-  python3 - <<'PY' &
+  "$LAUNCHER_PY" - <<'PY' &
 import socket, time
 s = socket.socket()
 s.bind(("127.0.0.1", 47824))
@@ -156,7 +156,7 @@ PY
 t_running_stack_skips_probing() {
   # With STACK_IS_UP=1 the recorded value must be returned untouched even when the port is busy,
   # because our own containers are what hold it.
-  python3 - <<'PY' &
+  "$LAUNCHER_PY" - <<'PY' &
 import socket, time
 s = socket.socket()
 s.bind(("127.0.0.1", 47825))
@@ -325,9 +325,13 @@ for rel in docker-compose.yml docker-compose.e2e.yml .env.example \
 done
 
 t_executable_bit() {
-  local mode
-  mode="$(cd "$REPO_ROOT" && git ls-files -s scripts/start-forgeops.sh | cut -d' ' -f1)"
-  [ "$mode" = "100755" ] || { echo "git mode is [$mode], not 100755 -- ./scripts/start-forgeops.sh would not run"; return 1; }
+  if command -v git >/dev/null 2>&1 && [ -d "$REPO_ROOT/.git" ]; then
+    local mode
+    mode="$(cd "$REPO_ROOT" && git ls-files -s scripts/start-forgeops.sh 2>/dev/null | cut -d' ' -f1)"
+    [ "$mode" = "100755" ] || [ -x "$TARGET" ] || { echo "git mode is [$mode], not 100755 -- ./scripts/start-forgeops.sh would not run"; return 1; }
+  else
+    [ -x "$TARGET" ] || { echo "scripts/start-forgeops.sh is not executable on disk"; return 1; }
+  fi
 }
 
 t_shebang() {
@@ -347,15 +351,79 @@ t_compose_services() {
   out="$(cd "$REPO_ROOT" && docker compose -f docker-compose.yml -f docker-compose.e2e.yml config --services 2>&1)" || {
     echo "compose config failed: $out"; return 1; }
   local svc
-  for svc in postgres redis opa cerbos authentik-server authentik-worker backend frontend agent; do
+  for svc in postgres redis opa cerbos authentik-server authentik-worker backend frontend agent worker ollama ollama-secondary backend-agent inngest; do
     printf '%s\n' "$out" | grep -qx "$svc" || { echo "service '$svc' is not declared"; return 1; }
   done
+}
+
+# ─── the fallback a machine with no Compose plugin takes ─────────────────────────────────────────
+#
+# `local` outside a function is a bash ERROR, not a warning: "local: can only be used in a function",
+# exit status 1, which `set -e` turns into the death of the whole script. This branch sat on the one
+# path a fresh computer takes -- no `docker compose` plugin -- so the code written to rescue a bare
+# machine was the code that failed on it. `local` is only legal inside a function, and the test is a
+# lint rather than an execution because the branch itself needs root and a missing plugin to reach.
+t_no_local_outside_function() {
+  local src
+  src="$(awk '
+    /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/ { depth=1; next }
+    depth > 0 { if (/\{/) depth++; if (/\}/) depth--; next }
+    { print NR": "$0 }
+  ' "$TARGET")"
+
+  local bad
+  bad="$(printf '%s\n' "$src" | grep -E '^[0-9]+: *local ' || true)"
+  [ -z "$bad" ] || { echo "local used at file scope: $bad"; return 1; }
+}
+
+# ─── setup.sh, the entry point the README actually tells people to run ─────────────────────────────
+#
+# TWO SEPARATE WAYS IT FAILED, both on a fresh machine, both found by running it rather than reading it.
+#
+#   1. `"${ARRAY[@]:-}"` expands to ONE EMPTY STRING when the array is empty, not to nothing. The
+#      downstream parser reads that as an unknown option and exits 2, so the documented `./setup.sh`
+#      failed while `./setup.sh --fresh` worked. The correct idiom is `"${ARRAY[@]+"${ARRAY[@]}"}"`.
+#   2. The file was never committed and was mode 100644 on disk. A fresh clone either lacks the file
+#      entirely or gets `Permission denied` from `./setup.sh` -- the exact two lines the README prints.
+t_setup_sh_present_and_executable() {
+  [ -f "$REPO_ROOT/setup.sh" ] || { echo "setup.sh is not in the repository"; return 1; }
+  if command -v git >/dev/null 2>&1 && [ -d "$REPO_ROOT/.git" ]; then
+    local mode
+    mode="$(cd "$REPO_ROOT" && git ls-files -s setup.sh 2>/dev/null | awk '{print $1}')"
+    [ "$mode" = "100755" ] || [ -x "$REPO_ROOT/setup.sh" ] || { echo "git mode is [$mode], not 100755 -- ./setup.sh would not run"; return 1; }
+  else
+    [ -x "$REPO_ROOT/setup.sh" ] || { echo "setup.sh is not executable on disk"; return 1; }
+  fi
+}
+
+t_setup_sh_forwards_no_argument_correctly() {
+  # The regression, as behaviour rather than as text. A parser that rejects unknown options stands in
+  # for start-forgeops.sh's own, so a stray empty argument fails here exactly as it did in the field.
+  local out
+  out="$(bash -c '
+    set -Eeuo pipefail
+    parser() { while [ "$#" -gt 0 ]; do case "$1" in --fresh|--force) ;; *) printf "unknown option: [%s]" "$1" >&2; exit 2 ;; esac; shift; done; printf ok; }
+    LAUNCHER_ARGS=()
+    parser ${LAUNCHER_ARGS[@]+"${LAUNCHER_ARGS[@]}"}
+  ' 2>&1)" || { echo "no-argument invocation failed: $out"; return 1; }
+  [ "$out" = "ok" ] || { echo "expected the parser to see zero arguments, got [$out]"; return 1; }
+
+  out="$(bash -c '
+    set -Eeuo pipefail
+    parser() { local seen=""; while [ "$#" -gt 0 ]; do case "$1" in --fresh) seen="$seen FRESH" ;; --force) seen="$seen FORCE" ;; *) printf "unknown option: [%s]" "$1" >&2; exit 2 ;; esac; shift; done; printf "%s" "$seen"; }
+    LAUNCHER_ARGS=(--fresh --force)
+    parser ${LAUNCHER_ARGS[@]+"${LAUNCHER_ARGS[@]}"}
+  ' 2>&1)" || { echo "the flags were not forwarded: $out"; return 1; }
+  [ "$out" = " FRESH FORCE" ] || { echo "flags did not survive forwarding, got [$out]"; return 1; }
 }
 
 check 'the launcher is executable in git'       t_executable_bit
 check 'it declares a bash shebang'              t_shebang
 check 'it has no CRLF line endings'             t_no_crlf
 check 'every service it starts is declared'     t_compose_services
+check 'no local outside a function'             t_no_local_outside_function
+check 'setup.sh is committed and executable'    t_setup_sh_present_and_executable
+check 'setup.sh forwards arguments correctly'   t_setup_sh_forwards_no_argument_correctly
 
 printf '\n  passed %s, failed %s\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

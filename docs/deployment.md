@@ -18,19 +18,29 @@ non-local deployment of Phase 0, and no production deployment target exists yet.
 > devices, codebase-index extensions, change-sets, policies, secrets, the append-only audit table,
 > generation runs, project tags, the change-set status vocabulary, `served_from: pending`, the cAST
 > metadata columns on `embeddings_local`, and project archiving with per-user favourites.
+>
+> **Phase 2 Autonomous Deployment Update (2026-10-13):**
+> For complete technical documentation of the Phase 2 autonomous deployment pipeline (Docker daemon management, GitHub Git Data API publishing, Vercel REST API integration), G1–G7 verification gates, G8 bounded self-healing engine, port authority validation, and browser safety rules, refer to [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md).
 
 ## What the local topology publishes
 
-The Compose project is named `forgeops`. The unprofiled default set is exactly five
-services: `postgres`, `redis`, `opa`, `backend`, `frontend`.
+The Compose project is named `forgeops`. In the current implementation, **14 services are declared** in `docker-compose.yml`, with **10–14 active** in the default unprofiled set without requiring manual flags:
 
-| Service    | Local binding    | Notes                               |
-| :--------- | :--------------- | :---------------------------------- |
-| `frontend` | `127.0.0.1:3000` | Next.js shell                       |
-| `backend`  | `127.0.0.1:8000` | FastAPI; liveness health check only |
-| `postgres` | `127.0.0.1:5432` | PostgreSQL 17 + pgvector            |
-| `redis`    | `127.0.0.1:6379` | Redis Stack, vector search enabled  |
-| `opa`      | `127.0.0.1:8181` | Gateway policy server               |
+| Service            | Local binding     | Notes                                                              |
+| :----------------- | :---------------- | :----------------------------------------------------------------- |
+| `frontend`         | `127.0.0.1:3000`  | Next.js 16 (React 19) App Router web shell                         |
+| `backend`          | `127.0.0.1:8000`  | FastAPI modular monolith; liveness health check only               |
+| `backend-agent`    | `127.0.0.1:18443` | Agent mTLS listener terminating client certificates on port 8443   |
+| `worker`           | — (no port)       | Asynchronous ARQ distributed task runner and deployment pipeline   |
+| `postgres`         | `127.0.0.1:5432`  | PostgreSQL 17 + pgvector (relational data & semantic embeddings)   |
+| `redis`            | `127.0.0.1:6379`  | Redis Stack 7.4, vector search enabled (caching, queues, limitter) |
+| `opa`              | `127.0.0.1:8181`  | Gateway and governance Rego policy server                          |
+| `cerbos`           | `127.0.0.1:3592`  | Principal and resource RBAC policy engine                          |
+| `authentik-server` | `127.0.0.1:9000`  | Authentik 2026.5.6 OIDC identity provider server                   |
+| `authentik-worker` | — (no port)       | Authentik background asynchronous task processor                   |
+| `ollama`           | `127.0.0.1:11434` | Primary local model server (qwen3-coder-next, bge-m3:567m)         |
+| `ollama-secondary` | `127.0.0.1:11435` | Secondary model server for cascade failover (glm-5.2)              |
+| `inngest`          | `127.0.0.1:8288`  | Inngest durable execution workflow engine                          |
 
 Every published port binds to `127.0.0.1` in the committed file rather than `0.0.0.0`, so a
 laptop on an untrusted network is not serving a database. `CORS_ALLOW_ORIGINS` defaults to
@@ -38,11 +48,45 @@ exactly `http://localhost:3000` with no wildcard, so a hostile page cannot drive
 from the developer's browser.
 
 Optional profiles are never part of the default startup and are exercised separately:
-`docker compose --profile vault up -d --wait` for Infisical, and
-`docker compose --profile tools up -d --wait` for the `agent-dev` container carrying
-OpenTofu. The agent itself ships as a single binary, not as a Compose service.
 
-## Starting and stopping
+- `docker compose --profile vault up -d --wait` for Infisical secret management.
+- `docker compose --profile tools up -d --wait` for the `agent-dev` container carrying OpenTofu 1.12.5.
+- `docker compose --profile observability up -d --wait` for the OTel monitoring tier (`otel-agent`, `otel-gateway`, `prometheus`, `mimir`, `loki`, `tempo`, `grafana`).
+
+The host agent binary connects to `backend-agent` over mTLS via outbound-only WebSockets.
+
+## 1-Click Automated Setup on Linux / Ubuntu (`./setup.sh`)
+
+For fresh Linux installations—particularly Ubuntu 22.04 LTS or 24.04 LTS (or Ubuntu 20.04 LTS with Python 3.10+) on lab or development workstations lacking Docker or build tools:
+
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+### Prerequisites
+
+- **Operating System**: Ubuntu 22.04 LTS or 24.04 LTS (Ubuntu 20.04 LTS requires Python 3.10+ package).
+- **Disk Space**: At least ~10 GB free space for Docker base layers and models.
+- **Memory**: ~4 GB RAM minimum (a 2 GB safe swapfile is created automatically on low-RAM machines if filesystem allows).
+- **Privileges**: sudo rights for initial package and Docker group configuration (`usermod -aG docker`).
+- **Network**: Internet access for initial Docker repository setup and base image pulls.
+
+`setup.sh` handles package manager locks (`unattended-upgrades`), installs Docker CE and Compose V2 plugin, sets up non-root docker group permissions, detects free ports, generates cryptographic keys and internal CA certificates, runs migrations, boots the services, and validates the entire stack against `/health/ready`.
+
+## Autonomous Deployment Verification Gates (G1–G7) & BuildKit Integration
+
+Phase 2 adds the Autonomous Deployment Engine, executing deployments through 7 sequential gates:
+
+1. **G1 (Blueprint Baseline)**: Strategy validation (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`), target configuration presence, workspace path resolution, and R0 readiness assessment.
+2. **G2 (Synthesis & Template Library)**: Existing manifest discovery or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go. Consolidates `ENV` instructions (`ENV NODE_ENV=production PORT=...`) and mounts stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`) to avoid redundant dependency downloads. Computes post-generation readiness (R1).
+3. **G3 (Cross-artifact Consistency)**: Static validation ensuring port ranges are valid (1–65535), reserved environment variables are not overwritten, and browser-restricted host ports (such as `4045` with `ERR_UNSAFE_PORT`) are rejected across all 77 Chromium/WHATWG bad ports.
+4. **G4 (Build & Compile)**: Direct Docker Engine daemon integration via Unix Domain Socket (`/var/run/docker.sock`). Integrates the native **BuildKit HTTP API** (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion (`.env*`, `*.pem`, `*.key`), symlink boundary confinement, and automatic graceful fallback to the legacy Docker V1 builder if BuildKit negotiation fails.
+5. **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket with strict runtime port authority, conflict detection with immutable commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+6. **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+7. **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
+
+## Starting and stopping (Make & Compose)
 
 ```sh
 make up      # init-env, then docker compose up -d --wait, then poll /health/ready
@@ -56,7 +100,7 @@ make down    # unprofiled docker compose down
 `.env.example` as a required env file and `.env` as an optional override.
 
 Database schema: `make migrate` runs `alembic upgrade head` inside the backend container.
-Phase 0 has exactly one revision, `0001_initial`.
+The schema spans migrations `0001_initial` through `0013`.
 
 ## Health versus readiness when operating the stack
 

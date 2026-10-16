@@ -193,6 +193,16 @@ type Manager struct {
 	skewMu       sync.Mutex
 	skew         time.Duration
 	skewMeasured bool
+
+	activeSessionMu sync.Mutex
+	activeSession   *liveSession
+	pendingMu       sync.Mutex
+	pending         []pendingNotification
+}
+
+type pendingNotification struct {
+	method string
+	params map[string]any
 }
 
 // uptime is what `session.heartbeat` reports. Measured from construction rather than from

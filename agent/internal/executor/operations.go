@@ -46,6 +46,69 @@ const (
 	OpGitBranchCommitPush Operation = "git.branch_commit_push"
 	OpGitOpenPR           Operation = "git.open_pr"
 	OpSecretsInject       Operation = "secrets.inject"
+	// OpRepositoryClone puts a repository on the operator's machine. Mutating, and the only operation
+	// that creates the directory a project points at rather than writing inside one.
+	OpRepositoryClone Operation = "repository.clone"
+	// OpDeploymentApplyManifests applies Kubernetes manifests to a real cluster AND waits for the
+	// workloads to converge. Mutating: it changes what is running, which is the largest blast radius
+	// any operation here has.
+	OpDeploymentApplyManifests Operation = "deployment.apply_manifests"
+
+	// ── Phase 2 ──
+	//
+	// OpDockerInventory and OpKubernetesInventory are READS. They exist as their own operations, rather
+	// than as a mode of the action operations below, so that "may look" is never a route to "may act":
+	// the dashboards hold the read authority continuously and the write authority never.
+	OpDockerInventory     Operation = "docker.inventory"
+	OpKubernetesInventory Operation = "kubernetes.inventory"
+
+	// OpDockerContainerAction and OpDockerImageAction act on ONE named container or image with an action
+	// from a closed set. Not one operation per verb: the authority is the same and the whitelist would
+	// grow without narrowing. Not a docker command line either — there is no such operation here.
+	OpDockerContainerAction Operation = "docker.container_action"
+	OpDockerImageAction     Operation = "docker.image_action"
+
+	// OpKubernetesWorkloadAction scales, restarts or rolls back ONE named workload, and then verifies
+	// it converged. Confined to the same three pod-bearing kinds the deployment operation can verify,
+	// because acting on something unverifiable would report the API server's acceptance as success.
+	OpKubernetesWorkloadAction Operation = "kubernetes.workload_action"
+
+	// OpDockerContainerLogs and OpKubernetesPodDetail are READS of output. Bounded by line count and time
+	// window, and the applied bounds travel with the answer so a tail is never mistaken for a whole log.
+	// Two operations rather than one: a container with no logs and a pod that never scheduled are different
+	// facts, and the pod read returns EVENTS alongside logs because for an unscheduled pod the events are
+	// the entire explanation.
+	OpDockerContainerLogs Operation = "docker.container_logs"
+	OpKubernetesPodDetail Operation = "kubernetes.pod_detail"
+
+	// OpIacApply applies OpenTofu configuration, from a plan it makes inside the same approval. 2.2.
+	//
+	// ONE OPERATION AND NOT plan-then-apply, because the authority is "change this project's
+	// infrastructure" and a plan changes nothing. Two operations would mean two approvals with the state
+	// free to move between them, which defeats the reason an apply runs from a SAVED PLAN.
+	OpIacApply Operation = "iac.apply"
+
+	// OpArgoAppAction acts on ONE ArgoCD Application. 2.7.
+	//
+	// One authority with a closed verb set. `delete` is NOT among them: deleting an Application cascades
+	// through the resources finalizer to everything it deployed, which is a fleet-scale delete behind a
+	// single verb. Neither is `rollback`: `argocd app rollback` deploys a previous revision without
+	// changing Git, so the cluster and the repository disagree and the next sync undoes it.
+	OpArgoAppAction Operation = "argocd.app_action"
+
+	// OpKubernetesRolloutDetail reads ONE Argo Rollout's progress in detail. 2.7a.
+	//
+	// Separate from `kubernetes.inventory` for the reason `pod_detail` is: an inventory answers what
+	// exists across a namespace, and this answers what is happening to this one Rollout right now.
+	// Folding it in would fetch analysis runs for every workload on every dashboard refresh.
+	OpKubernetesRolloutDetail Operation = "kubernetes.rollout_detail"
+
+	// OpDevToolsRun runs the PROJECT'S OWN tests, linters, build, compose stack or migrations. The argument
+	// is a KIND from a closed set, never a command line: this is where an arbitrary-shell operation would
+	// most naturally appear and it deliberately does not. Mutating and approval-required, because a
+	// project's own test command is code the project controls, a build writes artifacts, compose starts
+	// containers and a migration changes a database.
+	OpDevToolsRun Operation = "devtools.run"
 )
 
 // allOperations is the declared vocabulary, used only to assert that the dispatch table covers
@@ -61,6 +124,14 @@ var allOperations = []Operation{
 	OpValidateCompose, OpValidateK8s, OpValidateTofu, OpValidateHelm, OpValidateYAML, OpValidateTrivy,
 	OpReadinessInventory, OpSecretScanRun,
 	OpChangeSetApply, OpChangeSetRevert, OpGitBranchCommitPush, OpGitOpenPR, OpSecretsInject,
+	OpRepositoryClone, OpDeploymentApplyManifests,
+	OpDockerInventory, OpKubernetesInventory,
+	OpDockerContainerAction, OpDockerImageAction, OpKubernetesWorkloadAction,
+	OpDockerContainerLogs, OpKubernetesPodDetail,
+	OpDevToolsRun,
+	OpIacApply,
+	OpArgoAppAction,
+	OpKubernetesRolloutDetail,
 }
 
 // OperationInfo is what `agent.status` and `agent doctor` report about one operation (§10.5).

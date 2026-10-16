@@ -171,7 +171,14 @@ async def sink() -> RecordingSink:
 
 
 def build_chokepoint(
-    *, policy: Any, sink: Any, redis_client: Any, analyzer: SemanticPlanAnalyzer | None = None
+    *,
+    policy: Any,
+    sink: Any,
+    redis_client: Any,
+    analyzer: SemanticPlanAnalyzer | None = None,
+    clone_credential_provider: Any = None,
+    change_set_settler: Any = None,
+    registry_credential_provider: Any = None,
 ) -> GovernanceChokepoint:
     """A chokepoint over the real collaborators, with a per-instance Redis key prefix.
 
@@ -192,6 +199,12 @@ def build_chokepoint(
         sink=sink,
         envelope_pepper=PEPPER,
         envelope_max_age_seconds=300,
+        # DEFAULTS TO ABSENT, which is exactly what a deployment with no GitHub integration composed
+        # looks like. A harness that always supplied one could not express the refusal that
+        # configuration has to produce, and every apply test would carry a collaborator it never uses.
+        clone_credential_provider=clone_credential_provider,
+        change_set_settler=change_set_settler,
+        registry_credential_provider=registry_credential_provider,
     )
 
 

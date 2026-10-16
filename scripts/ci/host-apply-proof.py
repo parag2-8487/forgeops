@@ -338,6 +338,25 @@ def prove_create(seeded: dict[str, str], workspace: Path) -> None:
     report("a create change set applied and its file exists with the right bytes")
 
 
+def backups_of(workspace: Path, relative: str) -> list[Path]:
+    """Every backup the agent kept for `relative`, oldest first.
+
+    WHERE BACKUPS LIVE MOVED, AND THIS SCRIPT DID NOT. They used to sit beside their target as
+    `<file>.backup.<timestamp>`, which put a `templates/deployment.yaml.backup.20260911T063257Z` inside a
+    generated Helm chart and made `helm lint` fail on a chart this platform had just produced. They now go
+    under `.forgeops-rollback/backups/<timestamp>/<relpath>` — still inside root, so a reboot cannot
+    orphan them — and the scanner skips that directory. This proof kept globbing the old shape, found
+    nothing, and reported "no backup was taken before an overwrite": a true statement about the glob and a
+    false one about the agent, which is the worst kind of failing assertion.
+    """
+    root = workspace / ".forgeops-rollback" / "backups"
+    if not root.is_dir():
+        return []
+    return sorted(
+        (stamp / relative for stamp in sorted(root.iterdir()) if (stamp / relative).is_file()),
+        key=lambda path: path.parent.name,
+    )
+
 def prove_update(seeded: dict[str, str], workspace: Path) -> None:
     target = workspace / "package.json"
     before = target.read_bytes()
@@ -346,7 +365,7 @@ def prove_update(seeded: dict[str, str], workspace: Path) -> None:
     after = target.read_bytes()
     if after.decode("utf-8") != UPDATE_NEW:
         raise Failure(f"package.json holds {after!r}, expected the updated content")
-    backups = sorted(workspace.glob("package.json.backup.*"))
+    backups = backups_of(workspace, "package.json")
     if not backups:
         raise Failure("no backup was taken before an overwrite")
     kept = backups[-1].read_bytes()
@@ -355,12 +374,12 @@ def prove_update(seeded: dict[str, str], workspace: Path) -> None:
             f"the backup is not the pre-image: {sha(kept)} != {sha(before)} "
             f"({len(kept)} vs {len(before)} bytes)"
         )
-    report(f"an update applied and {backups[-1].name} holds the exact pre-image")
+    report(f"an update applied and {backups[-1].parent.name}/package.json holds the exact pre-image")
 
 
 def prove_revert(seeded: dict[str, str], workspace: Path) -> None:
     target = workspace / "package.json"
-    backups = sorted(workspace.glob("package.json.backup.*"))
+    backups = backups_of(workspace, "package.json")
     pre_image = backups[-1].read_bytes()
 
     applied = newest_change_set(seeded["project_id"], "applied", "package.json")

@@ -52,6 +52,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuGroup,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
 import {
   Form,
@@ -65,7 +68,8 @@ import {
 } from "@/components/ui/form";
 import { AsyncState } from "@/components/ui/async-state";
 import { NotImplemented } from "@/components/ui/not-implemented";
-import { DEFAULT_PROJECT_ID, ProjectIdField } from "@/components/ui/project-id-field";
+import { DEFAULT_PROJECT_ID, ProjectIdField, isProjectId } from "@/components/ui/project-id-field";
+import { Textarea } from "@/components/ui/textarea";
 import { ApiProblemError, ApiTransportError } from "@/lib/api";
 
 afterEach(() => cleanup());
@@ -317,6 +321,14 @@ describe("DropdownMenu", () => {
             </DropdownMenuRadioItem>
             <DropdownMenuRadioItem value="split">Split</DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger inset data-testid="sub-trigger">
+              More
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent data-testid="sub-content">
+              <DropdownMenuItem>Sub action</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         </DropdownMenuContent>
       </DropdownMenu>
     );
@@ -366,6 +378,15 @@ describe("DropdownMenu", () => {
     render(<Menu />);
     await userEvent.click(screen.getByRole("button", { name: "Actions" }));
     expect(await screen.findByText("⌘U")).toBeInTheDocument();
+  });
+
+  it("renders sub menu trigger and opens submenu", async () => {
+    render(<Menu />);
+    await userEvent.click(screen.getByRole("button", { name: "Actions" }));
+    const subTrigger = await screen.findByTestId("sub-trigger");
+    expect(subTrigger).toBeInTheDocument();
+    await userEvent.click(subTrigger);
+    expect(await screen.findByText("Sub action")).toBeInTheDocument();
   });
 });
 
@@ -675,5 +696,31 @@ describe("ProjectIdField", () => {
     expect(DEFAULT_PROJECT_ID).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+  });
+
+  it("validates project IDs with isProjectId helper", () => {
+    expect(isProjectId(DEFAULT_PROJECT_ID)).toBe(true);
+    expect(isProjectId("   " + DEFAULT_PROJECT_ID + "   ")).toBe(true);
+    expect(isProjectId("not-a-valid-uuid")).toBe(false);
+    expect(isProjectId("")).toBe(false);
+  });
+});
+
+describe("Textarea", () => {
+  it("renders with custom className and forwards props", () => {
+    render(<Textarea placeholder="Type details..." className="custom-textarea" disabled />);
+    const textarea = screen.getByPlaceholderText("Type details...");
+    expect(textarea).toBeInTheDocument();
+    expect(textarea).toBeDisabled();
+    expect(textarea).toHaveClass("custom-textarea");
+  });
+
+  it("handles input typing and forwards ref", async () => {
+    const ref = React.createRef<HTMLTextAreaElement>();
+    render(<Textarea ref={ref} data-testid="test-textarea" />);
+    const textarea = screen.getByTestId("test-textarea");
+    await userEvent.type(textarea, "Hello world");
+    expect(textarea).toHaveValue("Hello world");
+    expect(ref.current).toBe(textarea);
   });
 });

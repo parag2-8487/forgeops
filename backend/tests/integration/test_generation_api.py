@@ -278,10 +278,17 @@ class TestTheValidationGateIsDeterministic:
         assert any("parsable" in f or "mapping" in f for f in findings), findings
 
     def test_it_accepts_a_configmap_which_has_no_spec(self) -> None:
-        """A kind with no `spec` is a valid object, and the substring gate rejected all of them."""
+        """A kind with no `spec` is a valid object, and the substring gate rejected all of them.
+
+        THE DOCKERFILE THAT USED TO BE IN THIS SET IS GONE, and removing it is what makes the assertion
+        about the ConfigMap again. It was `FROM x`, an unpinned base image, which D-106's per-file rule
+        correctly refuses — `dockerfile_base_pinned` is a check that artifact is generated to satisfy. So
+        `passed is False` became the right answer for a reason that has nothing to do with ConfigMaps,
+        and the failure named the Dockerfile while the test name said ConfigMap. One artifact, one
+        property.
+        """
         passed, findings = GenerationService()._validate(
             (
-                GeneratedFile(path="Dockerfile", content="FROM x\nUSER 1001\n"),
                 GeneratedFile(
                     path="k8s/configmap.yaml",
                     content="apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\ndata:\n  k: v\n",

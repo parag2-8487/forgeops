@@ -685,12 +685,17 @@ describe("Approvals renders a real diff and submits a real decision", () => {
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/approve", {
-        comment: "looks right",
-        // The version THIS screen displayed, so a stale tab gets a 409 rather than deciding on
-        // state the reviewer never saw.
-        expected_version: 3,
-      }),
+      expect(mockPost).toHaveBeenCalledWith(
+        "/approvals/cs-1/approve",
+        {
+          comment: "looks right",
+          // The version THIS screen displayed, so a stale tab gets a 409 rather than deciding on
+          // state the reviewer never saw.
+          expected_version: 3,
+        },
+        // A decision waits on the backend, which is slower than the default request budget.
+        { timeoutMs: 180_000 },
+      ),
     );
   });
 
@@ -703,10 +708,14 @@ describe("Approvals renders a real diff and submits a real decision", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/reject", {
-        comment: null,
-        expected_version: 3,
-      }),
+      expect(mockPost).toHaveBeenCalledWith(
+        "/approvals/cs-1/reject",
+        {
+          comment: null,
+          expected_version: 3,
+        },
+        { timeoutMs: 180_000 },
+      ),
     );
   });
 
@@ -782,7 +791,10 @@ describe("Approvals renders a real diff and submits a real decision", () => {
     const deliver = await screen.findByTestId("deliver-button");
     await userEvent.click(deliver);
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/deliver", undefined),
+      // Delivery waits on the agent host, which is slower than the default request budget.
+      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/deliver", undefined, {
+        timeoutMs: 180_000,
+      }),
     );
     await waitFor(() => expect(screen.getByTestId("deliver-panel")).toHaveTextContent(/applying/i));
   });

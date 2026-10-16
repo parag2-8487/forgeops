@@ -20,6 +20,7 @@ from sqlalchemy import (
     Index,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
@@ -77,6 +78,17 @@ class GenerationRun(SQLModel, table=True):
     # informational, so this column must never be read as a pass/fail.
     rubric: dict | None = Field(default=None, sa_column=Column("rubric", JSONB, nullable=True))
     retrieval: dict | None = Field(default=None, sa_column=Column("retrieval", JSONB, nullable=True))
+    #: One record per model attempt: when it ran, for how long, what became of it, and the reason for any
+    #: non-delivery. Revision `0037`.
+    #:
+    #: A run that ends `template_fallback` has to be able to say WHICH attempt failed and WHY. Without
+    #: this the answer lived only in a live SSE stream and was gone once the request ended -- and the cause
+    #: it exposed was a TRUNCATING TIMEOUT, which is indistinguishable from a refused artifact unless the
+    #: duration is recorded beside the outcome.
+    attempts: list | None = Field(
+        default=None,
+        sa_column=Column("attempts", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    )
     prompt_tokens: int = Field(default=0)
     completion_tokens: int = Field(default=0)
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()))

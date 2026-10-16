@@ -82,12 +82,30 @@ printf '%s\n' "$REQUIRED_SECTIONS" | {
 # formatting (design §8.4) and pads table cells to align columns, so a check
 # that demanded exactly one space either side of a cell value would break the
 # moment the mandated formatter ran.
-echo 'Checking the phase status table lists phases 0 through 5...'
-for phase in 0 1 2 3 4 5; do
+# PHASES 0 THROUGH 4. The former Phase 3 (Observe, Troubleshoot & Self-Heal) was merged into Phase 2,
+# the former Phase 4 became Phase 3 and the former Phase 5 became Phase 4 — so a row for a fifth phase
+# is now a row for a phase that does not exist, and demanding one would force PROGRESS.md to
+# describe a plan `phases.md` no longer has. The upper bound is read from `phases.md` rather than
+# written here, so the next merge or split cannot leave this gate asserting the old shape: that is
+# exactly the failure this file exists to catch, and it caught itself on the merge.
+LAST_PHASE=$(grep -oE '^## Phase ([0-9]+):' phases.md | grep -oE '[0-9]+' | sort -n | tail -n 1)
+if [ -z "$LAST_PHASE" ]; then
+	fail "phases.md yielded no '## Phase N:' headings, so the phase range cannot be checked"
+	LAST_PHASE=0
+fi
+echo "Checking the phase status table lists phases 0 through ${LAST_PHASE} (read from phases.md)..."
+for phase in $(seq 0 "$LAST_PHASE"); do
 	if grep -E "^\|[[:space:]]*$phase[[:space:]]*\|" "$LOWER" >/dev/null 2>&1; then
 		ok "phase row present: $phase"
 	else
 		fail "phase status table is missing a row for phase $phase (design §18)"
+	fi
+done
+
+# And the reverse direction, because a row for a phase that no longer exists reads as a plan item.
+for phase in $(seq $((LAST_PHASE + 1)) 9); do
+	if grep -E "^\|[[:space:]]*$phase[[:space:]]*\|" "$LOWER" >/dev/null 2>&1; then
+		fail "phase status table has a row for phase $phase, which phases.md does not have"
 	fi
 done
 

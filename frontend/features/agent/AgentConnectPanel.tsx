@@ -145,6 +145,14 @@ export function AgentConnectPanel({
     location: { kind: "on-path" },
   });
 
+  const wipeCommand = renderCommand({
+    verb: "pair",
+    platform: active,
+    shell: activeShell,
+    location: { kind: "on-path" },
+    flags: { wipe: true },
+  });
+
   return (
     <section
       aria-labelledby="connect-heading"
@@ -237,6 +245,11 @@ export function AgentConnectPanel({
             command={doctorCommand}
             caption="Reports Docker, Kubernetes, OpenTofu, the credential store — including whether a device credential will fit in it — and the pairing state."
             testId="doctor-command"
+          />
+          <CommandBlock
+            command={wipeCommand}
+            caption="Wipes stored device credentials from this machine if previously paired to another project or encountering unauthenticated errors."
+            testId="wipe-command"
           />
         </div>
       </details>

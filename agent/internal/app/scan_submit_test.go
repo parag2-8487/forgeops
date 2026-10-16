@@ -77,7 +77,7 @@ func TestScanSubmit_ThePresentedTokenIsHexEncoded(t *testing.T) {
 
 	indexer, err := newCodebaseIndexer(
 		t.TempDir(), server.URL, "", 1024, plaintextProvider{},
-		deviceTokenSource(store), 10*time.Second,
+		deviceTokenSource(store), 10*time.Second, store,
 	)
 	if err != nil {
 		t.Fatalf("newCodebaseIndexer: %v", err)
@@ -138,7 +138,7 @@ func TestScanSubmit_ADialThatCannotGetACertificateFailsBeforeSending(t *testing.
 	store := storeWithToken(t, tokenBytes)
 	indexer, err := newCodebaseIndexer(
 		t.TempDir(), "https://127.0.0.1:1/", "", 1024, failingProvider{},
-		deviceTokenSource(store), 2*time.Second,
+		deviceTokenSource(store), 2*time.Second, store,
 	)
 	if err != nil {
 		t.Fatalf("newCodebaseIndexer: %v", err)
@@ -165,3 +165,98 @@ func (failingProvider) RenewBefore() time.Duration { return time.Hour }
 var errNoCertificate = net.UnknownNetworkError("no device certificate is available")
 
 var _ scanner.TokenSource = scanner.TokenFunc(nil)
+
+func TestScanSubmit_IndexIncrementalAndFilesAndConfiguredURL(t *testing.T) {
+	store := storeWithToken(t, tokenBytes)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"project_id":"22222222-2222-2222-2222-222222222222",` +
+			`"files_indexed":1,"chunks_indexed":0,"files_removed":0,"dependencies_indexed":0,` +
+			`"vectors_written":0,"vectors_absent_reason":"","inventory_hash":"abc"}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "sample.txt")
+	if err := os.WriteFile(testFile, []byte("hello world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	indexer, err := newCodebaseIndexer(
+		dir, server.URL, "", 1024, plaintextProvider{},
+		deviceTokenSource(store), 10*time.Second, store,
+	)
+	if err != nil {
+		t.Fatalf("newCodebaseIndexer: %v", err)
+	}
+	indexer.configuredURL = server.URL
+
+	// Exercise IndexChanged
+	if _, err := indexer.IndexChanged(context.Background(), "22222222-2222-2222-2222-222222222222", []string{"sample.txt"}); err != nil {
+		t.Fatalf("IndexChanged: %v", err)
+	}
+
+	// Exercise IndexFull
+	if _, err := indexer.IndexFull(context.Background(), "22222222-2222-2222-2222-222222222222"); err != nil {
+		t.Fatalf("IndexFull: %v", err)
+	}
+}
+
+func TestResolveSubmitOrigin_ReconcilesPortsAndSchemes(t *testing.T) {
+	tests := []struct {
+		name       string
+		stored     string
+		configured string
+		want       string
+	}{
+		{
+			name:       "Shifted backend port 18000 with unreconciled stored 8443",
+			stored:     "wss://localhost:8443/api/v1/ws/agent",
+			configured: "ws://localhost:18000/api/v1/ws/agent",
+			want:       "https://localhost:18443",
+		},
+		{
+			name:       "Shifted backend port 18000 with empty stored",
+			stored:     "",
+			configured: "ws://localhost:18000/api/v1/ws/agent",
+			want:       "https://localhost:18443",
+		},
+		{
+			name:       "Default backend port 8000 with empty stored",
+			stored:     "",
+			configured: "ws://localhost:8000/api/v1/ws/agent",
+			want:       "https://localhost:8443",
+		},
+		{
+			name:       "Properly reconciled stored 18443",
+			stored:     "wss://localhost:18443/api/v1/ws/agent",
+			configured: "ws://localhost:18000/api/v1/ws/agent",
+			want:       "https://localhost:18443",
+		},
+		{
+			name:       "Container network backend-agent on port 8443",
+			stored:     "wss://backend-agent:8443/api/v1/ws/agent",
+			configured: "wss://backend-agent:8443/api/v1/ws/agent",
+			want:       "https://backend-agent:8443",
+		},
+		{
+			name:       "Test plaintext server preserved",
+			stored:     "",
+			configured: "http://127.0.0.1:45678",
+			want:       "http://127.0.0.1:45678",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveSubmitOrigin(tt.stored, tt.configured)
+			if err != nil {
+				t.Fatalf("resolveSubmitOrigin(%q, %q) returned error: %v", tt.stored, tt.configured, err)
+			}
+			if got != tt.want {
+				t.Errorf("resolveSubmitOrigin(%q, %q) = %q, want %q", tt.stored, tt.configured, got, tt.want)
+			}
+		})
+	}
+}

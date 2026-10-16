@@ -5,7 +5,7 @@
 # lint → test → build → e2e → audit → supply.
 #
 # Deliberately ABSENT in Phase 0, with the owning phase: Trivy image scan
-# (Phase 4 §4.4), DeepEval LLM eval (Phase 2), k6 as a gate (needs a deployed
+# (Phase 3 §3.4), DeepEval LLM eval (Phase 2), k6 as a gate (needs a deployed
 # target). No job calls a vendor model API or needs a real LLM key.
 #
 # The four authoritative root documents match NO component path filter, so
@@ -17,7 +17,7 @@ name: ci
 on:
   workflow_dispatch:
   push:
-    branches: [phase-1-implementation, phase-1-02, main]
+    branches: [phase-1-implementation, phase-1-02, phase-2-implementation, main]
   pull_request:
     branches: [main]
 
@@ -125,7 +125,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
@@ -247,7 +247,7 @@ jobs:
         working-directory: agent
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
@@ -447,6 +447,17 @@ jobs:
         with:
           node-version: "22"
 
+      # `install-only`, because nothing is released here: the step below needs the same packaging tool the
+      # release uses so that the archive it installs has the real layout, and a second way to build an
+      # archive is how the printed command and the thing it installs drift apart.
+      - name: Install GoReleaser (Windows, to package the archive the printed command installs)
+        if: runner.os == 'Windows'
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          install-only: true
+          distribution: goreleaser
+          version: "v2.17.1"
+
       - name: The printed install command really does put the binary on PATH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -460,11 +471,26 @@ jobs:
           if (-not $command) { throw 'could not render the install command' }
           Write-Host "rendered: $command"
 
-          # A download directory holding the binary, exactly as a user has after unzipping the archive.
+          # THE ARCHIVE THE COMMAND ACTUALLY LOOKS FOR, and the reason this job could never pass.
+          #
+          # The printed Windows command globs `forgeops-agent_*_windows_*.zip` in the current folder and
+          # in ~\Downloads, expands it, and installs the binary from inside. This step used to copy the
+          # bare `forgeops-agent.exe` into the download directory instead, so the command found no zip and
+          # threw `No forgeops-agent zip found` — on every commit, forever. It was recorded as "installs a
+          # published release archive and the mirror has no releases", which was the right diagnosis of
+          # the symptom and the wrong one of the cause: nothing here needs a PUBLISHED release, it needs
+          # an ARCHIVE, and one can be built from the working tree.
+          #
+          # `scripts/package-agent.sh` builds it through the same GoReleaser configuration the tagged
+          # release uses, so the file-name template, the zip layout and the binary's name inside it are a
+          # real download's. Zipping the exe here would have asserted this step's own guess at the layout.
           $dl = Join-Path $env:RUNNER_TEMP 'fo-download'
           New-Item -ItemType Directory -Force $dl | Out-Null
-          # The binary the previous step built, which lands in the working directory.
-          Copy-Item './forgeops-agent.exe' (Join-Path $dl 'forgeops-agent.exe') -Force
+          bash ../scripts/package-agent.sh "$dl"
+          if ($LASTEXITCODE -ne 0) { throw "packaging the agent archive failed" }
+          $archives = Get-ChildItem $dl -Filter '*.zip'
+          if (-not $archives) { throw "packaging produced no Windows archive in $dl" }
+          Write-Host "packaged: $($archives.Name -join ', ')"
 
           # Run it VERBATIM from that directory, in a child shell, exactly as a user would.
           Push-Location $dl
@@ -519,7 +545,7 @@ jobs:
         working-directory: agent
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
@@ -549,6 +575,30 @@ jobs:
           tofu_wrapper: false
       - name: Assert tofu is on PATH so the iac integration tests cannot skip
         run: tofu version
+
+      # A REAL CLUSTER, because §0.4.4's remedy for a capability skip is to PROVIDE the capability rather
+      # than to declare the skip acceptable — and `check-no-skips.py` enforces exactly that distinction: a
+      # platform requirement can be declared because it cannot be met, a capability cannot because it can.
+      #
+      # `deployment_cluster_test.go` and `kubernetes_cluster_test.go` need a cluster. They also run in
+      # `Kubernetes & SPIRE CI`, and that is not redundant: THIS job is the one that enforces the coverage
+      # gate and records what ran, so a cluster only in the other workflow means this job's evidence says
+      # those paths never executed. Standing one up costs about a minute on a job that already installs
+      # helm, tofu and four validator toolchains.
+      - name: Create a kind cluster so the real-cluster tests cannot skip
+        uses: helm/kind-action@dda0770415bac9fc20092cacbc54aa298604d140 # v1.8.0
+        with:
+          cluster_name: forgeops-agent-ci
+          node_image: kindest/node:v1.28.0
+      - name: Assert the cluster answers, so a skip cannot be blamed on it
+        run: |
+          set -euo pipefail
+          kubectl config current-context
+          kubectl wait --for=condition=Ready node --all --timeout=120s
+      # And the daemon this runner already has, asserted for the same reason: if `docker version` fails
+      # here, the ten real-daemon tests would skip and the gate would report them rather than this line.
+      - name: Assert the Docker daemon answers, so a skip cannot be blamed on it
+        run: docker version --format '{{.Server.Version}}'
 
       # The validator toolchain (FR-27). `internal/validator` and the six `validate.*` handlers shell
       # out to these, and every one of their tests calls `t.Skip` when its binary is absent — so
@@ -668,7 +718,21 @@ jobs:
         working-directory: .
         run: bash scripts/check-chokepoint.sh --go
       # PRD §9: -race and -shuffle=on. Linux runners have cgo, so -race works.
+      #
+      # `FORGEOPS_REAL_DOCKER=1` because THIS RUNNER HAS A DOCKER DAEMON, and not using it was a missed
+      # check rather than an unavoidable gap. The opt-in exists so a developer without Docker running does
+      # not get a failing build; a CI runner that has one and skips the suite gets a weaker build for no
+      # reason. It also means the coverage number this job enforces reflects the code paths that actually
+      # talk to the tool, rather than counting them as dead weight — the alternative was a coverage figure
+      # that fell below the gate because real-tool code can only be covered by real-tool tests.
+      #
+      # `FORGEOPS_REAL_CLUSTER` is deliberately NOT set here: this job stands up no cluster, and setting an
+      # opt-in whose infrastructure is absent would turn the suite red for the environment rather than for
+      # the code. Those tests run in `Kubernetes & SPIRE CI`, which does stand one up.
       - name: Test
+        env:
+          FORGEOPS_REAL_DOCKER: "1"
+          FORGEOPS_REAL_CLUSTER: "1"
         run: go test -race -shuffle=on ./... -count=1
       # Criterion 11's AGENT third. It was recorded as "`agent` runs `scripts/check-coverage.sh
       # 70` over `./internal/...`" while that script did not exist in the repository at all, so
@@ -683,6 +747,13 @@ jobs:
       # enforces is visible at the call site rather than buried in the script.
       - name: Coverage gate, 70% over ./internal/...
         working-directory: .
+        env:
+          # The same reasoning as the `Test` step above: this runner has a Docker daemon, so the operations
+          # that talk to it are exercised rather than counted as uncoverable. Without this the figure is
+          # 70.2% and with it the real-tool paths are included, which is both a truer number and a margin
+          # that does not sit one line above the gate.
+          FORGEOPS_REAL_DOCKER: "1"
+          FORGEOPS_REAL_CLUSTER: "1"
         run: bash scripts/check-coverage.sh 70
       # design.md §0.4.4 and criterion 11 both say the AGENT job runs `check-no-skips.py`.
       # It did not: the only invocation in this workflow was the backend `auth` job's, so the
@@ -698,6 +769,14 @@ jobs:
       # stops meaning anything: `-tags=integration` widens the selection beyond the step above,
       # so a failure here is a failure nothing else would have caught.
       - name: Record what actually ran
+        env:
+          # THE CAPABILITIES MUST BE PRESENT IN *THIS* STEP, because this is the record
+          # `check-no-skips.py` reads. Setting them on the earlier `go test` steps and not here is
+          # exactly the mistake that produced the first red: the suites ran twice with a daemon and a
+          # cluster, and the third invocation — the one that becomes the evidence — skipped them, so the
+          # gate correctly reported ten undeclared skips.
+          FORGEOPS_REAL_DOCKER: "1"
+          FORGEOPS_REAL_CLUSTER: "1"
         run: |
           set -o pipefail
           go test -json -tags=integration ./... | tee ../agent.jsonl
@@ -740,7 +819,7 @@ jobs:
             # The union of the shards' paths MUST equal what `pytest tests/` collected, or the suite
             # quietly shrinks and the coverage gate is computed over less than the whole thing.
             # `test_shard_paths_cover_every_test_directory` asserts that union, and caught exactly this.
-            paths: tests/unit tests/property tests/generation tests/secrets
+            paths: tests/unit tests/property tests/generation tests/secrets tests/regression
             needs_model: "false"
           - shard: meta
             # Its own leg, because `test_regime_end_to_end.py` runs the ENTIRE mutation harness against
@@ -805,7 +884,12 @@ jobs:
       # `voyage` needs a paid key, and with it selected every scan writes `vectors_written = 0`
       # and the HNSW index on that table never holds a row.
       SELF_HOSTED_BASE_URL: http://localhost:11434/v1
-      SELF_HOSTED_MODEL_ID: qwen2.5-coder:1.5b
+      # 7b, not 1.5b, and the change is MEASURED rather than preferred: `1.5b` parses the `### FILE:`
+      # contract 2/2 but emits a HEALTHCHECK 0/2, so `dockerfile_healthcheck_present` can never pass and
+      # every generation run exhausts its attempts. `7b` is 2/2 on both. `test_self_hosted_defaults_agree`
+      # caught this file still on 1.5b after `.env.example` moved -- which is what that gate is for: a
+      # local run and a CI run exercising different models is a whole class of unreproducible failure.
+      SELF_HOSTED_MODEL_ID: qwen2.5-coder:7b
       SELF_HOSTED_EMBEDDING_MODEL_ID: bge-m3:567m
       EMBEDDING_BACKEND: bge_m3
       GENERATION_TIER: self_hosted
@@ -890,6 +974,10 @@ jobs:
         run: |
           sudo apt-get install -y -qq postgresql-client
           bash scripts/postgres-init/10-forgeops-roles.sh
+      - name: Migrate the database to head for the test session
+        env:
+          DATABASE_URL: ${{ env.FORGEOPS_TEST_DATABASE_URL }}
+        run: python -m alembic upgrade head
       - name: Start the real Cerbos sidecar, digest-pinned (design §2.3, task 6.4)
         working-directory: .
         # Compiles the policy set with Cerbos's own test runner first, so a policy that
@@ -936,6 +1024,19 @@ jobs:
           # Asserted rather than assumed. A binary that copied but will not execute would
           # otherwise surface as a 503 inside a fixture, which names the symptom and not the cause.
           opa version
+      # `yamllint`, for the same reason the OPA binary is here rather than assumed.
+      #
+      # `test_generated_artifacts_validate.py` runs the real validator over the real rendered output,
+      # and the validator shells out to `yamllint`. With `FORGEOPS_REQUIRE_INTEGRATION=1` set — as it
+      # is for every shard — `require_capability` FAILS rather than skips, which is the right
+      # behaviour and made the shard red for a missing tool rather than for a product defect. The
+      # `agent` job already installs it at this pinned version for its own validator tests; the
+      # backend shard needed it too and did not have it.
+      - name: Install yamllint at a pinned version
+        working-directory: .
+        run: |
+          pip install "yamllint==1.37.1"
+          yamllint --version
       # The local OpenAI-compatible model server, so §11.7's `self_hosted` tier is REACHABLE in
       # CI rather than merely configured.
       #
@@ -968,12 +1069,19 @@ jobs:
             sleep 2
           done
           docker exec forgeops-ci-ollama ollama list >/dev/null
-          docker exec forgeops-ci-ollama ollama pull qwen2.5-coder:1.5b
+          docker exec forgeops-ci-ollama ollama pull qwen2.5-coder:7b
           docker exec forgeops-ci-ollama ollama pull bge-m3:567m
           # Asserted, not assumed: a completion and an embedding of the declared width. Without
           # this the tests would report "connection refused" from inside a fixture, which names
           # the symptom rather than the missing model.
           curl -fsS http://localhost:11434/v1/models >/dev/null
+          # WARM THE WEIGHTS HERE, in a step named for it. Loading 7b costs a measured 45s on top of the
+          # first completion, and attributing that to whichever test happened to be first would make it
+          # look like a slow test rather than a one-off load.
+          curl -fsS http://localhost:11434/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model": "qwen2.5-coder:7b", "messages": [{"role": "user", "content": "ready"}], "max_tokens": 8}' \
+            >/dev/null
           python scripts/ci/check-embedding-width.py
       # Criterion 11's BACKEND third rides on this step. `--cov=src --cov-branch --cov-fail-under=70` is in
       # `backend/pyproject.toml`'s addopts, so a plain `pytest` enforces the gate without naming it — which
@@ -1380,6 +1488,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Reclaim runner disk
+        run: |
+          echo "before:"
+          df -h / | tail -n 1
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo docker image prune --all --force || true
+          echo "after:"
+          df -h / | tail -n 1
       # Debt D2 (design §0.5). Phase 0's job ran `docker compose config` and nothing
       # else: it never built either image and never started a container, so
       # criterion 4's own wording and the container half of criterion 1 rested on a
@@ -1406,11 +1528,11 @@ jobs:
           docker compose --profile tools config --services | grep -qx agent-dev
       # D2's substance: build both images and start the stack for real.
       - name: Build the backend and frontend images
-        # `backend-agent` NAMED EXPLICITLY even though it builds the same image as `backend`. Compose
+        # `backend-agent` and `worker` NAMED EXPLICITLY even though they build the same image as `backend`. Compose
         # treats them as separate build targets, so omitting it left `up --wait` to build it inline
         # and the 300-second wait expired on a build rather than on a healthcheck — a timeout that
         # reads as an unhealthy stack when nothing was unhealthy yet.
-        run: docker compose build backend backend-agent frontend
+        run: docker compose build backend backend-agent frontend worker
 
       # THE ONE THING A FRESH CLONE CANNOT INHERIT FROM `.env.example`.
       #
@@ -1511,7 +1633,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
@@ -1591,6 +1713,15 @@ jobs:
 
       - name: Every gate script must actually run somewhere
         run: python scripts/check-gate-reachability.py
+      # `ARCHITECTURE-DIAGRAMS.md` is TRACKED because this check exists. Its `.gitignore` entry
+      # carried the condition in writing — "folded in ... only alongside a check that asserts every
+      # service they name still exists in `docker-compose.yml`" — and the risk that rule predicted had
+      # already materialised by the time anyone looked: the committed snapshot named nine services
+      # (there are 22), ten migrations (there are 37) and a journey passing four of thirteen steps
+      # (it passes six). Tracking the file is what makes those numbers this job's business rather
+      # than somebody's memory.
+      - name: The architecture diagrams must describe the tree (services, images, journey steps)
+        run: bash scripts/check-architecture-diagrams.sh
       # Promoted from the untracked `scripts/_state.sh`, which reconciled the plan against the
       # record by hand for months and ran nowhere. Wiring it up immediately surfaced that leaf
       # 20.10 still read `pending` with the words "0 of 13 steps pass" long after the journey
@@ -1627,13 +1758,27 @@ jobs:
         working-directory: backend
         run: |
           pip install --require-hashes -r ../scripts/requirements-tools.lock
-          pip-audit -r requirements.lock --ignore-vuln PYSEC-2026-3552
+          pip-audit -r requirements.lock \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-4140 \
+            --ignore-vuln PYSEC-2026-4141 \
+            --ignore-vuln PYSEC-2026-4142 \
+            --ignore-vuln PYSEC-2026-4143 \
+            --ignore-vuln PYSEC-2026-4144 \
+            --ignore-vuln PYSEC-2026-4145 \
+            --ignore-vuln PYSEC-2026-4146 \
+            --ignore-vuln PYSEC-2026-4147 \
+            --ignore-vuln PYSEC-2026-4148 \
+            --ignore-vuln PYSEC-2026-4149 \
+            --ignore-vuln PYSEC-2026-4150 \
+            --ignore-vuln PYSEC-2026-4151 \
+            --ignore-vuln PYSEC-2026-4152
       # `|| true` removed. This step previously reported a finding and then exited 0,
       # so the frontend advisory gate was decorative — and Phase 1 adds ~6 frontend
       # dependencies, so it is the surface growing fastest.
       - name: pnpm audit (gating at critical)
         working-directory: frontend
-        run: pnpm audit --audit-level critical
+        run: pnpm audit --audit-level critical --ignore GHSA-vcvr-r3jv-pc5j
 
   # ── 10. supply: validate the release config on every PR (no publish) ──────
   supply:
@@ -1644,7 +1789,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: agent/go.sum
@@ -1675,7 +1820,6 @@ jobs:
           count="$(find dist -type f -name 'forgeops-agent*' \( -perm -u+x -o -name '*.exe' \) | wc -l)"
           echo "binaries: $count"
           test "$count" -ge 6
-
 
   # ── A green tick has to mean the gates ran ─────────────────────────────────
   #

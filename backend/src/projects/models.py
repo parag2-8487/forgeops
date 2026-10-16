@@ -89,6 +89,17 @@ PROJECT_SETTINGS_KEYS: frozenset[str] = frozenset(
         "repo_default_branch",
         "repo_private",
         "repo_languages",
+        # The GitHub-onboarded clone (Part 3). `clone_state` is the one a screen reads: it is
+        # `awaiting_clone` between creating the project and the agent reporting the directory exists,
+        # and absent afterwards. It extends the index-status vocabulary rather than adding a parallel
+        # one — `GET /analysis/codebase/{id}/status` reads it to tell `awaiting_clone` from `empty`,
+        # which share "zero indexed files" and have different next steps.
+        #
+        # `repo_full_name` and `clone_url` are recorded because the clone needs them and a retry must
+        # not depend on the browser still holding what the user picked. Neither is a credential.
+        "clone_state",
+        "repo_full_name",
+        "clone_url",
     }
 )
 
@@ -96,6 +107,18 @@ PROJECT_SETTINGS_KEYS: frozenset[str] = frozenset(
 #: embeddings exist would mean two vector spaces for one project, which is why
 #: §11.4 returns `409 project-embedding-backend-locked` instead.
 EMBEDDING_BACKENDS: frozenset[str] = frozenset({"voyage", "bge_m3"})
+
+#: The states a GitHub-onboarded project's directory can be in, before it simply exists.
+#:
+#: `awaiting_clone` — the project row exists and points at a path the agent has not created yet.
+#: `cloning` — a signed clone command is in flight.
+#: `clone_failed` — the agent refused or the fetch failed; the reason is in the audit row, and the
+#: state is distinct from `awaiting_clone` because a retry is a different action from a first attempt.
+#:
+#: There is deliberately no `cloned`: once the directory exists the key is REMOVED rather than set to a
+#: success value, so the absence of a clone state means "this is an ordinary project" and nothing
+#: downstream has to know the project came from GitHub.
+CLONE_STATES: frozenset[str] = frozenset({"awaiting_clone", "cloning", "clone_failed"})
 
 
 class ProjectSettingsError(ValueError):
@@ -145,6 +168,18 @@ def validate_project_settings(settings: dict) -> dict:
     if globs is not None:
         if not isinstance(globs, list) or not all(isinstance(g, str) for g in globs):
             raise ProjectSettingsError("ignore_globs must be a list of strings")
+
+    # A CLOSED SET, for the reason `embedding_backend` has one: the codebase-status route branches on
+    # this value to tell `awaiting_clone` from `empty`, so a typo would make a project that is waiting
+    # for a clone report as merely unscanned — the one confusion the state exists to prevent.
+    clone_state = settings.get("clone_state")
+    if clone_state is not None and clone_state not in CLONE_STATES:
+        raise ProjectSettingsError(f"clone_state must be one of {sorted(CLONE_STATES)}, got {clone_state!r}")
+
+    for text_key in ("repo_full_name", "clone_url"):
+        value = settings.get(text_key)
+        if value is not None and not isinstance(value, str):
+            raise ProjectSettingsError(f"{text_key} must be a string")
 
     return settings
 

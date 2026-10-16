@@ -117,11 +117,22 @@ test.describe("Part E: the onboarding path, in a browser", () => {
     // Eight steps, in the order their preconditions require.
     await expect(page.getByTestId("onboarding-steps").locator("li")).toHaveCount(8);
 
-    // THE ASSERTION THAT MATTERS HERE: the bundle step is never ticked, because no endpoint reports
-    // whether a tenant has an active bundle. A tick nothing checked is the defect this whole pass
-    // removed from other screens, so the path declines to invent one.
-    await expect(page.getByTestId("step-5-state")).toHaveText("Not checked");
-    await expect(page.getByText(/no tick is shown for something nothing checked/i)).toBeVisible();
+    // THE ASSERTION THAT MATTERS HERE, and it has MOVED because the product improved underneath it.
+    //
+    // This used to read `expect(step-5-state).toHaveText("Not checked")`, pinning a disclaimer on the
+    // policy-bundle step: nothing reported whether a tenant had an active bundle, so the path declined to
+    // invent a tick. Two things then changed. The bundle became genuinely observable, so step 5 is now a
+    // real check that answers `Done` or `To do`; and the single "Not checked" label was replaced, because
+    // it collapsed three unrelated situations — a check in flight, a step that is an ACTION with no
+    // resting state, and a step with no read route — into one grey word that read as "broken" in all
+    // three.
+    //
+    // The DISCIPLINE is unchanged and is what this still asserts: never a tick for something nothing
+    // checked. It just belongs on step 8 now, which is the remaining step this screen has no endpoint
+    // for. This spec had not been run since that change, which is exactly how a stale assertion survives.
+    await expect(page.getByTestId("step-5-state")).toHaveText(/Done|To do/);
+    await expect(page.getByTestId("step-8-state")).toHaveText("Not reported here");
+    await expect(page.getByText(/Nothing here to tick/i).first()).toBeVisible();
   });
 
   test("step 1 — create a project through the form", async ({ page }) => {

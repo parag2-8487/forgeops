@@ -88,6 +88,19 @@ export default defineConfig({
           timeout: 2_460_000,
         },
         {
+          // The self-healing criterion: deploy -> inject failure -> AI detects -> AI suggests -> human
+          // approves.
+          //
+          // Its own project for the reasons `paint` and `onboarding` are: it is serial and stateful --
+          // it requests a deployment, files an incident through the production failure path and
+          // approves a change set -- so folding it into `journey` would change what "13/13" counts. It
+          // also makes a real RCA model call, which the journey's 180s per-step bound would cut off.
+          name: "self-healing",
+          testMatch: /self-healing\.spec\.ts/,
+          use: { ...devices["Desktop Chrome"] },
+          timeout: 1_800_000,
+        },
+        {
           // Part F: the printed commands, executed verbatim, with the agent as a HOST process.
           //
           // Its own project because it is the only spec that runs the agent OUTSIDE a container. Every

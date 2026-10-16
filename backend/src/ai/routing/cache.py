@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -40,6 +41,8 @@ from typing import Any, Protocol, runtime_checkable
 from src.secrets.redaction import RedactedPrompt
 
 from .contract_version import GENERATION_CONTRACT_VERSION
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -90,7 +93,6 @@ def cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
     if left_norm == 0.0 or right_norm == 0.0:
         return 0.0
     return dot / (left_norm * right_norm)
-
 
 
 class TieredSemanticCache:
@@ -152,12 +154,23 @@ class TieredSemanticCache:
 
         if self._embed is None:
             return None
-        return await self._lookup_semantic(model=model, prompt=prompt)
+        try:
+            return await self._lookup_semantic(model=model, prompt=prompt)
+        except Exception as exc:
+            logger.warning("L2 semantic cache lookup failed, falling back to miss: %s", exc)
+            return None
 
     async def _lookup_semantic(self, *, model: str, prompt: RedactedPrompt) -> CacheHit | None:
         """The L2 path: nearest stored prompt vector, admitted only at or above the threshold."""
         assert self._embed is not None  # guarded by the caller
-        query_vector = list(await self._embed(str(prompt)))
+        text = str(prompt)
+        if len(text) > 4000:
+            text = text[:4000]
+        try:
+            query_vector = list(await self._embed(text))
+        except Exception as exc:
+            logger.warning("L2 semantic embedding failed on lookup: %s", exc)
+            return None
         if not query_vector:
             return None
 
@@ -223,12 +236,18 @@ class TieredSemanticCache:
             return
         # Computed from the RedactedPrompt, never from raw text (D-44), so no unredacted value
         # reaches the embedding provider or the index.
-        vector = list(await self._embed(str(prompt)))
-        if not vector:
-            return
-        await self._redis.hset(  # type: ignore[attr-defined]
-            self._index_name(model), cache_key, json.dumps(vector)
-        )
+        try:
+            text = str(prompt)
+            if len(text) > 4000:
+                text = text[:4000]
+            vector = list(await self._embed(text))
+            if not vector:
+                return
+            await self._redis.hset(  # type: ignore[attr-defined]
+                self._index_name(model), cache_key, json.dumps(vector)
+            )
+        except Exception as exc:
+            logger.warning("L2 semantic cache store failed, skipping vector indexing: %s", exc)
 
     def _index_name(self, model: str) -> str:
         """One index per model: vectors from different models are not comparable."""

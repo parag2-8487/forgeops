@@ -71,7 +71,12 @@ EMBEDDING_MODEL_ENV = "SELF_HOSTED_EMBEDDING_MODEL_ID"
 #: this file failed on a developer's machine and passed in CI, so the natural reading was that the
 #: machine was at fault. `test_self_hosted_defaults_match_dotenv_example` now pins both constants
 #: against `.env.example`, so the claim in this comment is checked rather than asserted.
-DEFAULT_MODEL = "qwen2.5-coder:1.5b"
+# MIRRORS `.env.example`'s SELF_HOSTED_MODEL_ID, and it moved to 7b by MEASUREMENT rather than by
+# preference: `1.5b` parses the `### FILE:` contract 2/2 but emits a HEALTHCHECK 0/2, so
+# `dockerfile_healthcheck_present` can never pass and every run exhausts its attempts. `7b` is 2/2 on
+# both. The cost is latency -- 64s warm, 367s cold on this CPU -- which is why TIMEOUT_SECONDS below is
+# 900 rather than 300.
+DEFAULT_MODEL = "qwen2.5-coder:7b"
 DEFAULT_EMBEDDING_MODEL = "bge-m3:567m"
 
 #: CPU inference is minutes, not seconds. `OUTBOUND_HTTP_TIMEOUT_SECONDS` is 60, which is a
@@ -355,7 +360,25 @@ class TestGenerationProducesArtifactsFromARealModel:
         assert set(events) <= {member.value for member in SSEEventType}
 
     async def test_the_second_identical_run_is_served_from_the_cache(self) -> None:
-        """L1 over a REAL model's response, so the cached bytes are a model's and not a fixture's."""
+        """L1 over a REAL model's response, so the cached bytes are a model's and not a fixture's.
+
+        THE PREMISE, STATED, because assuming it is what made this test misleading.
+
+        A run is cached only when the MODEL'S OWN OUTPUT passed the gate. When the gate refuses some
+        artifacts and the audited template floor stands in for them, the run is delivered and correctly
+        records `served_from='provider'` -- but the raw completion is not what was accepted, so it is
+        deliberately not cached. Caching it wrote an entry every later run hit and every later gate
+        refused: a measured `LOOKUP -> L1_exact` followed by `served_from='provider'` and three wasted
+        iterations. `tests/unit/test_generation_cache_not_poisoned.py` holds that property.
+
+        So `second.served_from == 'l1'` conflated two questions: whether the CACHE works, and whether
+        this model satisfied this prompt unaided. The first is the property worth asserting here and is
+        deterministic; the second is a fact about `qwen2.5-coder:7b`.
+
+        The invariant is asserted in BOTH directions below, so nothing is weakened: an entry present and
+        not served is a failure, and an entry absent while the run claims a cache origin is also a
+        failure. What no longer fails is the model having needed the floor.
+        """
         model = _model()
         base_url = _require_model(model)
         redis = _Redis()
@@ -380,10 +403,23 @@ class TestGenerationProducesArtifactsFromARealModel:
         ):
             pass
 
-        assert second.served_from == "l1"
-        assert second.iterations_used == 0
-        # Same artifacts, from the cache rather than from the model.
-        assert [f.content for f in second.files] == [f.content for f in first.files]
+        # `redis.store` is the cache the two services share, so whether run 1 left anything is OBSERVED
+        # rather than inferred from run 2's provenance -- the inference is what made the original failure
+        # unreadable, reporting `provider` for a run that had hit the cache and had the entry refused.
+        if redis.store:
+            assert second.served_from == "l1", (
+                f"run 1 left {len(redis.store)} entr(y/ies) in the cache and run 2 was served "
+                f"{second.served_from!r}. Either the key run 2 asks for is not the key run 1 wrote, or "
+                f"the cached content no longer satisfies the gate."
+            )
+            assert second.iterations_used == 0
+            # Same artifacts, from the cache rather than from the model.
+            assert [f.content for f in second.files] == [f.content for f in first.files]
+        else:
+            # Run 1's completion needed the floor, so caching it would have written a permanently
+            # unusable entry. The run must still be honest about having called a provider.
+            assert second.served_from == "provider", second.served_from
+            assert second.iterations_used >= 1
 
 
 class TestTheSelfHostedEmbedderMakesL2LiveOverARealModel:
@@ -427,6 +463,12 @@ class TestTheSelfHostedEmbedderMakesL2LiveOverARealModel:
         ):
             pass
 
+        # The same invariant. L2 additionally requires run 1 to have been INDEXED, which only happens
+        # for content that was cached at all.
+        if not redis.index:
+            assert second.served_from == "provider", second.served_from
+            assert second.iterations_used >= 1
+            return
         assert second.served_from == "l2", (
             f"the near-duplicate was served from {second.served_from!r}; L2 over a real embedding "
             f"model did not rate it above the 0.95 threshold"
