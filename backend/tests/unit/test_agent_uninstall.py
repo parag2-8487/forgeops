@@ -59,7 +59,7 @@ def app(mock_session):
     app.include_router(uninstall_router)
 
     app.state.settings = MagicMock()
-    app.state.settings.agent_release_tag = "v0.1.2"
+    app.state.settings.agent_release_tag = "v0.1.3"
     app.state.device_service = AsyncMock()
 
     app.dependency_overrides[require_principal] = lambda: _principal()
@@ -92,7 +92,7 @@ def test_installations_authenticated_empty(client, mock_session):
     assert response.status_code == 200
     data = response.json()
     assert "installations" in data
-    assert data["release_tag"] == "v0.1.2"
+    assert data["release_tag"] == "v0.1.3"
 
 
 def test_installations_returns_registered_devices(client, mock_session):

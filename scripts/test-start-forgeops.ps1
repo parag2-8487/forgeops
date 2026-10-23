@@ -319,17 +319,17 @@ Write-Host ''
 Write-Host 'Installation Mode Detection & Self-Repair Audit' -ForegroundColor Cyan
 
 Check 'Get-ForgeOpsInstallationMode returns Fresh when env is empty' {
-    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{} -InstalledVer '' -IntendedVer 'v0.1.2' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $null
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{} -InstalledVer '' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $null
     $plan.Mode -eq 'Fresh'
 }
 
 Check 'Get-ForgeOpsInstallationMode returns Fresh when IsFresh is true' {
-    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{'ENVELOPE_PEPPER'='abc'} -InstalledVer 'v0.1.2' -IntendedVer 'v0.1.2' -IsFresh $true -IsRebuild $false -IsNoReset $false -ComposePsResult $null
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{'ENVELOPE_PEPPER'='abc'} -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $true -IsRebuild $false -IsNoReset $false -ComposePsResult $null
     $plan.Mode -eq 'Fresh'
 }
 
 Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsRepair when required secret is missing' {
-    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{'BACKEND_PORT'='18000'} -InstalledVer 'v0.1.2' -IntendedVer 'v0.1.2' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $null
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{'BACKEND_PORT'='18000'} -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $null
     $plan.Mode -eq 'ExistingNeedsRepair'
 }
 
@@ -344,7 +344,7 @@ Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsUpdate when installed v
         )
     }
     $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
-    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.1' -IntendedVer 'v0.1.2' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.1' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
     $plan.Mode -eq 'ExistingNeedsUpdate'
 }
 
@@ -359,7 +359,7 @@ Check 'Get-ForgeOpsInstallationMode returns ExistingHealthy when all services ar
         )
     }
     $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
-    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.2' -IntendedVer 'v0.1.2' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
     ($plan.Mode -eq 'ExistingHealthy') -and ($plan.MissingServices.Count -eq 0)
 }
 
@@ -374,7 +374,7 @@ Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsRepair when a service i
         )
     }
     $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
-    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.2' -IntendedVer 'v0.1.2' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
     ($plan.Mode -eq 'ExistingNeedsRepair') -and ($plan.MissingServices -contains 'worker')
 }
 
@@ -389,7 +389,7 @@ Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsRepair when Rebuild is 
         )
     }
     $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
-    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.2' -IntendedVer 'v0.1.2' -IsFresh $false -IsRebuild $true -IsNoReset $false -ComposePsResult $mockPs
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $true -IsNoReset $false -ComposePsResult $mockPs
     $plan.Mode -eq 'ExistingNeedsRepair'
 }
 

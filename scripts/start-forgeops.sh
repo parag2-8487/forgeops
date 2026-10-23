@@ -566,7 +566,7 @@ fi
 
 head_ 'Installation & Self-Repair Audit'
 
-INTENDED_VERSION="v0.1.2"
+INTENDED_VERSION="v0.1.3"
 INSTALLED_VERSION=""
 VERSION_FILE="$REPO_ROOT/.forgeops_version"
 if [ -f "$VERSION_FILE" ]; then
@@ -576,7 +576,7 @@ elif grep -q '^FORGEOPS_VERSION=' "$ENV_PATH" 2>/dev/null; then
 elif grep -q '^AGENT_RELEASE_TAG=' "$ENV_PATH" 2>/dev/null; then
   INSTALLED_VERSION="$(grep -E '^AGENT_RELEASE_TAG=' "$ENV_PATH" | head -n1 | cut -d= -f2- | tr -d '"''' ')"
 else
-  INSTALLED_VERSION="v0.1.2"
+  INSTALLED_VERSION="v0.1.3"
 fi
 
 PS_PROBE="$(dc ps --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null || true)"
@@ -808,7 +808,7 @@ env_set_ AGENT_TLS_HOST_PORT "$AGENT_TLS_HOST_PORT_V"
 env_set_ INNGEST_PORT     "$INNGEST_PORT_V"
 env_set_ OLLAMA_PORT      "$OLLAMA_PORT_V"
 env_set_ OLLAMA_SECONDARY_PORT "$OLLAMA_SECONDARY_PORT_V"
-env_set_ AGENT_RELEASE_TAG "v0.1.2"
+env_set_ AGENT_RELEASE_TAG "v0.1.3"
 env_set_ AGENT_DOWNLOAD_BASE_URL "https://github.com/parag8487/ForgeOps/releases/download"
 
 env_set_ NEXT_PUBLIC_API_BASE_URL "$API_BASE_URL"

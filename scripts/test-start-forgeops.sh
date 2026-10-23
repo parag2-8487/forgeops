@@ -419,7 +419,7 @@ t_setup_sh_forwards_no_argument_correctly() {
 
 t_mode_fresh_on_missing_env() {
   local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
-  detect_installation_mode_ "/tmp/definitely-missing-env" "v0.1.2" "v0.1.2" 0 0 0 ""
+  detect_installation_mode_ "/tmp/definitely-missing-env" "v0.1.3" "v0.1.3" 0 0 0 ""
   [ "$INSTALL_MODE" = "Fresh" ] || { echo "expected Fresh on missing env, got $INSTALL_MODE"; return 1; }
 }
 
@@ -428,7 +428,7 @@ t_mode_fresh_on_flag() {
   tmp_env="$(mktemp)"
   echo "ENVELOPE_PEPPER=abc" > "$tmp_env"
   local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
-  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 1 0 0 ""
+  detect_installation_mode_ "$tmp_env" "v0.1.3" "v0.1.3" 1 0 0 ""
   rm -f "$tmp_env"
   [ "$INSTALL_MODE" = "Fresh" ] || { echo "expected Fresh on --fresh flag, got $INSTALL_MODE"; return 1; }
 }
@@ -438,7 +438,7 @@ t_mode_repair_on_missing_secrets() {
   tmp_env="$(mktemp)"
   echo "BACKEND_PORT=18000" > "$tmp_env"
   local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
-  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 0 0 0 ""
+  detect_installation_mode_ "$tmp_env" "v0.1.3" "v0.1.3" 0 0 0 ""
   rm -f "$tmp_env"
   [ "$INSTALL_MODE" = "ExistingNeedsRepair" ] || { echo "expected ExistingNeedsRepair on missing pepper, got $INSTALL_MODE"; return 1; }
 }
@@ -461,7 +461,7 @@ inngest|running|healthy
 ollama|running|healthy
 ollama-secondary|running|healthy"
   local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
-  detect_installation_mode_ "$tmp_env" "v0.1.1" "v0.1.2" 0 0 0 "$mock_ps"
+  detect_installation_mode_ "$tmp_env" "v0.1.1" "v0.1.3" 0 0 0 "$mock_ps"
   rm -f "$tmp_env"
   [ "$INSTALL_MODE" = "ExistingNeedsUpdate" ] || { echo "expected ExistingNeedsUpdate on older version, got $INSTALL_MODE"; return 1; }
 }
@@ -484,7 +484,7 @@ inngest|running|healthy
 ollama|running|healthy
 ollama-secondary|running|healthy"
   local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
-  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 0 0 0 "$mock_ps"
+  detect_installation_mode_ "$tmp_env" "v0.1.3" "v0.1.3" 0 0 0 "$mock_ps"
   rm -f "$tmp_env"
   [ "$INSTALL_MODE" = "ExistingHealthy" ] || { echo "expected ExistingHealthy, got $INSTALL_MODE"; return 1; }
   [ -z "$INSTALL_MISSING_SERVICES" ] || { echo "expected no missing services, got $INSTALL_MISSING_SERVICES"; return 1; }
@@ -508,7 +508,7 @@ inngest|running|healthy
 ollama|running|healthy
 ollama-secondary|running|healthy"
   local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
-  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 0 0 0 "$mock_ps"
+  detect_installation_mode_ "$tmp_env" "v0.1.3" "v0.1.3" 0 0 0 "$mock_ps"
   rm -f "$tmp_env"
   [ "$INSTALL_MODE" = "ExistingNeedsRepair" ] || { echo "expected ExistingNeedsRepair on stopped service, got $INSTALL_MODE"; return 1; }
   echo "$INSTALL_MISSING_SERVICES" | grep -q "worker" || { echo "expected worker in missing services, got $INSTALL_MISSING_SERVICES"; return 1; }

@@ -533,7 +533,7 @@ if (Test-PythonHasProvisioningDeps -PythonExe $BackendVenvPython) {
 
 Write-Head 'Installation & Self-Repair Audit'
 
-$IntendedVersion = 'v0.1.2'
+$IntendedVersion = 'v0.1.3'
 $InstalledVersion = $null
 $VersionFile = Join-Path $RepoRoot '.forgeops_version'
 $existing = Read-EnvFile -Path $EnvPath
@@ -545,7 +545,7 @@ if (Test-Path -LiteralPath $VersionFile) {
 } elseif ($existing.ContainsKey('AGENT_RELEASE_TAG') -and [string]::IsNullOrWhiteSpace($existing['AGENT_RELEASE_TAG']) -eq $false) {
     $InstalledVersion = $existing['AGENT_RELEASE_TAG']
 } else {
-    $InstalledVersion = 'v0.1.2'
+    $InstalledVersion = 'v0.1.3'
 }
 
 $composePsProbe = Invoke-Compose -Arguments 'ps --format "{{.Service}}|{{.State}}|{{.Health}}"' -Quiet
@@ -815,7 +815,7 @@ $tierDefaults = [ordered]@{
     'SELF_HOSTED_BASE_URL'            = 'http://ollama:11434/v1'
     'SELF_HOSTED_MODEL_ID'            = 'qwen2.5-coder:1.5b'
     'SELF_HOSTED_EMBEDDING_MODEL_ID'  = 'bge-m3:567m'
-    'AGENT_RELEASE_TAG'               = 'v0.1.2'
+    'AGENT_RELEASE_TAG'               = 'v0.1.3'
     'AGENT_DOWNLOAD_BASE_URL'         = 'https://github.com/parag8487/ForgeOps/releases/download'
 }
 $tierAdded = @()

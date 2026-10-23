@@ -41,7 +41,7 @@ describe("Agent Uninstall Feature & UI", () => {
     mockGet.mockResolvedValue({
       backend_ws_url: "ws://localhost:18000/api/v1/ws/agent",
       agent_ws_path: "/api/v1/ws/agent",
-      release_tag: "v0.1.2",
+      release_tag: "v0.1.3",
       download_base_url: "https://github.com/parag8487/ForgeOps/releases/download",
     });
   });

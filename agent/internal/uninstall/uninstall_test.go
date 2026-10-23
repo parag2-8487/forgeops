@@ -4,8 +4,11 @@ package uninstall
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func createFakeAgentBinary(t *testing.T, dir, filename string, isForgeOps bool) string {
@@ -152,4 +155,169 @@ func TestUninstallAll_RemovesVerifiedAndPreservesUnrelated(t *testing.T) {
 	if !repeatReport.VerifiedClean {
 		t.Errorf("Second run must report VerifiedClean = true")
 	}
+}
+
+func TestKnownDefaultDirectories(t *testing.T) {
+	dirs := KnownDefaultDirectories()
+	if len(dirs) == 0 {
+		t.Errorf("KnownDefaultDirectories() returned empty list")
+	}
+}
+
+func TestDiscoverInstallations_WithPath(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	binName := TargetBinaryName()
+	extraDir := filepath.Join(tmp, "extra_bin")
+	createFakeAgentBinary(t, extraDir, binName, true)
+
+	found := DiscoverInstallations(ctx, extraDir)
+	var foundExtra bool
+	for _, inst := range found {
+		if filepath.Dir(inst.Path) == extraDir {
+			foundExtra = true
+			break
+		}
+	}
+	if !foundExtra {
+		t.Errorf("DiscoverInstallations did not discover binary in extraSearchPaths: %s", extraDir)
+	}
+}
+
+func TestFindRunningProcesses_EmptyAndMock(t *testing.T) {
+	ctx := context.Background()
+	// Should not panic with empty installations
+	procs := FindRunningProcesses(ctx, nil)
+	_ = procs
+
+	// Should not panic with dummy installation
+	procs = FindRunningProcesses(ctx, []Installation{
+		{Path: filepath.Join(t.TempDir(), TargetBinaryName())},
+	})
+	_ = procs
+}
+
+func TestStopProcess_Validation(t *testing.T) {
+	ctx := context.Background()
+	err := StopProcess(ctx, ProcessInfo{PID: -1})
+	if err == nil {
+		t.Errorf("StopProcess with negative PID must return error")
+	}
+}
+
+func TestCleanUserPathWindows(t *testing.T) {
+	tmp := t.TempDir()
+	_, _ = CleanUserPathWindows(tmp)
+}
+
+func TestUninstallAll_EmptyDiscovery(t *testing.T) {
+	ctx := context.Background()
+	emptyDir := filepath.Join(t.TempDir(), "empty_dir")
+	_ = os.MkdirAll(emptyDir, 0o755)
+
+	report, err := UninstallAll(ctx, Options{
+		SearchDirs: []string{emptyDir},
+	})
+	if err != nil {
+		t.Fatalf("UninstallAll error on empty dir: %v", err)
+	}
+	if !report.VerifiedClean {
+		t.Errorf("expected VerifiedClean = true on empty dir")
+	}
+	if len(report.Found) != 0 {
+		t.Errorf("expected 0 installations found, got %d", len(report.Found))
+	}
+}
+
+func TestUninstallAll_WipeCredentials(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	binName := TargetBinaryName()
+	agentDir := filepath.Join(tmp, "ForgeOps")
+	createFakeAgentBinary(t, agentDir, binName, true)
+
+	report, err := UninstallAll(ctx, Options{
+		DryRun:          false,
+		WipeCredentials: true,
+		SearchDirs:      []string{agentDir},
+	})
+	if err != nil {
+		t.Fatalf("UninstallAll error with WipeCredentials: %v", err)
+	}
+	if report.CredentialsPreserved {
+		t.Errorf("report.CredentialsPreserved must be false when WipeCredentials is true")
+	}
+}
+
+func TestVerifyBinary_EdgeCases(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+
+	// 1. Non-existent path
+	ok, _, _, _ := VerifyBinary(ctx, filepath.Join(tmp, "does_not_exist"))
+	if ok {
+		t.Errorf("VerifyBinary on non-existent path returned true")
+	}
+
+	// 2. Directory path
+	subDir := filepath.Join(tmp, "subdir")
+	_ = os.MkdirAll(subDir, 0o755)
+	ok, _, _, _ = VerifyBinary(ctx, subDir)
+	if ok {
+		t.Errorf("VerifyBinary on directory returned true")
+	}
+
+	// 3. Empty file
+	emptyFile := filepath.Join(tmp, TargetBinaryName())
+	_ = os.WriteFile(emptyFile, []byte{}, 0o755)
+	ok, _, _, _ = VerifyBinary(ctx, emptyFile)
+	if ok {
+		t.Errorf("VerifyBinary on empty file returned true")
+	}
+}
+
+func TestUninstallAll_WithRunningProcess(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("skipping Windows-specific process stop test")
+	}
+	ctx := context.Background()
+	tmp := t.TempDir()
+	binName := TargetBinaryName()
+	agentDir := filepath.Join(tmp, "ForgeOps")
+	_ = os.MkdirAll(agentDir, 0o755)
+	agentExe := filepath.Join(agentDir, binName)
+
+	// Copy cmd.exe so we can run a dummy forgeops-agent.exe process
+	cmdExe := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	input, err := os.ReadFile(cmdExe)
+	if err != nil {
+		t.Skip("cannot read cmd.exe")
+	}
+	// Append forgeops agent signature to make it authentic
+	input = append(input, []byte("\n"+"github.com/parag8487/ForgeOps/agent\nForgeOps local agent\n")...)
+	if err := os.WriteFile(agentExe, input, 0o755); err != nil {
+		t.Fatalf("write fake agent exe: %v", err)
+	}
+
+	// Spawn dummy process running forgeops-agent.exe
+	cmd := exec.Command(agentExe, "/c", "ping 127.0.0.1 -n 30 >nul")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start dummy process: %v", err)
+	}
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+
+	report, err := UninstallAll(ctx, Options{
+		DryRun:     false,
+		SearchDirs: []string{agentDir},
+	})
+	if err != nil {
+		t.Fatalf("UninstallAll with running process failed: %v", err)
+	}
+	_ = report
 }

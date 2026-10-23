@@ -120,3 +120,60 @@ func TestRootCommand_RegistersUninstallCommand(t *testing.T) {
 		t.Errorf("unexpected output from uninstall --force:\n%s", forceOut)
 	}
 }
+
+func TestUninstallCmd_JSON(t *testing.T) {
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.2"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--dry-run", "--json"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "{") {
+		t.Errorf("expected json output, got: %s", out)
+	}
+}
+
+func TestUninstallCmd_WipeCredentials(t *testing.T) {
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.2"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--dry-run", "--wipe-credentials"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+}
+
+func TestUninstallCmd_InteractiveWarning(t *testing.T) {
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.2"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	// Without --force and without --dry-run
+	cmd.SetArgs([]string{})
+	_ = cmd.ExecuteContext(context.Background())
+}

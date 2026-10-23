@@ -124,6 +124,10 @@ func newUninstallCmd(a *App) *cobra.Command {
 				_, _ = fmt.Fprintf(out, "\n  %s Note: Stored credentials were preserved. Use `forgeops-agent pair --wipe` to remove them.\n", glyphInfo)
 			}
 
+			if !report.VerifiedClean {
+				return fmt.Errorf("uninstall verification failed: %s", report.Summary)
+			}
+
 			return nil
 		},
 	}

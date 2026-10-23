@@ -76,24 +76,35 @@ func KnownDefaultDirectories() []string {
 	if runtime.GOOS == "windows" {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		if localAppData != "" {
-			dirs = append(dirs, filepath.Join(localAppData, "Programs", "ForgeOps"))
-			dirs = append(dirs, filepath.Join(localAppData, "bin"))
+			dirs = append(dirs,
+				filepath.Join(localAppData, "Programs", "ForgeOps"),
+				filepath.Join(localAppData, "ForgeOps"),
+				filepath.Join(localAppData, "ForgeOps", "bin"),
+				filepath.Join(localAppData, "bin"),
+			)
 		}
 		progFiles := os.Getenv("ProgramFiles")
 		if progFiles != "" {
-			dirs = append(dirs, filepath.Join(progFiles, "ForgeOps"))
+			dirs = append(dirs,
+				filepath.Join(progFiles, "ForgeOps"),
+				filepath.Join(progFiles, "ForgeOps", "bin"),
+			)
 		}
 		if home != "" {
-			dirs = append(dirs, filepath.Join(home, "go", "bin"))
-			dirs = append(dirs, filepath.Join(home, "bin"))
+			dirs = append(dirs,
+				filepath.Join(home, "go", "bin"),
+				filepath.Join(home, "bin"),
+				filepath.Join(home, ".local", "bin"),
+			)
 		}
 	} else {
-		dirs = append(dirs, "/usr/local/bin", "/opt/forgeops/bin", "/opt/forgeops")
+		dirs = append(dirs, "/usr/local/bin", "/opt/forgeops/bin", "/opt/forgeops", "/usr/bin")
 		if home != "" {
 			dirs = append(dirs,
 				filepath.Join(home, ".local", "bin"),
 				filepath.Join(home, "go", "bin"),
 				filepath.Join(home, "bin"),
+				filepath.Join(home, ".forgeops", "bin"),
 			)
 		}
 	}
@@ -233,10 +244,14 @@ func DiscoverInDirs(ctx context.Context, candidateDirs []string) []Installation 
 	return results
 }
 
-// DiscoverInstallations searches known directories, PATH, and extra paths for verified ForgeOps agent binaries.
+// DiscoverInstallations searches known directories, PATH, current executable directory, and extra paths for verified ForgeOps agent binaries.
 func DiscoverInstallations(ctx context.Context, extraSearchPaths ...string) []Installation {
 	candidateDirs := KnownDefaultDirectories()
 	candidateDirs = append(candidateDirs, extraSearchPaths...)
+
+	if currentExe, err := os.Executable(); err == nil && currentExe != "" {
+		candidateDirs = append(candidateDirs, filepath.Dir(currentExe))
+	}
 
 	// Add directories from PATH
 	pathEnv := os.Getenv("PATH")
@@ -250,12 +265,14 @@ func DiscoverInstallations(ctx context.Context, extraSearchPaths ...string) []In
 }
 
 // FindRunningProcesses finds all active processes executing a verified ForgeOps agent binary.
+// It explicitly excludes the current process PID so the uninstall command does not terminate itself.
 func FindRunningProcesses(ctx context.Context, verifiedInstallations []Installation) []ProcessInfo {
 	var procs []ProcessInfo
 	verifiedMap := make(map[string]bool)
 	for _, inst := range verifiedInstallations {
 		verifiedMap[strings.ToLower(filepath.Clean(inst.Path))] = true
 	}
+	currentPID := os.Getpid()
 
 	if runtime.GOOS == "windows" {
 		// Run tasklist to find forgeops-agent.exe processes
@@ -273,7 +290,7 @@ func FindRunningProcesses(ctx context.Context, verifiedInstallations []Installat
 					name := strings.Trim(cols[0], "\"")
 					pidStr := strings.Trim(cols[1], "\"")
 					pid, err := strconv.Atoi(pidStr)
-					if err == nil && pid > 0 {
+					if err == nil && pid > 0 && pid != currentPID {
 						// Query process path via PowerShell
 						pCmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command",
 							fmt.Sprintf("(Get-Process -Id %d -ErrorAction SilentlyContinue).Path", pid))
@@ -312,7 +329,7 @@ func FindRunningProcesses(ctx context.Context, verifiedInstallations []Installat
 					continue
 				}
 				pid, err := strconv.Atoi(line)
-				if err == nil && pid > 0 {
+				if err == nil && pid > 0 && pid != currentPID {
 					procs = append(procs, ProcessInfo{
 						PID:  pid,
 						Path: TargetBinaryName(),
@@ -428,19 +445,33 @@ func UninstallAll(ctx context.Context, opts Options) (*Report, error) {
 				report.Removed = append(report.Removed, inst.Path)
 			} else if runtime.GOOS == "windows" && inst.IsCurrentExe {
 				// Running executable on Windows is file-locked by the kernel while alive.
-				// Schedule post-exit self-deletion via detached cmd.exe process.
-				selfDelCmd := fmt.Sprintf("ping 127.0.0.1 -n 2 >nul & del /f /q \"%s\"", inst.Path)
-				if strings.HasSuffix(strings.ToLower(inst.Directory), "forgeops") {
-					selfDelCmd += fmt.Sprintf(" & rmdir /q \"%s\"", inst.Directory)
-				}
-				dCmd := exec.Command("cmd.exe", "/C", "start", "/B", "cmd.exe", "/C", selfDelCmd)
-				if dErr := dCmd.Start(); dErr == nil {
+				// However, NTFS permits renaming an open executable!
+				// We rename it to forgeops-agent.exe.deleted immediately so that Doctor, PATH,
+				// and discovery scans instantly see it as removed.
+				deletedPath := inst.Path + ".deleted"
+				_ = os.Remove(deletedPath)
+				if rErr := os.Rename(inst.Path, deletedPath); rErr == nil {
+					selfDelCmd := fmt.Sprintf("ping 127.0.0.1 -n 2 >nul & del /f /q \"%s\"", deletedPath)
+					if strings.HasSuffix(strings.ToLower(inst.Directory), "forgeops") {
+						selfDelCmd += fmt.Sprintf(" & rmdir /q \"%s\"", inst.Directory)
+					}
+					dCmd := exec.Command("cmd.exe", "/C", "start", "/B", "cmd.exe", "/C", selfDelCmd)
+					_ = dCmd.Start()
 					report.Removed = append(report.Removed, inst.Path)
 				} else {
-					report.Skipped = append(report.Skipped, SkippedItem{
-						Path:   inst.Path,
-						Reason: fmt.Sprintf("Self-removal schedule error: %v", dErr),
-					})
+					selfDelCmd := fmt.Sprintf("ping 127.0.0.1 -n 2 >nul & del /f /q \"%s\"", inst.Path)
+					if strings.HasSuffix(strings.ToLower(inst.Directory), "forgeops") {
+						selfDelCmd += fmt.Sprintf(" & rmdir /q \"%s\"", inst.Directory)
+					}
+					dCmd := exec.Command("cmd.exe", "/C", "start", "/B", "cmd.exe", "/C", selfDelCmd)
+					if dErr := dCmd.Start(); dErr == nil {
+						report.Removed = append(report.Removed, inst.Path)
+					} else {
+						report.Skipped = append(report.Skipped, SkippedItem{
+							Path:   inst.Path,
+							Reason: fmt.Sprintf("Self-removal schedule error: %v", dErr),
+						})
+					}
 				}
 			} else {
 				report.Skipped = append(report.Skipped, SkippedItem{
