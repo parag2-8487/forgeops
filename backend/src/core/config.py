@@ -525,8 +525,8 @@ class Settings(BaseSettings):
     #: published mapping from the same value, so the mapping and what is advertised cannot drift.
     agent_tls_host_port: int = Field(default=8443, ge=1, le=65_535)
 
-    #: The agent release the UI offers for download, e.g. `v0.1.1`.
-    agent_release_tag: str = Field(default="v0.1.1")
+    #: The agent release the UI offers for download, e.g. `v0.1.2`.
+    agent_release_tag: str = Field(default="v0.1.2")
 
     #: Where the signed archives live.
     agent_download_base_url: str = Field(default="https://github.com/parag8487/ForgeOps/releases/download")

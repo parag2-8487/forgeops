@@ -781,7 +781,7 @@ $tierDefaults = [ordered]@{
     'SELF_HOSTED_BASE_URL'            = 'http://ollama:11434/v1'
     'SELF_HOSTED_MODEL_ID'            = 'qwen2.5-coder:1.5b'
     'SELF_HOSTED_EMBEDDING_MODEL_ID'  = 'bge-m3:567m'
-    'AGENT_RELEASE_TAG'               = 'v0.1.1'
+    'AGENT_RELEASE_TAG'               = 'v0.1.2'
     'AGENT_DOWNLOAD_BASE_URL'         = 'https://github.com/parag8487/ForgeOps/releases/download'
 }
 $tierAdded = @()

@@ -678,7 +678,7 @@ env_set_ AGENT_TLS_HOST_PORT "$AGENT_TLS_HOST_PORT_V"
 env_set_ INNGEST_PORT     "$INNGEST_PORT_V"
 env_set_ OLLAMA_PORT      "$OLLAMA_PORT_V"
 env_set_ OLLAMA_SECONDARY_PORT "$OLLAMA_SECONDARY_PORT_V"
-env_set_ AGENT_RELEASE_TAG "v0.1.1"
+env_set_ AGENT_RELEASE_TAG "v0.1.2"
 env_set_ AGENT_DOWNLOAD_BASE_URL "https://github.com/parag8487/ForgeOps/releases/download"
 
 env_set_ NEXT_PUBLIC_API_BASE_URL "$API_BASE_URL"
