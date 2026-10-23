@@ -333,7 +333,7 @@ func TestDiscoverInDirs_DefaultAndCurrentExe(t *testing.T) {
 	ctx := context.Background()
 	currentExe, err := os.Executable()
 	if err != nil || currentExe == "" {
-		t.Skip("no current executable")
+		t.Fatalf("no current executable: %v", err)
 	}
 	defDirs := KnownDefaultDirectories()
 	candidateDirs := []string{defDirs[0], filepath.Dir(currentExe), ""}
@@ -349,7 +349,7 @@ func TestStopProcess_LiveProcess(t *testing.T) {
 		cmd = exec.Command("sleep", "10")
 	}
 	if err := cmd.Start(); err != nil {
-		t.Skipf("cannot start dummy process: %v", err)
+		t.Fatalf("cannot start dummy process: %v", err)
 	}
 	defer func() {
 		if cmd.Process != nil {
@@ -400,16 +400,19 @@ func TestUninstallAll_ForgeOpsDirectoryCleanup(t *testing.T) {
 }
 
 func TestUninstallAll_PartiallyUninstalledWhenFileLocked(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("platform-only: windows - file handle locking during open is an NTFS-specific behaviour")
+	}
 	ctx := context.Background()
 	tmp := t.TempDir()
 	binName := TargetBinaryName()
 	agentDir := filepath.Join(tmp, "locked_dir")
 	fakePath := createFakeAgentBinary(t, agentDir, binName, true)
 
-	// Keep an exclusive handle to the file so os.Remove fails on Windows / platforms with mandatory locking
+	// Keep an exclusive handle to the file so os.Remove fails on Windows
 	f, err := os.OpenFile(fakePath, os.O_RDWR, 0)
 	if err != nil {
-		t.Skipf("cannot lock file: %v", err)
+		t.Fatalf("cannot lock file: %v", err)
 	}
 	defer f.Close()
 
@@ -419,19 +422,17 @@ func TestUninstallAll_PartiallyUninstalledWhenFileLocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UninstallAll failed: %v", err)
 	}
-	if runtime.GOOS == "windows" {
-		if report.VerifiedClean {
-			t.Errorf("expected VerifiedClean = false for locked file")
-		}
-		if len(report.Skipped) == 0 && len(report.LeftBehind) == 0 {
-			t.Errorf("expected skipped or left behind items for locked file")
-		}
+	if report.VerifiedClean {
+		t.Errorf("expected VerifiedClean = false for locked file")
+	}
+	if len(report.Skipped) == 0 && len(report.LeftBehind) == 0 {
+		t.Errorf("expected skipped or left behind items for locked file")
 	}
 }
 
 func TestUninstallAll_WithRunningProcess(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("skipping Windows-specific process stop test")
+		t.Skip("platform-only: windows - process inspection and taskkill are Windows-specific here")
 	}
 	ctx := context.Background()
 	tmp := t.TempDir()
@@ -444,7 +445,7 @@ func TestUninstallAll_WithRunningProcess(t *testing.T) {
 	cmdExe := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
 	input, err := os.ReadFile(cmdExe)
 	if err != nil {
-		t.Skip("cannot read cmd.exe")
+		t.Fatalf("cannot read cmd.exe: %v", err)
 	}
 	// Append forgeops agent signature to make it authentic
 	input = append(input, []byte("\n"+"github.com/parag8487/ForgeOps/agent\nForgeOps local agent\n")...)
