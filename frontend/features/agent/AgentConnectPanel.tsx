@@ -114,6 +114,8 @@ function usePlatform(override?: Platform): Platform {
   return override ?? detected;
 }
 
+const noop = () => {};
+
 export function AgentConnectPanel({
   code,
   projectId,
@@ -274,17 +276,17 @@ export function AgentConnectPanel({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => {}} data-testid="dropdown-cmd-help">
+                <DropdownMenuItem onSelect={noop} data-testid="dropdown-cmd-help">
                   Help
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => {}} data-testid="dropdown-cmd-doctor">
+                <DropdownMenuItem onSelect={noop} data-testid="dropdown-cmd-doctor">
                   Doctor
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => {}} data-testid="dropdown-cmd-wipe">
+                <DropdownMenuItem onSelect={noop} data-testid="dropdown-cmd-wipe">
                   Wipe
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  onClick={() => setUninstallOpen(true)}
+                  onSelect={() => setUninstallOpen(true)}
                   data-testid="dropdown-cmd-uninstall"
                   className="text-destructive focus:text-destructive font-medium"
                 >

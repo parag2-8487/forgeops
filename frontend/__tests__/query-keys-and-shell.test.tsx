@@ -21,6 +21,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { queryKeys } from "@/lib/api/query-keys";
+import * as apiBarrel from "@/lib/api/index";
 
 describe("queryKeys", () => {
   it("prefixes every key with its family, so invalidating the family reaches all of it", () => {
@@ -263,5 +264,16 @@ describe("the shell layout", () => {
     vi.doUnmock("@/components/layout/app-sidebar");
     vi.doUnmock("@/components/layout/app-header");
     vi.doUnmock("@/components/layout/auth-boundary");
+  });
+});
+
+describe("api module barrel export", () => {
+  it("re-exports client, errors, problem, and queryKeys", () => {
+    expect(apiBarrel.api).toBeDefined();
+    expect(apiBarrel.ApiProblemError).toBeDefined();
+    expect(apiBarrel.ApiTransportError).toBeDefined();
+    expect(apiBarrel.isProblemDetails).toBeDefined();
+    expect(apiBarrel.PROBLEM_CONTENT_TYPE).toBeDefined();
+    expect(apiBarrel.queryKeys).toBeDefined();
   });
 });

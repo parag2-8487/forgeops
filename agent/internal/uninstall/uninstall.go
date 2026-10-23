@@ -17,14 +17,14 @@ import (
 
 // Installation represents a discovered ForgeOps agent installation.
 type Installation struct {
-	Path        string `json:"path"`
-	Directory   string `json:"directory"`
-	Version     string `json:"version"`
-	Commit      string `json:"commit,omitempty"`
-	Date        string `json:"date,omitempty"`
-	Verified    bool   `json:"verified"`
-	IsDefault   bool   `json:"is_default"`
-	IsCurrentExe bool  `json:"is_current_exe"`
+	Path         string `json:"path"`
+	Directory    string `json:"directory"`
+	Version      string `json:"version"`
+	Commit       string `json:"commit,omitempty"`
+	Date         string `json:"date,omitempty"`
+	Verified     bool   `json:"verified"`
+	IsDefault    bool   `json:"is_default"`
+	IsCurrentExe bool   `json:"is_current_exe"`
 }
 
 // ProcessInfo represents a running process identified as a ForgeOps agent.
@@ -52,7 +52,7 @@ type Options struct {
 	WipeCredentials  bool     `json:"wipe_credentials"`
 	ExtraSearchPaths []string `json:"extra_search_paths,omitempty"`
 	// SearchDirs overrides the default search locations. Useful for tests and isolated scans.
-	SearchDirs       []string `json:"search_dirs,omitempty"`
+	SearchDirs []string `json:"search_dirs,omitempty"`
 }
 
 // Report details the outcome of an uninstallation operation.
@@ -165,7 +165,7 @@ func VerifyBinary(ctx context.Context, path string) (bool, string, string, strin
 	if err != nil {
 		return false, "", "", ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	buf := make([]byte, 512*1024)
 	n, _ := io.ReadFull(f, buf)

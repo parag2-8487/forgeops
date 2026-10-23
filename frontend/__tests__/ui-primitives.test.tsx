@@ -41,6 +41,16 @@ import {
   SheetClose,
 } from "@/components/ui/sheet";
 import {
+  Dialog,
+  DialogTrigger,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
@@ -290,6 +300,35 @@ describe("Sheet", () => {
     }
     // Four sides must yield four different placements, or one of them is silently wrong.
     expect(seen.size).toBe(4);
+  });
+});
+
+describe("Dialog", () => {
+  it("renders nothing until trigger is clicked, then displays content and closes via close button", async () => {
+    render(
+      <Dialog>
+        <DialogTrigger>Open Modal</DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Modal Title</DialogTitle>
+            <DialogDescription>Modal Description</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose>Cancel</DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open Modal" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Modal Title" })).toBeInTheDocument();
+    expect(screen.getByText("Modal Description")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 });
 

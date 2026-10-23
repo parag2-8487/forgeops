@@ -268,4 +268,34 @@ describe("the history viewer", () => {
     const explanation = await screen.findByTestId("history-explanation");
     expect(explanation.textContent).toContain("different from having been told and ignoring it");
   });
+
+  it("cancels preference editing and sends forget mutation", async () => {
+    get.mockResolvedValue({
+      preferences: [preference({ id: "p1" })],
+      excluded: [],
+      explanation: "Learned preferences",
+    });
+    del.mockResolvedValue({});
+    mount(<PreferenceDisplay projectId="proj-1" />);
+
+    // Test Cancel during edit
+    const correctBtn = await screen.findByRole("button", { name: "Correct" });
+    await userEvent.click(correctBtn);
+    const cancelBtn = screen.getByRole("button", { name: "Cancel" });
+    await userEvent.click(cancelBtn);
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+
+    // Test Forget entirely
+    const forgetBtn = screen.getByTestId("preference-forget-p1");
+    await userEvent.click(forgetBtn);
+    await waitFor(() => {
+      expect(del).toHaveBeenCalledWith("/learning/preferences/p1");
+    });
+  });
+
+  it("renders error alert when compiling skill file fails", async () => {
+    get.mockRejectedValue(new Error("Compile error"));
+    mount(<SkillFilePanel projectId="proj-1" />);
+    expect(await screen.findByTestId("skill-file-error")).toBeInTheDocument();
+  });
 });
