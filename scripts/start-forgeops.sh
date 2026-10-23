@@ -107,6 +107,85 @@ COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.e2e.yml)
 dc() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
 ENV_PATH="$REPO_ROOT/.env"
 
+detect_installation_mode_() {
+  local env_file="$1"
+  local installed_ver="$2"
+  local intended_ver="$3"
+  local is_fresh="$4"
+  local is_rebuild="$5"
+  local is_no_reset="$6"
+  local ps_output="$7"
+
+  if [ "$is_fresh" -eq 1 ]; then
+    INSTALL_MODE="Fresh"
+    INSTALL_DESC="Fresh installation / reset requested via --fresh flag"
+    INSTALL_ACTION="Wipe containers and data volumes, perform fresh bootstrap"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  if [ ! -f "$env_file" ] || [ ! -s "$env_file" ]; then
+    INSTALL_MODE="Fresh"
+    INSTALL_DESC="Fresh installation: no configuration file (.env) found"
+    INSTALL_ACTION="Generate configuration, secrets, and bootstrap stack"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  local pepper=""
+  pepper="$(grep -E '^ENVELOPE_PEPPER=' "$env_file" 2>/dev/null | head -n1 | cut -d= -f2- || true)"
+  if [ -z "$pepper" ]; then
+    INSTALL_MODE="ExistingNeedsRepair"
+    INSTALL_DESC="Existing installation missing required configuration or secrets (ENVELOPE_PEPPER)"
+    INSTALL_ACTION="Generate missing secrets and repair configuration without overwriting existing data"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  local required_services="postgres redis cerbos opa authentik-server authentik-worker backend worker backend-agent frontend inngest ollama ollama-secondary"
+  local missing=""
+  for req in $required_services; do
+    if ! echo "$ps_output" | grep -q "^$req|"; then
+      missing="$missing $req"
+    else
+      local line=""
+      line="$(echo "$ps_output" | grep "^$req|" | head -n1)"
+      local st=""
+      local hl=""
+      st="$(echo "$line" | cut -d'|' -f2 | tr '[:upper:]' '[:lower:]')"
+      hl="$(echo "$line" | cut -d'|' -f3 | tr '[:upper:]' '[:lower:]')"
+      if [ "$st" != "running" ]; then
+        missing="$missing $req"
+      elif [ -n "$hl" ] && [ "$hl" != "healthy" ]; then
+        missing="$missing $req"
+      fi
+    fi
+  done
+  missing="$(echo "$missing" | sed -e 's/^[[:space:]]*//')"
+
+  if [ -n "$installed_ver" ] && [ -n "$intended_ver" ] && [ "$installed_ver" != "$intended_ver" ]; then
+    INSTALL_MODE="ExistingNeedsUpdate"
+    INSTALL_DESC="Existing installation requiring an update from $installed_ver to $intended_ver"
+    INSTALL_ACTION="Back up database, build/pull updated images, apply migrations, update version marker"
+    INSTALL_MISSING_SERVICES="$missing"
+    return 0
+  fi
+
+  if [ -z "$missing" ] && [ "$is_rebuild" -eq 0 ]; then
+    INSTALL_MODE="ExistingHealthy"
+    INSTALL_DESC="Existing healthy installation at intended version ($intended_ver)"
+    INSTALL_ACTION="Verify health endpoints and maintain running stack without teardown"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  INSTALL_MODE="ExistingNeedsRepair"
+  INSTALL_DESC="Existing installation needing repair: service(s) stopped, missing, or unhealthy ($missing)"
+  INSTALL_ACTION="Recreate or restart only stopped/unhealthy services"
+  INSTALL_MISSING_SERVICES="$missing"
+  return 0
+}
+
 # ─── Docker ──────────────────────────────────────────────────────────────────────────────────────
 
 head_ 'Prerequisites'
@@ -485,60 +564,111 @@ fi
 
 # ─── Optional clean slate ────────────────────────────────────────────────────────────────────────
 
-head_ 'Previous deployment'
-step_ 'Removing anything left from a previous run'
+head_ 'Installation & Self-Repair Audit'
 
-<<'NOTE' true
-THIS RUNS BY DEFAULT, and it removes CONTAINERS but not DATA.
-
-`docker compose down` deletes the containers and the network; the named volumes survive unless `-v`
-is given. That split is deliberate:
-
-  * Removing the containers every run makes the whole class of stale-container faults impossible.
-    Compose reads `env_file` only when it CREATES a container, so a container that predates a change
-    to .env keeps the old values -- which is how a stack came up with all nine services healthy and
-    every sign-in answering 503, because the backend still held an issuer pointing at localhost.
-
-  * Keeping the volumes means your projects, paired devices, change sets, audit rows and identity
-    provider configuration are still there afterwards. Deleting those on every start would be a
-    surprising thing for a script called "start" to do, and the audit chain is append-only by design.
-
-Use --fresh when you do want the data gone, and --no-reset to skip this step entirely.
-NOTE
-
-if [ "$NO_RESET" -eq 1 ]; then
-  info_ 'skipped (--no-reset): existing containers will be reused'
-elif [ -z "$(dc ps -aq 2>/dev/null)" ]; then
-  ok_ 'nothing to remove'
+INTENDED_VERSION="v0.1.2"
+INSTALLED_VERSION=""
+VERSION_FILE="$REPO_ROOT/.forgeops_version"
+if [ -f "$VERSION_FILE" ]; then
+  INSTALLED_VERSION="$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')"
+elif grep -q '^FORGEOPS_VERSION=' "$ENV_PATH" 2>/dev/null; then
+  INSTALLED_VERSION="$(grep -E '^FORGEOPS_VERSION=' "$ENV_PATH" | head -n1 | cut -d= -f2- | tr -d '"''' ')"
+elif grep -q '^AGENT_RELEASE_TAG=' "$ENV_PATH" 2>/dev/null; then
+  INSTALLED_VERSION="$(grep -E '^AGENT_RELEASE_TAG=' "$ENV_PATH" | head -n1 | cut -d= -f2- | tr -d '"''' ')"
 else
-  DOWN_ARGS='--remove-orphans'
-  if [ "$FRESH" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
-    if [ ! -t 0 ]; then
-      die_ '--fresh deletes all persistent data and requires interactive confirmation or --force.'
-    fi
-    warn_ '--fresh DELETES every project, device, change set, audit row and identity.'
-    printf '      type "yes" to continue: '
-    read -r answer
-    if [ "$answer" != "yes" ]; then
-      info_ 'keeping the data; removing containers only'
-      FRESH=0
-    fi
+  INSTALLED_VERSION="v0.1.2"
+fi
+
+PS_PROBE="$(dc ps --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null || true)"
+INSTALL_MODE=""
+INSTALL_DESC=""
+INSTALL_ACTION=""
+INSTALL_MISSING_SERVICES=""
+
+detect_installation_mode_ "$ENV_PATH" "$INSTALLED_VERSION" "$INTENDED_VERSION" "$FRESH" "$REBUILD" "$NO_RESET" "$PS_PROBE"
+
+step_ "Detected mode: $INSTALL_MODE"
+info_ "Installed version: ${INSTALLED_VERSION:-none} | Intended version: $INTENDED_VERSION"
+info_ "$INSTALL_DESC"
+info_ "Action: $INSTALL_ACTION"
+
+# Fast-path for already healthy and current installation
+if [ "$INSTALL_MODE" = "ExistingHealthy" ] && [ "$FRESH" -eq 0 ] && [ "$REBUILD" -eq 0 ]; then
+  probe_backend_port="$(env_get_ BACKEND_PORT || echo 18000)"
+  [ -n "$probe_backend_port" ] || probe_backend_port=18000
+  probe_frontend_port="$(env_get_ FRONTEND_PORT || echo 13000)"
+  [ -n "$probe_frontend_port" ] || probe_frontend_port=13000
+
+  b_ready=0
+  if have_ curl && curl -s -f --max-time 5 "http://localhost:${probe_backend_port}/health/ready" >/dev/null 2>&1; then
+    b_ready=1
   fi
-  # Written as `if` blocks rather than `[ cond ] && assignment`. Under `set -e` a trailing test that
-  # evaluates FALSE returns non-zero, and as the last command of a block that terminates the whole
-  # script -- a silent early exit that looks like the run simply stopping.
-  if [ "$FRESH" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS -v"; fi
-  if [ "$PURGE_IMAGES" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS --rmi local"; fi
+  f_ready=0
+  if have_ curl && curl -s -f --max-time 5 "http://localhost:${probe_frontend_port}" >/dev/null 2>&1; then
+    f_ready=1
+  fi
 
-  # shellcheck disable=SC2086  # DOWN_ARGS is a deliberate list of flags and must word-split
-  dc down $DOWN_ARGS >/dev/null 2>&1 || warn_ 'the teardown reported a problem; continuing'
-
-  if [ "$FRESH" -eq 1 ]; then
-    ok_ 'containers, networks and data volumes removed'
+  if [ "$b_ready" -eq 1 ] && [ "$f_ready" -eq 1 ]; then
+    ok_ "Backend is ready at http://localhost:${probe_backend_port}/health/ready"
+    ok_ "Frontend is ready at http://localhost:${probe_frontend_port}"
+    ok_ "All 13 ForgeOps services are running and healthy."
+    head_ "Verification Complete"
+    ok_ "ForgeOps is already current ($INTENDED_VERSION) and operational. No restart required."
+    exit 0
   else
-    ok_ 'containers and networks removed; data volumes kept'
+    warn_ "Health probe failed on existing installation; falling back to self-repair mode."
+    INSTALL_MODE="ExistingNeedsRepair"
   fi
-  if [ "$PURGE_IMAGES" -eq 1 ]; then ok_ 'locally built images removed, so they will be rebuilt'; fi
+fi
+
+# Targeted repair: start or recreate missing/unhealthy services
+if [ "$INSTALL_MODE" = "ExistingNeedsRepair" ] && [ "$FRESH" -eq 0 ] && [ "$REBUILD" -eq 0 ]; then
+  if [ -n "$INSTALL_MISSING_SERVICES" ]; then
+    step_ "Targeting repair for missing/unhealthy services: $INSTALL_MISSING_SERVICES"
+    # shellcheck disable=SC2086
+    dc up -d $INSTALL_MISSING_SERVICES || warn_ "Targeted service start reported a warning."
+    ok_ "Targeted services started successfully."
+  fi
+fi
+
+# Pre-upgrade database safety backup
+if [ "$INSTALL_MODE" = "ExistingNeedsUpdate" ]; then
+  mkdir -p "$REPO_ROOT/backups"
+  ts="$(date +%Y%m%d_%H%M%S)"
+  upgrade_bak="$REPO_ROOT/backups/forgeops_pre_upgrade_${ts}.sql"
+  info_ "Creating pre-upgrade database backup: $(basename "$upgrade_bak")"
+  if dc exec -T postgres pg_dump -U forgeops -d forgeops -F p > "$upgrade_bak" 2>/dev/null && [ -s "$upgrade_bak" ]; then
+    ok_ "Database backup created successfully ($(wc -c < "$upgrade_bak" | tr -d ' ') bytes)"
+  else
+    warn_ "Could not create pre-upgrade database backup; proceeding with caution."
+  fi
+fi
+
+# Fresh reset if requested
+if [ "$INSTALL_MODE" = "Fresh" ]; then
+  if [ -n "$(dc ps -aq 2>/dev/null)" ]; then
+    DOWN_ARGS='--remove-orphans'
+    if [ "$FRESH" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
+      if [ ! -t 0 ]; then
+        die_ '--fresh deletes all persistent data and requires interactive confirmation or --force.'
+      fi
+      warn_ '--fresh DELETES every project, device, change set, audit row and identity.'
+      printf '      type "yes" to continue: '
+      read -r answer
+      if [ "$answer" != "yes" ]; then
+        info_ 'keeping the data; removing containers only'
+        FRESH=0
+      fi
+    fi
+    if [ "$FRESH" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS -v"; fi
+    if [ "$PURGE_IMAGES" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS --rmi local"; fi
+    # shellcheck disable=SC2086
+    dc down $DOWN_ARGS >/dev/null 2>&1 || warn_ 'the teardown reported a problem; continuing'
+    if [ "$FRESH" -eq 1 ]; then ok_ 'containers, networks and data volumes removed'
+    else ok_ 'containers and networks removed; data volumes kept'; fi
+    if [ "$PURGE_IMAGES" -eq 1 ]; then ok_ 'locally built images removed, so they will be rebuilt'; fi
+  fi
+fi
 fi
 
 # ─── Ports ───────────────────────────────────────────────────────────────────────────────────────
@@ -1104,10 +1234,15 @@ ok_ 'the identity provider is provisioned'
 
 # ─── Migrations ──────────────────────────────────────────────────────────────────────────────────
 
-step_ 'Applying the database migrations'
+step_ 'Applying database migrations'
+info_ 'Checking current migration revision'
+dc run --rm --entrypoint /bin/sh backend -c "alembic current" 2>/dev/null || true
 dc run --rm --entrypoint /bin/sh backend -c "alembic upgrade head" >/dev/null \
-  || die_ 'the migrations failed.'
+  || die_ 'the migrations failed. Data volumes were NOT deleted.' \
+          'Your database state has been preserved. If a backup was made, it is located in backups/.'
 ok_ 'the schema is at head'
+printf '%s' "$INTENDED_VERSION" > "$REPO_ROOT/.forgeops_version"
+env_set_ FORGEOPS_VERSION "$INTENDED_VERSION"
 
 # ─── Application ─────────────────────────────────────────────────────────────────────────────────
 

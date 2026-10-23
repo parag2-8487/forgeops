@@ -329,149 +329,109 @@ function Invoke-Compose {
     return Invoke-Native -Command ("docker compose {0} {1}" -f $ComposeFiles, $Arguments) -Quiet:$Quiet
 }
 
-# --- 1. Docker -----------------------------------------------------------------------------------
-
-Write-Head 'Prerequisites'
-Write-Step 'Checking Docker'
-
-if (-not (Test-CommandExists -Name 'docker')) {
-    if ($SkipInstall) {
-        Stop-WithAdvice -Problem 'Docker is not installed, and -SkipInstall was given.' -Advice @(
-            'Install Docker Desktop from https://www.docker.com/products/docker-desktop/ and retry.'
-        )
-    }
-    Write-Warn2 'Docker is not installed. Installing Docker Desktop.'
-    if (-not (Test-CommandExists -Name 'winget')) {
-        Stop-WithAdvice -Problem 'Docker is missing and winget is not available to install it.' -Advice @(
-            'Install Docker Desktop by hand, then run this script again:',
-            '    https://www.docker.com/products/docker-desktop/',
-            '',
-            'winget ships with App Installer from the Microsoft Store on Windows 10 1809 and later.'
-        )
-    }
-    Write-Info 'winget install Docker.DockerDesktop  (this takes several minutes)'
-    $install = Invoke-Native -Command 'winget install --id Docker.DockerDesktop --exact --accept-source-agreements --accept-package-agreements --disable-interactivity'
-    if (-not $install.Ok) {
-        Stop-WithAdvice -Problem 'the Docker Desktop installation did not succeed.' -Advice @(
-            'winget output:', $install.Output, '',
-            'Docker Desktop usually needs an elevated prompt and, on a first install, a REBOOT to',
-            'enable the WSL 2 backend. Install it manually, reboot, then run this script again.'
-        )
-    }
-    Write-Ok 'Docker Desktop installed'
-    Write-Warn2 'A REBOOT is usually required before Docker can run. Reboot, then run this script again.'
-    $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-                [System.Environment]::GetEnvironmentVariable('Path', 'User')
-    if (-not (Test-CommandExists -Name 'docker')) {
-        Stop-WithAdvice -Problem 'Docker was installed but is not yet on PATH.' -Advice @(
-            'Reboot and run this script again. This is expected on a first install.'
-        )
-    }
-} else {
-    $v = Invoke-Native -Command 'docker --version' -Quiet
-    Write-Ok $v.Lines[0]
-}
-
-Write-Step 'Checking the Docker engine is running'
-
-$engine = Invoke-Native -Command 'docker info --format "{{.ServerVersion}}"' -Quiet
-if (-not $engine.Ok) {
-    Write-Warn2 'the Docker engine is not responding. Trying to start Docker Desktop.'
-    # THE PATH IS DERIVED FROM THE CLI, not just guessed from Program Files. Docker Desktop 4.x
-    # installs per-user by default, at %LOCALAPPDATA%\Programs\DockerDesktop, and the machine-wide
-    # path does not exist at all -- so a hardcoded Program Files list reports "Docker Desktop was not
-    # found" on a machine where Docker is installed and working, which is worse than useless advice.
-    # `docker` on PATH points at <root>\resources\bin\docker.exe, so <root>\Docker Desktop.exe is the
-    # app whatever the install scope. The fixed paths stay as fallbacks for older installs.
-    $dockerCli = (Get-Command docker -ErrorAction SilentlyContinue)
-    $derived = $null
-    if ($dockerCli) {
-        $binDir = Split-Path -Parent $dockerCli.Source                 # ...\resources\bin
-        $root = Split-Path -Parent (Split-Path -Parent $binDir)        # ...\DockerDesktop
-        if ($root) { $derived = Join-Path $root 'Docker Desktop.exe' }
-    }
-    $regPaths = @(
-        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Docker Desktop.exe',
-        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Docker Desktop.exe'
+function Get-ForgeOpsInstallationMode {
+    param(
+        [hashtable]$EnvConfig,
+        [string]$InstalledVer,
+        [string]$IntendedVer,
+        [bool]$IsFresh,
+        [bool]$IsRebuild,
+        [bool]$IsNoReset,
+        [object]$ComposePsResult
     )
-    $regDesktop = $null
-    foreach ($rp in $regPaths) {
-        if (Test-Path $rp) {
-            $val = (Get-ItemProperty -Path $rp -ErrorAction SilentlyContinue).'(default)'
-            if ($val -and (Test-Path -LiteralPath $val)) { $regDesktop = $val; break }
+    if ($IsFresh) {
+        return @{
+            Mode = 'Fresh'
+            Description = 'Fresh installation / reset requested via -Fresh flag'
+            Action = 'Wipe containers and data volumes, perform fresh bootstrap'
+            MissingServices = @()
         }
     }
-    $desktop = @(
-        $regDesktop,
-        $derived,
-        (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'),
-        (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
-        (Join-Path ${env:ProgramFiles(x86)} 'Docker\Docker\Docker Desktop.exe'),
-        $(if ($env:ProgramW6432) { Join-Path $env:ProgramW6432 'Docker\Docker\Docker Desktop.exe' })
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-
-    $ddProcess = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue
-    if ($ddProcess) {
-        Write-Info 'Docker Desktop process is already active; waiting for the container engine to respond...'
-    } elseif ($desktop) {
-        Write-Info ("launching Docker Desktop from {0}..." -f $desktop)
-        Start-Process -FilePath $desktop | Out-Null
-    } else {
-        Stop-WithAdvice -Problem 'the Docker engine is not running and Docker Desktop was not found.' -Advice @(
-            'Start Docker Desktop manually, wait for the whale icon to stop animating, and retry.',
-            'If Docker Desktop is not installed, install it with: winget install Docker.DockerDesktop'
-        )
+    if ($null -eq $EnvConfig -or $EnvConfig.Count -eq 0) {
+        return @{
+            Mode = 'Fresh'
+            Description = 'Fresh installation: no configuration file (.env) found'
+            Action = 'Generate configuration, secrets, and bootstrap stack'
+            MissingServices = @()
+        }
     }
 
-    Write-Info 'waiting for the engine (up to 4 minutes; a cold start is slow)'
-    $engineUp = $false
-    for ($i = 1; $i -le 48; $i++) {
-        Start-Sleep -Seconds 5
-        $probe = Invoke-Native -Command 'docker info --format "{{.ServerVersion}}"' -Quiet
-        if ($probe.Ok) { $engineUp = $true; $engine = $probe; break }
-        if ($i % 6 -eq 0) { Write-Info ("still waiting ({0}s)" -f ($i * 5)) }
+    $requiredKeys = @('ENVELOPE_PEPPER', 'AUTHENTIK_SECRET_KEY', 'BACKEND_PORT', 'FRONTEND_PORT')
+    $missingKeys = @()
+    foreach ($k in $requiredKeys) {
+        if (-not $EnvConfig.ContainsKey($k) -or [string]::IsNullOrWhiteSpace($EnvConfig[$k])) {
+            $missingKeys += $k
+        }
     }
-    if (-not $engineUp) {
-        Stop-WithAdvice -Problem 'the Docker engine did not become ready.' -Advice @(
-            'Open Docker Desktop and look at its own error message. Common causes:',
-            '  - WSL 2 is not installed or needs updating:  wsl --update',
-            '  - virtualisation is disabled in the BIOS/UEFI',
-            '  - the machine needs a reboot after installing Docker Desktop'
-        )
+    if ($missingKeys.Count -gt 0) {
+        return @{
+            Mode = 'ExistingNeedsRepair'
+            Description = ("Existing installation needing repair: missing required configuration key(s) ({0})" -f ($missingKeys -join ', '))
+            Action = 'Generate missing secrets and repair configuration without overwriting existing data'
+            MissingServices = @()
+        }
     }
-}
-Write-Ok ("Docker engine " + $engine.Lines[0].Trim())
 
-$composeProbe = Invoke-Native -Command 'docker compose version --short' -Quiet
-if (-not $composeProbe.Ok) {
-    Stop-WithAdvice -Problem 'Docker Compose v2 is not available (`docker compose` failed).' -Advice @(
-        'This project uses the Compose V2 plugin, not the old `docker-compose` binary.',
-        'Update Docker Desktop, which bundles it.'
+    $requiredServices = @(
+        'postgres', 'redis', 'cerbos', 'opa', 'authentik-server', 'authentik-worker',
+        'backend', 'worker', 'backend-agent', 'frontend', 'inngest', 'ollama', 'ollama-secondary'
     )
+
+    $serviceStatus = @{}
+    if ($null -ne $ComposePsResult -and $ComposePsResult.Ok) {
+        foreach ($line in $ComposePsResult.Lines) {
+            $trimmed = $line.Trim()
+            if ($trimmed.Length -eq 0) { continue }
+            $parts = $trimmed -split '\|'
+            if ($parts.Count -ge 2) {
+                $svc = $parts[0].Trim()
+                $st = $parts[1].Trim().ToLowerInvariant()
+                $hl = ''
+                if ($parts.Count -ge 3) { $hl = $parts[2].Trim().ToLowerInvariant() }
+                $serviceStatus[$svc] = @{ State = $st; Health = $hl }
+            }
+        }
+    }
+
+    $missingOrUnhealthy = @()
+    foreach ($req in $requiredServices) {
+        if (-not $serviceStatus.ContainsKey($req)) {
+            $missingOrUnhealthy += $req
+        } else {
+            $info = $serviceStatus[$req]
+            if ($info.State -ne 'running') {
+                $missingOrUnhealthy += $req
+            } elseif ($info.Health -ne '' -and $info.Health -ne 'healthy') {
+                $missingOrUnhealthy += $req
+            }
+        }
+    }
+
+    if ($InstalledVer -and $IntendedVer -and ($InstalledVer -ne $IntendedVer)) {
+        return @{
+            Mode = 'ExistingNeedsUpdate'
+            Description = ("Existing installation requiring an update from {0} to {1}" -f $InstalledVer, $IntendedVer)
+            Action = 'Back up database, build/pull updated images, apply migrations, update version marker'
+            MissingServices = $missingOrUnhealthy
+        }
+    }
+
+    if ($missingOrUnhealthy.Count -eq 0 -and (-not $IsRebuild)) {
+        return @{
+            Mode = 'ExistingHealthy'
+            Description = ("Existing healthy installation at intended version ({0})" -f $IntendedVer)
+            Action = 'Verify health endpoints and maintain running stack without teardown'
+            MissingServices = @()
+        }
+    }
+
+    return @{
+        Mode = 'ExistingNeedsRepair'
+        Description = ("Existing installation needing repair: {0} service(s) stopped, missing, or unhealthy ({1})" -f $missingOrUnhealthy.Count, ($missingOrUnhealthy -join ', '))
+        Action = 'Recreate or restart only stopped/unhealthy services'
+        MissingServices = $missingOrUnhealthy
+    }
 }
-Write-Ok ("Docker Compose v" + $composeProbe.Lines[0].Trim())
-
-# --- 2. Python, used for two host-side steps only ------------------------------------------------
-
-Write-Step 'Checking Python'
-
-<#
-    Python is needed for exactly two things that cannot run in a container:
-
-      * scripts/init_ca.py         generates the development internal CA into .env
-      * scripts/ci/provision-authentik.py   creates the OIDC application, groups and users
-
-    The provisioner imports its API client from backend/tests/integration/test_authentik_real_idp.py
-    -- deliberately, so there is one implementation rather than two -- and that module imports pytest
-    at the top level. The backend RUNTIME image has httpx but no pytest, so the provisioner cannot
-    run inside it. Rather than duplicate the client or stub out pytest, the launcher creates its own
-    virtual environment from the repository's hash-pinned dev lock.
-#>
-
-$VenvDir = Join-Path $RepoRoot '.forgeops-launcher\venv'
-$VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
-$BackendVenvPython = Join-Path $RepoRoot 'backend\.venv\Scripts\python.exe'
-$LauncherPython = $null
 
 function Test-PythonHasProvisioningDeps {
     param([Parameter(Mandatory)][string]$PythonExe)
@@ -569,39 +529,113 @@ if (Test-PythonHasProvisioningDeps -PythonExe $BackendVenvPython) {
     Write-Ok 'launcher virtual environment ready'
 }
 
-# --- 3. Optional clean slate ---------------------------------------------------------------------
+# --- 3. Mode Detection and Installation Audit ----------------------------------------------------
 
-Write-Head 'Previous deployment'
-Write-Step 'Removing anything left from a previous run'
+Write-Head 'Installation & Self-Repair Audit'
 
-<#
-    THIS RUNS BY DEFAULT, and it removes CONTAINERS but not DATA.
+$IntendedVersion = 'v0.1.2'
+$InstalledVersion = $null
+$VersionFile = Join-Path $RepoRoot '.forgeops_version'
+$existing = Read-EnvFile -Path $EnvPath
 
-    `docker compose down` deletes the containers and the network; named volumes survive unless `-v` is
-    given. That split is deliberate:
-
-      * Removing the containers every run makes the whole class of stale-container faults impossible.
-        Compose reads `env_file` only when it CREATES a container, so one that predates a change to
-        .env keeps the old values -- which is how a stack came up with all nine services healthy and
-        every sign-in answering 503, because the backend still held an issuer pointing at localhost.
-
-      * Keeping the volumes means projects, paired devices, change sets, audit rows and the identity
-        provider's configuration are still there afterwards. Destroying those on every start would be
-        a surprising thing for a script called "start" to do, and the audit chain is append-only by
-        design.
-
-    Use -Fresh when the data should go, and -NoReset to skip this entirely.
-#>
-
-if ($NoReset) {
-    Write-Info 'skipped (-NoReset): existing containers will be reused'
+if (Test-Path -LiteralPath $VersionFile) {
+    $InstalledVersion = (Get-Content -LiteralPath $VersionFile -Raw).Trim()
+} elseif ($existing.ContainsKey('FORGEOPS_VERSION') -and [string]::IsNullOrWhiteSpace($existing['FORGEOPS_VERSION']) -eq $false) {
+    $InstalledVersion = $existing['FORGEOPS_VERSION']
+} elseif ($existing.ContainsKey('AGENT_RELEASE_TAG') -and [string]::IsNullOrWhiteSpace($existing['AGENT_RELEASE_TAG']) -eq $false) {
+    $InstalledVersion = $existing['AGENT_RELEASE_TAG']
 } else {
-    # `@(...)` for the same reason as below: with no containers this is $null, and `.Count` on $null
-    # is a terminating error under StrictMode.
-    $existingIds = @((Invoke-Compose -Arguments 'ps -aq' -Quiet).Lines | Where-Object { $_ -match '\S' })
-    if ($existingIds.Count -eq 0) {
-        Write-Ok 'nothing to remove'
+    $InstalledVersion = 'v0.1.2'
+}
+
+$composePsProbe = Invoke-Compose -Arguments 'ps --format "{{.Service}}|{{.State}}|{{.Health}}"' -Quiet
+$installPlan = Get-ForgeOpsInstallationMode `
+    -EnvConfig $existing `
+    -InstalledVer $InstalledVersion `
+    -IntendedVer $IntendedVersion `
+    -IsFresh ([bool]$Fresh) `
+    -IsRebuild ([bool]$Rebuild) `
+    -IsNoReset ([bool]$NoReset) `
+    -ComposePsResult $composePsProbe
+
+Write-Step ("Detected mode: {0}" -f $installPlan.Mode)
+Write-Info ("Installed version: {0} | Intended version: {1}" -f $(if ($InstalledVersion) { $InstalledVersion } else { 'none' }), $IntendedVersion)
+Write-Info $installPlan.Description
+Write-Info ("Action: {0}" -f $installPlan.Action)
+
+# Fast-path for already healthy and current installation
+if ($installPlan.Mode -eq 'ExistingHealthy' -and -not $Fresh -and -not $Rebuild) {
+    $backendPort = 18000
+    if ($existing.ContainsKey('BACKEND_PORT') -and $existing['BACKEND_PORT'] -match '^\d+$') {
+        $backendPort = [int]$existing['BACKEND_PORT']
+    }
+    $frontendPort = 13000
+    if ($existing.ContainsKey('FRONTEND_PORT') -and $existing['FRONTEND_PORT'] -match '^\d+$') {
+        $frontendPort = [int]$existing['FRONTEND_PORT']
+    }
+
+    $backendUrl = ("http://localhost:{0}/health/ready" -f $backendPort)
+    $frontendUrl = ("http://localhost:{0}" -f $frontendPort)
+
+    $backendHealthy = $false
+    try {
+        $resp = Invoke-WebRequest -Uri $backendUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
+        if ($resp.StatusCode -eq 200) { $backendHealthy = $true }
+    } catch {}
+
+    $frontendHealthy = $false
+    try {
+        $resp = Invoke-WebRequest -Uri $frontendUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
+        if ($resp.StatusCode -eq 200) { $frontendHealthy = $true }
+    } catch {}
+
+    if ($backendHealthy -and $frontendHealthy) {
+        Write-Ok ("Backend is ready at {0}" -f $backendUrl)
+        Write-Ok ("Frontend is ready at {0}" -f $frontendUrl)
+        Write-Ok 'All 13 ForgeOps services are running and healthy.'
+        Write-Head 'Verification Complete'
+        Write-Ok ("ForgeOps is already current ({0}) and operational. No restart required." -f $IntendedVersion)
+        exit 0
     } else {
+        Write-Warn2 'Health probe failed on existing installation; falling back to self-repair mode.'
+        $installPlan.Mode = 'ExistingNeedsRepair'
+    }
+}
+
+# Targeted repair: start or recreate missing/unhealthy services
+if ($installPlan.Mode -eq 'ExistingNeedsRepair' -and -not $Fresh -and -not $Rebuild) {
+    if ($installPlan.MissingServices.Count -gt 0) {
+        Write-Step ("Targeting repair for {0} service(s)" -f $installPlan.MissingServices.Count)
+        Write-Info ("Services: {0}" -f ($installPlan.MissingServices -join ', '))
+        $repairUp = Invoke-Compose -Arguments ("up -d {0}" -f ($installPlan.MissingServices -join ' ')) -Quiet
+        if (-not $repairUp.Ok) {
+            Write-Warn2 "Targeted service start reported a warning: $($repairUp.Output)"
+        } else {
+            Write-Ok "Targeted services started successfully."
+        }
+    }
+}
+
+# Pre-upgrade database safety backup
+if ($installPlan.Mode -eq 'ExistingNeedsUpdate') {
+    $backupDir = Join-Path $RepoRoot 'backups'
+    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Path $backupDir -Force | Out-Null }
+    $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $backupFile = Join-Path $backupDir ("forgeops_pre_upgrade_{0}.sql" -f $timestamp)
+    Write-Info ("Creating pre-upgrade database backup: {0}" -f (Split-Path -Leaf $backupFile))
+    $pgDump = Invoke-Compose -Arguments 'exec -T postgres pg_dump -U forgeops -d forgeops -F p' -Quiet
+    if ($pgDump.Ok -and $pgDump.Output.Length -gt 100) {
+        [System.IO.File]::WriteAllText($backupFile, $pgDump.Output, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Ok ("Database backup created successfully ({0} bytes)" -f (Get-Item $backupFile).Length)
+    } else {
+        Write-Warn2 'Could not create pre-upgrade database backup; proceeding with caution.'
+    }
+}
+
+# Fresh reset if requested
+if ($installPlan.Mode -eq 'Fresh') {
+    $existingIds = @((Invoke-Compose -Arguments 'ps -aq' -Quiet).Lines | Where-Object { $_ -match '\S' })
+    if ($existingIds.Count -gt 0) {
         if ($Fresh -and -not $Force) {
             Write-Warn2 '-Fresh DELETES every project, device, change set, audit row and identity.'
             $answer = Read-Host '      type "yes" to continue'
@@ -769,7 +803,7 @@ if (Need-Secret -Key $keyToken)  { $updates[$keyToken] = New-RandomSecret -Bytes
 # pulls `$SELF_HOSTED_MODEL_ID` and `$SELF_HOSTED_EMBEDDING_MODEL_ID`. Neither was ever written to `.env`
 # by this script, so on a fresh clone both expanded to the empty string, the pull failed, and the model
 # server never became healthy. Generation then attempted the configured endpoint chain, could not reach it,
-# and honestly recorded `template_fallback` — a correct row describing a stack that had been reported ready.
+# and honestly recorded `template_fallback` -- a correct row describing a stack that had been reported ready.
 #
 # Written only when ABSENT, like the ports and the secrets above: an operator who has pointed this at their
 # own endpoint or a different model must not have it overwritten on the next start.
@@ -862,7 +896,7 @@ if (-not $needBuild) {
         # an untagged name resolves to the same image compose just built.
         #
         # Parsed from JSON rather than read with `--format`. A Go template containing quoted strings does
-        # not survive PowerShell's native-command argument handling — the first attempt produced
+        # not survive PowerShell's native-command argument handling -- the first attempt produced
         # `template parsing error: function "org" not defined`, which would have made this check silently
         # useless in exactly the direction it exists to prevent.
         $built = ''
@@ -923,13 +957,13 @@ Write-Ok 'postgres, redis, opa, cerbos and inngest are healthy'
 # and the wait belongs before the parts that depend on it.
 #
 # WHY IT WAS MISSING AND WHY THAT MATTERED. `ollama` is in `docker-compose.yml`'s DEFAULT profile, but this
-# script names its services explicitly at every step — so the model server was never started, and the
+# script names its services explicitly at every step -- so the model server was never started, and the
 # generation tier pointed at an endpoint nothing was listening on. Generation then attempted the provider,
 # failed, and recorded `template_fallback`: an honest row describing a stack this script had just reported
 # ready. Criterion 10's step 7 asserts `accepted`, so the journey failed on a stack that looked healthy.
 #
-# NOT FATAL when it does not come up. A stack with no model server is still a usable stack — generation
-# falls back to the template library and says so in the run row — and refusing to start over a model pull
+# NOT FATAL when it does not come up. A stack with no model server is still a usable stack -- generation
+# falls back to the template library and says so in the run row -- and refusing to start over a model pull
 # would make the whole platform unavailable because one optional component could not fetch a blob. So this
 # warns and continues, which is the difference between a degraded stack and a failed one.
 Write-Step 'Starting the model servers (ollama and ollama-secondary)'
@@ -1278,15 +1312,23 @@ Write-Ok 'the identity provider is provisioned'
 
 # --- 10. Migrations ------------------------------------------------------------------------------
 
-Write-Step 'Applying the database migrations'
-
+Write-Step 'Applying database migrations'
+Write-Info 'Checking current migration revision'
+$currentRev = Invoke-Compose -Arguments 'run --rm --entrypoint /bin/sh backend -c "alembic current"' -Quiet
+if ($currentRev.Ok) {
+    Write-Info ("Current database revision: {0}" -f ($currentRev.Lines -join ' '))
+}
 $mig = Invoke-Compose -Arguments 'run --rm --entrypoint /bin/sh backend -c "alembic upgrade head"'
 if (-not $mig.Ok) {
-    Stop-WithAdvice -Problem 'the migrations failed.' -Advice @(
-        ($mig.Lines | Select-Object -Last 25) -join [Environment]::NewLine
+    Stop-WithAdvice -Problem 'The database migration failed. Data volumes were NOT deleted.' -Advice @(
+        ($mig.Lines | Select-Object -Last 25) -join [Environment]::NewLine, '',
+        'Your database state has been preserved. If a backup was made, it is located in backups/.'
     )
 }
-Write-Ok 'the schema is at head'
+Write-Ok 'The database schema is at head.'
+# Record current version
+Set-Content -LiteralPath (Join-Path $RepoRoot '.forgeops_version') -Value $IntendedVersion -Encoding ASCII
+Set-EnvValues -Path $EnvPath -Values @{ 'FORGEOPS_VERSION' = $IntendedVersion }
 
 # --- 11. Application -----------------------------------------------------------------------------
 

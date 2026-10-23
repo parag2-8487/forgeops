@@ -417,6 +417,110 @@ t_setup_sh_forwards_no_argument_correctly() {
   [ "$out" = " FRESH FORCE" ] || { echo "flags did not survive forwarding, got [$out]"; return 1; }
 }
 
+t_mode_fresh_on_missing_env() {
+  local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
+  detect_installation_mode_ "/tmp/definitely-missing-env" "v0.1.2" "v0.1.2" 0 0 0 ""
+  [ "$INSTALL_MODE" = "Fresh" ] || { echo "expected Fresh on missing env, got $INSTALL_MODE"; return 1; }
+}
+
+t_mode_fresh_on_flag() {
+  local tmp_env
+  tmp_env="$(mktemp)"
+  echo "ENVELOPE_PEPPER=abc" > "$tmp_env"
+  local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
+  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 1 0 0 ""
+  rm -f "$tmp_env"
+  [ "$INSTALL_MODE" = "Fresh" ] || { echo "expected Fresh on --fresh flag, got $INSTALL_MODE"; return 1; }
+}
+
+t_mode_repair_on_missing_secrets() {
+  local tmp_env
+  tmp_env="$(mktemp)"
+  echo "BACKEND_PORT=18000" > "$tmp_env"
+  local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
+  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 0 0 0 ""
+  rm -f "$tmp_env"
+  [ "$INSTALL_MODE" = "ExistingNeedsRepair" ] || { echo "expected ExistingNeedsRepair on missing pepper, got $INSTALL_MODE"; return 1; }
+}
+
+t_mode_update_on_older_version() {
+  local tmp_env
+  tmp_env="$(mktemp)"
+  echo "ENVELOPE_PEPPER=abc" > "$tmp_env"
+  local mock_ps="postgres|running|healthy
+redis|running|healthy
+cerbos|running|healthy
+opa|running|healthy
+authentik-server|running|healthy
+authentik-worker|running|healthy
+backend|running|healthy
+worker|running|healthy
+backend-agent|running|healthy
+frontend|running|healthy
+inngest|running|healthy
+ollama|running|healthy
+ollama-secondary|running|healthy"
+  local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
+  detect_installation_mode_ "$tmp_env" "v0.1.1" "v0.1.2" 0 0 0 "$mock_ps"
+  rm -f "$tmp_env"
+  [ "$INSTALL_MODE" = "ExistingNeedsUpdate" ] || { echo "expected ExistingNeedsUpdate on older version, got $INSTALL_MODE"; return 1; }
+}
+
+t_mode_healthy_when_all_services_healthy() {
+  local tmp_env
+  tmp_env="$(mktemp)"
+  echo "ENVELOPE_PEPPER=abc" > "$tmp_env"
+  local mock_ps="postgres|running|healthy
+redis|running|healthy
+cerbos|running|healthy
+opa|running|healthy
+authentik-server|running|healthy
+authentik-worker|running|healthy
+backend|running|healthy
+worker|running|healthy
+backend-agent|running|healthy
+frontend|running|healthy
+inngest|running|healthy
+ollama|running|healthy
+ollama-secondary|running|healthy"
+  local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
+  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 0 0 0 "$mock_ps"
+  rm -f "$tmp_env"
+  [ "$INSTALL_MODE" = "ExistingHealthy" ] || { echo "expected ExistingHealthy, got $INSTALL_MODE"; return 1; }
+  [ -z "$INSTALL_MISSING_SERVICES" ] || { echo "expected no missing services, got $INSTALL_MISSING_SERVICES"; return 1; }
+}
+
+t_mode_repair_when_service_missing_or_stopped() {
+  local tmp_env
+  tmp_env="$(mktemp)"
+  echo "ENVELOPE_PEPPER=abc" > "$tmp_env"
+  local mock_ps="postgres|running|healthy
+redis|running|healthy
+cerbos|running|healthy
+opa|running|healthy
+authentik-server|running|healthy
+authentik-worker|running|healthy
+backend|running|healthy
+worker|exited|
+backend-agent|running|healthy
+frontend|running|healthy
+inngest|running|healthy
+ollama|running|healthy
+ollama-secondary|running|healthy"
+  local INSTALL_MODE="" INSTALL_DESC="" INSTALL_ACTION="" INSTALL_MISSING_SERVICES=""
+  detect_installation_mode_ "$tmp_env" "v0.1.2" "v0.1.2" 0 0 0 "$mock_ps"
+  rm -f "$tmp_env"
+  [ "$INSTALL_MODE" = "ExistingNeedsRepair" ] || { echo "expected ExistingNeedsRepair on stopped service, got $INSTALL_MODE"; return 1; }
+  echo "$INSTALL_MISSING_SERVICES" | grep -q "worker" || { echo "expected worker in missing services, got $INSTALL_MISSING_SERVICES"; return 1; }
+}
+
+check 'detect_mode: Fresh on missing env'                  t_mode_fresh_on_missing_env
+check 'detect_mode: Fresh on --fresh flag'                t_mode_fresh_on_flag
+check 'detect_mode: ExistingNeedsRepair on missing secret' t_mode_repair_on_missing_secrets
+check 'detect_mode: ExistingNeedsUpdate on older version'  t_mode_update_on_older_version
+check 'detect_mode: ExistingHealthy when all healthy'      t_mode_healthy_when_all_services_healthy
+check 'detect_mode: ExistingNeedsRepair on stopped svc'   t_mode_repair_when_service_missing_or_stopped
+
 check 'the launcher is executable in git'       t_executable_bit
 check 'it declares a bash shebang'              t_shebang
 check 'it has no CRLF line endings'             t_no_crlf
