@@ -115,6 +115,232 @@
         "title": "AgentConnectionInfo",
         "type": "object"
       },
+      "AgentInstallationItem": {
+        "properties": {
+          "agent_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Version"
+          },
+          "cert_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cert Fingerprint"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_running": {
+            "default": false,
+            "title": "Is Running",
+            "type": "boolean"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "source": {
+            "default": "registered_device",
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "AgentInstallationItem",
+        "type": "object"
+      },
+      "AgentInstallationsResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "installations": {
+            "items": {
+              "$ref": "#/components/schemas/AgentInstallationItem"
+            },
+            "title": "Installations",
+            "type": "array"
+          },
+          "release_tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Tag"
+          }
+        },
+        "required": [
+          "installations",
+          "count"
+        ],
+        "title": "AgentInstallationsResponse",
+        "type": "object"
+      },
+      "AgentUninstallRequest": {
+        "properties": {
+          "device_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "wipe_credentials": {
+            "default": false,
+            "title": "Wipe Credentials",
+            "type": "boolean"
+          }
+        },
+        "title": "AgentUninstallRequest",
+        "type": "object"
+      },
+      "AgentUninstallResult": {
+        "properties": {
+          "cleaned_entries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cleaned Entries",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "remaining_count": {
+            "default": 0,
+            "title": "Remaining Count",
+            "type": "integer"
+          },
+          "removed_devices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed Devices",
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "stopped_devices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stopped Devices",
+            "type": "array"
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AgentUninstallResult",
+        "type": "object"
+      },
       "ApprovalDecisionRequest": {
         "description": "The body of an approve or reject.\n\nA **body**, not query parameters, and this is the point of the rewrite. The old handlers took\n`approver: str = \"admin\"` and `rejector: str = \"admin\"` in the query string, so the caller\nsupplied the identity that the audit record would attribute the decision to \u2014 and defaulted it\nto an administrator. The approver is now taken from the verified principal and cannot be\nexpressed on the wire at all; there is deliberately no `approver` field here.\n\n`comment` carries the reviewer's reason into `approvals.comment` and into the audit record's\n`reason`. `expected_version` is the change set's `version` as the client last saw it.",
         "properties": {
@@ -6709,6 +6935,59 @@
         ]
       }
     },
+    "/api/v1/agents/installations": {
+      "get": {
+        "description": "List active/known agent installations and registered devices.",
+        "operationId": "list_agent_installations_api_v1_agents_installations_get",
+        "parameters": [
+          {
+            "description": "Optional project filter",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional project filter",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentInstallationsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover registered and local agent installations",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/v1/agents/pair/exchange": {
       "post": {
         "description": "The public exchange. Rate limited per IP and globally before anything else runs.",
@@ -6803,6 +7082,48 @@
           }
         },
         "summary": "Surrender the calling device (agent, authenticated by its own device token)",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/v1/agents/uninstall": {
+      "post": {
+        "description": "Revoke and clean up agent installations matching criteria.",
+        "operationId": "uninstall_agents_api_v1_agents_uninstall_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentUninstallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentUninstallResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Safely uninstall, disconnect, and revoke agent installations",
         "tags": [
           "agents"
         ]
