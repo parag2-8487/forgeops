@@ -1,0 +1,79 @@
+# Grafana Mimir — Phase 2 §2.10's long-term metrics store with a configured retention period.
+#
+# WHY MIMIR EXISTS BESIDE PROMETHEUS. Prometheus holds fifteen days on local disk and answers fast. Mimir
+# holds the retention an audit needs and answers slower. The requirements are opposite — a store tuned for
+# millisecond queries over a recent window and one tuned for years of object storage are different systems —
+# and asking one to do both gives either slow dashboards or a disk that fills.
+#
+# MONOLITHIC MODE, DELIBERATELY. Mimir's microservices mode is the right answer for a metrics platform serving
+# many teams; it is a dozen components to operate. This product's default deployment is one machine, and a
+# single-binary Mimir with a filesystem backend is a store an operator can actually run. A fleet deployment
+# switches `blocks_storage.backend` to s3 and scales out, which is a configuration change rather than a
+# migration — that is the reason for choosing Mimir over stacking another Prometheus with long retention.
+
+target: all
+multitenancy_enabled: false
+
+server:
+  http_listen_port: 9009
+  grpc_listen_port: 9095
+  log_level: warn
+
+common:
+  storage:
+    backend: filesystem
+    filesystem:
+      dir: /data/mimir
+
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/mimir/blocks
+  bucket_store:
+    sync_dir: /data/mimir/tsdb-sync
+  tsdb:
+    dir: /data/mimir/tsdb
+    # Two hours per block, Mimir's default and worth stating: a longer block delays compaction and a shorter
+    # one multiplies the object count, and both cost more than they save at this scale.
+    block_ranges_period: [2h]
+    retention_period: 24h # LOCAL retention only; the durable retention is in `limits` below.
+
+compactor:
+  data_dir: /data/mimir/compactor
+  sharding_ring:
+    kvstore:
+      store: memberlist
+
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/mimir/rules
+
+limits:
+  # THE CONFIGURED RETENTION §2.10'S COMPLETION CRITERION ASKS FOR. Ninety days: long enough that a quarterly
+  # cost review and a post-incident analysis both have their data, short enough that a filesystem backend on
+  # one machine does not fill. It is stated here rather than left to Mimir's default of "forever", which on a
+  # filesystem backend means "until the disk fills and every write fails at once".
+  compactor_blocks_retention_period: 90d
+  # Ingestion guards. Without them one misbehaving exporter with a high-cardinality label can exhaust memory,
+  # and the failure presents as Mimir dying rather than as a rejected series naming the culprit.
+  max_global_series_per_user: 1000000
+  max_label_names_per_series: 40
+  ingestion_rate: 100000
+  ingestion_burst_size: 200000
+
+ingester:
+  ring:
+    replication_factor: 1 # One instance; a higher factor would block writes waiting for replicas that do not exist.
+    kvstore:
+      store: memberlist
+
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+
+memberlist:
+  join_members: []
+
+activity_tracker:
+  filepath: /data/mimir/metrics-activity.log

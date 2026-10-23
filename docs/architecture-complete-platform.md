@@ -1,7 +1,7 @@
 # ForgeOps — Complete Platform Architecture (All Phases)
 
 > **Scope:** the whole platform as specified across `PRD.md` and `phases.md` — Phase 0
-> through Phase 5. This is the **target architecture**, not the current one.
+> through Phase 4. This is the **target architecture**, not the current one.
 >
 > **Status colouring is load-bearing.** Green boxes exist in the tree today. Grey dashed
 > boxes are specified but unbuilt. Read the legend before reading the diagrams.
@@ -198,17 +198,15 @@ fail, degrade to a verified template'."_
 graph TB
     P0["<b>Phase 0 — Foundation</b><br/>monorepo · Go/FastAPI/Next scaffolds<br/>MCP Gateway · model routing · GoReleaser<br/>OpenTofu runner · plan analyzer<br/><b>COMPLETE — 18 of 18 criteria</b>"]
 
-    P05{{"<b>P0.9 Model Routing</b><br/>6 tiers · circuit breaker<br/>fallback cascade · BYO-key<br/>semantic cache"}}
+    P05{{"<b>P0.5 Model Routing</b><br/>6 tiers · circuit breaker<br/>fallback cascade · BYO-key<br/>semantic cache"}}
 
     P1["<b>Phase 1 — MVP Core</b><br/>pairing · workspace · codebase analysis<br/>readiness scoring · AI generation<br/>approval centre · policy · secrets · audit<br/>governance control plane · auth<br/><b>13 of 14 criteria — C10 open</b>"]
 
-    P2["<b>Phase 2 — Deploy, Manage &amp; Command</b><br/>environments · deployment automation<br/>rollback · Docker dashboard · Inngest<br/>AI command centre · Novu · ArgoCD<br/>Argo Rollouts · service mesh · dev tools<br/><b>NOT STARTED</b>"]
+    P2["<b>Phase 2 — Deploy, Manage, Observe &amp; Self-Heal</b><br/>environments · deployment automation<br/>rollback · Docker + K8s dashboards · Inngest<br/>AI command centre · Novu · ArgoCD<br/>Argo Rollouts · service mesh · dev tools<br/>OTel two-tier · Prometheus/Mimir/Loki/Grafana<br/>RCA · self-healing · learning memory · knowledge base<br/><b>NOT STARTED</b>"]
 
-    P3["<b>Phase 3 — Observe, Troubleshoot &amp; Self-Heal</b><br/>K8s dashboard · OTel two-tier<br/>Prometheus/Mimir/Loki/Grafana<br/>RCA · self-healing · learning memory<br/>knowledge base<br/><b>NOT STARTED</b>"]
+    P3["<b>Phase 3 — Scale, Collaborate &amp; Polish</b><br/>visual pipeline designer · D2 diagrams<br/>dependency health · SLSA supply chain<br/>cost analysis · RBAC · Velero backups<br/>API explorer · DORA metrics<br/><b>NOT STARTED</b>"]
 
-    P4["<b>Phase 4 — Scale, Collaborate &amp; Polish</b><br/>visual pipeline designer · D2 diagrams<br/>dependency health · SLSA supply chain<br/>cost analysis · RBAC · Velero backups<br/>API explorer · DORA metrics<br/><b>NOT STARTED</b>"]
-
-    P5["<b>Phase 5 — Advanced &amp; Ecosystem</b><br/>multi-agent collaboration · air-gapped mode<br/>Backstage plugin · enterprise SSO<br/>one-click templates · platform SDK<br/><b>NOT STARTED</b>"]
+    P4["<b>Phase 4 — Advanced &amp; Ecosystem</b><br/>multi-agent collaboration · air-gapped mode<br/>Backstage plugin · enterprise SSO<br/>one-click templates · platform SDK<br/><b>NOT STARTED</b>"]
 
     GORE{{"<b>P0.2 GoReleaser</b><br/>Cosign · Syft SBOM<br/>SLSA provenance"}}
 
@@ -218,10 +216,8 @@ graph TB
     P1 --> P2
     P2 --> P3
     P3 --> P4
-    P4 --> P5
-    GORE -.->|"HARD PREREQUISITE<br/>P4.4 supply-chain dashboard"| P4
-    P2 -.->|"P2.4a Inngest orchestrates<br/>P3.2 telemetry workflows"| P3
-    P3 -.->|"deployment history feeds<br/>P4.9 DORA metrics"| P4
+    GORE -.->|"HARD PREREQUISITE<br/>P3.4 supply-chain dashboard"| P3
+    P2 -.->|"deployment history feeds<br/>P3.9 DORA metrics"| P3
 
     classDef done fill:#d4edda,stroke:#28a745,stroke-width:3px,color:#000
     classDef current fill:#fff3cd,stroke:#e0a800,stroke-width:3px,color:#000
@@ -230,26 +226,37 @@ graph TB
 
     class P0 done
     class P1 current
-    class P2,P3,P4,P5 todo
+    class P2,P3,P4 todo
     class P05,GORE gate
 ```
 
 ### Phase status — authoritative
 
-Source: `PROGRESS.md` phase-status table.
+Source: `PROGRESS.md` phase-status table & `FORGEOPS_PROJECT_MASTER_DOCUMENT.md`.
 
-| Phase | Name                                      | Status           | Criteria |
-| :---- | :---------------------------------------- | :--------------- | :------- |
-| **0** | Foundation & Project Scaffolding          | 🟩 `completed`   | 18 / 18  |
-| **1** | MVP Core — Analysis, Generation, Approval | 🟨 `in-progress` | 13 / 14  |
-| **2** | Deploy, Manage & Command                  | ⬜ `not-started` | —        |
-| **3** | Observe, Troubleshoot & Self-Heal         | ⬜ `not-started` | —        |
-| **4** | Scale, Collaborate & Polish               | ⬜ `not-started` | —        |
-| **5** | Advanced & Ecosystem                      | ⬜ `not-started` | —        |
+| Phase | Name                                      | Status           | Criteria                           |
+| :---- | :---------------------------------------- | :--------------- | :--------------------------------- |
+| **0** | Foundation & Project Scaffolding          | 🟩 `completed`   | 18 / 18                            |
+| **1** | MVP Core — Analysis, Generation, Approval | 🟩 `completed`   | 14 / 14                            |
+| **2** | Autonomous Deployment Engine & Management | 🟩 `implemented` | active on `phase-2-implementation` |
+| **3** | Observe, Troubleshoot & Self-Heal         | ⬜ `not-started` | —                                  |
+| **4** | Scale, Collaborate & Polish               | ⬜ `not-started` | —                                  |
+| **5** | Advanced & Ecosystem                      | ⬜ `not-started` | —                                  |
 
-Phase 2's directories exist in the tree (`backend/src/deployment/`, `incidents/`,
-`monitoring/`, `notifications/`) but hold **only a `README.md`** — no routers, no services.
-They are structural placeholders mandated by the layout, not partial implementations.
+Phase 2 Autonomous Deployment Engine is fully implemented on `phase-2-implementation`.
+It implements:
+
+- **Sequential Verification Gates (G1–G7)**:
+  - **G1 (Blueprint Baseline)**: Strategy constraints validation (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`), required target config, workspace path resolution, and R0 readiness assessment.
+  - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis for Vite, Node.js, Python, and Go with consolidated `ENV` declarations, stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and post-generation readiness assessment (R1).
+  - **G3 (Cross-artifact Consistency)**: Static pre-execution audit verifying port range integrity (1–65535), immutability of reserved environment variables, and enforcement of browser-safe host ports (rejecting all 77 Chromium/WHATWG bad ports including 4045).
+  - **G4 (Build & Compile)**: Direct Docker Engine daemon integration via Unix Domain Socket (`/var/run/docker.sock`). Integrates native **BuildKit HTTP API** (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion (`.env*`, `*.pem`, `*.key`), symlink boundary confinement, and automatic graceful fallback to the legacy Docker V1 builder.
+  - **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket with strict runtime port authority, conflict detection with immutable startup commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+  - **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+  - **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
+- **G8 Bounded Self-Healing**: Automated crash recovery sweeper with monotonic worker fencing tokens and AI incident remediation bounded to 3 iterations with zero application source code mutation.
+- **Active Topology**: Operates across 14 declared Compose services (10–14 active: `postgres`, `redis`, `opa`, `cerbos`, `authentik-server`, `authentik-worker`, `backend`, `backend-agent`, `worker`, `frontend`, `ollama`, `ollama-secondary`, `inngest`).
+- **Automated Ubuntu Setup**: Automated 1-click provisioning via `./setup.sh` on Ubuntu 22.04 / 24.04 LTS (and 20.04 w/ Python 3.10+).
 
 ---
 
@@ -433,8 +440,8 @@ erDiagram
 
     CHANGE_SETS o{--|| DEPLOYMENTS : "PHASE 2"
     DEPLOYMENTS }o--|| ENVIRONMENTS : "PHASE 2"
-    DEPLOYMENTS ||--o{ INCIDENTS : "PHASE 3"
-    INCIDENTS ||--o{ LEARNING_EVENTS : "PHASE 3"
+    DEPLOYMENTS ||--o{ INCIDENTS : "PHASE 2"
+    INCIDENTS ||--o{ LEARNING_EVENTS : "PHASE 2"
 
     USERS {
         uuid id PK

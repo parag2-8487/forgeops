@@ -3,7 +3,7 @@ import { asRole, clearSession, getAccessToken, setSession } from "@/lib/session"
 import { ApiProblemError, ApiTransportError } from "./errors";
 import { isProblemDetails, PROBLEM_CONTENT_TYPE } from "./problem";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
  * The HTTP header carrying the access token, and the auth scheme it names (RFC 6750 §2.1).
@@ -87,6 +87,13 @@ async function request<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  if (init.signal) {
+    if (init.signal.aborted) {
+      controller.abort();
+    } else {
+      init.signal.addEventListener("abort", () => controller.abort());
+    }
+  }
 
   const token = getAccessToken();
 

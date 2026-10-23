@@ -290,6 +290,13 @@ class TestTheConstants:
     def test_the_two_mutating_operations_are_the_ones_in_the_catalogue(self) -> None:
         assert (APPLY_OPERATION, REVERT_OPERATION) == ("changeset.apply", "changeset.revert")
 
+    def test_scan_operation_timeout_matches_agent_budget(self) -> None:
+        """scan.full takes up to 15 minutes in the agent dispatcher, and the chokepoint matches that."""
+        from src.governance.chokepoint import DEFAULT_SCAN_TIMEOUT_SECONDS, SCAN_OPERATION
+
+        assert SCAN_OPERATION == "scan.full"
+        assert DEFAULT_SCAN_TIMEOUT_SECONDS == 900.0
+
     def test_the_rollback_handle_ttl_is_data_not_configuration(self) -> None:
         """A deployment that could set this to zero would pass every test while shipping a
         product with no rollback (criterion 6)."""

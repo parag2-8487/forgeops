@@ -119,14 +119,6 @@ func TestResolve_TheTwoIntentsDifferOnExactlyThreeNames(t *testing.T) {
 	}
 }
 
-func keysOf(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
 // TestPackageExportsNoWriteFunction is the D-45 assertion stated where it can rot.
 //
 // The point of moving the write path was that "an exported write function that any package

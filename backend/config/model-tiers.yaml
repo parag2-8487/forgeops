@@ -72,7 +72,7 @@ endpoints:
     protocol: openai_compatible
     base_url: ${SELF_HOSTED_BASE_URL}
     key_ref: null
-    timeout_seconds: 60
+    timeout_seconds: 1200
     rank_source: unranked
   qwen3-coder-standby:
     provider: self_hosted
@@ -84,7 +84,7 @@ endpoints:
     protocol: openai_compatible
     base_url: ${SELF_HOSTED_SECONDARY_BASE_URL}
     key_ref: null
-    timeout_seconds: 60
+    timeout_seconds: 1200
     rank_source: unranked
   glm-5.2:
     provider: self_hosted

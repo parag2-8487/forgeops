@@ -25,9 +25,12 @@ have nothing to render.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from dataclasses import replace
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
@@ -38,19 +41,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.dependencies import require_principal
 from ..auth.principal import Principal
+from ..core import index_evidence
 from ..core.db import get_session
 from ..core.errors import forbidden_problem
-from ..core.index_evidence import load_index_evidence
 from ..core.readiness import ReadinessEngine
 from ..core.sse import SSE_MEDIA_TYPE, SSEEventType, format_event
 from ..governance.chokepoint import ChangeItemRequest, GovernanceChokepoint, MutationRequest
-from .prompt_compiler import CompiledPrompt, compile_prompt
+from .prompt_compiler import CompiledPrompt, compile_prompt, compile_repair_prompts
 from .retrieval import retrieve_generation_context
 from .service import GenerationOutcome, GenerationService
+
+logger = logging.getLogger(__name__)
+
 
 #: The two event types that end a stream (§7.4). Anything after one of these is unreachable by a
 #: client that closed on it, which is why exactly one may be emitted.
 _TERMINAL_EVENTS = frozenset({SSEEventType.COMPLETE.value, SSEEventType.ERROR.value})
+
+
+def nl_join(skill_file_text: str) -> str:
+    """Two blank lines and the skill file, so it reads as its own section rather than running on."""
+    return "\n\n" + skill_file_text
 
 
 def _is_terminal(frame: str) -> bool:
@@ -75,7 +86,20 @@ class GenerationRequest(BaseModel):
     """What a caller asks to have generated."""
 
     project_id: uuid.UUID
-    prompt: str = Field(min_length=1, max_length=4000)
+    #: THE PROMPT CARRIES A BUILD LOG when this run is a repair, so the ceiling is sized for one.
+    #:
+    #: It was 4000, and that made "Resolve Errors with AI" fail with a 422 the user saw as
+    #: "One or more fields failed validation." — a message that names neither the field nor the
+    #: reason. Measured: the resolver's own instructions are 3133 characters, and the real failure
+    #: a user pasted was 944 more, so a genuine repair request was 4977 and could never be accepted.
+    #: The limit was set when the prompt was a sentence a human typed; it stopped being that when
+    #: the resolver started attaching the host's error output, and nothing moved with it.
+    #:
+    #: 16000 is not a licence to send anything: it is roughly 4k tokens, comfortably inside every
+    #: model's context, and large enough for a truncated build log (the agent caps what it returns)
+    #: plus the instructions. A prompt past it is a bug worth rejecting rather than silently
+    #: truncating, because a truncated log is a log with the cause cut out of it.
+    prompt: str = Field(min_length=1, max_length=16000)
     #: Where the change is destined. Passed straight through to the chokepoint, and deliberately
     #: not defaulted here: `approval.rego` answers `require_approval` when the member is absent, so
     #: an omitted environment means a human reviews it rather than it auto-approving (finding 68).
@@ -92,6 +116,7 @@ class GenerationRequest(BaseModel):
     #: nothing, which is the same outcome as asking for a check that already passes; rejecting the
     #: request would make a stale browser tab an error rather than a no-op.
     target_checks: list[str] | None = Field(default=None, max_length=64)
+    target_strategy: str | None = Field(default=None, max_length=128)
 
 
 def _service(request: Request) -> GenerationService:
@@ -168,7 +193,31 @@ async def _load_project_for_generation(session: AsyncSession, project_id: uuid.U
         {"id": project_id},
     )
     row = result.mappings().first()
-    return dict(row) if row is not None else None
+    if row is None:
+        return None
+    data = dict(row)
+    inv_res = await session.execute(
+        text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
+        {"p": project_id},
+    )
+    inv = inv_res.scalar_one_or_none() or {}
+    if not inv.get("manifests"):
+        with contextlib.suppress(Exception):
+            ft_res = await session.execute(
+                text(
+                    "SELECT path FROM file_tree WHERE project_id = :p AND ("
+                    "path LIKE '%package.json' OR path LIKE '%package-lock.json' OR "
+                    "path LIKE '%requirements.txt' OR path LIKE '%pyproject.toml' OR "
+                    "path LIKE '%go.mod' OR path LIKE '%Cargo.toml')"
+                ),
+                {"p": project_id},
+            )
+            found_manifests = [str(r[0]).replace("\\", "/") for r in ft_res.fetchall()]
+            if found_manifests:
+                inv = dict(inv)
+                inv["manifests"] = sorted(found_manifests)
+    data["inventory"] = inv
+    return data
 
 
 @router.post(
@@ -259,11 +308,47 @@ async def create_generation_run(
         # prohibitions that describe how generated infrastructure goes wrong. A model asked for "a
         # Dockerfile" with no facts has to guess the language, the entry point and the port, and a guess
         # that reads plausibly is indistinguishable from a fact until it fails.
-        compiled, existing_contents = await _compile_generation_plan(
+        effective_strat = body.target_strategy or (
+            (project_row.get("settings") or {}).get("deployment_strategy") if project_row else None
+        )
+        compiled, existing_contents, repair_prompts = await _compile_generation_plan(
             session,
             project_id=body.project_id,
             selected_check_ids=body.target_checks,
+            target_strategy=effective_strat,
         )
+        # 2.13: THIS PROJECT'S LEARNED PREFERENCES, injected into the instruction.
+        #
+        # After compilation and before recording, deliberately: the recorded prompt must be the text the
+        # model actually received, or the run cannot be judged from it. Recording the pre-injection
+        # version would make every learned preference invisible in exactly the place somebody looks to
+        # find out why a run behaved as it did.
+        #
+        # The skill file is appended rather than prepended: the gate's requirements and the project's
+        # facts are what the artifact is judged against, and a preference that pushed them further from
+        # the answer would trade correctness for style.
+        # Through `app.state`, so `generation` names `core.memory_port` and never `learning`. Absent when
+        # the learning domain is not composed, which leaves the prompt exactly as it was -- memory is an
+        # enhancement and a deployment without it must generate identically, not fail.
+        memory_port = getattr(request.app.state, "memory_port", None)
+        if compiled is not None and memory_port is not None:
+            memory = await memory_port.memory_for_prompt(session, project_id=body.project_id)
+            if not memory.is_empty:
+                skill_file = nl_join(memory.content)
+                compiled = replace(compiled, text=compiled.text + skill_file)
+                # THE REPAIR PROMPTS GET IT TOO, and leaving them out was a latent defect rather than a
+                # harmless omission. A repair is a model call like any other; injecting the project's
+                # learned preferences into the opening ask and not into the retry means the model is
+                # told one thing first and a different thing when it is corrected -- and the retry is
+                # the call that has to land, because it is the one the gate already refused once.
+                #
+                # Invisible while no preference is stored, which is exactly why it had to be fixed
+                # before something stored one.
+                repair_prompts = {
+                    path: replace(prompt, text=prompt.text + skill_file) for path, prompt in repair_prompts.items()
+                }
+                await memory_port.record_injection(session, project_id=body.project_id, memory=memory)
+
         # Persisted BEFORE the stream, not after. A run that crashes mid-generation is exactly the run
         # somebody needs the prompt for, and a prompt written at the end would be missing from every
         # failure.
@@ -276,6 +361,7 @@ async def create_generation_run(
             project=project_row,
             retrieval=retrieval,
             compiled=compiled,
+            repair_prompts=repair_prompts,
             existing=existing_contents,
         ):
             if _is_terminal(frame):
@@ -283,25 +369,25 @@ async def create_generation_run(
                 break
             yield frame.encode("utf-8")
 
-        await _finish_run(session, run_id=run_id, outcome=outcome)
-
-        if not outcome.validation_passed:
-            # The service's own terminal frame is the right answer here: it is an `error` naming the
-            # validation gate, and nothing is submitted because nothing passed.
-            if withheld is not None:
-                yield withheld.encode("utf-8")
-            return
-
-        # THE PRE-IMAGES, loaded before the submit because that is where the session lives.
-        #
-        # An `update` needs the exact bytes on disk, and this endpoint has never read the working tree.
-        # `_editable_preimages` is what makes the difference between claiming a pre-image and having
-        # one, and it deliberately returns FEWER paths than exist.
-        preimages = await _editable_preimages(
-            session, project_id=body.project_id, paths=[f.path for f in outcome.files]
-        )
-
         try:
+            await _finish_run(session, run_id=run_id, outcome=outcome)
+
+            if not outcome.validation_passed:
+                # The service's own terminal frame is the right answer here: it is an `error` naming the
+                # validation gate, and nothing is submitted because nothing passed.
+                if withheld is not None:
+                    yield withheld.encode("utf-8")
+                return
+
+            # THE PRE-IMAGES, loaded before the submit because that is where the session lives.
+            #
+            # An `update` needs the exact bytes on disk, and this endpoint has never read the working tree.
+            # `_editable_preimages` is what makes the difference between claiming a pre-image and having
+            # one, and it deliberately returns FEWER paths than exist.
+            preimages = await _editable_preimages(
+                session, project_id=body.project_id, paths=[f.path for f in outcome.files]
+            )
+
             submission = await chokepoint.submit(
                 session,
                 MutationRequest(
@@ -315,10 +401,8 @@ async def create_generation_run(
                 principal=principal,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as the terminal frame
-            # A refusal by the chokepoint is a legitimate outcome, not a server fault: a policy
-            # deny, a blocked blast radius or a stale policy bundle all land here. This is THE
-            # terminal frame, not one appended after another — the artifacts were generated and
-            # then refused, so the run did not succeed.
+            # A refusal by the chokepoint or persistence issue is surfaced to the client as the
+            # terminal frame, guaranteeing the stream never ends without a terminal event.
             yield format_event(
                 SSEEventType.ERROR,
                 {
@@ -421,7 +505,12 @@ async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: Gene
             # FR-13. This column has existed since revision `0006` and was never written, so a run's
             # grounding was unrecoverable after the request finished — which made "generated using RAG
             # context" a claim with no record behind it.
-            "retrieval = CAST(:retrieval AS jsonb), finished_at = now() "
+            "retrieval = CAST(:retrieval AS jsonb), "
+            # PER-ATTEMPT EVIDENCE, revision `0037`. A row that says `template_fallback` must be able to
+            # name which attempt failed and why -- and, because each record carries its duration, whether
+            # it was refused on its merits or cut off by a client budget. That distinction is what three
+            # investigations this cycle lacked.
+            "attempts = CAST(:attempts AS jsonb), finished_at = now() "
             "WHERE id = :id"
         ),
         {
@@ -437,6 +526,7 @@ async def _finish_run(session: AsyncSession, *, run_id: uuid.UUID, outcome: Gene
             # to a JSONB parameter through `text()` leaves the driver to guess, and the guess differs
             # between asyncpg and psycopg.
             "retrieval": json.dumps(outcome.retrieval) if outcome.retrieval is not None else None,
+            "attempts": json.dumps(outcome.attempts),
         },
     )
     await session.commit()
@@ -447,7 +537,8 @@ async def _compile_generation_plan(
     *,
     project_id: uuid.UUID,
     selected_check_ids: list[str] | None,
-) -> tuple[CompiledPrompt | None, Mapping[str, str]]:
+    target_strategy: str | None = None,
+) -> tuple[CompiledPrompt | None, Mapping[str, str], dict[str, CompiledPrompt]]:
     """Build the instruction from this project's own index and its failing checks.
 
     Returns None when the project has never been scanned. That is deliberate rather than a fallback to a
@@ -455,16 +546,70 @@ async def _compile_generation_plan(
     template-with-substitutions this compiler exists to replace. The service then uses the older
     free-text path, which is honest about having nothing to ground itself in.
     """
-    evidence = await load_index_evidence(session, project_id=project_id)
+    evidence = await index_evidence.load_index_evidence(session, project_id=project_id)
+    if not evidence.paths:
+        try:
+            proj_res = await session.execute(
+                text("SELECT path, tenant_id FROM projects WHERE id = :p"),
+                {"p": project_id},
+            )
+            proj_row = proj_res.mappings().first()
+            if proj_row and proj_row.get("path"):
+                from ..analysis.indexer import persist_scan_report
+                from ..deployments.autonomous_gates import resolve_workspace_path
+                from ..deployments.autonomous_source import scan_workspace_to_report
+
+                ws_path = resolve_workspace_path(proj_row["path"])
+                if ws_path.exists() and ws_path.is_dir():
+                    report = scan_workspace_to_report(ws_path)
+                    if report and getattr(report, "files", None):
+                        tenant_id = proj_row.get("tenant_id")
+                        await persist_scan_report(
+                            session,
+                            project_id=project_id,
+                            tenant_id=tenant_id,
+                            report=report,
+                            embedder=None,
+                            embedder_absent_reason="Direct workspace scan fallback for generation prompt compiler",
+                        )
+                        await session.flush()
+                        evidence = await index_evidence.load_index_evidence(session, project_id=project_id)
+        except Exception as scan_err:
+            logger.warning("Direct workspace scan fallback in _compile_generation_plan failed: %s", scan_err)
+
     if not evidence.paths:
         # No index: no facts to compile from, and no stored text to compare a rewrite against.
-        return None, {}
+        return None, {}, {}
+
     inventory = (
         await session.execute(
             text("SELECT inventory FROM analysis_reports WHERE project_id = :p ORDER BY created_at DESC LIMIT 1"),
             {"p": project_id},
         )
     ).scalar_one_or_none() or {}
+
+    if not inventory.get("manifests") and evidence.paths:
+        manifests_from_paths = [
+            p
+            for p in evidence.paths
+            if any(
+                p.endswith(m) or p == m
+                for m in (
+                    "package.json",
+                    "package-lock.json",
+                    "pnpm-lock.yaml",
+                    "yarn.lock",
+                    "requirements.txt",
+                    "pyproject.toml",
+                    "go.mod",
+                    "Cargo.toml",
+                    "pnpm-workspace.yaml",
+                )
+            )
+        ]
+        if manifests_from_paths:
+            inventory = dict(inventory)
+            inventory["manifests"] = sorted(manifests_from_paths)
     # The project's own name, which is the fact that fills the one placeholder the findings table
     # carries: a chart directory. Without it `charts/<name>/Chart.yaml` would reach the model verbatim
     # and the model would either invent a name or write the angle brackets into the tree.
@@ -475,14 +620,30 @@ async def _compile_generation_plan(
     # THE CONTENTS TRAVEL WITH THE PROMPT, because the same index answers both questions: what to
     # tell the model, and what each file it rewrites already satisfied. Loading the index twice would
     # let the two drift apart between the compile and the gate.
-    return compile_prompt(
-        checks=report.checks,
-        paths=evidence.paths,
-        contents=evidence.contents,
-        inventory=inventory,
-        selected_check_ids=selected_check_ids,
-        project_name=str(project_name),
-    ), evidence.contents
+    return (
+        compile_prompt(
+            checks=report.checks,
+            paths=evidence.paths,
+            contents=evidence.contents,
+            inventory=inventory,
+            selected_check_ids=selected_check_ids,
+            project_name=str(project_name),
+            target_strategy=target_strategy,
+        ),
+        evidence.contents,
+        # ONE PROMPT PER ARTIFACT, for the repair loop. Built here, from the SAME readiness report that
+        # produced the opening ask, so a repair cannot disagree with it about what is failing -- loading
+        # the index twice is how the compile and the gate drift apart.
+        compile_repair_prompts(
+            checks=report.checks,
+            paths=evidence.paths,
+            contents=evidence.contents,
+            inventory=inventory,
+            selected_check_ids=selected_check_ids,
+            project_name=str(project_name),
+            target_strategy=target_strategy,
+        ),
+    )
 
 
 async def _record_compiled_prompt(session: AsyncSession, *, run_id: uuid.UUID, compiled: CompiledPrompt | None) -> None:

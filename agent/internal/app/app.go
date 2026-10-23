@@ -283,6 +283,14 @@ func (a *App) Session() (*session.Manager, error) {
 	return a.sessionMgr, a.sessionErr
 }
 
+// ResetSession clears the memoised session manager so that subsequent calls to
+// Session() construct a fresh manager with updated credentials and configuration.
+func (a *App) ResetSession() {
+	a.sessionOnce = sync.Once{}
+	a.sessionMgr = nil
+	a.sessionErr = nil
+}
+
 // UseBackendURL applies a backend URL resolved on the command line.
 //
 // MUST BE CALLED BEFORE `Session()`, and that is enforced rather than documented: `Session` is

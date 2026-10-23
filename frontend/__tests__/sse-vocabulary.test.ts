@@ -57,9 +57,11 @@ describe("the SSE vocabulary agrees across the wire", () => {
     expect(SSE_EVENTS).toHaveLength(backend.length);
   });
 
-  it("is exactly six names, as §7.4 states", () => {
-    expect(backendSseEventNames()).toHaveLength(6);
-    expect(SSE_EVENTS).toHaveLength(6);
+  it("is exactly seven names: §7.4's six plus 2.2's `log`", () => {
+    // Pinned so growth is deliberate and visible in a diff. `log` is the seventh, added with §2.2's live
+    // deployment stream; anything beyond that needs the same change on both ends and a reason here.
+    expect(backendSseEventNames()).toHaveLength(7);
+    expect(SSE_EVENTS).toHaveLength(7);
   });
 
   it("accepts every name the backend can emit", () => {

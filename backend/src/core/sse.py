@@ -27,6 +27,10 @@ class SSEEventType(StrEnum):
     STATUS = "status"
     TOKEN = "token"
     PROGRESS = "progress"
+    #: 2.2's live deployment output. Added to the closed vocabulary rather than reusing `progress`:
+    #: progress is a percentage and a phase, a log line is text, and a client rendering one as the other
+    #: shows either a progress bar made of sentences or a log made of percentages.
+    LOG = "log"
     VALIDATION = "validation"
     COMPLETE = "complete"
     ERROR = "error"

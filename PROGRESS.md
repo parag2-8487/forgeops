@@ -14,10 +14,139 @@ exactly `completed`, `in-progress`, `not-started` or `blocked`.
 | :---- | :---------------------------------------- | :---------- |
 | 0     | Foundation & Project Scaffolding          | completed   |
 | 1     | MVP Core — Analysis, Generation, Approval | in-progress |
-| 2     | Deploy, Manage & Command                  | not-started |
-| 3     | Observe, Troubleshoot & Self-Heal         | not-started |
-| 4     | Scale, Collaborate & Polish               | not-started |
-| 5     | Advanced & Ecosystem                      | not-started |
+| 2     | Deploy, Manage, Observe & Self-Heal       | in-progress |
+| 3     | Scale, Collaborate & Polish               | not-started |
+| 4     | Advanced & Ecosystem                      | not-started |
+
+The former Phase 2 (Deploy, Manage & Command) and Phase 3 (Observe, Troubleshoot & Self-Heal) are one
+phase: self-healing reads what the observability stack reports and acts through the deployment and
+rollback machinery, so neither half is shippable alone. The former Phase 4 became Phase 3 and the
+former Phase 5 became Phase 4. 126 boxes became 123, with three combined pairs named in `phases.md`.
+
+**Phase 2 is `in-progress` as of 2026-09-21: 8 of 123 boxes carry evidence.** The build order and the
+dependency reasoning behind it are recorded in `phases.md` under "Build order" — 2.1 first because every
+other deliverable in the phase references an environment, and 2.12 self-healing last because it needs both
+the observability chain it reads and the deployment chain it acts through.
+
+**2.1 Multi-Environment Management** (revision `0023`, `src/environments/`, `features/environments/`, 13
+integration + 14 frontend tests). Two of its six boxes are deliberately not ticked and `phases.md` says why
+in each case. The single most useful thing it produced is not CRUD but `requires_approval`:
+`GovernanceChokepoint._evaluate_policy` has accepted an `environment` argument since Phase 1 and **no caller
+ever supplied one** — which is why a clone's policy evaluation fell through to "requires approval because
+`environment` is absent". There is now a row that answers it, it defaults to requiring a human, a production
+environment cannot waive it, and an unknown environment name resolves to "ask a human".
+
+**2.2 Deployment Automation** (revision `0024`, `agent/internal/executor/deployment.go`,
+`src/deployments/`, `features/deployments/`, 16 integration + 13 frontend tests + the agent's own).
+`deployment.apply_manifests` is the 19th agent operation and the first that changes what is RUNNING rather
+than what is on disk. Four of its ten boxes are ticked; image build/push, OpenTofu apply, the SSE `log`
+stream, Inngest and the circuit breaker are not, and each open box says why in `phases.md`.
+
+Three things from 2.2 are worth carrying forward as facts rather than as claims:
+
+**`applied` and `degraded` are separate statuses, everywhere.** The agent distinguishes them, the
+`deployments` row stores `healthy` as a nullable column (`null` = nothing verified it, `false` = checked and
+not ready), and the dashboard renders three sentences rather than a tick and a cross. This is the coupling
+2.3's timeline and 2.12's self-healing both read, and collapsing it would let a deployment that never came
+up be recorded as one that did.
+
+**`stable` is set on health, not on apply** — enforced by `ck_deployments_stable_implies_healthy` as well as
+by the service, because the service is one writer and a support UPDATE is another. That single choice is
+what makes `GET /rollback-target` trustworthy: a deployment whose workloads never converged is not a state
+to return to, and the endpoint answers `{"target": null}` with a reason rather than offering the
+second-newest row.
+
+**The deployment transit is the first caller that supplies `environment` to the policy**, and a test reads
+the payload the policy was actually handed rather than trusting that the argument arrived. The environment's
+own `requires_approval` is enforced separately from the Rego verdict, and the two can only add caution: the
+bundle is runtime data, so an operator who marked an environment as needing a human must not lose that to a
+bundle change.
+
+**Not yet run against a real cluster.** `deployment.apply_manifests` has unit coverage of its decisions —
+path confinement, the waitable-kind set, the timeout clamp, the verdict parser — and has not applied a
+manifest to Kubernetes. The e2e stack is where that belongs and it has not been done, so nothing above
+claims it.
+
+### Verification of 2026-09-21, and what it found
+
+**The journey is 13/13 against the real stack** — real Ollama (`qwen2.5-coder:1.5b` and `bge-m3:567m`),
+real Authentik, real paired agent, step 8's assertion untouched. The change set now carries
+`SECURITY.md, k8s/ingress.yaml, k8s/service.yaml, Dockerfile, k8s/deployment.yaml`; the run that opened this
+work carried `SECURITY.md, k8s/ingress.yaml, k8s/service.yaml, terraform/backend.tf` and no Dockerfile.
+Read from `change_items` directly, not inferred from the test result.
+
+E2E locally: **smoke 24/24, journey 13/13, sse-paint 1/1, onboarding 10/10, printed-instructions 5/6.**
+The one printed-instructions failure pairs "this machine" by running the printed **Linux** instructions,
+which cannot work on a Windows host; CI runs that job on `ubuntu-latest`. `onboarding.spec.ts` had never
+been re-run and held a stale assertion — it pinned `step-5-state` as `"Not checked"`, a label the product
+deliberately replaced (one word had been covering "check in flight", "an action with no resting state" and
+"no read route", and read as "broken" in all three), and the policy-bundle step has since become genuinely
+observable. The discipline it was protecting — never a tick for something nothing checked — now lives on
+step 8, and the spec asserts it there.
+
+Agent: `go test -race ./...` clean, **74.1%** statements against the 70 gate. Frontend: **604 tests**,
+95.30 / 84.07 / 92.00 / 95.63 against 90 / 90 / 90 / 80. All 9 repository gates green, `alembic check`
+clean, `dump-openapi.py --check` clean at 75 paths, all 18 pre-commit hooks green.
+
+Backend **unit+property+meta shard: 2292 passed, 2 failed** — both were tests pinning the pre-substitution
+withholding contract, and both are now correct rather than deleted. One of them caught **a provenance
+defect I had introduced**: substituting the floor when NOTHING of the model's output survived would have
+delivered a set of entirely template content on a run row saying `served_from='provider'`. The floor now
+applies only to a mixed result, and the nothing-survived case still goes to the template path and records
+`template`.
+
+Backend **integration shard: 1039 passed, 11 failed**, of which **six were mine and are fixed at their
+cause** rather than by adjusting a number: `environments`, `environment_variables` and `deployments` had
+migrations and no SQLModel declarations, so `alembic check` proposed dropping all three (a migration with no
+model looks exactly like a table somebody forgot to remove) — `src/deployments/models.py` now exists and
+`alembic/env.py` imports all three; the pinned head revision moved `0021` → `0024`; `test_0006_secrets`
+asserted that no `environments` table could exist, which was right when it would have been a Phase 2 stub
+under Phase 1 numbering and is now wrong, so it asserts the property that actually mattered — `secrets` has
+no foreign key to it; and `test_wiring_coverage` demanded a `@wires` declaration for the two new composed
+collaborators, which `test_phase2_wiring.py` supplies by driving both through the real lifespan's graph.
+
+**Three integration failures remain and all three are the pre-existing generation-provenance set** recorded
+above (`test_a_near_duplicate_prompt_stores_l2` and the two `test_self_hosted_generation` cases). A fourth,
+`test_the_generated_workflow_passes_yamllint`, is environmental: it passes locally once `yamllint` is on
+PATH (7 passed), and the backend shard's missing dependency is recorded above.
+
+**What was not re-run, stated rather than implied.** The unit shard takes 1h43m and was run once, before the
+two contract fixes; those two files were then re-run individually (20 and 17 passed). The integration shard
+was run once in full (32m56s) and the six files I changed were re-run afterwards (53 passed).
+`verify-release.py` cannot report a clean set from a local machine: it wants a per-shard `.coverage.*` from
+all three shards in one sitting and workflow conclusions for the pushed commit, so its combined-coverage and
+workflow lines read MISSING until CI has run. Its raw output is quoted in the session report.
+
+### CI on the mirror, for `c6b7e5d`
+
+| Workflow                                | Result                                                                                                                                                                                                                                                                                                                                                                                                            |
+| :-------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Kubernetes & SPIRE CI`                 | success                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Templates Library Validation Pipeline` | success                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Mutation Testing CI Pipeline`          | success                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `ci`                                    | **failure — one job**: `agent (windows-latest host binary)`, which installs a PUBLISHED RELEASE ARCHIVE and cannot pass on a mirror with no releases. Byte-identical failure in the pre-branch run `34604857055`. Every other job green, including `audit`, which had caught a real defect first: the agent's Go files require `SPDX-License-Identifier: Apache-2.0` and the two new ones carried `FSL-1.1-ALv2`. |
+| `End-to-End Journey CI`                 | **failure — one test.** The journey is **13/13** (8.7m) and `sse-paint` passes (7.2s). `printed-instructions` fails one of its seven: after the printed `sudo install` the login shell reports `bash: forgeops-agent: command not found`.                                                                                                                                                                         |
+
+**Two E2E defects were newly EXPOSED rather than newly caused, and the distinction is the point.** That job
+had been dying at journey step 8 for months, so nothing after the journey had run. With step 8 fixed, the two
+specs behind it executed for the first time in a long while:
+
+- `sse-paint` failed at sign-in, and the cause was in the shared helper. It restores the journey's saved
+  session, whose refresh token the journey had already rotated, and the recovery path assumed the browser
+  still held AUTHENTIK'S OWN cookie — true inside a spec that signed in, false in a fresh Playwright context
+  that only restored this application's cookies. The first repair put the real login on the LATER attempts
+  and still failed, because by then the `/login` resume had left a partial IdP session and re-driving the
+  flow executor against a visitor the IdP already knows returns `ak-stage-flow-error`. **The order was the
+  fix**: clear the context and authenticate first, resume second. Fixed and green in CI.
+- [ ] **`printed-instructions` cannot find `forgeops-agent` after following its own printed install command.**
+      Six of its seven assertions hold; the failing one runs the printed
+      `sudo install -m 0755 ./forgeops-agent /usr/local/bin/forgeops-agent` and then `forgeops-agent version`
+      through `bash -lc`, and the login shell reports `command not found`. Either the install did not place
+      the binary or the login shell's PATH does not include `/usr/local/bin` on that runner — and which of
+      those it is matters, because the spec's whole subject is that the instructions printed to a user
+      actually work. **Not fixed**, and not worked around: the evidence is in run `35609449724`, job
+      `106364603656`. Locally the same test fails for a different and honest reason — it installs a Linux
+      archive, and this host is Windows.
 
 Phase 0 is `completed`: all 108 executable task leaves are implemented, all 18 completion
 criteria carry real evidence, and P-01 through P-15 are all present and passing. The work
@@ -35,6 +164,1204 @@ owner's decision and has deliberately not been done here.
 | **CI (Phase 1 code gate)**         | **run `32289535507`, commit `30f74f4`**                                               | **all 12 jobs pass: changes, pre-commit, lock-integrity, backend, frontend, agent, supply, audit, compose-smoke, and the three Phase 1 additions auth, secrets and policy**                                                                                                                                                                      |
 | **CI (Phase 1 sibling workflows)** | **commit `30f74f4`**                                                                  | **`e2e-ci`, `k8s-ci`, `mutation-ci` and `templates-validation` all green; `mutation-ci` is the gate that `scripts/check-mutation-manifest.py` backs, so 31 of 31 properties having a verified control is enforced rather than recorded**                                                                                                         |
 | CI (post-Phase-1 re-verification)  | commit `b97b6e3`, run on a mirror of this repository                                  | all 5 branch workflows green, `ci` 12 of 12 jobs. Cited separately and honestly: this account's Actions minutes are exhausted, so `30f74f4` is the last signal on the primary remote, and `b97b6e3` — which adds the criterion 14 wiring — was verified by pushing to a private mirror instead. The commit is identical; only the remote differs |
+
+## Baseline measurement — one full cycle on the demo project (2026-09-11)
+
+Taken because the previous pass changed the template library and the renderers and nothing had been
+measured since; a score that is not recorded before the next phase lands on top of it is unrecoverable.
+**It is a measurement, not a work item.** Everything it exposed is in the Phase 2 backlog below rather
+than fixed here.
+
+**How it was run**, on a stack rebuilt from commit `11abe08` (`docker compose build backend frontend
+worker backend-agent` then `up -d --wait`, every service reporting healthy):
+
+```
+backend/.venv/Scripts/python ../scripts/ci/materialise-demo-project.py C:\forgeops-cycle\demo
+docker compose exec -T backend python /tmp/seed_host_apply.py C:\forgeops-cycle\demo
+forgeops-agent.exe pair --code <code> --backend ws://localhost:18000/api/v1/ws/agent
+forgeops-agent.exe scan --project <project-id>
+docker compose exec -T backend python /tmp/cycle_drive.py score    <project-id> <user-id>
+docker compose exec -T backend python /tmp/cycle_drive.py generate <project-id> <user-id>
+forgeops-agent.exe scan --project <project-id>
+docker compose exec -T backend python /tmp/cycle_drive.py score    <project-id> <user-id>
+```
+
+The demo project is `demo_project_before()` from `backend/tests/unit/test_reachable_score_contract.py`,
+materialised onto the host by `scripts/ci/materialise-demo-project.py` so the one definition is used
+rather than a second copy. `scripts/ci/cycle_drive.py` drives the REAL routes — readiness, the
+generation SSE stream, the approvals surface — overriding only `require_principal`, which is the same
+substitution `seed_host_apply.py` already argues for.
+
+**Before**, `GET /projects/{id}/readiness` after a real host-agent scan of 19 files:
+
+```json
+{
+  "score": 89,
+  "level": "production_ready",
+  "indexed": true,
+  "evaluated_paths": 19,
+  "reachable_score": 100,
+  "categories": {
+    "containerization_score": 100,
+    "ci_config_score": 100,
+    "orchestration_score": 41,
+    "env_config_score": 85,
+    "security_policy_score": 100,
+    "iac_score": 100
+  },
+  "short_checks": [
+    "compose_file_present 0/25",
+    "kubernetes_resource_limits_declared 0/35",
+    "kubernetes_probes_declared 0/25",
+    "kubernetes_image_tags_pinned 0/20",
+    "kubernetes_containers_unprivileged 0/20",
+    "kubernetes_manifests_are_valid 0/25",
+    "every_imported_package_is_declared 0/25"
+  ]
+}
+```
+
+**After** generation, auto-approval under `environment=staging`, a real apply onto the host filesystem
+by the paired host agent (`change_sets.status = applied`, three files on disk) and a rescan of 22 files:
+
+```json
+{
+  "score": 92,
+  "level": "production_ready",
+  "indexed": true,
+  "evaluated_paths": 22,
+  "reachable_score": 100,
+  "categories": {
+    "containerization_score": 100,
+    "ci_config_score": 100,
+    "orchestration_score": 61,
+    "env_config_score": 85,
+    "security_policy_score": 100,
+    "iac_score": 100
+  },
+  "short_checks": [
+    "kubernetes_resource_limits_declared 0/35",
+    "kubernetes_probes_declared 0/25",
+    "kubernetes_image_tags_pinned 0/20",
+    "kubernetes_containers_unprivileged 0/20",
+    "every_imported_package_is_declared 0/25"
+  ]
+}
+```
+
+**89 → 92.** The score moved, honestly and in the right direction, and four facts about that number are
+worth more than the number:
+
+1. **The unit test's 90 is not the real 89.** `TestTheAcceptanceCase` asserts the same fixture reads
+   exactly 90, using a hand-written `DEPENDENCY_SPECIFIERS` tuple in place of a scan. A real agent scan
+   of the same bytes fails `every_imported_package_is_declared` (0/25), so the real reading is 89. The
+   fixture's evidence and the agent's evidence disagree by one check.
+2. **Predicted was 100; achieved was 92.** `reachable_score` committed to 100 before the run, from the
+   template renderer. The run delivered three of four artifacts.
+3. **`k8s/deployment.yaml` was withheld by the gate**, twice for the same two reasons —
+   `kubernetes_image_tags_pinned` and `kubernetes_probes_declared` still failing on the artifact
+   generated to satisfy them. That is D-106's per-file machinery working: three artifacts were
+   delivered and the bad one was not. It is also why the ceiling for this run was 92.
+4. **No model was called.** `served_from: "l2"`, `token_frames: 0`, `completion_tokens: 81` — the L2
+   cache replayed a stored completion for an identical compiled prompt. So this cycle measures the
+   scoring, gating, governance and apply chain end to end, and does NOT measure the model.
+
+Two defects the run exposed, both recorded rather than fixed:
+
+- **`forgeops-agent run` ignores the endpoint the backend stated at pairing.** `credentials-public.json`
+  holds `session_ws_url = wss://localhost:18443/api/v1/ws/agent`, and `connect` and the codebase
+  indexer resolve it through `session.SessionURL(stored, cfg.BackendWSSURL)` — but `App.Session()`
+  builds the manager from `cfg.BackendWSSURL` alone. So a freshly paired host agent started with `run`
+  serves no session, exits 0, and logs nothing but `agent starting`; `doctor` then reports "no backend
+  configured (AGENT_BACKEND_WSS_URL is unset)" immediately after a pairing that stored one. The cycle
+  above had to pass `AGENT_BACKEND_WSS_URL` explicitly. `scripts/ci/host-apply-proof.py` deliberately
+  removes that variable and calls `run`, so the same gap is reachable from CI.
+- **The rescan reported 0 dependency edges where the first scan reported 10**, over a superset of the
+  same files. `every_imported_package_is_declared` fails in both readings, so it did not move the
+  score, but a full scan losing its import graph is not a difference the index should have.
+
+## Phase 2 progress — 40 of 123 boxes
+
+Up from 16. Sections complete: **2.1** (6/6), **2.3** (5/5), **2.8** (7/7), **2.7b** (3/3). Partly done:
+2.2 (7/10), 2.4 (3/6), 2.9 (6/6 — complete), 2.6 (4/5). Untouched: 2.4a, 2.5, 2.7, 2.7a, 2.10, 2.11, 2.12,
+2.13, 2.14 and the 20 completion criteria.
+
+### Two defects found that nothing had ever exercised
+
+**`DeploymentService.complete` had no production caller.** Only tests called it, so a real deployment stayed
+`applying` for ever, `healthy` and `stable` were never written, and `rollback_target` could never offer
+anything — the whole of §2.3 rested on a column nothing set. `DeploymentSettler` is the runtime path, hooked
+into `record_command_result` through a `ChangeSetSettler` Protocol so `governance/` still cannot import
+`deployments/`. Verified by driving the real chain and reading the row back: a converged report writes
+`healthy=true, stable=true`; an unready workload writes `healthy=false, stable=false`; a report that says
+nothing about workloads leaves `healthy` NULL, because absence of health is not health.
+
+**`record_command_result`'s failure branch could never have worked.** It has always written
+`status = 'failed'`, and revision `0010` REMOVED `failed` from `ck_change_sets_status_allowed` precisely
+because design §3.6 does not define that state — so any agent reporting a failed command raised
+`CheckViolationError` inside the result handler. Nothing had exercised it until a settler test drove it end
+to end.
+
+**And the first fix was in the wrong direction, which is worth recording.** I widened the vocabulary to admit
+`failed`, and `test_0010_change_set_statuses.py` failed immediately: it asserts the constraint REJECTS
+`failed`, because `0010`'s whole purpose was that `0004`'s tuple had been written from memory rather than
+from §3.6. Widening the authority to accommodate a bug is the wrong trade. The code is fixed toward the
+authority instead — a failed result records `rolled_back`, §3.6's only failure edge out of `applying` — and
+revision `0029` restores the constraint to exactly what `0010` installed. No finer outcome is lost: for a
+deployment, `deployments.status` already carries `degraded` versus `failed` separately, which is where
+per-operation detail belongs.
+
+### Decisions made
+
+- **Promotion and rollback are deployments**, not operations of their own: both go through
+  `deploy_manifests`, so the TARGET environment's approval requirement governs a promotion into production
+  whether or not anybody remembered to think about it. Only a `stable` deployment can be a promotion source
+  or a rollback target.
+- **`change_sets.command_id`** (revision `0026`) records which command a change set was delivered as. §2.2's
+  live-log stream needs it to find the agent's per-command channel, and the audit chain gains a correlation
+  it previously left to matching timestamps.
+- **`devtools.run` takes a KIND, never a command line.** This is where an arbitrary-shell escape would most
+  naturally appear. The agent resolves the vector from the workspace's own manifests, a test enumerates every
+  vector against a forbidden-verb list so `down -v` and `prune` are unreachable, and another asserts `exec`,
+  `shell`, `run`, `custom` and `script` are not kinds. It is MUTATING and approval-required, because "run the
+  tests" executes code the repository controls.
+- **Novu is not integrated, and §2.6's first box stays open.** It needs an API key this deployment does not
+  have, and composing an unreachable client would put a placeholder on a runtime path. The three real
+  channels sit behind a `Channel` Protocol, so a Novu adapter is a new class rather than a rewrite.
+- **A webhook URL is treated as a credential.** Preference reads return `target_configured`, never the
+  value, asserted by searching both the service payload and the rendered DOM.
+
+### What the boundary checks caught in my own work
+
+`deployments/settler.py` imported `notifications.service` directly. Ruff's per-domain exemption did not hide
+it — the parse-based check in `scripts/chokepoint_graph.py` reported it as a cross-domain import, which is
+exactly the arrangement its comments claim. Replaced with a local `NotificationRaiser` Protocol.
+
+The first version of the settler hook used `contextlib.suppress`, which swallows the exception and leaves the
+TRANSACTION aborted, so the next statement failed with `InFailedSQLTransactionError` — an error about the
+wrong thing, several lines from its cause. It runs in a savepoint now, and a settlement failure is recorded
+on the change set rather than lost.
+
+### The generation-provenance failures: three real defects fixed, and why the tests still fail
+
+**Phase 2 is 72 of 123.** These three tests have been carried for five passes. Driving them with a live
+`qwen2.5-coder:1.5b` found and fixed **three genuine defects**, and then established that the tests'
+remaining failure is not a defect at all. Both halves of that are recorded because the second is the more
+useful finding.
+
+**Defect 1: a run was served from the cache it had just written.** `ModelRouter.complete` consulted the
+cache on every call, and a generation run calls it once per attempt. Attempt 1 missed, called a provider,
+and stored the result; attempt 2 -- which exists only because the gate rejected attempt 1 -- found that
+entry and was served from it. The run recorded `served_from='l1'` for work no cache held when it began,
+and `iterations_used=0` for a run that plainly iterated, corrupting the NFR-04 average that column exists
+to measure. Worse, it guaranteed non-convergence: the retry was handed back the artifact the gate had just
+rejected. Fixed with `may_serve_from_cache`, a CALLER'S DECLARATION rather than something inferred in the
+router -- from inside `complete`, two attempts of one run and two separate runs are indistinguishable.
+
+**Defect 2: the cache was poisoned with gate-rejected output.** The router stored every successful
+completion, but generation's output faces a validation gate AFTER the router returns. So rejected
+artifacts were cached, and every later run with that prompt was served the known-bad one, failed the gate
+again, and burned its whole attempt budget re-delivering it. Fixed by making storage the caller's decision
+(`store_in_cache`) and adding one verb, `remember`, called only after the gate passes. `remember` is a
+named router method rather than a public `cache` attribute, because exposing the cache would let a caller
+read entries or choose a tier, none of which belong outside routing.
+
+**Defect 3: the accepted answer was cached under a key nobody would ask for.** A retry's prompt carries
+the previous attempt's findings appended to it. Caching under that prompt writes an entry whose key no
+future run will ever present -- a silent permanent miss that looks exactly like a cache working and never
+hitting. Now keyed on the first attempt's prompt, captured for the run.
+
+**Why the tests still fail, with the evidence.** Instrumenting the real path showed exactly one cache
+lookup per run (correct) and run 2's attempt 1 reporting `served='l1'` (correct -- the fixes work). The
+run then continues, because the gate rejects the cached artifacts with
+`Dockerfile: still fails dockerfile_healthcheck_present (0/15)` on **every attempt of both runs**. The
+1.5b model never emits a HEALTHCHECK, so no run ever has acceptable output to serve from cache, and the
+final `served_from` is honestly `provider` -- the delivered artifacts came from attempt 3 plus a template
+substitution, not from the cache.
+
+So `assert second['served_from'] == 'l1'` asserts a RUN-level provenance that requires the first run's
+output to pass the gate. **The tests are not wrong about the system; they are unsatisfiable with the
+configured model.** They were left failing rather than relaxed: changing the assertion to the attempt-level
+provenance, or to a prompt with weaker checks, would be weakening a test to fit -- and the assertion is
+the correct one for a deployment whose model can satisfy its own gate. **What would close them** is a model
+that satisfies `dockerfile_healthcheck_present`; `qwen2.5-coder:7b` is the cheapest thing to try, and the
+decision is a deployment one rather than a code change.
+
+**A fourth, smaller provenance defect was found and fixed on the way:** when the gate rejected everything
+and the audited template floor supplied EVERY delivered artifact, the row still said `provider`. It now
+says `template`. A partial substitution deliberately keeps the model's provenance, since some delivered
+artifact did come from it.
+
+**Two regressions of my own, both caught by existing tests rather than by review**, which is the argument
+for those tests: binding `substituted` only on the gate-failure path raised `UnboundLocalError` on the
+ordinary happy path (`test_generation_routing.py`), and the new 2.10 and Inngest env keys were absent from
+`PROJECT_CONFIG_KEYS` (`test_config.py`, which demands bidirectional agreement between the registry and
+`.env.example` -- stronger than I had assumed, and it caught a setting I had registered without
+documenting).
+
+### The model question, settled by measurement -- and the answer was not the one expected
+
+**Measured on this CPU, two runs each, direct prompt asking for a Dockerfile with a HEALTHCHECK:**
+
+| model                | `### FILE:` parse | emits `HEALTHCHECK` | latency             |
+| -------------------- | ----------------- | ------------------- | ------------------- |
+| `qwen2.5-coder:1.5b` | 2/2               | **0/2**             | 11-71s              |
+| `qwen2.5-coder:7b`   | 2/2               | **2/2**             | 64s warm, 367s cold |
+
+Both properties were measured rather than just size, because the earlier `3b` result (1 of 4 parsed where
+`1.5b` parsed 4 of 4) had already shown bigger is not automatically better on the format contract. 7b is
+better on both, so **7b is now the default** in `.env.example`, `.env` and the integration suite's
+`DEFAULT_MODEL` -- which mirrors it deliberately, so the tests exercise the configured model rather than a
+hardcoded other one. The latency cost is real and is why `TIMEOUT_SECONDS` is 900: a cold first generation
+is around six minutes.
+
+**The three provenance tests still fail, and that is the useful finding.** With 7b configured the run took
+19m30s and still ended `served_from == 'provider'`. So the model was NOT the sole binding constraint, and
+the earlier diagnosis was incomplete: 7b satisfies `dockerfile_healthcheck_present` when asked directly,
+but the real pipeline does not ask directly -- `compile_prompt` builds its instruction from the set of
+FAILING READINESS CHECKS, and the gate then judges the result against all of them. Which of those checks
+now fails is **not isolated**, and it was not isolated because each iteration costs nineteen minutes; that
+is a statement of what was not done rather than an excuse.
+
+**What to do next, in the cheap order:** run one generation through `compile_prompt` + `_validate` in
+isolation and print the findings -- roughly 60-90 seconds against a warm 7b, versus 19 minutes through
+pytest. That names the failing check directly. An attempt at this was started and blocked only on
+`compile_prompt`'s real signature (it takes `checks`, `paths`, `contents`, `inventory` -- not a free-text
+prompt), so the next pass should build that fixture first.
+
+The assertions were not relaxed and the prompt was not swapped for one with weaker checks. `ci` stays red
+for this, now with a measured cause and a named next step rather than a carried one.
+
+### The provenance diagnosis, completed: the gate blocker was a build-arg base image
+
+**The isolation harness works and is the deliverable that made this findable.**
+`scripts/generation_harness.py` drives the real chain -- `IndexEvidence` -> `ReadinessEngine` ->
+`compile_prompt` -> the model -> `parse_artifacts` -> `GenerationService._validate` -- with no database,
+chokepoint or HTTP. One iteration is 130-440s against a warm 7b instead of 19m30s through pytest, and it
+prints which readiness check failed on each attempt. Everything below was found with it.
+
+**The cause, in three measured steps rather than one guess:**
+
+1. The failing check was never `dockerfile_healthcheck_present`. It is **`dockerfile_base_pinned`**, and
+   the earlier diagnosis was wrong about which check and therefore about the fix.
+2. 7b first wrote `FROM alpine:latest` -- a reasonable-looking base and an unambiguous failure. Naming
+   `:latest` as forbidden and giving `python:3.13-slim` as a copyable shape fixed that, following the
+   documented `USER 10001` precedent: a small model copies a literal and does not reliably synthesise from
+   a description.
+3. It then wrote `ARG BASE_IMAGE=python:3.13-slim` followed by `FROM $BASE_IMAGE` -- which looks MORE
+   careful than a hard-coded tag and is refused, correctly: a build argument can be overridden at build
+   time, so the file does not establish what it builds on. The requirement now names that construct.
+   **The gate then PASSED on attempt 2**, with `FROM python:3.13-slim AS builder`.
+
+**A permanent guard came out of it.** `test_prompt_requirements_achievable.py` (11 tests, 1.8s) constructs
+the Dockerfile the requirements literally describe and asserts the REAL readiness engine accepts it, with
+negative controls for `:latest`, a floating builder, a single stage and the ARG form. It answers in under
+two seconds the question each model round previously cost seven minutes to ask: are the instructions
+satisfiable, or is the model not following them. An instruction edited into something unachievable now
+fails at the moment it is written.
+
+**A real defect found on the way:** `max_write_targets` does not bound write targets. Measured, 6 yields
+EIGHT targets and 8 yields TEN, because it counts instruction groups and one group can name three
+manifests. That is the carry-over item "artifact cap derived from measured model output" with a concrete
+number attached, and the parameter name is wrong for what it does.
+
+**The five provenance tests still fail, and the cause has moved.** They now fail on
+`served_from == 'provider'` where `'l1'`/`'l2'` was expected, plus one artifact-order mismatch -- not on
+the gate, which passes. The likely reason is that run 1 delivers artifacts, so run 2's compiled prompt
+names fewer failing checks and different write targets: a legitimately different prompt, hence a different
+cache key, hence no hit. If that is confirmed the tests' premise needs restating (the same prompt twice
+requires unchanged project state) rather than the assertions relaxing -- but it is NOT confirmed, and each
+round of confirming costs 1h32m through pytest. **The harness is the way to confirm it cheaply:** compile
+the prompt twice with the index updated between, and compare the cache keys. That is the next step and it
+is minutes, not hours.
+
+### What a full shard run found that no narrow check had
+
+Running the unit and integration shards end to end (17m17s and 1h32m) surfaced **17 failures, 14 of them
+regressions from this pass that narrow checks had not touched.** The lesson is the one the brief states:
+a prior report is not evidence.
+
+- **Four design authorities** legitimately needed updating, each with its reason written down, none
+  relaxed. `test_metadata` DISALLOWED `opentelemetry-*` with the docstring "OTel SDK is Phase 2" -- a phase
+  boundary, not a permanent ban like `celery`, so the guard was INVERTED to assert exact pinning and
+  internal version consistency rather than deleted. `test_auth_verifier` pinned 12 public routes and there
+  were 13: the ArgoCD webhook was added in an earlier pass **without that number moving**, exactly the
+  deliberate-act check that test exists to force. `inngest` had become an unprofiled compose service, so
+  the committed default-service list needed it with the argument for why it is default (one container, and
+  the engine of a shipped feature) where the six-service observability tier is profiled.
+- **A Protocol change propagating correctly.** Widening `ArtifactModelPort` with `may_serve_from_cache` and
+  `store_in_cache` broke a test double that did not follow, raising `TypeError` in five tests. A double
+  accepting `**kwargs` would have hidden the widening and gone on testing a signature production no longer
+  has.
+- **Five composed collaborators with no wiring test**, which `test_wiring_coverage` refuses by name. Each
+  is now exercised through `app.state` rather than type-checked -- an `isinstance` assertion passes on an
+  object wired to nothing.
+- **A route tripping the no-change-set-endpoint guard.** `POST .../suggestions/{id}/change-set` matched a
+  substring guard that exists because a generic change-set endpoint would be an unscoped mutation entry
+  point. This route is scoped to one suggestion and carries a schema, so it is not that hole -- but it was
+  renamed to `.../submit` rather than narrowing the guard, which keeps the guard at full strength and names
+  the action rather than the artifact.
+- **Two capability skips provided rather than accepted**: `yamllint` onto PATH at CI's pinned 1.37.1, and
+  the Inngest dev server started so `test_durable_pipeline` runs 11 with 0 skipped.
+
+**The meta shard was measured hanging past an hour** and the cause is `mutation-harness.py`: 31 properties,
+each a pytest invocation, invoked up to three times across the shard's tests. Pre-existing, not a
+regression, and the reason the coverage figure excludes that shard -- it captures no `src` coverage anyway,
+since it runs the gates as subprocesses.
+
+### The provenance defect, found: a cache that hit and was thrown away
+
+**The stated hypothesis was wrong, and disproving it cost minutes rather than the 1h32m a pytest
+round costs.** The carry-over said run 1 delivers artifacts, so run 2 compiles a different prompt and
+the cache key differs. Measured instead, by compiling twice against the real database:
+
+- The attempt-1 prompt is **byte-identical** across two runs (`e5d8c36b`, 1,708 chars both times).
+- **Zero** rows are added to `file_tree`, `file_contents` or `change_sets`. A run does not touch the
+  index at all, so the premise of the hypothesis never occurs.
+
+Four more layers were then exonerated by measurement, each with output: `remember` writes the key
+`lookup` asks for; a SECOND port finds the first port's write; and `router.complete`'s own lookup --
+which builds its params from `request` rather than from the port -- returns `l1` with zero endpoint
+calls. The cache was never broken.
+
+**So the lookup was instrumented on a real run, and it said:**
+
+```
+LOOKUP model='qwen2.5-coder:7b' params={'temperature': 0.0, 'max_tokens': 2048} -> L1_exact
+run 2: served_from='provider' iterations=3
+```
+
+**The cache hit. The run threw the answer away and called the provider three times.** Run 1 had been
+delivered with the template floor standing in for the artifacts the gate refused -- correctly recording
+`served_from='provider'`, because the substitution was partial -- and what it cached was the RAW MODEL
+TEXT the gate had just refused. Run 2 hit that entry, had it refused for the same reason, burned its
+first attempt, and went to the provider anyway.
+
+That is exactly the POISONED ENTRY the router's `store_in_cache=False` comment describes, arriving by
+the one route that guard does not cover. It is strictly worse than not caching: the run pays a lookup,
+receives a known-bad answer, spends an attempt rediscovering that it is bad, and still calls the
+provider. **An entry that can never serve is indistinguishable from a cache that is working and never
+hitting**, which is why it survived -- the hit rate was zero and every run looked correct.
+
+The fix is one clause: `and not substituted`. `tests/unit/test_generation_cache_not_poisoned.py`
+(4 tests, 6s) reproduces it deterministically with a stub, and **the guard was toggled off to prove the
+test fails without it** -- the first draft of that file used TOTAL model failure, which takes the
+template path and never reaches the cache write, so it passed without the fix and proved nothing. The
+scenario that matters is PARTIAL substitution, and the manifests it needs are the floor's own, captured
+from a real run rather than invented, because the floor's artifacts satisfy the gate by definition.
+
+**The two real-model tests had their PREMISE restated rather than their assertions lowered.**
+`second['served_from'] == 'l1'` conflated two things: whether the cache works, and whether 7b can
+satisfy a four-artifact prompt unaided. The first is deterministic and is now asserted as an invariant
+in both directions -- the cache is populated if and only if the delivery needed no floor, and when it is
+populated the second run must be `l1` with `iterations_used=0`. A violation of either direction fails.
+What no longer fails is the model needing the floor, which is not a defect and which the test now
+reports instead of hiding.
+
+### `max_write_targets` now bounds write targets
+
+It counted instruction GROUPS, and a group carries companions -- the Deployment group also names a
+Service and an Ingress. Measured before the fix: **6 produced EIGHT targets and 8 produced TEN**, so the
+bound was 30-40% loose in the one direction that matters, towards asking a small model for more files
+than it can complete.
+
+The name was kept and the count corrected, because every reason the cap exists is written in terms of
+FILES: eleven artifacts requested, a 1.5b model unable to emit eleven valid files, four demonstrably
+within reach. A cap named `max_write_targets` that does not bound write targets fails its own purpose.
+One group always survives -- the k8s group is three files against a cap of two, and deferring it would
+leave the run with no instruction -- and when that happens `budget_strategy` SAYS the cap was exceeded
+rather than reporting a bound it did not achieve. `tests/unit/test_prompt_write_target_cap.py` measures
+`len(write_targets)` across seven caps with a non-vacuity control; a test asserting on the loop passed
+throughout the defect, because the loop was bounding the wrong thing.
+
+### The instruction told a Node repository to build a Python image
+
+**My own fix from the previous pass caused this.** The Dockerfile requirement named
+`python:3.13-slim` as its example. Given the criterion-10 fixture -- a `package.json` and a
+`server.js`, no Python anywhere -- 7b wrote `ARG BASE_IMAGE=python:3.13-slim`, `COPY requirements.txt`
+and `pip install`. The prose rule "the base image and the build steps match the language of THIS
+repository" was already in the list and did not help: the only CONCRETE image name in the block was a
+Python one, and a small model copies the literal it can see over the sentence beside it.
+
+That is the `USER 10001` lesson a third time, arriving from the other direction: the copyable shape was
+right about pinning and wrong about language. The example is now resolved from the inventory through
+`BASE_IMAGE_BY_LANGUAGE`, exactly as linter configuration filenames already are, and an unrecognised
+language produces NO example rather than a guessed one -- a wrong literal is worse than an absent one,
+which is precisely what went wrong. Five tests assert the prompt's TEXT, including that a Node
+repository is never shown a Python image: a correct checker cannot rescue an instruction that tells the
+model the wrong thing.
+
+The harness gained `--language node` and, more importantly, a real `inventory`. It had been passing
+`inventory={}`, which compiles a prompt production never sends -- the base image is resolved FROM the
+inventory -- so it could not reproduce the journey's failure while that was true.
+
+### Criterion 10's journey: 6 of 13 steps pass against a real local stack
+
+The full stack was brought up on this host for the first time: postgres, redis, opa, cerbos, Authentik
+server and worker, backend, the mTLS agent listener, worker, frontend, the agent container and ollama
+with both models -- sixteen containers, five images built, the IdP provisioned and the migrations taken
+from **0029 to 0036**.
+
+Steps 1 to 6 pass, and that includes a **real OIDC redirect through a real browser**, a real agent
+pairing over mTLS, the readiness screen rendering the API's own numbers, and a 15.8-minute generation
+run against 7b. **Step 7 fails**, on its final clause and only that one: the SSE event names, their
+documented order and the single terminal event all pass, and then
+`SELECT status FROM generation_runs` returns `template_fallback` where `accepted` is required.
+
+So the criterion is NOT ticked, and the blocker is named precisely: 7b does not satisfy the readiness
+gate on the Node fixture within three attempts, so the audited template floor delivers and the run
+honestly records the fallback. Two genuine instruction defects were found and fixed along the way (the
+build-arg base image, and the Python image for a Node repository), each with a deterministic guard, and
+the gate still refuses. **Ticking this box would require either a model that can satisfy the gate or a
+relaxed assertion, and the assertion is right.**
+
+A resource fact for the next pass: with the full stack up, `go vet` failed on the HOST with
+"the paging file is too small" and `cannot allocate memory`, and a harness run against ollama timed
+out. Sixteen containers plus a 7b model plus a Go build does not fit. Tear the stack down before
+running the gates, or run them first.
+
+### What both shards say now, and the three failures left
+
+**Unit shard: 2,160 passed, 2 skipped, 0 failed in 13m18s.** The previous run was 2,134 passed with
+**4 failed**; those four are fixed and 26 tests were added.
+
+**Integration shard: 1,317 passed, 12 failed, 3 skipped in 20m09s** -- and **eight of the twelve were an
+absent capability, not defects.** `docker compose down` had removed the ollama container, so every
+real-model test failed at connect (`ollama_api=000`), and `yamllint` was not on PATH. With the model
+server back and the venv's `Scripts` on PATH, those re-run **11 passed**, and the whole of
+`test_generation_run_rows.py` re-runs **5 passed in 28m05s** -- including both cache tests whose premise
+was restated, so the invariant holds against the real model rather than only against a stub.
+
+**Combined coverage re-measured this session: 86.51%** (13,136 of 15,184), from unit 72.10% and
+integration 76.03%. Neither shard alone clears the floor, which is why the criterion is combined.
+
+**Three failures remain, all in `test_self_hosted_generation.py`, and each has a measured cause:**
+
+1. `test_the_second_identical_run_is_served_from_the_cache` -- asserts `l1`, gets `provider`.
+2. `test_a_near_duplicate_generation_prompt_is_served_from_l2` -- asserts `l2`, gets `provider`.
+
+   These are the SAME premise conflation that was corrected in `test_generation_run_rows.py`, in a file
+   that was not touched. The cause is no longer a mystery: with 7b the delivery needs the template
+   floor, so the completion is correctly NOT cached, so the second run legitimately calls a provider.
+   The fix is the same invariant, stated in both directions, and it is a known edit rather than an
+   investigation. It was left undone rather than made blind: each verification round on this file costs
+   **41 minutes** against the real model, and an unverified edit to a test is worth less than an honest
+   note saying which edit is needed.
+
+3. `test_a_run_is_served_from_provider_and_the_artifacts_are_real` -- the delivered artifact list no
+   longer equals `['Dockerfile', 'k8s/deployment.yaml', 'k8s/ingress.yaml', 'k8s/service.yaml']`, and
+   `Dockerfile` is the entry missing. **This one needs deciding rather than restating**, because the
+   write-target cap fix legitimately changed what a run ASKS for -- 6 files where it previously asked
+   for 8 -- so an exact-list expectation may now be encoding the pre-fix behaviour. Establish which
+   artifacts the run requests under the corrected cap BEFORE touching the assertion, and if the
+   expectation moves, move it to the right set with the reason and keep it exact. Do not weaken it to a
+   subset check: the exactness is what catches an artifact silently going missing, which is what it is
+   reporting right now.
+
+### The gate refusal: not capability, and not one cause but four
+
+The previous conclusion -- "blocked on model capability" -- was wrong, and the measurement that
+disproved it took one afternoon. Same model, same repository, same check, two shapes of ask:
+
+```
+ASK A   6 artifacts, 55 mechanical requirements in one call    FAIL, FAIL, FAIL
+ASK B   1 artifact,  24 requirements                           FAIL, PASS
+```
+
+In ASK A the finding was fed back twice and 7b reproduced the same `FROM node:$NODE_VERSION` each
+time. In ASK B the identical finding landed on the first correction and the answer became
+`FROM node:22-slim`. Every other requirement was satisfied in both -- two stages, `USER`,
+`HEALTHCHECK`. **What a wide ask costs is not the model's ability to write a file; it is the model's
+ability to ACT ON A CORRECTION while regenerating five unrelated files.** Four separate defects were
+underneath, each fixed and each with a test proven to fail without the fix.
+
+**1. `dockerfile_base_pinned` was satisfied by an unpinned image.** The guard was
+`image.startswith("$")`, so `FROM $BASE_IMAGE` was refused and `FROM node:$NODE_VERSION` PASSED --
+the `$` was in the tag, not at the front. The worst form passed too: `ARG V` with no default and
+`FROM node:$V`, which resolves to `node:` and builds nothing reproducible. Found by asking 7b for a
+Dockerfile and reading what SATISFIED the check rather than what failed it. A check that can be
+satisfied by the thing it exists to forbid is worse than an absent check, because the score claims the
+property and nobody is looking. No legitimate tag contains `$`, so the fix is `"$" in image`.
+
+**2. The repair ask is now one artifact.** `compile_repair_prompts` returns one prompt per write
+target, each carrying only that artifact's requirements. The OPENING ask is deliberately unchanged --
+it produces most of the set in one round and it is the cache key of the run -- and the model-call
+budget is unchanged, so this buys compliance rather than spending wall clock. On the real model the
+same fixture that failed three whole-plan attempts now reports `served_from='provider'`,
+`status='accepted'`, **iterations=2**, with `FROM node:22-slim AS builder`.
+
+**3. A write target that was a DIRECTORY.** `pipeline_actions_pinned` states its remedy location as
+`.github/workflows/`, which is right for a human -- the fix is every unpinned action in every workflow
+found, and that is not one file. It was passed through as a write target, so the journey asked for
+`['.env.example', '.github/workflows/', 'Dockerfile', ...]`. **No model can write a file at a
+directory, and the parser accepts only a path it was told to expect, so that target could never be
+satisfied by anything.** Every run on such a repository reached the template path with
+`iterations_used=0` -- and it is not an unusual repository: any project with a workflows directory and
+one unpinned action lands there. The harness's own fixture has no workflows directory, which is why it
+passed while the journey did not, and why this needed the journey's real files to find. A directory
+remedy path now resolves against the INDEX, to the workflow that exists, as a `modify`.
+
+**4. A regression I introduced, caught by reading the delivered list.** With several artifacts
+rejected, only some get a narrow repair -- the budget is finite. A later attempt then PASSED on the
+shorter set, because an artifact that is ABSENT produces no finding. The run reported success
+delivering `['Dockerfile', 'k8s/ingress.yaml', 'k8s/service.yaml']`: a Service and an Ingress with no
+Deployment, which is precisely the gap `ARTIFACT_COMPANIONS` exists to prevent. The audited floor now
+covers anything rejected and never repaired, and the assembled set is re-validated through the same
+gate. The first version of that test passed with the fix removed, because a good Deployment in the
+fixture overrode the refused one -- the same vacuity trap as the first cache-poisoning draft.
+
+**The requirement-block audit the brief asked for: 0 flagged.** No remaining rule carries a
+language-, image- or version-specific literal, and a test now asserts that over the ASSEMBLED prompt
+in both directions -- a Node repository is never shown a Python toolchain token and vice versa,
+with a non-vacuity control that each prompt does name its own.
+
+**Measured end to end on the journey's own fixture and prompt:** attempt 1 rejects the Dockerfile and
+the Deployment, the narrow repair passes, the floor supplies `.env.example`,
+`.github/workflows/build.yml` and `k8s/deployment.yaml`, and the run is `accepted` with all six
+artifacts delivered. **The route driving the same inputs still records `template_fallback`**, and that
+difference is unexplained -- see the handoff.
+
+### Delivery order is now a property of the plan
+
+`test_self_hosted_generation.py` asserted an exact ORDERED artifact list and got
+`['k8s/service.yaml', ...]`. The order was the model's emission order, and once repairs existed it
+would have become carried-then-repaired. Both reach `change_items.ordinal`, so the diff a reviewer
+reads was sequenced by something nobody chose and `ORDER BY ordinal` gave different answers for
+identical inputs. Rather than relax the assertion to a set comparison, the delivered order is now the
+order the plan asked for -- applied where the set is FINAL, after both the repair and the floor, because
+the floor reassigns the list and an ordering applied earlier is silently overwritten. Measured that way
+round first: the order stayed wrong with the sort in place. The assertion was not touched.
+
+### Both shards are green
+
+**Unit: 2,186 passed, 2 skipped, 0 failed (13m30s). Integration: 1,329 passed, 3 skipped, 0 failed
+(1h27m).** Combined coverage **86.73%** (13,223 of 15,247), from unit 72.29% and integration 76.58%.
+The three `test_self_hosted_generation.py` failures are resolved and confirmed in a full shard run, not
+only in isolation. `go test -race` passes across every agent package.
+
+### There is no route/service prompt divergence, and the bytes now prove it
+
+The route and the service were suspected of sending different prompts. They do not.
+`tests/integration/test_generation_sent_bytes.py` records the prompt at the PORT BOUNDARY -- the last
+place the text exists before it leaves the process -- on both paths, for one indexed project, and
+asserts they are byte-identical. They are.
+
+What the earlier reproduction got wrong was its own fixture. It hand-supplied
+`package_managers: ["npm"]`; the real scan of that fixture detects **no package manager at all**,
+because the detector reads the LOCK FILE and the fixture has none -- `package.json` says nothing about
+npm versus pnpm, which is a deliberate and defensible authority. So the reproduction and production
+were reading different facts, and the difference was in the test, not the product. **The fixture
+differed from production in exactly one detail, for the third time this cycle.**
+
+Re-run with the faithful inventory -- `hcl` first so the base-image lookup must skip an unmapped
+language, and no package managers -- the service path is still accepted: `served_from='provider'`,
+`iterations=2`, all six artifacts.
+
+**The audit moved to the sent text.** `generation/routes.py` appends this project's learned
+preferences after compilation, so the compile-time audit could never see them: a stored preference
+naming an image or a version would steer the model exactly as `python:3.13-slim` did, and nothing
+would flag it. The new test asserts over the SENT bytes in both directions, and the write-target
+check runs there too. An audit that stops one step short of the boundary has a gap by construction.
+
+One inconsistency found while reading and worth naming: the injection updates `compiled` and NOT
+`repair_prompts`, so a repair would carry the un-injected instruction. Harmless while memory is empty,
+wrong once it is not.
+
+### The guard sweep: five of seven checks had a hole
+
+`dockerfile_base_pinned` was satisfied by `FROM node:$NODE_VERSION`. That was a category, not an
+incident, and sweeping every readiness guard with values a real repository could contain found six more
+holes. **13 of the 40 sweep assertions fail against the pre-fix predicates.**
+
+- **`dockerfile_healthcheck` accepted `HEALTHCHECK NONE`** -- Docker's syntax for DISABLING one. The
+  purest form of the defect: an image built from that file has its inherited healthcheck REMOVED, so
+  the score did not merely overstate the property, it reported the opposite of the truth.
+- **`kubernetes_image_tags_pinned` accepted `image: app:${TAG}`** -- the identical interpolation hole,
+  in the Kubernetes twin of the check that had just been fixed. Kustomize, Helm and envsubst all reach
+  a cluster this way.
+- **`kubernetes_resource_limits` accepted `cpu: ""`, `cpu: null` and `cpu: "0"`** -- a membership test
+  where a value test was meant. Kubernetes refuses the empty string outright, and a zero limit is the
+  absence of a limit written as a number. The check exists so one container cannot evict its
+  neighbours, and all three left it able to.
+- **`kubernetes_probes` accepted `livenessProbe: {}`** -- a Mapping with no handler. The API server
+  refuses it, so the manifest does not deploy while the score reported the workload as probed.
+- **`pipeline_runs_tests` accepted a commented-out `# npm test`** -- a substring match over a joined
+  script where an executed-line match was meant. A pipeline with its tests commented out reported as
+  running them, and such a pipeline is green for every change.
+
+`pipeline_actions_pinned` and `pipeline_stages_declared` were swept with the same crafted values and
+held; that is recorded in the test rather than assumed, so the conclusion is "five of seven had holes"
+and not "five had holes and two were not looked at". Every group also asserts the honest value is still
+accepted, because refusing everything would satisfy a table of refusals and destroy the checks.
+
+`_is_real_quantity` reads the LEADING NUMBER with a regex rather than stripping a character set: ruff's
+B005 was right that `rstrip("EPTGMKikeimn")` is misleading, and it was also wrong -- `128Mi` worked by
+accident and `12Mi8` would have too.
+
+**The template-readiness audit passes against the tightened checks**, which is the thing that had to
+hold: the audited floor is what the gate substitutes, and a tightening the floor could not satisfy
+would have broken every fallback. The unit shard is 2,226 passed with them in place.
+
+### What the never-run gates found
+
+`verify-release.py` had never run this cycle. Twelve problems, eleven of them artifact-shaped -- JUnit
+XML and coverage files from all three shards, and a CI run for HEAD, none of which exist before a push.
+One was real and local: **`docs/openapi.json` had drifted from the live schema** and is regenerated
+(123 paths). Frontend gates, also never run this cycle, pass: `tsc` clean, 48 test files, and coverage
+94.23 statements / 94.69 lines / 90.86 functions / 83.97 branches against thresholds of 90/90/90/80.
+
+### HANDOFF: where the next pass starts
+
+**Phase 2 is 120 of 123. The journey is 6 of 13. The self-healing spec is 2 of 9. NOT pushed** --
+local verification is not clean, and not pushing a red tree is the rule this repository keeps.
+
+**Criterion 3, and it is the closer of the two.** `self-healing.spec.ts` now runs rather than merely
+collecting, and running it found five real defects in itself -- an unauthenticated token mint, a
+per-test session that had to be carried like the journey carries it, three wrong table and column
+names, and two MISSING LINKS in the chain it claims to drive. Steps 1 and 2 pass: a real OIDC login, a
+project, a staging environment, a published policy bundle, a paired agent and a LIVE agent session.
+
+It blocks in step 3. The chain is longer than the spec first assumed:
+
+    request a deployment  ->  202 `pending_approval`
+    approve the change set ->  the envelope is delivered to the agent  (this now succeeds)
+    the agent applies      ->  it fails, there being no cluster
+    `DeploymentService.fail` ->  files the incident
+
+The deployment ROW stays `pending_approval` for the full 240s wait. `deployments/routes.py` sets
+`applying` only at REQUEST time, from the chokepoint's own verdict, so approving the change set does
+not move that row -- something must report the agent's outcome back, and I did not identify what. Start
+there: find what advances a deployment out of `pending_approval` once the envelope is delivered, and
+whether the agent's apply is reported at all in this stack. The 409 `device-not-connected` that
+preceded this was genuine and is now fixed by starting `forgeops-agent run` detached.
+
+**Local versus CI for this spec: it is legitimately LOCAL-CAPABLE and needs no cluster.** The absence
+of a cluster IS the injection -- the apply cannot succeed, which is what files the incident. Nothing in
+it needs kind. It is registered as its own Playwright project and wired into `e2e-ci.yml`.
+
+**Criterion 2.** The journey is still 6 of 13 at step 7's final clause. The service path is accepted on
+the journey's own fixture with the journey's own prompt and its REAL inventory, and the route sends
+byte-identical bytes -- both now measured, the second by a permanent test. So the remaining difference
+is not the prompt. What has NOT been done is driving the route with a REAL model and reading the
+validation frames; every route measurement so far used a recording port that refuses content. Do that
+next: `test_generation_sent_bytes.py` has the whole harness, and swapping the recorder for the real
+port turns it into the comparison that is left.
+
+**2.6's Novu box stays open** with its recorded reason.
+
+**One inconsistency to close while you are in there:** the memory injection updates `compiled` and not
+`repair_prompts`, so a repair carries the un-injected instruction. Harmless while no preference is
+stored, wrong the moment one is.
+
+**Carry-over, still open and now categorised:** `automated_tests_present` and
+`centralised_configuration` are presence checks of exactly the class the guard sweep addressed -- sweep
+them the same way, with a value that is present and means nothing. Also open: `sse-paint`
+cross-invocation session recovery; the host-apply failure on `5de7d1e`; the Inngest dev-server EOF;
+lockfile and provider-lock generation by real tool execution; no change set may lower the readiness
+score; predicted reachable score equal to achieved; cache-key versioning for the prompt-and-gate
+contract; `backend-coverage`'s `needs.backend.result != 'skipped'` self-skip; Linux watch mode.
+
+**Stack and resource notes.** Ports are not CI's: frontend **13000**, backend **18000**, Authentik
+**19000**, agent listener **18443**. `.env` needs the four `AUTHENTIK_*` values and the internal CA
+appended first, and the Authentik database script reads its password from the ENVIRONMENT. Under Git
+Bash, `MSYS_NO_PATHCONV=1` on every `docker compose` call carrying an absolute path. `alembic upgrade
+head` before the first spec. Sixteen containers plus a resident 7b plus a Go build does not fit -- run
+the gates and `go test -race` BEFORE the stack.
+
+**Measured runtimes.** Unit shard 13m30s (2,226 passed). Integration shard 1h27m (1,329 passed).
+Combined coverage 86.73%. Journey step 6 is 11-19 minutes. A self-healing iteration is ~4 minutes,
+which is what made five defects affordable to fix in one sitting. Migrations at **0036**.
+
+### Phase 2: 44 of 123. This pass closed four boxes in 2.2 and 2.4
+
+**Image build and push are VERBS of the existing `docker.image_action` authority**, not new operations.
+The permission granted is "act on an image in this project"; four whitelist entries would describe one
+permission. Verified against a real `registry:2` the test starts itself, and the pushed digest is
+fetched back with `docker manifest inspect` -- so a fabricated digest fails rather than reaching a
+deployment record, which is what that box's own wording warned about. A build reports
+`digest_kind: local_image_id` and a push `registry_digest`, because pinning a local ID would produce a
+deployment nobody can rebuild.
+
+**The registry credential is resolved AT DELIVERY, in `secrets/registry_credentials.py`.** It is not a
+request-body field: `FORBIDDEN_ARG_KEYS` and revision 0022's CHECK exist to keep credentials out of
+`change_sets.operation_args`, and accepting one on the body would mean carrying it through the six
+stages to dodge them. It is added at the single signature site, so the auto-approved transit and the
+human-approved one get it from one place. An integration test drives a real push and then searches
+`change_sets.operation_args` and every `audit_events` state and reason column for the token -- because
+`transit_host_action` copies every argument into `after_state`, and reasoning about which fields get
+copied is not the same as checking.
+
+**Two gates rejected the first placement and both were right.** The provider started under `hostops/`;
+the parse-based check refused it for reaching `get_value` outside `secrets.injection`, then for
+importing `secrets.store` at all. Secret retrieval is that domain's alone, so the file moved rather
+than an exemption being added.
+
+**OpenTofu apply runs only from a saved plan, and the lock is not expressible as off.**
+`ApplyOptions` has no `Lock` field, so an unlocked apply cannot be requested; `-lock=true` with a
+timeout is always in the vector. One operation plans and applies inside ONE approval, because two
+would leave the state free to move between the approval and the apply -- which defeats the reason a
+plan is saved. Verified against real `tofu` with the `local` provider: the resource is read off the
+filesystem and the state SERIAL is read back, so two applies that both report success are
+distinguishable. The first version read the serial from `tofu show -json` and got zero every time --
+that command emits a rendered view with no `serial` field -- so it reads the raw state via
+`tofu state pull`.
+
+**Widening `iac.Runner` broke an MCP test double, which is the interface doing its job.** The tempting
+fix was a method returning an empty result; that would have given the MCP tool surface -- a surface an
+AI drives -- a silent working apply that no approval covered. It raises instead, and a new test walks
+`toolMeta` asserting no tool names an apply and none claims a blast radius beyond the workspace.
+
+**The circuit breaker counts validation failures and nothing else, structurally.** The counting site is
+the settler's failure branch, reached only when the agent RAN the command and it failed -- so a policy
+deny, a held approval and an agent timeout cannot be counted, because none of them reaches
+`record_command_result`. That is a property of where the code lives rather than a condition somebody
+has to remember. A `degraded` deployment closes it too: the manifests were accepted and a pod is
+unhappy, which retrying can legitimately fix. Checked in the route BEFORE the deployment row exists
+and before a human is asked. Persisted, because two replicas with in-memory breakers disagree and a
+refusal that depends on which replica answered looks random.
+
+The first breaker left a failed half-open trial in `half_open`, which `guard` treats as passable -- so a
+broken environment would have admitted every later attempt. A test caught it. Re-reading the argument
+written against re-opening, it was wrong: by then there are four failures, more evidence than the three
+that opened it. It re-opens with a fresh cooldown and the count resets to one, because the count means
+failures since the last DECISION.
+
+**A self-inflicted defect worth recording, because it wasted time and will recur.** A patch script
+replaced a docstring paragraph by slicing to "the next blank line", and the paragraph was followed
+immediately by the closing `"""` with no blank line between -- so the terminator was deleted and every
+line after it became code. The symptom was `SyntaxError: invalid character '-' (U+2014)` pointing three
+lines into a docstring, which sends a reader looking for an encoding problem that does not exist. The
+diagnosis is to COUNT `"""` in the file: an odd number is the answer immediately.
+
+### A regression I introduced and did NOT isolate
+
+**`End-to-End Journey CI` / "Apply from a host agent binary" fails on `5de7d1e` and passed on the previous
+run.** It is a regression from this session. What is known from the log:
+
+- The revert transit SUCCEEDS — `scripts/submit_host_apply.py` prints its result line,
+  `{"reverse_change_set_id": ..., "status": "applying", "reverted": ...}`, so the governance work completed.
+- The process then exits NON-ZERO, and the traceback is `asyncio.exceptions.CancelledError` raised inside
+  the app lifespan's teardown, at `redis.asyncio.client.aclose` → `connection.disconnect`.
+- `host-apply-proof.py` treats any non-zero return from that `docker compose exec` as
+  `submit ('revert-and-approve', ...) failed`, which is why the message names the transit rather than the
+  shutdown.
+
+So the likely shape is: the transit is fine and the short-lived process's SHUTDOWN now raises. The two
+changes that could plausibly reach it are the `command_id` UPDATE added to `_deliver` and the savepoint the
+settler hook opens in `record_command_result` — the latter is composed as `None` in that script, which argues
+against it and is exactly why this needs isolating rather than guessing.
+
+**Next step, stated so it is not re-derived:** run `scripts/submit_host_apply.py` in the stack with a real
+seeded project and read its exit code separately from its stdout; if the transit line prints and the exit is
+non-zero, the fault is in teardown and not in governance, and `git stash`-ing the `_deliver` UPDATE alone
+distinguishes the two candidates in one run. Do not change the proof script to tolerate a non-zero exit:
+that would hide whatever this is.
+
+### Carry-over still open
+
+- [ ] The three pre-existing generation-provenance integration failures: unchanged and still a decision about
+      what `served_from` means rather than a bug with one obvious fix.
+- [ ] `sse-paint`'s cross-invocation session recovery: the diagnostic is in place and has not yet reported,
+      because the spec passed on the last CI run. Read what it says before changing anything.
+- [ ] `verify-release.py`'s artifact-shaped problems: per-shard `.coverage.*` and junit XML are produced by a
+      full shard run, which does not fit in a build loop.
+- [ ] `automated_tests_present` / `centralised_configuration`, lockfile generation by real tool execution, the
+      no-lowering rule, predicted-versus-achieved readiness score, a real `served_from='provider'` run, the
+      measured artifact cap, cache-key versioning, `backend-coverage`'s self-skip, and Linux watch mode — all
+      untouched this session.
+
+## Phase 2 progress — 16 of 123 boxes, and what closed the three open items
+
+**Box count: 16 done, 107 open.** Up from 8. Every tick carries its evidence inline in `phases.md`; every
+box left open says why in the same place. What landed this session is one vertical slice — the Docker and
+Kubernetes read-and-act surface, 2.4 and 2.9 — plus the three items that had been recorded as open.
+
+### The three open items, all closed
+
+**1. `deployment.apply_manifests` had never touched a cluster.** It now runs against a real one on every
+push. `agent/internal/executor/deployment_cluster_test.go` and `kubernetes_cluster_test.go` execute in
+`Kubernetes & SPIRE CI` against the kind cluster that workflow already stands up: apply, real health
+verification, a `degraded` from an image tag that cannot be pulled, a second `degraded` from a CPU request
+no node can satisfy, a rollback that restores the previous image, the confinement refusal with a reachable
+cluster sitting there ready to accept anything, and the full inventory. Every assertion reads back from the
+cluster with `kubectl get -o jsonpath` rather than from the operation's own report, because a report is the
+code's opinion and the point is to check the opinion against the object. 57s locally, PASS.
+
+That workflow was also, until now, a job that created a cluster and asserted nothing: 29 lines ending in
+`kubectl create namespace spire || true`. The `|| true` made its only assertion unfalsifiable — a namespace
+that cannot be created is the clearest possible signal that the cluster above is unusable, and it swallowed
+exactly that. Removed, and replaced with an idempotent `apply` plus a read-back.
+
+**2 and 3 had ONE root cause, and it was not the one recorded.** `printed-instructions` failing 1 of 7 and
+`ci / agent (windows-latest host binary)` failing forever were both recorded as consequences of the mirror
+having no published releases. The real cause is narrower and fixable: the printed install command installs
+an **archive** — it globs `forgeops-agent_*_<os>_*.tar.gz` (or `.zip`) in the current folder and
+`~/Downloads`, extracts it, and installs the binary from inside — and both checks placed a bare `go build`
+output where the archive should be. The command then did exactly what it promises: reported finding no
+tarball and exited 0, deliberately, because `exit` in an interactive shell closes the user's terminal. So
+`expect(output).toBeDefined()` was satisfied by the words "No forgeops-agent tarball found", nothing was
+installed, and the next line failed with `command not found`. **The product was right the whole time; both
+checks' setup did not match the instructions they were checking.**
+
+`scripts/package-agent.sh` builds the archive by invoking the same `agent/.goreleaser.yaml` the tagged
+release uses, so the file-name template, the archive format and the binary's name inside it are a real
+download's. Nothing here needs a published release — it needs an archive, and one can be built from the
+working tree. Writing `tar czf` instead would have been three lines and would have tested the three lines.
+Verified on this Windows host end to end: package, run the printed command **verbatim**, and resolve the
+bare name against a PATH composed the way a newly opened shell composes it (Machine + User from the
+registry) — `C:\Users\...\AppData\Local\Programs\ForgeOps\forgeops-agent.exe`, and
+`forgeops-agent version` prints one line. The Linux half runs in CI.
+
+### 2.4 and 2.9: five new agent operations, two reads and three actions
+
+Not fifteen verbs. An operation is an AUTHORITY, not a function: `docker.container_action` names "may act on
+one container on this host", and splitting it per verb would quadruple the whitelist while narrowing
+nothing, since anything holding one could ask for the others. What the split DOES buy is the opposite
+direction — the reads are separate operations so that a refreshing panel holds read authority continuously
+and write authority never. Still absent, and checkable by reading one file: no operation takes a docker or
+kubectl command line, none accepts `--privileged` or a bind mount, none can name a resource kind outside the
+workload set, and there is no `exec` into a container.
+
+**The reads are approval-free, and that pairing is the design.** A dashboard refreshes; an approval per
+refresh either stops the refresh or trains an approver to click without reading, and the second is worse.
+What makes it safe is that they mutate nothing — and `read_inventory` still performs admission, still
+evaluates policy, and still sends a signed envelope over mTLS. A policy `deny` **raises** rather than
+returning an empty inventory, because an empty answer renders as "this host has nothing" and a human acts
+on that. No change-set row and no audit row per read: that is a decision with a cost, recorded rather than
+hidden — a read of a cluster's ConfigMap key names is not reconstructible from the audit log. What makes it
+acceptable is that the read cannot change anything and cannot disclose a value.
+
+The read had to be minted by `_mint_and_sign`, because that function is asserted to be the only caller of
+`sign_envelope` and a second signer would defeat the gate. It takes a read branch there and mints **no
+`MutationAuthority`**: an authority names a change set, an approval and an audit sequence, a read has none
+of the three, and `mint_authority` rightly refuses an `audit_seq` below 1 — so minting one would have meant
+inventing all three to satisfy a constructor, which is the defect class this repository keeps digging out.
+A read's `approval_id` travels empty, and a guard refuses a read that carries one.
+
+### Defects this session's own work produced, and how each was caught
+
+- **A version-skew warning made every cluster unreadable.** `kubectl` writes it to stderr, the runner merges
+  the streams, and the buffer is then not a JSON document. The first version ignored the parse failure and
+  refused every inventory on any cluster whose version differed from the operator's client — a warning
+  turned into an unreachable cluster. The second trimmed to the first brace and failed when the warning
+  landed AFTER the document (`invalid character 'W' after top-level value`), which is what actually happens
+  when stdout flushes first. It now decodes the first complete JSON value; four arrangements are pinned.
+  **Only a real cluster surfaced this**, and only because the local kubectl is 1.36 against a 1.32 server.
+- **A frontend test passed while still showing its spinner.** It awaited `k8s-dashboard`, which is present
+  during loading, so the assertion after it was vacuous. It now awaits a data-dependent element.
+- **A credential-shaped literal and mangled Go struct tags**, both caught by `pre-commit` before they could
+  be committed — the DSN is assembled from fragments, and the tags were shell-escaping damage.
+- **Two PowerShell backtick accidents**, each turning a comment into code (`` `r `` became a carriage
+  return) and each caught by `ruff`. Noted because it happened twice: content containing backticks must not
+  go through a double-quoted PowerShell string.
+
+### What is NOT built, stated plainly
+
+107 boxes remain, and they are not small: §2.3's timeline and diff, §2.4a Inngest, §2.5's Command Center,
+§2.6 notifications, §2.7 and §2.7a ArgoCD and Argo Rollouts, §2.7b the service mesh, §2.8 dev tools,
+§2.10's twelve OTel/Mimir/Loki/Grafana boxes, §2.11 RCA, §2.12 self-healing, §2.13 learning history, §2.14
+knowledge base, and the twenty completion criteria. Within the sections touched this session, the specific
+absences are container and pod LOGS and EVENTS (all streams, all needing the §2.2 SSE `log` machinery),
+container CREATE (deliberately — it is the bind-mount-and-privilege authority this catalogue avoids), image
+BUILD and PUSH (§2.2's own box; a push produces the digest a deployment record should pin), and the
+metrics-tier half of the resource-utilisation box, which needs §2.10.
+
+### Still open after this session, precisely
+
+- [ ] **`sse-paint` cannot recover a session across Playwright invocations.** The journey is 13/13 in CI
+      and paint runs after it in its own invocation, restores a state file whose refresh token the journey
+      has already rotated — and `test-results/` is cleared between invocations, so the file may not exist at
+      all — then fails at `/generation` with the sign-in screen. **Two repairs were attempted and both
+      failed**, and the reason neither converged is a defect in my own instrumentation: the recovery errors
+      were swallowed with `.catch(() => {})`, so two CI runs produced no information about the cause. The
+      third change is therefore a DIAGNOSTIC, not a third guess — `gotoAsOperator` now collects why each
+      recovery failed and the thrown error carries it. What is known: the same `signIn` succeeds for the
+      journey's step 1 minutes earlier in the same run, so the credentials and the IdP are fine, and the
+      failure is specific to signing in from a context that has restored application cookies. Next step is
+      to read the recovery reason from the next run rather than to reorder anything.
+- [ ] **Three backend integration failures remain, and all three are the pre-existing generation-provenance
+      set** already diagnosed above (`test_a_near_duplicate_prompt_stores_l2` and the two
+      `test_self_hosted_generation` cases): the run serves itself from the L2 it just populated, so
+      `served_from` records `l2` although the model was called. Unchanged by this session and still a
+      decision about what that column means rather than a bug with one obvious fix.
+- [ ] **`check-no-skips.py` caught ten undeclared skips of the new real-tool suites**, which is the gate
+      working exactly as designed: it permits a PLATFORM skip, which cannot be provided for, and refuses a
+      CAPABILITY skip, which can. The remedy it names is to provide the capability, so the `agent` job now
+      stands up a kind cluster and asserts the Docker daemon answers, and both opt-ins are set on all three
+      `go test` invocations — including the `-json` record, which is the one the gate reads and the one I
+      first forgot. Not yet confirmed green in CI: that is the next run's first thing to check.
+
+## Phase 2 backlog carried forward
+
+Explicit, so none of it is lost when the merged Phase 2 is built on top of it. Each line is a
+measurement or a gap somebody has already paid for, not a nice-to-have.
+
+- [x] **Strengthen `automated_tests_present` and `centralised_configuration` beyond presence.**
+      _(verified 2026-09-20, not newly built)_ `core/source_analysis.py` makes both read content, and this
+      pass confirmed they are on the LIVE path rather than merely present — `readiness.py:679` gates the
+      35 points on `test_substance(...).passed` and `readiness.py:1057` on `config_flow.passed`, so an
+      empty `tests/test_placeholder.py` no longer earns anything. One caveat found and recorded rather
+      than closed: `ReadinessEngine.evaluate_project(project_data)` honours a caller-supplied
+      `has_tests` boolean, which bypasses the substance check. **It has no caller anywhere in `src/`**
+      (grep for `evaluate_project` returns only its own definition), so it is not reachable from a live
+      path — but it is a compatibility entry point that exists for tests, and by the project's own rule
+      about test seams it should be removed rather than trusted to stay uncalled.
+- [ ] **Lockfile and provider-lock generation by real tool execution.** Both are refused today because
+      a lockfile is a resolver's output; an agent operation that runs the real resolver would make them
+      reachable instead of permanently unreachable.
+- [ ] **No change set may lower the score.** `core/content_regression.py` refuses a per-file trade of a
+      satisfied property for an unsatisfied one, and `score_lowering_findings` is now also applied to the
+      **assembled** set when the template floor substitutes for a withheld artifact (see below), which is
+      the first place the set-level rule actually decides something. The property "the score after an
+      approved apply is never below the score before it" is still not asserted end to end.
+- [ ] **Predicted-equals-achieved reporting on a real run.** The unit test compares the prediction with
+      the template renderer. The baseline predicted 100 and achieved 92 and nothing reported the gap.
+      **The reason for that gap is now known and fixed** — see the withheld-artifact entry below — so this
+      item is now measurable rather than mysterious, and re-running the cycle is the way to close it.
+- [ ] **A real `served_from='provider'` run on current code.** The baseline was served from L2. A
+      measured model run on the current prompt-and-gate contract does not exist.
+- [ ] **The artifact cap derived from measured model output**, rather than chosen.
+- [ ] **Cache-key versioning for the prompt-and-gate contract.** `GENERATION_CONTRACT_VERSION` is in the
+      key; the rule for bumping it is prose, and the baseline's L2 hit shows how much rests on it.
+- [ ] **`backend-coverage` must skip itself via `needs.backend.result != 'skipped'`** rather than by a
+      path filter, so the combine job cannot report on a partial shard set. **This pass produced direct
+      evidence of why it matters**: `ci` reported success on `8278dbe`, a documentation-only commit, with
+      only five jobs run — the path filter skipped every test shard, and `gates-actually-ran` passed. A
+      green `ci` and an enforced coverage gate are not the same statement, and nothing outside the
+      filtered jobs asserts the difference.
+- [ ] **Linux watch mode.**
+- [ ] **`App.Session()` must resolve the pairing-stated endpoint**, with a test that pairs, drops
+      `AGENT_BACKEND_WSS_URL`, runs, and requires a live session. **Correction to the earlier note in this
+      file**: CI's own host-apply job reports "doctor verified the listener against the CA issued at
+      pairing" and "the host agent holds an active session over mutual TLS", so `run` DOES establish a
+      session in CI. The defect is narrower than recorded — it is about which endpoint is used when the
+      environment variable is absent, not about `run` being broken.
+- [ ] **A full rescan must not lose the import graph** (the defect above).
+- [ ] **Phase 2.1 left two boxes open deliberately, and they are the next two to close.** Promotion flows
+      (the rule is built and tested; the deployment it authorises is 2.2) and "environment selector
+      throughout the dashboard" (the selector is built and has 4 tests, but the deployment, Docker,
+      Kubernetes and Command Center screens it belongs on do not exist). Neither was ticked.
+- [ ] **`ReadinessEngine.evaluate_project` should be removed.** See the caveat on the first item above: a
+      compatibility entry point with no production caller that can bypass a strengthened check is exactly
+      the shape the project's own "no test seam on a production path" rule exists to prevent.
+
+### The withheld-artifact defect, and the two halves of its fix _(2026-09-20)_
+
+**The journey's step 8 failed because the change set carried no `Dockerfile`.** Root cause, found by
+reading the cascade rather than by guessing: **the template floor applied per RUN, not per ARTIFACT.**
+The only route to it was `if not accepted`, which needs EVERY artifact to have failed the gate. The case
+it was built for is the opposite one — the model returns several good artifacts and one Dockerfile with
+an unpinned `FROM`. That Dockerfile was withheld, correctly, and nothing put the known-good template in
+its place, so the operator got no Dockerfile at all.
+
+`scripts/check-template-readiness.py` had been certifying that floor against every target check the whole
+time. **A thing that exists with the right name, is audited in CI, and is read by no live path in the
+situation it was designed for** — this codebase's recurring defect, once more.
+
+- **The live path**: `_apply_floor` substitutes the audited template for each withheld artifact, under
+  three conditions that are all necessary — the floor must actually render that path (no invention), the
+  substitute must satisfy its own target checks (verified at runtime, not trusted from CI), and the
+  assembled set must pass the WHOLE gate including the regression and no-lowering rules. The model's
+  failing artifact is still never delivered, and the substitution is reported in an SSE finding so an
+  approver can see the floor was used. 7 unit tests + 5 cascade tests.
+- **A second, independent defect in the floor itself**: `settings.base_image` went into `FROM`
+  unvalidated, so a project recording `node` or the floating tag rendered a Dockerfile that fails
+  `dockerfile_base_pinned` — the check the artifact exists to satisfy. The pinned runtime default is used
+  instead and **the rejected value is named in a comment in the file**, so the override is visible in the
+  diff the operator approves rather than being silently applied.
+- **The audit gate was measuring different bytes from production.** It rendered exactly ONE case — a name
+  and a port — and passed for three phases. It now runs the same rule over **21 inputs the live path can
+  supply**, organised by the SHAPE of the input rather than by a list of happy values: for every field the
+  renderer reads, the absent case, the ordinary case, and the case that would break the artifact's
+  contract. Two of the 21 failed before the fix; all 21 pass after it.
+- **A third honesty gap the probe exposed**: `settings.runtime: go` silently rendered a Python Dockerfile
+  with a `pip wheel` line. The artifact was well formed and passed every check, which is what made it
+  dangerous — nothing contradicted it and the operator would find out from a failed build. The
+  substitution is now named in the file. `template_library.py` holds Go, Rust, Java, Ruby, PHP and .NET
+  templates that **no runtime path reads** (only tests and a mutation config), and one of them pins its
+  runtime stage to the floating tag — recorded, not fixed, because it is not reachable.
+
+### Six integration failures that had been invisible, and why they surfaced now
+
+**They are not regressions from this branch.** The `backend (integration)` shard had not executed a single
+test since the template-library and renderer pass: on 2026-09-11 (run `34604857055`) it failed at a
+PRE-TEST gate — `check-test-credentials.py` could not parse
+`backend/tests/unit/test_generation_project_facts.py` because the file carried a UTF-8 BOM (`U+FEFF`).
+The shard was red, the pytest step never ran, and the failure named a scanner rather than the suite. That
+BOM was removed by `ruff-format` in this branch's first commit, so run `35448817607` is the first time
+these tests have actually run since the change they are about. The four schema failures in that run WERE
+this branch's and are fixed; these six are the ones the BOM had been hiding.
+
+- [ ] **`test_generated_artifacts_validate::test_the_generated_workflow_passes_yamllint`** — an
+      environment gap rather than a product defect: the backend shard had no `yamllint`, and
+      `require_capability` fails rather than skips when `FORGEOPS_REQUIRE_INTEGRATION=1`. **Fixed here** by
+      installing it at the same pinned version the `agent` job uses.
+- [ ] **`test_generation_api::test_it_accepts_a_configmap_which_has_no_spec`** — the gate refuses the
+      library's own render: "Dockerfile: still fails `dockerfile_base_pinned` (0/20), the check this
+      artifact is generated to satisfy", plus the probes check. This is the same shape as the incident
+      that produced `scripts/check-template-readiness.py` — and that gate is GREEN, so the template it
+      renders and the artifact the runtime path renders are not the same bytes. Finding the divergence is
+      the work; it is not a threshold to lower.
+- [ ] **`test_self_hosted_generation::test_a_run_is_served_from_provider_and_the_artifacts_pass_the_gate`**
+      — the same gate refusal over a real model run. This is also the `served_from='provider'` measurement
+      the backlog above asks for, so the two are one task.
+- [ ] **`test_generation_run_rows::test_a_near_duplicate_prompt_stores_l2`** and
+      **`test_self_hosted_generation::test_a_near_duplicate_generation_prompt_is_served_from_l2`** —
+      diagnosed: _"the first run stored `'l2'`, so nothing was indexed to match"_. The `_Redis` double is
+      created fresh per test, so nothing earlier polluted it — the run served ITSELF from L2. A run makes
+      up to three attempts; attempt 1 stores its completion in L1 and L2, attempt 2 uses the same prompt,
+      and so attempt 2 is served from the entry attempt 1 just wrote. The run then records
+      `served_from='l2'` although the model was called, which is the same class of wrongness as the
+      baseline cycle's `served_from` above: **the provenance a row reports is not the provenance the run
+      had.** Two candidate fixes, and the choice matters: either L2 must not serve an attempt within the
+      run that populated it, or a run's `served_from` must record its FIRST attempt's source. The second
+      is probably right — a cache hit on a retry is a legitimate saving — but it changes what the column
+      means, so it is a decision rather than a patch. Multi-attempt runs became more common when the gate
+      started withholding artifacts per file, which is why this surfaced now.
+- [ ] **`test_self_hosted_generation::test_a_run_is_served_from_provider_and_the_artifacts_pass_the_gate`**
+      — the same root cause on the provenance half, plus the gate half, over a real model run. It is also
+      the `served_from='provider'` measurement the backlog above asks for, so the two are one task.
+
+- [ ] **The journey's step 8 fails on the same root cause, which is the strongest evidence for it.**
+      `End-to-End Journey CI` run `35461246025`: seven steps pass, then step 8 reads the change set and
+      finds `["SECURITY.md", "k8s/ingress.yaml", "k8s/service.yaml", "terraform/backend.tf"]` — **no
+      `Dockerfile`**, because the per-file gate withheld it for failing `dockerfile_base_pinned`, the
+      check it was generated to satisfy. Identical in shape to the baseline cycle above, where
+      `k8s/deployment.yaml` was withheld for probes and pinned tags. So the one artifact kind the product
+      is most often asked for is the one its own gate refuses, on a real model run, and that is what
+      caps the achievable score at 92 rather than the promised 100. **This is the first item to fix in
+      Phase 2** — not the gate, which is behaving correctly, but the prompt-and-template path that keeps
+      producing a Dockerfile with an unpinned base image. The journey assertion is deliberately left
+      alone: it is asking for exactly the right thing.
+- [ ] **`shell.spec.ts` and the host-apply proof are fixed** (nav count 13 after the Integrations route;
+      the proof was still globbing `<file>.backup.<timestamp>` after backups moved under
+      `.forgeops-rollback/backups/<timestamp>/<relpath>`, so it reported "no backup was taken" — true
+      about the glob, false about the agent). Both jobs green on run `35461246025`.
+
+**Fixed while chasing these, each a real defect the shard had been hiding:**- `.github/workflows/build.yml` as GENERATED failed the `yamllint` the agent's own validator runs —
+one space before a trailing version comment where the config requires two. The library's output failing
+the validator that produced it is the incident `check-template-readiness.py` exists for, one rule
+further out.
+
+- **A container check is not a check about every manifest.** `unsatisfied_targets` derived an artifact's
+  targeted checks from its PATH, so `k8s/configmap.yaml` was held answerable for
+  `kubernetes_containers_unprivileged` and `kubernetes_resource_limits_declared` — checks a ConfigMap has
+  no containers to satisfy — and D-106's per-file rule withheld a correct artifact for failing to be
+  something it is not. The exclusion now reads the document's own `kind:`, is per document rather than
+  per run, and treats an unreadable kind as judgeable so nothing is excused by accident.
+  `test_target_checks_kind_awareness.py` pins all four properties.
+- The backend shard had no `yamllint`, so the validator test failed on a missing tool rather than running.
+- [ ] **`agent (windows-latest host binary)` cannot pass on the mirror at all.** Its first step downloads a
+      PUBLISHED release archive and the step under test installs it; the mirror has no releases, so the
+      download finds nothing and the printed-install assertion fails with "No forgeops-agent zip found".
+      Byte-identical in the pre-branch run (`34604857055`, job `103280740263`), so it is neither a
+      regression nor fixable from a workstation: it needs a release published on whichever remote runs CI.
+      The macOS and Linux variants pass, and the Windows host apply itself is recorded in
+      `docs/connecting-an-agent.md` against a real Windows host.
+
+## GitHub onboarding — what is built, and what the next session has to build
+
+Three parts were asked for. Two are complete and exercised; the third is complete on the agent side and
+not started on the backend side. The split is recorded here rather than left to a reader of the diff,
+because an operation in the agent's catalogue that no backend transit can mint is exactly this
+repository's recurring defect class, and the honest position is to name it.
+
+### Done, exercised
+
+**The GitHub onboarding path, run against real GitHub and a real host agent (2026-09-19).** Not a test
+— the product, on the local stack, with the token from `credentials.md`:
+
+| Step                                               | Result                                                                                                                                                                                                             |
+| :------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| link the account with a pasted token, no GitHub UI | `{"login": "parag2-8487", "credential_kind": "personal_token"}`                                                                                                                                                    |
+| list repositories from the real API                | `{"total": 3, "truncated": false, ...}` — `parag2-8487/forgeops` (branch `phase-1-implementation`, Python), `vantage-protocol22` (main, HTML), `vantage-protocol` (main, TypeScript)                               |
+| create a project from one                          | `path: C:\forgeops-gh/vantage-protocol22`, `clone_state: awaiting_clone`, **`index_status: awaiting_clone`**                                                                                                       |
+| dispatch the clone                                 | reached the chokepoint and stopped at the approval gate: `status: pending_approval`, audit `approval_required` — _"human approval required before cloning parag2-8487/vantage-protocol22 … environment is absent"_ |
+| approve it                                         | **refused, and that is the gap below**                                                                                                                                                                             |
+
+Three defects that only a real run could find, all fixed here: the tenant predicate was `= :tenant_id`
+and `= NULL` is never true, so a link written by the tenant-less principal this deployment actually
+issues could never be read back; the pending-link record stored `str(None)` as a tenant and the callback
+then called its own state unreadable; and `to_jsonb(:state::text)` was parsed by SQLAlchemy as a second
+bind parameter, so the clone dispatch sent Postgres a literal colon.
+
+- **The per-user GitHub account link** (`backend/src/integrations/`, migration `0019`,
+  `frontend/features/integrations/GitHubConnection.tsx`, Settings → Integrations). Authentik OIDC is
+  untouched: no sign-in route, no cookie, no principal. Evidence: 25 unit tests
+  (`tests/unit/test_github_link_sealing.py`) and 17 integration tests
+  (`tests/integration/test_github_link_routes.py`) against a real app, a real Postgres and a real HTTP
+  server on loopback — the GitHub base URLs are settings the product already has for GitHub Enterprise,
+  so nothing in `src/` knows a test is running. 6 frontend tests
+  (`frontend/__tests__/github-connection.test.tsx`).
+- **Isolation, twice.** Every read predicates on `(user_id, tenant_id)` and the seal's AAD is the user
+  id, so a transplanted row does not open. Three tests: cross-user, cross-tenant, and a hand-copied
+  ciphertext.
+- **`repository.clone`, the agent operation** (`agent/internal/executor/clone.go`). Mutating,
+  approval-required, in §7.7's catalogue. 14 tests, including a REAL fetch from a repository that
+  refuses unauthenticated requests — served by `git http-backend` behind a 401 — with `.git/config`
+  asserted free of the credential, and a negative control that plants a credential in `.git/config` and
+  requires the assertion to find it. Refusals proven: parent outside the workspace root, traversal,
+  separator, colon, absolute, reserved Windows device name, trailing dot, whitespace, case-only
+  collision, non-empty target named in the message, URL carrying userinfo, missing project or URL, size
+  over the ceiling, and a failed clone leaving nothing behind. `go test -race` clean.
+
+### Not finished, and exactly what is left
+
+- [x] **A human-approved clone is delivered.** _(2026-09-20)_ Both paths are complete; the design decision
+      and its evidence are below, under "How a human-approved clone is delivered".
+
+#### How a human-approved clone is delivered
+
+The AUTO-APPROVED path always minted and delivered a signed `repository.clone` envelope. The APPROVED path
+used to end in `_deliver(operation=changeset.apply, args=_apply_entries(...))`, so a clone arrived at the
+agent as an apply with no entries, the agent correctly refused, and the change set read `rolled_back` —
+which looks like an agent fault and was the backend sending the wrong command. Revision `0021` made it
+refuse honestly; revision `0022` makes it deliver, and the resolution is one decision: **split the
+arguments by whether they are a secret.**
+
+**The inert half** — repository, clone URL, parent directory, directory name, branch — persists in
+`change_sets.operation_args`. A repository name in a row is not a capability, and every one of these values
+is already in the audit chain.
+
+**The credential is not there.** It is read from the requester's `github_account_links` row at the moment
+of delivery, through a `CloneCredentialProvider` protocol that `governance/` declares and `integrations/`
+implements, wired at the composition root because TID251 forbids the import. Nothing long-lived is stored,
+and **revocation works without anything having to notice**: an operator who disconnects their GitHub
+account cannot have a queued clone delivered afterwards, because there is nothing left to decrypt.
+
+**It is read BEFORE the approval is recorded.** An expired link therefore leaves the change set
+`pending_approval` — genuinely still pending, since reconnecting makes the same approval work — rather than
+`approved` and undeliverable with no statement of why.
+
+**Whose credential: the requester's** (`change_sets.created_by`), not the approver's. An approver
+authorises an action; they do not lend their GitHub account to it.
+
+Guarded in three places, because a credential landing in that column is the worst outcome of the whole
+design: a database CHECK per forbidden key name in `0022`, an assertion in the chokepoint before the write,
+and a test that reads the rows back and searches for the value. 13 tests in
+`test_github_clone_transit.py`, including an expired-link refusal that names the cause and asserts nothing
+reached the agent, and a no-integration-composed refusal that names the missing configuration rather than
+raising.
+
+#### Still open on the clone
+
+- [ ] **A policy that has an opinion about clones.** A clone still requires approval only because
+      `approval.rego` requires it when `environment` is absent, and a clone has no environment — it is not
+      a deployment. That is the right answer by accident. Passing a synthetic environment to make it
+      auto-approve would be gaming the policy in the fail-open direction; the honest change is a Rego rule
+      about `repository.clone` with its own `opa test` case. **Phase 2.1's `requires_approval` is the first
+      real input for that rule** — see below.
+- [ ] **The clone credential should travel as a single-use ticket.** It is in the signed envelope, so it
+      crosses the Redis command stream on its way to the socket owner and sits there until the stream is
+      trimmed. Postgres never sees it and no audit row carries it. The refinement is an opaque id in the
+      envelope that the agent redeems over its device session.
+- [ ] **The E2E covering connect → pick → clone → project → scan → score.** The first four steps are
+      demonstrated against real GitHub; the delivery half is now built but has not been re-run end to end
+      against the live host agent, so the spec is still unwritten. **This is the first thing to run next
+      session** — the backend change is proven by tests and by the envelope the sink received, not by a
+      live agent actually cloning.
+- [ ] **`onboarding.spec.ts` and `printed-instructions.spec.ts` were not re-run.** They need the e2e
+      compose overlay and a provisioned IdP; the create form they drive changed.
 
 ## Current phase task list — Phase 1
 

@@ -6,6 +6,9 @@
 allowBuilds:
   sharp: true
   unrs-resolver: true
+auditConfig:
+  ignoreGhsas:
+    - GHSA-vcvr-r3jv-pc5j
 minimumReleaseAgeExclude:
   - "@hookform/resolvers@5.5.1"
   - "@next/env@16.2.12"

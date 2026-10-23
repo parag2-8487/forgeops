@@ -31,6 +31,7 @@ func TestInterfacesAndStructs(t *testing.T) {
 
 	var rc secretscan.RedactedChunk
 	_ = rc // Just asserting the type exists
+	_ = rc.String()
 }
 
 func TestScannerFindsCredentials(t *testing.T) {
@@ -116,4 +117,11 @@ func (m *mockScanner) Redact(ctx context.Context, c secretscan.Chunk, findings [
 func TestScannerInterface(t *testing.T) {
 	var s secretscan.Scanner = &mockScanner{}
 	_ = s
+}
+
+func TestEngineVersion(t *testing.T) {
+	v := secretscan.EngineVersion()
+	if !strings.HasPrefix(v, "gitleaks") {
+		t.Errorf("EngineVersion() = %q, want prefix 'gitleaks'", v)
+	}
 }

@@ -1,0 +1,138 @@
+{
+  "__comment": [
+    "Phase 2 §2.10's AI cost dashboard. Provisioned from this file, never edited in the UI -- see",
+    "grafana-dashboards.yaml for why allowUiUpdates is false.",
+    "",
+    "EVERY PANEL READS A RECORDING RULE, not a live increase(). A cost panel summing a counter over a month",
+    "recomputes the whole range on each refresh, at which point the dashboard is the load on the system it is",
+    "monitoring.",
+    "",
+    "THE TENANT VARIABLE IS A GRAFANA VARIABLE, which means this dashboard does NOT enforce tenant isolation.",
+    "It cannot: Grafana queries the datasource with the datasource's own credentials, and a variable is a",
+    "convenience for an operator, not an authorisation boundary. Anyone who can open this dashboard can select",
+    "any tenant. That is acceptable precisely because Grafana is behind its own login and is an OPERATOR tool;",
+    "isolation for product users is enforced by the backend read route, which composes the matcher from a",
+    "verified principal and accepts no PromQL. The two surfaces exist for different audiences and only one of",
+    "them is a boundary."
+  ],
+  "uid": "forgeops-ai-cost",
+  "title": "ForgeOps / AI Cost",
+  "tags": ["forgeops", "ai", "cost"],
+  "timezone": "browser",
+  "editable": false,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(tenant_model:gen_ai_cost:increase24h, forgeops_tenant_id)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "What this dashboard can and cannot tell you",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Figures are **accrued cost as reported by the generation pipeline**, not a provider invoice. A model served from a cache tier reports zero cost, so a fall in spend can mean either less work or more cache hits -- the *Generations by origin* panel separates them. **An empty panel means no generation has ever reported that series, which is not the same as zero spend:** if the collector is unreachable the cost is being incurred and not recorded. Check *Telemetry pipeline health* on the infrastructure dashboard before concluding spend is low."
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spend, last 24h",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum(tenant_model:gen_ai_cost:increase24h{forgeops_tenant_id=~\"$tenant\"})",
+          "legendFormat": "total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4,
+          "__comment": "noValue is the word, not a zero. A stat panel defaulting to 0 is exactly the plausible-number-from-a-dead-source failure.",
+          "noValue": "never reported",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        }
+      }
+    },
+    {
+      "type": "piechart",
+      "title": "Spend by model, last 24h",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum by (gen_ai_response_model) (tenant_model:gen_ai_cost:increase24h{forgeops_tenant_id=~\"$tenant\"})",
+          "legendFormat": "{{gen_ai_response_model}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "noValue": "never reported" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens by direction",
+      "description": "Input and output are separate because they price differently on every provider, so a combined total cannot be converted back into money.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 4 },
+      "targets": [
+        {
+          "expr": "sum(tenant_model:gen_ai_input_tokens:increase24h{forgeops_tenant_id=~\"$tenant\"})",
+          "legendFormat": "input"
+        },
+        {
+          "expr": "sum(tenant_model:gen_ai_output_tokens:increase24h{forgeops_tenant_id=~\"$tenant\"})",
+          "legendFormat": "output"
+        }
+      ],
+      "fieldConfig": { "defaults": { "noValue": "never reported" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Spend per model over time",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        {
+          "expr": "sum by (gen_ai_response_model) (tenant_model:gen_ai_cost:increase1h{forgeops_tenant_id=~\"$tenant\"})",
+          "legendFormat": "{{gen_ai_response_model}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "never reported",
+          "custom": {
+            "__comment": "Not connected across gaps. Interpolating a line over a collector outage draws spend that was never measured.",
+            "spanNulls": false
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Generations by origin",
+      "description": "Where each answer came from. A rise in cache hits lowers spend without lowering work, so this is what makes the cost panels interpretable.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        {
+          "expr": "sum by (forgeops_served_from) (increase(gen_ai_client_operation_duration_milliseconds_count{forgeops_tenant_id=~\"$tenant\"}[1h]))",
+          "legendFormat": "{{forgeops_served_from}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "noValue": "never reported", "custom": { "spanNulls": false } } }
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

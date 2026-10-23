@@ -46,7 +46,7 @@ One consequence of level 5 worth stating plainly: the *repository* is also an au
 |:---|:---|:---|
 | **6-tier** model routing; GPT-5.6 Sol primary flagship, Claude Fable 5 analysis flagship | Research §0 | §11.5, §13.2, §15.6 |
 | FastAPI **native `EventSourceResponse`**; never `sse-starlette` | Research §0, §A0b | §7.5, §11.11 |
-| SSE event vocabulary is exactly `status`, `token`, `progress`, `validation`, `complete`, `error` | Research §0; Phase 0 `core/sse.py` | §7.5, Q-26 |
+| SSE event vocabulary is exactly `status`, `token`, `progress`, `log`, `validation`, `complete`, `error` | Research §0; Phase 0 `core/sse.py`; `log` added by Phase 2 §2.2 for live deployment output, distinct from `progress` because one carries a percentage and the other carries text | §7.5, Q-26 |
 | **No Celery.** ARQ/Dramatiq at P1; exactly **one** durable engine at P2 behind an orchestrator-agnostic interface | Research §0, §B6 | §7.10, D-32 |
 | **pgvector HNSW** by default; `hnsw.ef_search` tuned at query time | Research §0, §A0a | §6.4, §11.4 |
 | Agent identity = **SPIFFE/SPIRE X.509-SVID + mTLS with attestation**; no long-lived agent keys | Research §0, §H31 | §14.3, D-36 |
@@ -366,9 +366,9 @@ Derived exclusions, each with its owning phase and the reason it is not pulled f
 |:---|:---|:---|
 | **DeepEval** | Phase 2 | Tech-Stack places LLM evaluation in CI at Phase 2. Phase 1's §1.5 evaluation pipeline is deterministic checks + an advisory rubric, which needs no eval framework. The golden dataset DeepEval would score does not exist yet (Research §C8) |
 | **LangFuse** | Phase 2 | Production AI observability; Research §0 lists it at Phase 2. Phase 1 records `attempts`, tier, cache tier and judge scores in its own tables, which is what the phase's decisions need |
-| **OTel SDK and Collector** | Phase 3 | `phases.md` §3.2. Phase 1 continues Phase 0's W3C propagation + `Tracer` seam and adds no exporter (§7.9, inherited) |
+| **OTel SDK and Collector** | Phase 2 | `phases.md` §2.10. Phase 1 continues Phase 0's W3C propagation + `Tracer` seam and adds no exporter (§7.9, inherited) |
 | **ArgoCD, Argo Rollouts** | Phase 2 | GitOps deployment and progressive delivery are deployment automation, excluded verbatim above |
-| **Cilium** | Phase 3 | Service mesh; Research §0 "New Technologies" places it at Phase 3. Phase 1 has no mesh-shaped problem |
+| **Cilium** | Phase 2 | Service mesh; Research §0 "New Technologies" places it at Phase 2. Phase 1 has no mesh-shaped problem |
 | **Kyverno** | Phase 2+ | Kubernetes admission control. Phase 0 §5.4 already fixed the placement table; Phase 1 owns only the OPA rows |
 | **Novu** | Phase 2 | Notification centre; `phases.md` §2.6. Phase 1 surfaces state through SSE and the audit viewer |
 | **Temporal / Inngest** | Phase 2 | Exactly one durable engine at the P2 boundary, behind the existing seam. OQ-16 stays open; Phase 1 must not assume either (D-32) |
@@ -438,7 +438,7 @@ One row per inherited seam. `as-is` means Phase 1 consumes it without modificati
 | **Backend** — `TaskDispatcher` + `InlineDispatcher` (§7.9) | **extend** | `ArqDispatcher` is added; `InlineDispatcher` stays for tests and dev. No engine concept enters the Protocol | **D-32** |
 | **Backend** — SSE event vocabulary (`core/sse.py`) | **as-is** | Exactly six types. Phase 1 producers use only these; a seventh would need its own decision, and none is proposed | Q-26 |
 | **Backend** — RFC 9457 primitives with traceback redaction (§11.2, D-27) | **extend** | ~26 new problem-type suffixes under the same registry base URI; `detail` still never carries secrets, tokens, connection strings or tracebacks | Appendix C |
-| **Backend** — W3C trace context (§7.8) | **as-is** | Propagation only. No exporter is added (Phase 3) | — |
+| **Backend** — W3C trace context (§7.8) | **as-is** | Propagation only. No exporter is added (Phase 2) | — |
 | **Backend** — middleware stack, row 6 reserved for `TenantContextMiddleware` (§4.3) | **extend** | Phase 1 fills row 6. RLS policies stay deferred | **D-35** |
 | **Data** — `Project`, `FileTreeEntry`, `Embedding` with HNSW at DIM 1536 (§6.2, D-2) | **extend** | Additive columns and eight new tables. `embeddings.embedding` stays `vector(1536)` and `model_id` stays `NOT NULL`. Self-hosted 1024-d vectors get their own table rather than sharing the column — this is D-2's deferred multi-model decision, now made | **D-48** |
 | **Data** — nullable `tenant_id`, no RLS (D-2, OQ-15) | **extend** | Every new table carries the same nullable `tenant_id` seam, for consistency and to avoid a Phase 2 backfill | D-35 |
@@ -1332,9 +1332,9 @@ Cerbos remains a sidecar and is **not** embedded in the agent (Research §B7). T
 | **D3** Change-sets & Approvals | `change_sets`, `change_items`, `validations`, `approvals` | **all four**, plus `[+] rollback_handles` |
 | **D4** Deployments & Environments | all | **deferred to Phase 2** — deployment automation is excluded verbatim |
 | **D5** Secret Vault | `secrets` | **added**, with the `environment_id` reference resolved (§6.6) |
-| **D6** AI Learning History | `feedback_events`, `skill_files` | deferred to Phase 3 (learning history excluded verbatim) |
+| **D6** AI Learning History | `feedback_events`, `skill_files` | deferred to Phase 2 (learning history excluded verbatim) |
 | **D7** Policies | `policies`, `policy_evaluations` | **both**, plus `[+] policy_bundles` |
-| **D8** Incidents & Telemetry | all | deferred to Phase 3 |
+| **D8** Incidents & Telemetry | all | deferred to Phase 2 |
 | — | `[+] audit_events` | **added** — §1.9 has no PRD §7 table, so one is defined here |
 | — | `[+] generation_runs` | **added** — §1.5's iteration/judge/cache provenance has no PRD table and is needed for NFR-04 evidence |
 
@@ -1869,7 +1869,7 @@ An integration test asserts the variable is visible to `current_setting('app.ten
 
 ### 6.8 What is deliberately not modelled
 
-No `environments`, `deployments`, `deployment_logs`, `health_checks` (D4, Phase 2). No `feedback_events`, `skill_files` (D6, Phase 3). No `incidents`, `auto_actions`, `metrics` (D8, Phase 3). No `teams`, `team_members` (D-40, Phase 2). Nothing in Phase 1 reads any of them, and creating them empty would make the migration numbering claim ownership of work this phase does not do.
+No `environments`, `deployments`, `deployment_logs`, `health_checks` (D4, Phase 2). No `feedback_events`, `skill_files` (D6, Phase 2). No `incidents`, `auto_actions`, `metrics` (D8, Phase 2). No `teams`, `team_members` (D-40, Phase 2). Nothing in Phase 1 reads any of them, and creating them empty would make the migration numbering claim ownership of work this phase does not do.
 
 
 ---
@@ -2000,10 +2000,21 @@ The `seq` high-water mark is Redis-authoritative (mirrored to `agent_devices.las
 | `changeset.revert` | **yes** | **yes** | Consumes a rollback handle; itself a mutation with its own authority |
 | `git.branch_commit_push` / `git.open_pr` | **yes** | **yes** | Mutates the repository, not the working tree; same envelope rules |
 | `secrets.inject` | **yes** | **yes** | Writes environment material for a process; never writes it to a file |
+| `repository.clone` | **yes** | **yes** | The only operation that CREATES the directory a project points at, rather than writing inside one. Confined to the agent's workspace root like every other write; refuses a non-empty target, a traversal, an absolute or reserved name and a case-only collision; shallow at depth 1, size-bounded, and the credential travels in the envelope and is asserted absent from the cloned tree including `.git/config` |
+| `deployment.apply_manifests` | **yes** | **yes** | **Phase 2 §2.2.** The first operation that changes what is RUNNING rather than what is on disk, and the largest blast radius in the catalogue: a file write can be undone by restoring bytes and a deployment cannot. Applies workspace-confined manifests with `kubectl` through an argument vector (no shell, no `--prune`), then WAITS for each pod-bearing workload to converge and reports `applied` or `degraded` — the two are separate facts, and collapsing them would let a deployment that never came up be recorded as one that did. Its own timeout (`timeoutDeploy`, 15 min) exceeds the per-workload health bound, so a workload that fails to converge is reported as such rather than as an operation that timed out |
+| `docker.inventory` | no | no | **Phase 2 §2.4.** Containers, images, volumes and networks from the operator's own Docker daemon, with an optional one-shot CPU/memory/network sample. READ-ONLY AND APPROVAL-FREE for one reason and at one cost: a dashboard refreshes, and requiring an approval per refresh either stops the refresh or trains an approver to click without reading. What makes that safe is that the authority is genuinely separate — nothing in this operation can change a container, and the operations that can are separate rows below. Every measured figure is nullable so "not sampled" and "idle" are distinguishable; `stats_sampled` reports which happened, and the daemon's own version and an `observed_at` from the host travel with the reading so a panel can tell current from stale |
+| `kubernetes.inventory` | no | no | **Phase 2 §2.9.** Namespaces, nodes, pods, the three workload kinds, services, ingresses, ConfigMaps and HPAs, through `kubectl get -o json`. Read-only and approval-free for the reason above. Two properties are load-bearing: every family is read independently and a family that cannot be read is named in `partial_reasons` with its cause, because "this cluster has no ingresses" and "this principal may not list ingresses" are opposite facts that an empty array renders identically; and ConfigMaps report KEY NAMES ONLY, because a ConfigMap regularly holds what should have been a Secret and a panel that printed values would publish it |
+| `docker.container_action` | **yes** | **yes** | **Phase 2 §2.4.** One action from a closed set (`start`, `stop`, `restart`, `remove`) against ONE named container. Not a name per verb: the authority is identical and the whitelist would grow without narrowing. Never a pattern or a glob — one envelope acting on an unbounded set is the blast radius the change-set machinery exists to bound — and an empty name is refused rather than expanded to "all". `remove` is not forced: `docker rm` on a running container fails, and that refusal is information an operator needs rather than a flag this code should have chosen for them. The state is read from the daemon either side of the action, so the audit row records what CHANGED and not what was requested |
+| `docker.image_action` | **yes** | **yes** | **Phase 2 §2.4.** `pull` or `remove` against one named image reference. A pull reports the resulting repo DIGEST when the image has one, because a tag moves and a digest does not — and reports its absence rather than inventing one for an image built locally and never pushed |
+| `kubernetes.workload_action` | **yes** | **yes** | **Phase 2 §2.9.** `scale`, `restart` or `rollback` against one named workload, confined to the same three pod-bearing kinds `deployment.apply_manifests` can VERIFY — acting on something unverifiable would report the API server's acceptance as success. A restart is `rollout restart`, not a pod delete: deleting pods bypasses the workload's own surge and availability settings, which is how a restart becomes an outage. A scale is bounded at `MaxScaleReplicas` and the refusal names the bound. Like a deployment it waits for convergence and reports `applied` or `degraded`, and reads the replica count either side so the audit row carries the change |
 
 The Go type is an enum with an exhaustive dispatch table, and a test asserts every enum member has a handler *and* that every handler is reachable only from the dispatch table. There is no `exec`, no `shell`, no `run_command`, and no operation that takes a command string as an argument — a reviewer can verify that claim by reading one file.
 
-Two scope notes on this table, so it cannot be read as pulling Phase 2 forward. `git.branch_commit_push` and `git.open_pr` wrap the **Phase 0 §0.6 client** (`go-git` + `go-github`, D-5) unchanged and add no new capability; what Phase 1 adds is that they now require a signed envelope like every other mutation. `secrets.inject` materialises environment variables for the duration of one command, which is exactly `phases.md` §1.8's "deploy-time secret injection (environment variables)"; it does not deploy anything, and `iac.Runner` still exposes no `apply` (§1.4). Nothing in this catalogue performs a deployment, drives a dashboard, interprets natural language, collects metrics, remediates automatically, or records feedback for learning — the six capabilities `phases.md` excludes verbatim.
+Two scope notes on this table, so it cannot be read as pulling Phase 2 forward. `git.branch_commit_push` and `git.open_pr` wrap the **Phase 0 §0.6 client** (`go-git` + `go-github`, D-5) unchanged and add no new capability; what Phase 1 adds is that they now require a signed envelope like every other mutation. `secrets.inject` materialises environment variables for the duration of one command, which is exactly `phases.md` §1.8's "deploy-time secret injection (environment variables)"; it does not deploy anything, and `iac.Runner` still exposes no `apply` (§1.4).
+
+**Corrected for Phase 2, twice.** This paragraph used to end "Nothing in this catalogue performs a deployment, drives a dashboard, interprets natural language, collects metrics, remediates automatically, or records feedback for learning — the six capabilities `phases.md` excludes verbatim." That was true of Phase 1. `deployment.apply_manifests` made the first clause false, deliberately, as `phases.md` §2.2's first box. The **second** amendment is the Docker and Kubernetes rows above: `docker.inventory` and `kubernetes.inventory` exist precisely to drive a dashboard, so that clause is false now too. The remaining four are still absent and still checkable by reading this table — no natural language is interpreted here, no metric series is collected, nothing remediates automatically, and no feedback is recorded. Amending the sentence twice is worse writing than amending it once and far better than leaving a claim this document no longer supports.
+
+A third scope note, because the shape of the Phase 2 additions is itself a decision. The five new rows are **two reads and three actions**, not fifteen verbs. An operation is an authority, not a function: `docker.container_action` names the authority "may act on one container on this host", and splitting it into `docker.start`, `docker.stop`, `docker.restart` and `docker.remove` would quadruple the whitelist while narrowing nothing, because anything holding one of them could ask for the others. What the split DOES buy, and the reason the reads are separate rows, is the opposite direction: the dashboards need the read authority continuously and the write authority never, so "may look at containers" is not a route to "may delete one". What is still absent is what a general-purpose wrapper would have added — no operation takes a docker or kubectl command line, none accepts `--privileged` or a bind mount, none can name a resource kind outside the workload set, and there is still no `exec` into a container.
 
 ### 7.8 Dependency-injection conventions
 
@@ -2013,7 +2024,7 @@ One convention worth adding explicitly because Phase 1 has many more collaborato
 
 ### 7.9 Telemetry seams
 
-Unchanged. W3C trace-context propagation continues across the new surfaces — the WSS session carries `traceparent` in `command.execute` params so an agent-side operation joins the request's trace, and `audit_events.trace_id` records it. Still no OTel SDK, no collector, no exporter, no `gen_ai.*` semantic conventions (Phase 3). The `Tracer` interface still has exactly one implementation, `NoopTracer`.
+Unchanged. W3C trace-context propagation continues across the new surfaces — the WSS session carries `traceparent` in `command.execute` params so an agent-side operation joins the request's trace, and `audit_events.trace_id` records it. Still no OTel SDK, no collector, no exporter, no `gen_ai.*` semantic conventions (Phase 2). The `Tracer` interface still has exactly one implementation, `NoopTracer`.
 
 ### 7.10 Task orchestration
 
@@ -3137,7 +3148,7 @@ class ReadinessEngine:
 
 The Phase 1 check set covers `phases.md`'s named examples and PRD FR-20: Dockerfile exists / is multi-stage / declares a non-root user / pins a base image digest / has a `HEALTHCHECK`; `.dockerignore` exists; CI workflow exists / runs tests / pins actions by SHA; K8s manifests exist / declare resource requests and limits / declare probes / avoid `latest`; `.env.example` exists / no hardcoded secrets found by the scan; IaC present / state backend configured. Around 30 checks.
 
-**Plain-language "why it matters" (FR-19)** comes from a committed template table keyed by check id — `report_templates.yaml` with `title`, `why_it_matters`, `how_to_fix`, `severity` per check. No LLM writes the report, for the same reason no LLM computes the score: the report is what the user acts on, and it must say the same thing twice for the same input. An LLM may later *rephrase* a report for tone; that is Phase 3's learning-history territory and it is not in this phase.
+**Plain-language "why it matters" (FR-19)** comes from a committed template table keyed by check id — `report_templates.yaml` with `title`, `why_it_matters`, `how_to_fix`, `severity` per check. No LLM writes the report, for the same reason no LLM computes the score: the report is what the user acts on, and it must say the same thing twice for the same input. An LLM may later *rephrase* a report for tone; that is Phase 2's learning-history territory and it is not in this phase.
 
 ### 11.5 `generation` — RAG, routing, evaluation, bounded loop, templates (§1.5)
 
@@ -3148,7 +3159,7 @@ class GenerationService:
     async def run(self, *, project_id: uuid.UUID, principal: Principal,
                   kinds: Sequence[ArtifactKind], stream: SSEStream) -> GenerationOutcome:
         """One generation run: retrieve → assemble → generate → validate (≤3) → judge
-        → hand to the governance chokepoint. Emits only the six SSE event types.
+        → hand to the governance chokepoint. Emits only the declared SSE event types.
 
         This method NEVER writes a file and NEVER contacts the agent hub directly. Its
         terminal act is chokepoint.submit(MutationRequest), which is the only way its
@@ -5285,6 +5296,8 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `device-not-found` | 404 | Revocation named a device id that does not exist (**D-71**) | Admin-only route, so a 404 discloses nothing a caller could not already read; §4.2's enumeration rule constrains the `forbidden` body |
 | `device-revoked` | 401 | Device token or certificate revoked | Names the revocation time, not the actor |
 | `device-not-connected` | 409 | No active agent session for the project | Suggests pairing or starting the agent |
+| `agent-timeout` | 504 | The agent did not answer a read inside its operation timeout | Names the operation and the timeout. Reported rather than answered with an empty inventory, because "the agent said nothing" and "the host holds nothing" need different responses |
+| `agent-error` | 502 | The agent answered, and its answer reported a failed operation | Carries the agent's own error text; an agent that ran and failed is not the same as one that never ran |
 | `envelope-signature-invalid` | 401 | HMAC mismatch (JSON-RPC `agent.error` counterpart) | Never includes the expected signature |
 | `envelope-replayed` | 409 | Duplicate nonce or non-increasing `seq` | States which condition, not the counter value |
 | `envelope-expired` | 401 | Outside `not_after` ± skew | Includes the tolerated skew so a clock problem is diagnosable |
@@ -5314,6 +5327,50 @@ All under `https://errors.forgeops.dev/{suffix}`, extending Phase 0's registry. 
 | `tenant-context-missing` | 500 | A tenant-scoped query ran without `app.tenant_id` | Internal invariant violation; generic detail plus `trace_id` |
 | `repository-import-unconfigured` | 503 | A GitHub import was requested and the server has no App credentials | Names the two environment variables to set |
 | `repository-import-failed` | 502 | GitHub refused a request during an import | Names the action and the upstream status, never the response body |
+| `github-link-unconfigured` | 503 | A GitHub account link was requested and the server has no App client credentials | Names the two environment variables to set and the callback URL to register |
+| `github-link-absent` | 409 | The server is configured and this user has not linked a GitHub account | Says where to connect one; not a 404, because the endpoint exists, and not a 403, because nothing is being hidden |
+| `github-link-failed` | 502 | GitHub refused a link request, or a callback could not be matched to a pending one | Names the action and the upstream status or GitHub's own error code, never the response body — a GitHub error description has carried the submitted authorization code back |
+| `environment-absent` | 404 | An environment id or name was given and no such environment exists in the project | Names the identifier that missed; a 404 rather than a 403 because an environment is not a hidden resource, and the caller is already authorised for the project |
+| `environment-invalid` | 422 | An environment request is internally inconsistent — an unknown kind, an empty name, or an attempt to waive human approval on a production environment | Names the field and the closed set it must come from; for the approval waiver it names the alternative (`custom`), because a refusal without a route forward reads as a bug |
+| `deployment-absent` | 404 | A deployment id was given and no such deployment exists | Names the identifier |
+| `deployment-invalid` | 422 | A deployment names no manifests, more than the bound allows, or a path that is not workspace-relative | Names the bound and the count, or the offending path. The agent enforces the same bound, and the message says so: a request the backend accepted and the agent will refuse becomes a change set that can never be delivered |
+| `deployment-conflict` | 409 | A report arrived for a deployment that has already settled | Names the current status and says the report was ignored. A 409 rather than a 422 because the request was well formed and the row moved on — command delivery is at-least-once, so this is an expected event rather than a caller error |
+| `deployment-circuit-open` | 503 | Repeated validation failures have stopped deployments to this environment | A 503 and not a 422: the request is well formed and would ordinarily be accepted, and the service is declining to attempt it for now. The detail says when it will be tried again, and distinguishes a breaker that has never tripped from one waiting to retry |
+| `pipeline-engine-absent` | 503 | A durable run was requested and no execution engine is configured | A 503 rather than a 500: the capability is absent rather than broken, and the detail names the setting that enables it |
+| `pipeline-step-not-gated` | 422 | The request named a pipeline step that has no approval gate | Releasing an ungated step would send an event nothing waits for -- the run would stay suspended while the operator believed they had released it, which for an approval mechanism is the worst available outcome. Refused, with the gated steps named |
+| `argocd-webhook-unconfigured` | 503 | The webhook was called and no HMAC secret is configured | A 503 because the capability is absent rather than broken. With no secret nothing can be authenticated, so the endpoint accepts NOTHING rather than accepting anything, and the detail names the setting |
+| `argocd-webhook-unrecognised` | 422 | The payload is well formed and names no repository | Recording it would put an entry in the history that matches no Application |
+| `argocd-manifest-incomplete` | 422 | The render request omits a field its kind requires | A caller error, not a server one: an ApplicationSet with no environments generates no Applications, which is a file that looks like a deployment and does nothing |
+| `monitoring-query-unknown` | 422 | The named monitoring query is not in the catalogue. A 422 and not a 404: the route runs only reviewed queries and accepts no PromQL, so an unknown name is a malformed request rather than an absent resource. |
+| `monitoring-query-forbidden` | 403 | The query covers the whole deployment because the series it reads carries no tenant dimension. Operators only. |
+| `monitoring-query-invalid` | 422 | A query argument is not a permitted label value, or a required one is absent, or the window is not in the allowed set. |
+| `incident-absent` | 404 | No incident with that id. A 404 and not a 403: the caller is already authorised for the project that owns it. |
+| `incident-suggestion-absent` | 404 | No fix suggestion with that id belongs to that incident. Matched on both ids, so a suggestion cannot be read through an incident that does not own it. |
+| `incident-suggestion-already-submitted` | 409 | The suggestion is already a change set. A 409 rather than a 422 because the request is well formed and the conflict is with state: two change sets proposing the same edit would both pass approval, and the second would conflict with the first -- presenting to an operator as an unexplained refusal of their own change. |
+| `incident-governance-absent` | 503 | The governance chokepoint is not composed, so a suggestion cannot become a change set. Applying it outside governance is not offered as an alternative. |
+| `healing-refused` | 409 | A self-healing guard rail refused the action: the attempt budget is spent, the cooldown has not elapsed, the remedy already failed for this incident, or no remedy is defined for that incident source. A 409 because the conflict is with recorded state; the detail names which bound was reached. |
+| `healing-requires-approval` | 403 | The remedy is not in the closed safe set, so it cannot be auto-executed. Not a 409: retrying does not change the answer, and the safe set is closed so an unclassified remedy lands here by default. |
+| `healing-governance-absent` | 503 | The governance chokepoint is not composed, so no healing action can be taken. Acting outside governance is not offered as an alternative. |
+| `learning-verdict-invalid` | 422 | The feedback verdict is not one of accepted/rejected/edited, or an `edited` verdict carried no final content -- which records that something changed while discarding what it became, the only part a preference can be derived from. |
+| `learning-scope-invalid` | 422 | The preference scope is not in the closed set. Refused rather than filed as `general`, because a misfiled preference is injected into prompts it has nothing to do with. |
+| `learning-preference-invalid` | 422 | The correction changes nothing: neither a statement nor an active flag was supplied. |
+| `learning-preference-absent` | 404 | No preference with that id. |
+| `learning-turn-invalid` | 422 | A conversation turn's role is not `user` or `assistant`. |
+| `command-refused` | 422 | The utterance or intent is not one the closed command set can express, or a slot value failed its vocabulary. A 422 rather than a 403: there is no authority question, because the command does not exist to be authorised for. |
+| `command-incomplete` | 422 | The resolved command is missing a required slot. Refused rather than defaulted, because guessing a value the user did not give is how an automated system does something nobody asked for. |
+| `knowledge-refused` | 404 | No project with that id, OR the project belongs to another tenant, OR the topic is not in the closed set. The first two share one sentence deliberately: a distinct message would let a caller probe which project ids exist in other tenants. |
+| `notification-absent` | 404 | The named notification does not belong to this project | A 404 rather than a 403 for the reason `environment-absent` is one: the caller is already authorised for the project that owns it, so concealing which notifications exist would buy nothing |
+| `notification-preference-invalid` | 422 | The notification preference cannot be stored as asked | Raised for one case above all: an ENABLED channel with no target. A preference that delivers nowhere is a setting that silently does nothing, and a user who set it believes they are covered — so it is refused at the point of saving rather than discovered when nothing arrives |
+| `github-push-failed` | 502 | Upstream GitHub API refused export push | Upstream response status |
+| `github-create-failed` | 502 | Upstream GitHub API refused repository creation | Upstream response status |
+| `github-init-failed` | 502 | Upstream GitHub API refused repository initialization | Upstream response status |
+| `github-blob-upload-failed` | 502 | Upstream GitHub API refused file blob upload | Upstream response status |
+| `github-tree-failed` | 502 | Upstream GitHub API refused git tree creation | Upstream response status |
+| `github-commit-failed` | 502 | Upstream GitHub API refused git commit creation | Upstream response status |
+| `github-ref-failed` | 502 | Upstream GitHub API refused git reference update | Upstream response status |
+| `project-empty` | 400 | Project has no indexed files to export or deploy | Clear actionable message |
+| `validation-error` | 422 | Request body or parameters failed validation schema | Names invalid field |
+| `vercel-deploy-failed` | 502 | Upstream Vercel API refused project deployment | Upstream response status |
 
 `audit-write-failed` deserves a note. A failed audit write **aborts the mutation**, because §1.9's guarantee is that every action is logged — an action that happened without a record would break Q-04 and, worse, would be invisible. Availability is traded for auditability, deliberately.
 

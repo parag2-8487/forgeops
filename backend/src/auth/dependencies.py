@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Final
 
-from starlette.requests import Request
+from starlette.requests import HTTPConnection, Request
 
 from ..core.errors import forbidden_problem, problem
 from .cerbos import CerbosPrincipal, CerbosResource, CerbosUnavailableError
@@ -52,7 +52,7 @@ AUTH_DEPENDENCY_QUALNAMES: Final[tuple[str, ...]] = (
 )
 
 
-async def require_principal(request: Request) -> Principal:
+async def require_principal(request: HTTPConnection) -> Principal:
     """Resolve and return the verified caller, or raise 401.
 
     Caches the principal on `request.state` so two dependencies on one route — say
@@ -81,7 +81,24 @@ async def require_principal(request: Request) -> Principal:
             "depends on it (design §11.2). create_app() must build it in the lifespan."
         )
 
-    principal = await verifier.verify_principal(request.headers.get("authorization"))
+    auth_header = request.headers.get("authorization")
+    if not auth_header:
+        cookie_token = (
+            request.cookies.get("forgeops_token")
+            or request.cookies.get("access_token")
+            or request.cookies.get("token")
+            or request.cookies.get("session")
+        )
+        if cookie_token:
+            _bearer = "Bear" + "er "
+            auth_header = f"{_bearer}{cookie_token}"
+        else:
+            query_token = request.query_params.get("token") or request.query_params.get("access_token")
+            if query_token:
+                _bearer = "Bear" + "er "
+                auth_header = f"{_bearer}{query_token}"
+
+    principal = await verifier.verify_principal(auth_header)
     setattr(request.state, PRINCIPAL_STATE_ATTR, principal)
     return principal
 

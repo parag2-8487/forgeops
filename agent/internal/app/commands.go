@@ -16,6 +16,7 @@ import (
 	"github.com/parag8487/ForgeOps/agent/internal/connection"
 	"github.com/parag8487/ForgeOps/agent/internal/scanner"
 	"github.com/parag8487/ForgeOps/agent/internal/session"
+	"github.com/parag8487/ForgeOps/agent/internal/uninstall"
 )
 
 // The two glyphs `doctor` prints.
@@ -51,6 +52,7 @@ func NewRootCommand(a *App) *cobra.Command {
 		newScanCmd(a),
 		newWatchCmd(a),
 		newMCPServeCmd(a),
+		newUninstallCmd(a),
 	)
 
 	return root
@@ -74,6 +76,22 @@ func newDoctorCmd(a *App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			var issues []string
+
+			// Agent executable & version check
+			exePath, err := os.Executable()
+			if err == nil {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s Agent executable: %s (version: %s)\n", glyphOK, exePath, a.bi.Version)
+			}
+
+			// Multiple installations detection
+			installations := uninstall.DiscoverInstallations(ctx)
+			if len(installations) > 1 {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s Multiple agent executables detected (%d):\n", glyphFail, len(installations))
+				for _, inst := range installations {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    - %s (version: %s)\n", inst.Path, inst.Version)
+				}
+				issues = append(issues, "Multiple ForgeOps agent versions found. Run `forgeops-agent uninstall` to remove older copies.")
+			}
 
 			// Docker check
 			dr := a.docker.Check(ctx)
@@ -391,14 +409,26 @@ func newPairCmd(a *App) *cobra.Command {
 }
 
 func newRunCmd(a *App) *cobra.Command {
-	return &cobra.Command{
+	var workspace string
+	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the agent",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			a.logger.Info("agent starting", zap.String("version", a.bi.Version))
+			if strings.TrimSpace(workspace) != "" {
+				a.UseWorkspaceRoot(workspace)
+				if store, err := a.CredentialStore(); err == nil {
+					if creds, lerr := store.Load(cmd.Context()); lerr == nil {
+						creds.WorkspaceRoot = workspace
+						_ = store.Save(cmd.Context(), creds)
+					}
+				}
+			}
+			a.logger.Info("agent starting", zap.String("version", a.bi.Version), zap.String("workspace", a.cfg.Executor.WorkspaceRoot))
 			return a.Run(cmd.Context())
 		},
 	}
+	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace directory to confine commands to")
+	return cmd
 }
 
 // newScanCmd indexes the agent's workspace and submits the result (phases.md §1.3, §1.4).
@@ -505,7 +535,8 @@ func newWatchCmd(a *App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot)
+			store, _ := a.CredentialStore()
+			root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot, store)
 			if err != nil {
 				return err
 			}

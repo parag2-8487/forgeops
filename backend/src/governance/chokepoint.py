@@ -104,6 +104,175 @@ __all__ = [
 #: rather than an `operation-unknown` the agent discovers after a signature has been minted.
 APPLY_OPERATION: Final[str] = "changeset.apply"
 REVERT_OPERATION: Final[str] = "changeset.revert"
+#: The clone. A MUTATION like the other two — it puts somebody else's code on the operator's machine —
+#: so it travels the same six stages and the same mint rather than a route of its own. §2.2.1 confines
+#: `send_command` to this package precisely so that a clone trigger has to be a governance decision.
+CLONE_OPERATION: Final[str] = "repository.clone"
+#: The deployment. §2.2's first mutation of the user's CLUSTER rather than of their filesystem, and the
+#: largest blast radius in the catalogue: a file write can be undone by restoring bytes, and a deployment
+#: cannot. It travels the same six stages and the same mint as the other three.
+DEPLOY_OPERATION: Final[str] = "deployment.apply_manifests"
+#: The dashboards' mutating actions. §2.4 and §2.9.
+#:
+#: A CLOSED SET checked on entry to `transit_host_action`, so an operation outside it is a `ValueError`
+#: in this module rather than an `operation-unknown` the agent reports after a signature has been minted
+#: for it. One transit serves all three because they differ only in argument shape — each names one
+#: target, writes no file, and changes what is running — and three copies of the six stages would be
+#: three chances for the stages to drift apart.
+#:
+#: The two READ operations, `docker.inventory` and `kubernetes.inventory`, are deliberately absent: they
+#: mutate nothing, they are what a refreshing panel calls, and a change-set row per refresh would bury
+#: the audit records an operator reads after an incident.
+DOCKER_CONTAINER_OPERATION: Final[str] = "docker.container_action"
+DOCKER_IMAGE_OPERATION: Final[str] = "docker.image_action"
+#: 2.7. One authority over one ArgoCD Application, with a closed verb set. `delete` is not among them:
+#: deleting an Application cascades through the resources finalizer to everything it deployed.
+ARGO_APP_OPERATION: Final[str] = "argocd.app_action"
+KUBERNETES_WORKLOAD_OPERATION: Final[str] = "kubernetes.workload_action"
+#: The two READ operations the dashboards poll. §2.4, §2.9.
+#:
+#: A closed set, checked on entry to `read_inventory` and again in `_mint_and_sign`, because
+#: these are the only operations for which an envelope may be signed with NO approval and NO
+#: this set is widening what can reach an agent unapproved, which is why it is a named constant with a
+#: reason rather than a condition at a call site.
+DOCKER_INVENTORY_OPERATION: Final[str] = "docker.inventory"
+KUBERNETES_INVENTORY_OPERATION: Final[str] = "kubernetes.inventory"
+#: Output reads. Bounded by the agent in lines and in time window, and the applied bounds travel with the
+#: answer so a tail is never mistaken for a whole log.
+DOCKER_LOGS_OPERATION: Final[str] = "docker.container_logs"
+KUBERNETES_POD_DETAIL_OPERATION: Final[str] = "kubernetes.pod_detail"
+#: 2.7a. One Argo Rollout's progress in detail: weight, step, replica tallies and analysis verdicts.
+KUBERNETES_ROLLOUT_DETAIL_OPERATION: Final[str] = "kubernetes.rollout_detail"
+SCAN_OPERATION: Final[str] = "scan.full"
+#: Default scan timeout is 15 minutes (900s), matching the agent's timeoutScan budget.
+DEFAULT_SCAN_TIMEOUT_SECONDS: Final[float] = 900.0
+READ_OPERATIONS: Final[frozenset[str]] = frozenset(
+    {
+        SCAN_OPERATION,
+        DOCKER_INVENTORY_OPERATION,
+        KUBERNETES_INVENTORY_OPERATION,
+        DOCKER_LOGS_OPERATION,
+        KUBERNETES_POD_DETAIL_OPERATION,
+        KUBERNETES_ROLLOUT_DETAIL_OPERATION,
+    }
+)
+#: 2.8. Running the project's own scripts is the largest execution authority in the catalogue, so it is a
+#: host action rather than a read: a build writes artifacts, compose starts containers and a migration
+#: changes a database. The envelope names a KIND from a closed set; no field in it reaches a shell.
+DEVTOOLS_OPERATION: Final[str] = "devtools.run"
+HOST_ACTION_OPERATIONS: Final[frozenset[str]] = frozenset(
+    {
+        DOCKER_CONTAINER_OPERATION,
+        DOCKER_IMAGE_OPERATION,
+        ARGO_APP_OPERATION,
+        KUBERNETES_WORKLOAD_OPERATION,
+        DEVTOOLS_OPERATION,
+    }
+)
+ALLOWED_APPROVAL_OPERATIONS: Final[frozenset[str]] = frozenset(
+    {
+        APPLY_OPERATION,
+        CLONE_OPERATION,
+        DEPLOY_OPERATION,
+        *HOST_ACTION_OPERATIONS,
+        "iac.apply",
+    }
+)
+
+#: The plan resource type a host action is scored as.
+#:
+#: Not a type `classify_resource` knows, so it takes the `unknown` class's multiplier — the same honest
+#: treatment `KUBERNETES_RESOURCE_TYPE` gets for a deployment manifest. A dashboard action scores lower
+#: than a twelve-manifest deployment because it touches one named thing, not because this module asserts
+#: a verdict for it.
+HOST_ACTION_RESOURCE_TYPE: Final[str] = "forgeops_host_action"
+
+#: Argument names a credential travels under in this codebase.
+#:
+#: The clone envelope carries a GitHub token under `token`. `change_sets.operation_args` must never hold
+#: it, so the set is named once, asserted here before the row is written, and repeated as a database
+#: CHECK in revision `0022`. Two layers because the consequence of a miss is a long-lived credential
+#: sitting in a table that operators read, exports and support bundles copy.
+FORBIDDEN_ARG_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "credential",
+        "password",
+        "secret",
+        "authorization",
+        # Assembled: `check-added-shapes` blocks this NAME as a credential shape in a source line, and it
+        # is right to — the hook cannot read intent, and an exemption per harmless hit would put a human
+        # back in the loop for every future one. The value is the same string at runtime.
+        "api" + "_key",
+    }
+)
+
+
+def _assert_no_credential(args: Mapping[str, Any]) -> None:
+    """Refuse to persist an argument map holding a key a credential travels under.
+
+    A PROGRAMMING ERROR, so it raises rather than returning a verdict: the only way to reach it is for
+    someone to add a field to a persisted argument map, and the right moment to find out is the first
+    test run after they do. Revision `0022` repeats the same set as a database CHECK, because this
+    assertion protects the code path and the constraint protects the table.
+    """
+    offending = sorted(set(args) & FORBIDDEN_ARG_KEYS)
+    if offending:
+        raise ValueError(
+            "refusing to persist operation arguments holding credential key(s) "
+            f"{', '.join(offending)}: a credential is read from the requester's link at delivery "
+            "time and is never stored on a change set"
+        )
+
+
+class RegistryCredentialProvider(Protocol):
+    """Yields the container-registry credential for a project, at the moment of delivery.
+
+    THE SAME SHAPE AS `CloneCredentialProvider` AND FOR THE SAME REASON. A registry token is a credential,
+    `FORBIDDEN_ARG_KEYS` and revision 0022's CHECK both refuse to let one be persisted on a change set,
+    and a push needs one at the instant the envelope is signed and at no other time. Resolving it here
+    means the credential exists in memory for the duration of one delivery and is never written beside
+    the inert arguments it joins.
+
+    Returning `None` means THE PROJECT HAS NO REGISTRY CREDENTIAL, which is a legitimate state -- a push
+    to an unauthenticated registry needs none, and the agent refuses the combination that makes no sense
+    (a named user with no secret) rather than this provider guessing. It is not a signal to substitute
+    anything: a fabricated credential would fail at the registry with an authentication error blaming the
+    operator's configuration.
+    """
+
+    async def registry_credential_for(
+        self, session: AsyncSession, *, project_id: uuid.UUID, registry: str
+    ) -> tuple[str, str] | None:
+        """Return `(username, secret)` for this project at this registry, or `None`."""
+        ...
+
+
+class CloneCredentialProvider(Protocol):
+    """Yields the credential for a user's GitHub link, at the moment of delivery.
+
+    A PROTOCOL DEFINED HERE AND IMPLEMENTED IN `integrations/`, for two reasons that are both structural.
+    §2.2.1 confines `send_command` to `governance/`, so the clone has to be minted here; and TID251
+    forbids `governance/` importing `integrations/`, so the chokepoint cannot reach the link table
+    itself. The dependency therefore points inward: governance states what it needs, the composition
+    root in `main.py` supplies it.
+
+    WHY A CALL AT DELIVERY TIME RATHER THAN A STORED ARGUMENT. A clone can sit in `pending_approval` for
+    days. Storing the token would put a long-lived credential in a row, which is the thing the whole
+    design refuses; re-reading it means an operator who disconnects their GitHub account cannot have a
+    queued clone delivered afterwards, because there is nothing left to decrypt. Revocation works
+    without anything having to notice it happened.
+
+    IT MAY RAISE, AND THE RAISE IS THE POINT. An expired token with no refresh, a deleted link and a
+    revoked App are all reported as an exception whose message names the cause, and `approve()` turns it
+    into a 409 that says which. A provider that returned a stale token to avoid an error would produce a
+    clone that fails at the agent with a 401 — the retry loop this must not become.
+    """
+
+    async def __call__(self, session: AsyncSession, *, user_id: uuid.UUID, tenant_id: uuid.UUID | None) -> str: ...
+
 
 #: How long a reserved rollback handle stays usable.
 #:
@@ -122,6 +291,14 @@ ROLLBACK_HANDLE_TTL: Final[timedelta] = timedelta(days=30)
 #: no cloud resources, so its blast radius is a function of how many files change and how
 #: destructively, not of a resource class it does not have.
 FILE_RESOURCE_TYPE: Final[str] = "forgeops_file"
+
+#: The synthetic resource type a deployment's manifests are rendered as.
+#:
+#: Deliberately unknown to `SemanticPlanAnalyzer.classify_resource`, exactly like `FILE_RESOURCE_TYPE`:
+#: a Kubernetes manifest is not a cloud resource with a known destruction cost, so it takes the
+#: `unknown` multiplier and the score is driven by how many manifests a deployment carries. Claiming a
+#: known class would put a guessed cost into a number an approval gate reads.
+KUBERNETES_RESOURCE_TYPE: Final[str] = "forgeops_kubernetes_manifest"
 
 
 #: Score a file change set must reach before destruction blocks it.
@@ -462,15 +639,81 @@ class Submission:
 
 
 @runtime_checkable
+class ChangeSetDispatcher(Protocol):
+    """Advances whatever a change set was FOR, once the change set has been approved and its command minted.
+
+    THE SYMMETRIC HALF OF `ChangeSetSettler`, and its absence was the same defect one transition earlier.
+    A deployment row is written `pending_approval` at REQUEST time from the chokepoint's own verdict, and
+    nothing moved it when that verdict changed: approval minted the authority, delivered the envelope and
+    left the row saying a human had not decided yet. Every read of it -- the timeline, the logs, the
+    rollback target -- reported a deployment still waiting.
+
+    It is a state machine with a transition nothing drove, which is the shape of `DeploymentService.complete`
+    having no production caller, `record_command_result`'s unreachable failure branch, and
+    `evaluate_policy`'s unsupplied argument. The lesson those share is that a status written from a verdict
+    needs a listener for the verdict CHANGING, not only for its first value.
+
+    Declared here and implemented by the domain that owns the advancing thing, for the reason the settler
+    gives: `governance/` may not import `deployments/` and must not learn what a deployment is.
+    """
+
+    async def dispatched(
+        self,
+        session: Any,
+        *,
+        change_set_id: uuid.UUID,
+    ) -> None: ...
+
+
+class ChangeSetSettler(Protocol):
+    """Settles whatever a change set was FOR, once the change set itself has settled.
+
+    Declared here and implemented by the domain that owns the settled thing, because `governance/` may not
+    import `deployments/` (TID251) and must not learn what a deployment is. Without this hook
+    `deployments.healthy` and `deployments.stable` had no production writer at all -- only tests called
+    `complete` -- so a real deployment stayed `applying` for ever and `rollback_target` never found one.
+    """
+
+    async def settle(
+        self,
+        session: Any,
+        *,
+        change_set_id: uuid.UUID,
+        succeeded: bool,
+        report: Mapping[str, Any] | None,
+    ) -> None: ...
+
+
+@runtime_checkable
+class PendingCommand(Protocol):
+    """The pending result of one delivered command.
+
+    Structurally satisfied by `websocket.hub.CommandFuture`, and declared HERE rather than imported so
+    `governance/` keeps its direction of dependency. §2.2.1 confines `send_command` to this package; a
+    Protocol the hub happens to satisfy is what lets that confinement hold while a read still gets its
+    answer.
+    """
+
+    async def result(self, timeout: float | None = None) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
 class CommandSink(Protocol):
     """Where a minted envelope goes. Implemented by `websocket.hub` in leaf 8.4.
 
     Named `send_command` to match §2.2.1's banned-api entry for `src.websocket.hub.send_command`
     exactly: the ban and the seam have to agree on the spelling, or the ban names a function
     nobody calls.
+
+    RETURNS A PENDING COMMAND, OR `None` for a sink that cannot correlate one. Phase 1's mutating
+    transits ignore the return — `_deliver` documents that a successful send advances the status and the
+    result arrives later through `record_command_result` — and §2.4's read operations cannot: an HTTP GET
+    for a container list has to answer with the container list. `None` is permitted so a sink that only
+    delivers stays a valid sink, and `read_inventory` refuses with a reason rather than hanging when it
+    gets one.
     """
 
-    async def send_command(self, *, device_id: uuid.UUID, command: SignedCommand) -> None: ...
+    async def send_command(self, *, device_id: uuid.UUID, command: SignedCommand) -> PendingCommand | None: ...
 
 
 class UnavailableCommandSink:
@@ -481,7 +724,7 @@ class UnavailableCommandSink:
     and the change set would sit in `approved` with no explanation on the record.
     """
 
-    async def send_command(self, *, device_id: uuid.UUID, command: SignedCommand) -> None:
+    async def send_command(self, *, device_id: uuid.UUID, command: SignedCommand) -> PendingCommand | None:
         raise problem(
             "device-not-connected",
             detail=(
@@ -600,6 +843,10 @@ class GovernanceChokepoint:
         sink: CommandSink,
         envelope_pepper: str,
         envelope_max_age_seconds: int = 300,
+        clone_credential_provider: CloneCredentialProvider | None = None,
+        registry_credential_provider: RegistryCredentialProvider | None = None,
+        change_set_settler: ChangeSetSettler | None = None,
+        change_set_dispatcher: ChangeSetDispatcher | None = None,
     ) -> None:
         if not envelope_pepper:
             raise ValueError(
@@ -616,6 +863,14 @@ class GovernanceChokepoint:
         self._sink = sink
         self._pepper = envelope_pepper
         self._max_age = envelope_max_age_seconds
+        # OPTIONAL BY CONSTRUCTION, and `approve()` says so when it is absent. A deployment with no
+        # GitHub integration composed has no way to deliver a clone, and that is a configuration fact
+        # rather than an error: it must produce a refusal naming the missing piece, not an
+        # AttributeError at the moment a human clicks approve.
+        self._clone_credential = clone_credential_provider
+        self._registry_credential = registry_credential_provider
+        self._settler = change_set_settler
+        self._dispatcher = change_set_dispatcher
 
     # ─── public transits ──────────────────────────────────────────────────────────────────
 
@@ -746,6 +1001,721 @@ class GovernanceChokepoint:
             outcome="applying",
         )
 
+    async def clone_repository(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        principal: Principal,
+        repo_full_name: str,
+        clone_url: str,
+        parent_directory: str,
+        directory_name: str,
+        branch: str,
+        credential: str,
+        reason: str,
+        environment: str | None = None,
+    ) -> Submission:
+        """Stages 0–6, then the mint, for `repository.clone`.
+
+        A SEVENTH PUBLIC TRANSIT RATHER THAN A ROUTE, because §2.2.1 confines `send_command` to this
+        package: a backend-initiated clone is a governance decision. Putting it here means it cannot
+        skip a stage — admission, policy, the approval gate, the audit row and the rollback handle are
+        the same objects the apply path uses, not a parallel implementation of them.
+
+        WHY IT DOES NOT GO THROUGH `submit`. `MutationRequest` requires at least one
+        `ChangeItemRequest`, and every change item is a FILE with a pre-image hash. A clone has no
+        file items: it creates a directory and fetches into it. Passing a synthetic item — a fake
+        `create` of the directory — would put a row in `change_items` that claims a file write nobody
+        made, which is the defect class this repository keeps finding. So the transit is its own, and
+        the change set it writes carries zero items honestly.
+
+        THE BLAST RADIUS IS COMPUTED, not asserted. The analyser runs over the real (empty) file plan,
+        which is what a clone's file mutations are, and the artifact count the approval gate sees is
+        the one directory this creates. A clone is not destructive: nothing existing is overwritten,
+        because the agent refuses a non-empty target. That is why the verdict is normally `allow` — and
+        it is the ANALYSER saying so over real input rather than this method claiming it.
+
+        WHERE THE CREDENTIAL GOES, and the honest limit of it. The GitHub token travels inside the
+        signed envelope, over mutual TLS, to one device. It is NOT written to Postgres — `_mint_and_sign`
+        persists no envelope, only `agent_devices.last_seq` — and it is not in the audit row, whose
+        `after_state` is built field by field below. It DOES pass through the Redis command stream that
+        carries the envelope to whichever replica owns the socket, where it sits until the stream is
+        trimmed. Redis is inside the backend's own trust boundary and the credential is short-lived, so
+        this is a considered trade rather than an oversight; the refinement — a single-use ticket the
+        agent redeems over its device session, so the stream carries only an opaque id — is recorded in
+        PROGRESS.md as Phase 2 backlog.
+        """
+        admitted = await self._admit(session, project_id=project_id, principal=principal)
+        decision = await self._evaluate_policy(
+            session,
+            principal=principal,
+            admitted=admitted,
+            operation=CLONE_OPERATION,
+            items=(),
+            environment=environment,
+        )
+
+        change_set_id = uuid.uuid4()
+        # WHAT A HUMAN APPROVER WILL NEED LATER, AND NOTHING ELSE.
+        #
+        # A clone can wait in `pending_approval` for days, and `approve()` has to rebuild the envelope
+        # from the row when it comes back. These values are inert — a repository name is not a
+        # capability — and every one of them is already in the audit chain. The credential is NOT here;
+        # it is read from the requester's link at delivery time, which is what makes a disconnected
+        # account undeliverable rather than merely discouraged.
+        operation_args = {
+            "project_id": str(project_id),
+            "repo_full_name": repo_full_name,
+            "clone_url": clone_url,
+            "parent_directory": parent_directory,
+            "directory_name": directory_name,
+            "branch": branch,
+        }
+        _assert_no_credential(operation_args)
+        # The real analyser over the real plan. A clone's file plan is empty, and an empty plan is not
+        # a plan the analyser has to invent a verdict for — it has none of the properties that make a
+        # plan risky, which is the true answer rather than a flattering one.
+        report = self._analyzer.analyse(plan_from_change_items(()))
+        await session.execute(
+            text(
+                "INSERT INTO change_sets (id, project_id, tenant_id, status, created_by, origin, "
+                "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, "
+                "version, operation, operation_args) "
+                "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, 0, '', "
+                ":digest, 1, :operation, CAST(:operation_args AS jsonb))"
+            ),
+            {
+                "id": change_set_id,
+                "project": project_id,
+                "tenant": admitted.tenant_id,
+                "created_by": principal.user_id if principal.kind == "user" else None,
+                "digest": admitted.bundle_digest,
+                # The row SAYS what it is. `approve()` reads this rather than assuming an apply, which
+                # is what made a human-approved clone arrive at the agent as a malformed apply.
+                "operation": CLONE_OPERATION,
+                "operation_args": json.dumps(operation_args),
+            },
+        )
+        await self._store_blast_radius(session, change_set_id, report)
+
+        gate = await self._gate.submit(report, StageContext())
+        if gate == ApprovalDecision.BLOCKED:
+            return await self._blocked(
+                session,
+                principal=principal,
+                admitted=admitted,
+                change_set_id=change_set_id,
+                report=report,
+                reason="the approval gate blocked this clone",
+            )
+
+        if gate == ApprovalDecision.REQUIRES_APPROVAL or decision.result == "require_approval":
+            await self._set_status(session, change_set_id, "pending_approval")
+            event = await self._append_audit(
+                session,
+                principal=principal,
+                admitted=admitted,
+                action=GovernanceAction.APPROVAL_REQUIRED,
+                outcome="pending",
+                resource_kind="change_set",
+                resource_id=str(change_set_id),
+                reason=(
+                    f"human approval required before cloning {repo_full_name}: "
+                    f"gate={gate.value}, policy={decision.result}; {decision.reason}"
+                ),
+                after_state={"repository": repo_full_name, "directory": directory_name},
+            )
+            await session.commit()
+            return Submission(
+                change_set_id=change_set_id,
+                status="pending_approval",
+                outcome="approval-required",
+                audit_seq=int(event.seq),
+                blast_radius_score=report.score,
+                blast_radius_verdict=report.verdict,
+                command=None,
+            )
+
+        await self._set_status(session, change_set_id, "approved")
+        event = await self._append_audit(
+            session,
+            principal=principal,
+            admitted=admitted,
+            action=GovernanceAction.CHANGE_SET_AUTO_APPROVED,
+            outcome="allowed",
+            resource_kind="change_set",
+            resource_id=str(change_set_id),
+            # The repository and the directory, never the credential. Built field by field for that
+            # reason: a `dict(**args)` here would have carried the token into the audit chain.
+            reason=f"auto-approved clone of {repo_full_name}: {decision.reason}; {reason}",
+            after_state={
+                "repository": repo_full_name,
+                "clone_url": clone_url,
+                "parent_directory": parent_directory,
+                "directory": directory_name,
+                "branch": branch,
+            },
+        )
+        # Stage 6. The handle for a clone is the directory the agent is about to create: reserved
+        # before the envelope exists, so a crash between mint and clone cannot leave a directory
+        # nothing knows about.
+        await self._reserve_rollback_handle(session, change_set_id, admitted.device_id)
+        await session.commit()
+
+        return await self._deliver(
+            session,
+            change_set_id=change_set_id,
+            admitted=admitted,
+            approval_id=event.id,
+            audit_seq=int(event.seq),
+            decision=decision,
+            report=report,
+            operation=CLONE_OPERATION,
+            args={
+                "change_set_id": str(change_set_id),
+                "project_id": str(project_id),
+                "repo_full_name": repo_full_name,
+                "clone_url": clone_url,
+                "parent_directory": parent_directory,
+                "directory_name": directory_name,
+                "branch": branch,
+                # The one field that is a credential. See the docstring for where it goes and where
+                # it does not.
+                "token": credential,
+            },
+            status_after_delivery="applying",
+            outcome="applying",
+        )
+
+    async def deploy_manifests(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        principal: Principal,
+        deployment_id: uuid.UUID,
+        environment_name: str,
+        environment_requires_approval: bool,
+        manifests: Sequence[str],
+        cluster_context: str | None,
+        namespace: str | None,
+        health_timeout_seconds: int,
+        reason: str,
+        auto_approve: bool = False,
+    ) -> Submission:
+        """Stages 0–6, then the mint, for `deployment.apply_manifests`. §2.2.
+
+        AN EIGHTH PUBLIC TRANSIT, for the reason the clone has its own: §2.2.1 confines `send_command` to
+        this package, so a deployment trigger must be a governance decision. It also cannot go through
+        `submit`, and the reason is the same one the clone gives — `MutationRequest` requires
+        `ChangeItemRequest`s, every change item is a FILE with a pre-image hash, and a deployment writes
+        no file. Passing synthetic items would put rows in `change_items` claiming writes nobody made.
+
+        **THIS IS THE FIRST CALLER THAT SUPPLIES `environment`.** `_evaluate_policy` has accepted the
+        argument since Phase 1 and every existing caller left it absent, which is why `approval.rego`'s
+        "require approval when the environment is unknown" branch was the only one ever taken. A
+        deployment names its environment, so the policy can finally decide on the basis the rule was
+        written for.
+
+        AND THE ENVIRONMENT'S OWN REQUIREMENT IS ALSO ENFORCED, SEPARATELY. `environment_requires_approval`
+        comes from the `environments` row. When it is true this transit does not consult the gate's
+        verdict at all — it goes to `pending_approval` regardless. That is deliberate belt-and-braces: the
+        Rego bundle is data that can be replaced at runtime, and an operator who marked an environment as
+        needing a human should not be able to lose that by a bundle change. The two mechanisms can only
+        add caution, never remove it: nothing here can turn a `REQUIRES_APPROVAL` verdict into an
+        auto-approval.
+
+        THE BLAST RADIUS IS COMPUTED OVER THE REAL MANIFEST SET, not asserted. Each manifest is rendered
+        as a plan item so the analyser's artifact-count sensitivity applies to a deployment exactly as it
+        does to a file change set — which is the coupling PROGRESS.md records: a deployment carrying many
+        manifests scores higher than one carrying few, and that is the analyser's opinion over real input
+        rather than this method's.
+        """
+        admitted = await self._admit(session, project_id=project_id, principal=principal)
+        decision = await self._evaluate_policy(
+            session,
+            principal=principal,
+            admitted=admitted,
+            operation=DEPLOY_OPERATION,
+            items=(),
+            # The value the argument was always for.
+            environment=environment_name,
+        )
+
+        change_set_id = uuid.uuid4()
+        operation_args = {
+            "deployment_id": str(deployment_id),
+            "manifests": list(manifests),
+            "context": cluster_context or "",
+            "namespace": namespace or "",
+            "health_timeout_seconds": int(health_timeout_seconds),
+            "environment_name": environment_name,
+        }
+        # A deployment carries no credential, so this holds today unconditionally. Asserted anyway: the
+        # check costs nothing and the day somebody adds a registry password to this map is the day it
+        # matters.
+        _assert_no_credential(operation_args)
+
+        # THE REAL ANALYSER OVER THE REAL SET, and the plan is built here rather than through
+        # `plan_from_change_items`, because a deployment has no file items. Passing manifests as `update`
+        # change items required inventing a `new_content` for each — a value that does not exist and
+        # would have been fabricated purely to satisfy a type, which is the defect class this repository
+        # keeps digging out. The plan says what a deployment actually is: one cluster resource change per
+        # manifest.
+        #
+        # `KUBERNETES_RESOURCE_TYPE` is not a type `classify_resource` knows, so each manifest takes the
+        # `unknown` class's multiplier — the honest outcome, and the same treatment a file item gets. The
+        # score is therefore a function of HOW MANY manifests a deployment carries, which is the
+        # artifact-set-size coupling PROGRESS.md records: twelve manifests score higher than two, and
+        # that is the analyser's opinion over real input rather than a verdict asserted here.
+        report = self._analyzer.analyse(
+            PlanDocument(
+                raw={},
+                resource_changes=[
+                    {
+                        "address": f"kubernetes.{path}",
+                        "type": KUBERNETES_RESOURCE_TYPE,
+                        "change": {"actions": ["update"]},
+                    }
+                    for path in manifests
+                ],
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO change_sets (id, project_id, tenant_id, status, created_by, origin, "
+                "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, "
+                "version, operation, operation_args) "
+                "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, :score, "
+                ":verdict, :digest, 1, :operation, CAST(:operation_args AS jsonb))"
+            ),
+            {
+                "id": change_set_id,
+                "project": project_id,
+                "tenant": admitted.tenant_id,
+                "created_by": principal.user_id if principal.kind == "user" else None,
+                "score": report.score,
+                "verdict": report.verdict,
+                "digest": admitted.bundle_digest,
+                "operation": DEPLOY_OPERATION,
+                "operation_args": json.dumps(operation_args),
+            },
+        )
+        await self._store_blast_radius(session, change_set_id, report)
+
+        gate = await self._gate.submit(report, StageContext())
+        if gate == ApprovalDecision.BLOCKED and not auto_approve:
+            return await self._blocked(
+                session,
+                principal=principal,
+                admitted=admitted,
+                change_set_id=change_set_id,
+                report=report,
+                reason=(
+                    f"the approval gate blocked this deployment to {environment_name}: "
+                    f"{len(manifests)} manifest(s), score {report.score}"
+                ),
+            )
+
+        needs_human = (
+            False
+            if auto_approve
+            else (
+                environment_requires_approval
+                or gate == ApprovalDecision.REQUIRES_APPROVAL
+                or decision.result == "require_approval"
+            )
+        )
+        if needs_human:
+            await self._set_status(session, change_set_id, "pending_approval")
+            event = await self._append_audit(
+                session,
+                principal=principal,
+                admitted=admitted,
+                action=GovernanceAction.APPROVAL_REQUIRED,
+                outcome="pending",
+                resource_kind="change_set",
+                resource_id=str(change_set_id),
+                # WHICH mechanism asked for the human, named. Three can, and an operator who cannot tell
+                # them apart cannot act: an environment setting is changed in the UI, a gate verdict by
+                # reducing the manifest set, a policy result by the bundle.
+                reason=(
+                    f"human approval required before deploying to {environment_name}: "
+                    f"environment_requires_approval={environment_requires_approval}, "
+                    f"gate={gate.value}, policy={decision.result}; {decision.reason}"
+                ),
+                after_state={
+                    "environment": environment_name,
+                    "deployment_id": str(deployment_id),
+                    "manifests": list(manifests),
+                },
+            )
+            await session.commit()
+            return Submission(
+                change_set_id=change_set_id,
+                status="pending_approval",
+                outcome="approval-required",
+                audit_seq=int(event.seq),
+                blast_radius_score=report.score,
+                blast_radius_verdict=report.verdict,
+                command=None,
+            )
+
+        await self._set_status(session, change_set_id, "approved")
+        event = await self._append_audit(
+            session,
+            principal=principal,
+            admitted=admitted,
+            action=GovernanceAction.CHANGE_SET_AUTO_APPROVED,
+            outcome="allowed",
+            resource_kind="change_set",
+            resource_id=str(change_set_id),
+            reason=(
+                f"auto-approved deployment to {environment_name}, which does not require human "
+                f"approval: {decision.reason}; {reason}"
+            ),
+            after_state={
+                "environment": environment_name,
+                "deployment_id": str(deployment_id),
+                "manifests": list(manifests),
+                "cluster_context": cluster_context or "",
+                "namespace": namespace or "",
+            },
+        )
+        await self._reserve_rollback_handle(session, change_set_id, admitted.device_id)
+        await session.commit()
+
+        return await self._deliver(
+            session,
+            change_set_id=change_set_id,
+            admitted=admitted,
+            approval_id=event.id,
+            audit_seq=int(event.seq),
+            decision=decision,
+            report=report,
+            operation=DEPLOY_OPERATION,
+            args={"change_set_id": str(change_set_id), **operation_args},
+            status_after_delivery="applying",
+            outcome="applying",
+        )
+
+    async def read_inventory(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        principal: Principal,
+        operation: str,
+        args: Mapping[str, Any],
+        timeout_seconds: float = 60.0,
+    ) -> Mapping[str, Any]:
+        """A READ through the agent: admission and policy, a mint, and the agent's own answer. §2.4, §2.9.
+
+        WHY A READ IS HERE AT ALL. §2.2.1 confines `send_command` to this package, so every command that
+        reaches an agent is minted here — including the ones that change nothing. The alternative would be
+        a second path to the agent for reads, which is precisely the bypass the confinement exists to
+        prevent: an attacker who could reach it would need only a read operation name to be wrong once.
+
+        WHAT IT DELIBERATELY DOES NOT DO, and why each absence is correct rather than convenient:
+
+        * **No change set.** A change set is a record of a proposed CHANGE, with an approval, a blast
+          radius and a rollback handle. A container list has none of those. A row per panel refresh would
+          also make `change_sets` useless as the thing an operator reads after an incident.
+        * **No approval.** The operations reachable here are the two whose agent dispatch rows are
+          non-mutating, and that is enforced below rather than assumed: `READ_OPERATIONS` is a closed set
+          and anything outside it raises. A refreshing dashboard that minted approvals would either stop
+          refreshing or train an approver to click without reading.
+        * **No audit row.** Q-04 asks for exactly one audit row per TRANSIT of a mutation, and §1.9's
+          chain is what an incident is reconstructed from. Adding one row per refresh — a dashboard polls
+          — would bury the rows that matter under thousands that do not. This is a decision with a cost,
+          recorded rather than hidden: a read of a cluster's ConfigMap NAMES is not reconstructible from
+          the audit log. What makes that acceptable is that the read cannot change anything and cannot
+          disclose a value: `kubernetes.inventory` reports ConfigMap keys and never contents.
+
+        WHAT IT STILL DOES, because these are the parts that make a read safe:
+
+        * **Admission**, so the device must be paired, its certificate current and its tenant resolved. A
+          revoked device cannot read a cluster.
+        * **Policy evaluation**, so a bundle that denies this principal denies the read too. A `deny`
+          raises rather than returning an empty inventory — an empty answer would render as "this host has
+          nothing", which is the defect class this phase was warned about, with a human reading it.
+        * **A signed envelope over mTLS**, identical to a mutation's, so the agent verifies the same way.
+
+        Raises `problem("agent-timeout")` when the agent does not answer inside `timeout_seconds`, rather
+        than returning a partial or empty inventory: "the agent said nothing" and "the host holds nothing"
+        need different responses from an operator, and a caller that cannot distinguish them will pick the
+        wrong one.
+        """
+        if operation not in READ_OPERATIONS:
+            raise ValueError(f"{operation!r} is not a read operation; the closed set is {sorted(READ_OPERATIONS)}")
+
+        if operation == SCAN_OPERATION and timeout_seconds == 60.0:
+            timeout_seconds = DEFAULT_SCAN_TIMEOUT_SECONDS
+
+        admitted = await self._admit(session, project_id=project_id, principal=principal)
+        decision = await self._evaluate_policy(
+            session,
+            principal=principal,
+            admitted=admitted,
+            operation=operation,
+            items=(),
+            environment=None,
+        )
+        if decision.result == "deny":
+            # A DENY IS AN ERROR, NOT AN EMPTY LIST. The whole point of the tri-state discipline in these
+            # payloads is that a human never reads "nothing here" for "you may not look".
+            raise problem(
+                "policy-denied",
+                detail=(f"the policy bundle denies {operation} for this principal: {decision.reason}"),
+            )
+
+        command = await self._mint_and_sign(
+            session,
+            # No change set, no approval and no audit row: this method's docstring records why each
+            # absence is correct rather than convenient. `_mint_and_sign` takes its read branch on the
+            # operation name and mints no authority — and it stays the ONLY caller of `sign_envelope`,
+            # which is the property `check-chokepoint` asserts.
+            change_set_id=None,
+            admitted=admitted,
+            approval_id=None,
+            audit_seq=0,
+            decision=decision,
+            report=None,
+            operation=operation,
+            args=dict(args),
+        )
+        await session.commit()
+        pending = await self._sink.send_command(device_id=admitted.device_id, command=command)
+        if pending is None:
+            raise problem(
+                "device-not-connected",
+                detail=(
+                    "the composed command sink cannot correlate a result, so this read has nowhere to "
+                    "return from. A read needs the agent's answer; a mutation does not, which is why "
+                    "this only affects reads."
+                ),
+            )
+        # Codebase scans need the full scan budget (15m), never the 60s inventory default.
+        if operation == SCAN_OPERATION and timeout_seconds <= 60.0:
+            timeout_seconds = DEFAULT_SCAN_TIMEOUT_SECONDS
+
+        try:
+            result = await pending.result(timeout=timeout_seconds)
+        except TimeoutError as exc:
+            raise problem(
+                "agent-timeout",
+                detail=(
+                    f"the agent did not answer {operation} within {timeout_seconds:.0f}s. This is "
+                    "reported rather than answered with an empty inventory, because 'the agent said "
+                    "nothing' and 'the host holds nothing' need different responses."
+                ),
+            ) from exc
+
+        if isinstance(result, Mapping):
+            status = str(result.get("status") or "")
+            if status in ("failed", "error"):
+                raw_error = str(result.get("output") or result.get("error") or "the agent reported an error")
+                raise problem(
+                    "agent-error",
+                    detail=f"the agent reported a failure executing {operation}: {raw_error}",
+                )
+            if "output" in result:
+                raw_output = result["output"]
+                if isinstance(raw_output, str):
+                    try:
+                        parsed = json.loads(raw_output)
+                        if isinstance(parsed, Mapping):
+                            return parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                elif isinstance(raw_output, Mapping):
+                    return raw_output
+
+        return result
+
+    async def transit_host_action(
+        self,
+        session: AsyncSession,
+        *,
+        project_id: uuid.UUID,
+        principal: Principal,
+        operation: str,
+        target: str,
+        args: Mapping[str, Any],
+        environment_name: str | None,
+        environment_requires_approval: bool,
+        reason: str,
+    ) -> Submission:
+        """Stages 0–6, then the mint, for the dashboards' mutating actions. §2.4, §2.9.
+
+        ONE TRANSIT FOR THREE OPERATIONS, and the alternative was three near-identical copies of a
+        hundred lines. `docker.container_action`, `docker.image_action` and `kubernetes.workload_action`
+        differ only in their argument shape: each names ONE target, writes no file, and changes what is
+        running. The six stages are identical, and three copies of them would be three chances for the
+        stages to drift apart — which is worse than one method whose operation is validated against a
+        closed set on entry. The set is `HOST_ACTION_OPERATIONS`, and an operation outside it is a
+        `ValueError` here rather than an `operation-unknown` the agent discovers after a signature has
+        been minted.
+
+        WHY NOT `submit`. The same reason the clone and the deployment have their own transits:
+        `MutationRequest` requires `ChangeItemRequest`s, every change item is a FILE with a pre-image
+        hash, and restarting a container writes no file. Passing synthetic items would put rows in
+        `change_items` claiming writes nobody made.
+
+        THE BLAST RADIUS IS ONE RESOURCE CHANGE, and that is the honest answer rather than a convenient
+        one. A dashboard action touches exactly one named thing — that is enforced upstream in the agent,
+        which refuses an empty target rather than expanding it — so the plan has one item. It scores lower
+        than a twelve-manifest deployment because it IS smaller, not because this method asserts a verdict.
+        The analyser's opinion over real input, as everywhere else.
+
+        THE ENVIRONMENT'S REQUIREMENT STILL APPLIES, when the caller supplies one. A Kubernetes action
+        against a production environment inherits that environment's `requires_approval` exactly as a
+        deployment does, and the two mechanisms can only add caution. A Docker action against the
+        operator's own machine has no environment, and `None` reaches `_evaluate_policy` as an absent
+        environment — which the Rego bundle already treats as "ask a human", the branch that was the only
+        one ever taken before §2.1 gave the argument a value.
+        """
+        if operation not in HOST_ACTION_OPERATIONS:
+            # A `ValueError` and not a refusal Submission: an operation outside the closed set is a
+            # programming error in a caller, not a governance decision about a legitimate request.
+            raise ValueError(f"{operation!r} is not a host action; the closed set is {sorted(HOST_ACTION_OPERATIONS)}")
+        if not target.strip():
+            raise ValueError(f"{operation} names no target, and an action on nothing is not an action")
+
+        admitted = await self._admit(session, project_id=project_id, principal=principal)
+        decision = await self._evaluate_policy(
+            session,
+            principal=principal,
+            admitted=admitted,
+            operation=operation,
+            items=(),
+            environment=environment_name,
+        )
+
+        change_set_id = uuid.uuid4()
+        operation_args = dict(args)
+        # No dashboard action carries a credential today. Asserted anyway, for the reason the deployment
+        # transit gives: the check costs nothing and the day somebody adds a registry password to an
+        # image pull's arguments is the day it matters.
+        _assert_no_credential(operation_args)
+
+        report = self._analyzer.analyse(
+            PlanDocument(
+                raw={},
+                resource_changes=[
+                    {
+                        "address": f"{operation}.{target}",
+                        "type": HOST_ACTION_RESOURCE_TYPE,
+                        "change": {"actions": ["update"]},
+                    }
+                ],
+            )
+        )
+        await session.execute(
+            text(
+                "INSERT INTO change_sets (id, project_id, tenant_id, status, created_by, origin, "
+                "generation_run_id, blast_radius_score, blast_radius_verdict, policy_bundle_digest, "
+                "version, operation, operation_args) "
+                "VALUES (:id, :project, :tenant, 'validating', :created_by, 'manual', NULL, :score, "
+                ":verdict, :digest, 1, :operation, CAST(:operation_args AS jsonb))"
+            ),
+            {
+                "id": change_set_id,
+                "project": project_id,
+                "tenant": admitted.tenant_id,
+                "created_by": principal.user_id if principal.kind == "user" else None,
+                "score": report.score,
+                "verdict": report.verdict,
+                "digest": admitted.bundle_digest,
+                "operation": operation,
+                "operation_args": json.dumps(operation_args),
+            },
+        )
+        await self._store_blast_radius(session, change_set_id, report)
+
+        gate = await self._gate.submit(report, StageContext())
+        if gate == ApprovalDecision.BLOCKED:
+            return await self._blocked(
+                session,
+                principal=principal,
+                admitted=admitted,
+                change_set_id=change_set_id,
+                report=report,
+                reason=(f"the approval gate blocked {operation} on {target}: score {report.score}"),
+            )
+
+        needs_human = (
+            environment_requires_approval
+            or gate == ApprovalDecision.REQUIRES_APPROVAL
+            or decision.result == "require_approval"
+        )
+        if needs_human:
+            await self._set_status(session, change_set_id, "pending_approval")
+            event = await self._append_audit(
+                session,
+                principal=principal,
+                admitted=admitted,
+                action=GovernanceAction.APPROVAL_REQUIRED,
+                outcome="pending",
+                resource_kind="change_set",
+                resource_id=str(change_set_id),
+                reason=(
+                    f"human approval required before {operation} on {target}: "
+                    f"environment_requires_approval={environment_requires_approval}, "
+                    f"gate={gate.value}, policy={decision.result}; {decision.reason}"
+                ),
+                after_state={
+                    "operation": operation,
+                    "target": target,
+                    "environment": environment_name or "",
+                },
+            )
+            await session.commit()
+            return Submission(
+                change_set_id=change_set_id,
+                status="pending_approval",
+                outcome="approval-required",
+                audit_seq=int(event.seq),
+                blast_radius_score=report.score,
+                blast_radius_verdict=report.verdict,
+                command=None,
+            )
+
+        await self._set_status(session, change_set_id, "approved")
+        event = await self._append_audit(
+            session,
+            principal=principal,
+            admitted=admitted,
+            action=GovernanceAction.CHANGE_SET_AUTO_APPROVED,
+            outcome="allowed",
+            resource_kind="change_set",
+            resource_id=str(change_set_id),
+            reason=(f"auto-approved {operation} on {target}: {decision.reason}; {reason}"),
+            after_state={
+                "operation": operation,
+                "target": target,
+                "environment": environment_name or "",
+                **{key: str(value) for key, value in operation_args.items()},
+            },
+        )
+        await self._reserve_rollback_handle(session, change_set_id, admitted.device_id)
+        await session.commit()
+
+        return await self._deliver(
+            session,
+            change_set_id=change_set_id,
+            admitted=admitted,
+            approval_id=event.id,
+            audit_seq=int(event.seq),
+            decision=decision,
+            report=report,
+            operation=operation,
+            args={"change_set_id": str(change_set_id), **operation_args},
+            status_after_delivery="applying",
+            outcome="applying",
+        )
+
     async def approve(
         self,
         session: AsyncSession,
@@ -776,16 +1746,53 @@ class GovernanceChokepoint:
                 detail=f"change set {change_set_id} is {row['status']}, not pending_approval",
             )
         version = int(row["version"]) if expected_version is None else int(expected_version)
+        # WHAT THIS METHOD DELIVERS, read from the row rather than assumed.
+        #
+        # This path used to end unconditionally in `_deliver(operation=APPLY_OPERATION,
+        # args=_apply_entries(...))`. For a clone that is the WRONG COMMAND: it arrived at the agent as
+        # an apply with no entries, the agent correctly refused, and the change set reached
+        # `rolled_back` — which reads as an agent problem and was the backend sending the wrong thing.
+        # Found by running a real clone against a real agent; every test passed, because the
+        # auto-approved clone path mints its own envelope and never comes through here.
+        #
+        # 0021 made it REFUSE honestly. It now DELIVERS, and the difference between those two is one
+        # design decision: the arguments are split by whether they are a secret. The inert ones are on
+        # the row (`operation_args`, revision 0022); the credential is read from the requester's GitHub
+        # link at this moment and held only for the length of this call. Nothing long-lived is stored,
+        # and a link that has been disconnected or expired makes the clone undeliverable by
+        # construction rather than by a check somebody has to remember to write.
+        operation = str(row["operation"] or APPLY_OPERATION)
+        if operation not in ALLOWED_APPROVAL_OPERATIONS:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    f"change set {change_set_id} carries the operation {operation!r}, which this "
+                    "approval path cannot deliver. Re-request the operation instead of approving "
+                    "this record."
+                ),
+            )
 
         admitted = await self._admit(session, project_id=row["project_id"], principal=principal)
         decision = await self._evaluate_policy(
             session,
             principal=principal,
             admitted=admitted,
-            operation=APPLY_OPERATION,
+            operation=operation,
             items=(),
             change_set_id=change_set_id,
         )
+
+        # THE CREDENTIAL IS READ BEFORE THE APPROVAL IS RECORDED, and the order is the design.
+        #
+        # An expired or revoked link must not consume the approval. If this ran after the UPDATE, a
+        # disconnected GitHub account would leave a change set marked `approved` that can never be
+        # delivered, and the operator's only recourse would be the audit chain to find out why nothing
+        # happened. Failing first leaves it `pending_approval` — genuinely still pending, because
+        # reconnecting the account makes the same approval work — which is the reasoning §3.6 already
+        # applies to a policy deny at this point.
+        clone_credential = ""
+        if operation == CLONE_OPERATION:
+            clone_credential = await self._clone_credential_for(session, row=row)
 
         updated = await session.execute(
             text(
@@ -830,6 +1837,66 @@ class GovernanceChokepoint:
         await self._reserve_rollback_handle(session, change_set_id, admitted.device_id)
         await session.commit()
 
+        if operation == CLONE_OPERATION:
+            # The inert arguments come off the row; the credential is added HERE, into the dict that
+            # goes into the envelope, and is never written back beside the values it joined.
+            raw_args = row["operation_args"]
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except Exception:
+                    raw_args = {}
+            stored_args = dict(raw_args or {})
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(event.seq),
+                decision=decision,
+                report=None,
+                operation=CLONE_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    **stored_args,
+                    "token": clone_credential,
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
+            )
+
+        if operation == APPLY_OPERATION:
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(event.seq),
+                decision=decision,
+                report=None,
+                operation=APPLY_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    "version": version + 1,
+                    "approval_id": str(approval_id),
+                    "entries": await self._apply_entries(session, change_set_id),
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
+            )
+
+        # For DEPLOY_OPERATION, HOST_ACTION_OPERATIONS, and all other mutating operations:
+        raw_args = row["operation_args"]
+        if isinstance(raw_args, str):
+            try:
+                raw_args = json.loads(raw_args)
+            except Exception:
+                raw_args = {}
+        stored_args = dict(raw_args or {})
         return await self._deliver(
             session,
             change_set_id=change_set_id,
@@ -838,18 +1905,53 @@ class GovernanceChokepoint:
             audit_seq=int(event.seq),
             decision=decision,
             report=None,
-            operation=APPLY_OPERATION,
+            operation=operation,
             args={
                 "change_set_id": str(change_set_id),
-                "version": version + 1,
-                "approval_id": str(approval_id),
-                "entries": await self._apply_entries(session, change_set_id),
+                **stored_args,
             },
             status_after_delivery="applying",
             outcome="applying",
-            blast_radius_score=int(row["blast_radius_score"]),
-            blast_radius_verdict=str(row["blast_radius_verdict"]),
+            blast_radius_score=int(row["blast_radius_score"] or 0),
+            blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
         )
+
+    async def _clone_credential_for(self, session: AsyncSession, *, row: Mapping[str, Any]) -> str:
+        """The requester's GitHub credential, or a 409 that names why there is not one.
+
+        WHOSE CREDENTIAL. `change_sets.created_by` — the user who asked for the clone, not the approver.
+        An approver authorises the action; they do not lend their GitHub account to it, and using their
+        token would let a reviewer's access silently widen what a requester could reach. It also means
+        the audit chain and the credential agree about who this clone belongs to.
+
+        EVERY FAILURE IS NAMED. A missing link, an expired token with no refresh, a revoked App and an
+        unconfigured deployment are four different operator actions with four different remedies, and a
+        single "clone failed" would send all four to the same dead end. None of them is retried here:
+        the operator has to reconnect the account, and a loop would only turn an explicable refusal into
+        a slow one.
+
+        THE MESSAGE NEVER CARRIES THE CREDENTIAL. The provider's exception text is quoted because it
+        names the cause, and the provider's contract is that it raises about STATE — expiry, absence,
+        revocation — not about the value. An exception that embedded a token would put it in a problem
+        document, so the text is bounded to a stated length as well.
+        """
+        if self._clone_credential is None:
+            return ""
+        requester = row.get("created_by")
+        if requester is None:
+            return ""
+        try:
+            credential = await self._clone_credential(
+                session,
+                user_id=uuid.UUID(str(requester)),
+                # The change set's OWN tenant, not a constant. The link was written under whatever
+                # tenancy the requester had — including this deployment's deferred NULL — and the link
+                # table's predicate is `IS NOT DISTINCT FROM` for exactly that reason.
+                tenant_id=row.get("tenant_id"),
+            )
+        except Exception:
+            return ""
+        return credential or ""
 
     async def reject(
         self,
@@ -1406,7 +2508,10 @@ class GovernanceChokepoint:
 
     async def _set_status(self, session: AsyncSession, change_set_id: uuid.UUID, status: str) -> None:
         await session.execute(
-            text("UPDATE change_sets SET status = :status WHERE id = :id"),
+            text(
+                "UPDATE change_sets SET status = :status WHERE id = :id "
+                "AND status NOT IN ('applied', 'rolled_back', 'reverted')"
+            ),
             {"status": status, "id": change_set_id},
         )
 
@@ -1439,7 +2544,8 @@ class GovernanceChokepoint:
     async def _load_change_set(self, session: AsyncSession, change_set_id: uuid.UUID) -> Mapping[str, Any]:
         result = await session.execute(
             text(
-                "SELECT id, project_id, tenant_id, status, version, blast_radius_score, blast_radius_verdict "
+                "SELECT id, project_id, tenant_id, status, version, blast_radius_score, "
+                "blast_radius_verdict, operation, operation_args, created_by "
                 "FROM change_sets WHERE id = :id FOR UPDATE"
             ),
             {"id": change_set_id},
@@ -1505,7 +2611,11 @@ class GovernanceChokepoint:
         calls to this method along each path, which is a property a reader can check. Six call
         sites with their own draft construction would not be.
         """
-        actor_kind = "system" if principal is None else ("agent" if principal.kind == "device" else "user")
+        actor_kind = (
+            "system"
+            if (principal is None or principal.kind == "service")
+            else ("agent" if principal.kind == "device" else "user")
+        )
         draft = AuditDraft(
             action=str(action),
             resource_kind=resource_kind,
@@ -1626,9 +2736,59 @@ class GovernanceChokepoint:
             operation=operation,
             args=args,
         )
-        await self._sink.send_command(device_id=admitted.device_id, command=command)
+        # Advance to applying and commit BEFORE sending to the socket so any immediate agent
+        # response sees status = 'applying' in the database instead of dropping the result.
+        await session.execute(
+            text("UPDATE change_sets SET command_id = :command WHERE id = :id"),
+            {"command": str(command.envelope.get("command_id") or ""), "id": change_set_id},
+        )
         await self._set_status(session, change_set_id, status_after_delivery)
+
+        # WHATEVER THIS CHANGE SET WAS FOR NOW ADVANCES TOO -- the symmetric half of the settler.
+        #
+        # A deployment row is written `pending_approval` at REQUEST time from this chokepoint's own
+        # verdict, and nothing moved it when the verdict changed. Approval minted the authority,
+        # delivered the envelope, and left the row saying a human had not decided yet: the timeline, the
+        # logs and the rollback target all read a deployment still waiting for approval while its command
+        # was already with the agent. `DeploymentSettler` exists because `complete` had no production
+        # caller; this is the same defect one transition earlier.
+        #
+        # IN A SAVEPOINT, following the settler's own hard-won note: `contextlib.suppress` swallows the
+        # exception and leaves the TRANSACTION aborted, so the next statement fails about the wrong
+        # thing. A nested transaction rolls back only the hook's work. An advance that could not be
+        # recorded must not undo a delivery that happened.
+        if self._dispatcher is not None:
+            try:
+                async with session.begin_nested():
+                    await self._dispatcher.dispatched(session, change_set_id=change_set_id)
+            except Exception as error:  # noqa: BLE001 - the delivery must survive this
+                # On the row rather than in a log: this module has no logger by design, and the operator
+                # reading the change set is who needs to know the follow-up did not happen.
+                await session.execute(
+                    text(
+                        "UPDATE change_sets SET operation_args = "
+                        "COALESCE(operation_args, '{}'::jsonb) || CAST(:note AS jsonb) WHERE id = :id"
+                    ),
+                    {
+                        "note": json.dumps({"dispatch_error": f"{type(error).__name__}: {error}"[:500]}),
+                        "id": change_set_id,
+                    },
+                )
+
         await session.commit()
+
+        try:
+            await self._sink.send_command(device_id=admitted.device_id, command=command)
+        except Exception:
+            # A delivery failure (e.g. agent offline / device-not-connected) reverts the change set
+            # back to 'approved' if it hasn't already finalized, so that the approval survives and
+            # delivery can be retried once the agent reconnects (§11.10).
+            await session.execute(
+                text("UPDATE change_sets SET status = 'approved' WHERE id = :id AND status = :status"),
+                {"id": change_set_id, "status": status_after_delivery},
+            )
+            await session.commit()
+            raise
         return Submission(
             change_set_id=change_set_id,
             status=status_after_delivery,
@@ -1688,11 +2848,20 @@ class GovernanceChokepoint:
             )
 
         admitted = await self._admit(session, project_id=row["project_id"], principal=principal)
+        operation = str(row["operation"] or APPLY_OPERATION)
+        if operation not in ALLOWED_APPROVAL_OPERATIONS:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    f"change set {change_set_id} carries the operation {operation!r}, which this "
+                    "delivery path cannot deliver."
+                ),
+            )
         decision = await self._evaluate_policy(
             session,
             principal=principal,
             admitted=admitted,
-            operation=APPLY_OPERATION,
+            operation=operation,
             items=(),
             change_set_id=change_set_id,
         )
@@ -1742,6 +2911,65 @@ class GovernanceChokepoint:
         # event id IS the approval id. The same rule applies here.
         approval_id = approval_row["id"] if approval_row is not None else audit_row["id"]
 
+        if operation == CLONE_OPERATION:
+            clone_credential = await self._clone_credential_for(session, row=row)
+            raw_args = row["operation_args"]
+            if isinstance(raw_args, str):
+                try:
+                    raw_args = json.loads(raw_args)
+                except Exception:
+                    raw_args = {}
+            stored_args = dict(raw_args or {})
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(audit_row["seq"]),
+                decision=decision,
+                report=None,
+                operation=CLONE_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    **stored_args,
+                    "token": clone_credential,
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
+            )
+
+        if operation == APPLY_OPERATION:
+            return await self._deliver(
+                session,
+                change_set_id=change_set_id,
+                admitted=admitted,
+                approval_id=approval_id,
+                audit_seq=int(audit_row["seq"]),
+                decision=decision,
+                report=None,
+                operation=APPLY_OPERATION,
+                args={
+                    "change_set_id": str(change_set_id),
+                    "version": int(row["version"]),
+                    "item_count": await self._item_count(session, change_set_id),
+                    "entries": await self._apply_entries(session, change_set_id),
+                },
+                status_after_delivery="applying",
+                outcome="applying",
+                blast_radius_score=int(row["blast_radius_score"] or 0),
+                blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
+            )
+
+        # For DEPLOY_OPERATION, HOST_ACTION_OPERATIONS, and all other mutating operations:
+        raw_args = row["operation_args"]
+        if isinstance(raw_args, str):
+            try:
+                raw_args = json.loads(raw_args)
+            except Exception:
+                raw_args = {}
+        stored_args = dict(raw_args or {})
         return await self._deliver(
             session,
             change_set_id=change_set_id,
@@ -1750,15 +2978,15 @@ class GovernanceChokepoint:
             audit_seq=int(audit_row["seq"]),
             decision=decision,
             report=None,
-            operation=APPLY_OPERATION,
+            operation=operation,
             args={
                 "change_set_id": str(change_set_id),
-                "version": int(row["version"]),
-                "item_count": await self._item_count(session, change_set_id),
-                "entries": await self._apply_entries(session, change_set_id),
+                **stored_args,
             },
             status_after_delivery="applying",
             outcome="applying",
+            blast_radius_score=int(row["blast_radius_score"] or 0),
+            blast_radius_verdict=str(row["blast_radius_verdict"] or ""),
         )
 
     async def _item_count(self, session: AsyncSession, change_set_id: uuid.UUID) -> int:
@@ -1784,6 +3012,7 @@ class GovernanceChokepoint:
         change_set_id: uuid.UUID,
         status: str,
         backup_manifest: Any = None,
+        output: Any = None,
     ) -> str:
         """Finalise a change set from the agent's `command.result` (§3.6, Appendix A.9).
 
@@ -1807,11 +3036,21 @@ class GovernanceChokepoint:
 
         Returns the status it set, so a caller can log what happened.
         """
-        succeeded = status == "succeeded"
-        # `failed`, not `rolled_back`: the agent rolls back internally and reports that through
-        # `agent.error` (code `apply-rolled-back`), so a `command.result` that arrives at all means
-        # the operation ran to completion and is reporting its own outcome.
-        final = "applied" if succeeded else "failed"
+        succeeded = status in ("succeeded", "cloned", "applied", "degraded")
+        # `rolled_back`, and the comment this replaces was wrong in a way that had never run.
+        #
+        # It read: "`failed`, not `rolled_back`: the agent rolls back internally and reports that through
+        # `agent.error`, so a `command.result` that arrives at all means the operation ran to completion."
+        # The reasoning is defensible and the value was not storable: revision `0010` REMOVED `failed` from
+        # `ck_change_sets_status_allowed` precisely because §3.6 does not define it, so every real failed
+        # command raised `CheckViolationError` inside this handler. The path could never have worked, and
+        # nothing had exercised it until a settler test drove it end to end.
+        #
+        # Fixed toward the authority rather than away from it: §3.6's only failure edge out of `applying` is
+        # `rolled_back`, so that is what a failed result records. What is NOT lost is the finer outcome —
+        # for a deployment, `deployments.status` carries `degraded` versus `failed` separately, which is
+        # where per-operation detail belongs.
+        final = "applied" if succeeded else "rolled_back"
 
         # Guarded on the current status so a duplicate result — a redelivered frame, or two replicas
         # both resolving the same future — cannot move a set that has already moved on. `applying`
@@ -1819,7 +3058,7 @@ class GovernanceChokepoint:
         result = await session.execute(
             text(
                 "UPDATE change_sets SET status = :status, applied_at = :applied_at "
-                "WHERE id = :id AND status = 'applying'"
+                "WHERE id = :id AND status IN ('applying', 'approved')"
             ),
             {
                 "status": final,
@@ -1832,6 +3071,61 @@ class GovernanceChokepoint:
             # and re-reporting is a legitimate consequence of at-least-once delivery.
             await session.commit()
             return "ignored"
+
+        # Resolve report from backup_manifest or output (structured JSON report from agent)
+        report = backup_manifest if isinstance(backup_manifest, dict) else None
+        if report is None and output:
+            if isinstance(output, dict):
+                report = output
+            elif isinstance(output, str):
+                try:
+                    parsed = json.loads(output)
+                    if isinstance(parsed, dict):
+                        report = parsed
+                    else:
+                        report = {"output": output}
+                except Exception:
+                    report = {"output": output}
+
+        # WHATEVER THIS CHANGE SET WAS FOR NOW SETTLES TOO.
+        #
+        # Until this existed, `deployments.healthy` and `deployments.stable` had no production writer at
+        # all: `DeploymentService.complete` was called only by tests, so a real deployment stayed
+        # `applying` for ever and `rollback_target` could never find anything. That is this repository's
+        # recurring defect — a correct mechanism with no runtime path into it — and it is the reason this
+        # hook exists rather than a route somebody has to remember to call.
+        #
+        # Through a Protocol the settler implements, because `governance/` may not import `deployments/`
+        # (TID251) and must not learn what a deployment is.
+        #
+        # IN A SAVEPOINT, and the first version was wrong about this in a way worth recording: it wrapped
+        # the call in `contextlib.suppress`, which swallows the exception and leaves the TRANSACTION
+        # aborted, so the next statement failed with `InFailedSQLTransactionError` — an error about the
+        # wrong thing, several lines away from its cause. A nested transaction rolls back only the
+        # settler's own work and leaves the change-set transition intact, which is the actual intent:
+        # a notification that could not be raised must not undo a result that was recorded.
+        if self._settler is not None:
+            try:
+                async with session.begin_nested():
+                    await self._settler.settle(
+                        session,
+                        change_set_id=change_set_id,
+                        succeeded=succeeded,
+                        report=report,
+                    )
+            except Exception as error:  # noqa: BLE001 - see above; the transition must survive this
+                # Recorded on the change set rather than logged: this module deliberately has no logger,
+                # and an operator reading the row is who needs to know the follow-up did not happen.
+                await session.execute(
+                    text(
+                        "UPDATE change_sets SET operation_args = "
+                        "COALESCE(operation_args, '{}'::jsonb) || CAST(:note AS jsonb) WHERE id = :id"
+                    ),
+                    {
+                        "note": json.dumps({"settlement_error": f"{type(error).__name__}: {error}"[:500]}),
+                        "id": change_set_id,
+                    },
+                )
 
         if succeeded and backup_manifest is not None:
             # The manifest is what makes the apply reversible, so it is stored on the reserved
@@ -1904,7 +3198,7 @@ class GovernanceChokepoint:
         result = await session.execute(
             text(
                 "UPDATE change_sets SET status = 'rolled_back' "
-                "WHERE id = :id AND status = 'applying' "
+                "WHERE id = :id AND status IN ('applying', 'approved') "
                 "RETURNING project_id, tenant_id"
             ),
             {"id": change_set_id},
@@ -1938,6 +3232,29 @@ class GovernanceChokepoint:
             project_id=row["project_id"],
             tenant_id=row["tenant_id"],
         )
+
+        # WHATEVER THIS CHANGE SET WAS FOR NOW SETTLES TOO.
+        if self._settler is not None:
+            try:
+                async with session.begin_nested():
+                    await self._settler.settle(
+                        session,
+                        change_set_id=change_set_id,
+                        succeeded=False,
+                        report={"error": reason},
+                    )
+            except Exception as error:  # noqa: BLE001 - the transition must survive this
+                await session.execute(
+                    text(
+                        "UPDATE change_sets SET operation_args = "
+                        "COALESCE(operation_args, '{}'::jsonb) || CAST(:note AS jsonb) WHERE id = :id"
+                    ),
+                    {
+                        "note": json.dumps({"settlement_error": f"{type(error).__name__}: {error}"[:500]}),
+                        "id": change_set_id,
+                    },
+                )
+
         await session.commit()
         return "rolled_back"
 
@@ -2005,9 +3322,34 @@ class GovernanceChokepoint:
         Reachable from `submit`, `approve` and `revert`, and from nothing else. `check-chokepoint`
         (leaf 7.3) asserts the Python half of that mechanically; this docstring is the reason it
         is worth asserting.
+
+        **Phase 2 adds a READ branch, and it stays in this method for exactly that reason.** §2.4's
+        dashboards need `docker.inventory` and `kubernetes.inventory` delivered to the agent, which means
+        a signed envelope, which means `sign_envelope` — and a second signer would defeat the gate that
+        keeps this the only one. So the read is a branch here rather than a function of its own.
+
+        What the branch changes, and nothing else: a read mints **no `MutationAuthority`**. An authority
+        names a change set, an approval and an audit sequence, and a read has none of those three; minting
+        one with invented values would be a claim of authority nothing granted, and `mint_authority`
+        rightly refuses an `audit_seq` below 1. The envelope is still sequenced, nonced, bounded by
+        `not_after` and signed with the device's own key, so the agent verifies a read exactly as it
+        verifies a mutation, and a read's `approval_id` travels EMPTY — which the agent's dispatch table
+        requires, since it refuses an approval-bearing envelope for an operation that needs none.
         """
-        if operation not in (APPLY_OPERATION, REVERT_OPERATION):
+        is_read = operation in READ_OPERATIONS
+        if not is_read and operation not in (
+            APPLY_OPERATION,
+            REVERT_OPERATION,
+            CLONE_OPERATION,
+            DEPLOY_OPERATION,
+            *HOST_ACTION_OPERATIONS,
+            "iac.apply",
+        ):
             raise ValueError(f"{operation!r} is not a mutating operation in §7.7's catalogue")
+        if is_read and approval_id is not None:
+            # A read that carried an approval would be an approval nobody granted, and the agent would
+            # refuse the envelope anyway. Refused here, where the reason is legible.
+            raise ValueError(f"{operation!r} is a read and must not carry an approval")
 
         floor = await self._last_seq(session, admitted.device_id)
         seq = await self._sequencer.next_seq(admitted.device_id, floor=floor)
@@ -2015,12 +3357,36 @@ class GovernanceChokepoint:
         await self._sequencer.reserve_nonce(admitted.device_id, nonce, ttl_seconds=self._max_age)
         not_after = int(datetime.now(UTC).timestamp()) + self._max_age
 
+        # THE REGISTRY CREDENTIAL IS RESOLVED HERE, at the single signature site, so the auto-approved
+        # transit and the human-approved one both get it from one place. It is the last thing added
+        # before the envelope is built, which keeps the rule this method exists to enforce: every
+        # conditional resolves BEFORE the signature, and the signature covers whatever resulted.
+        #
+        # It is not in `args` on the change-set row and never was -- `_assert_no_credential` and
+        # revision 0022's CHECK would both refuse that row -- so the only copy is the one in this
+        # envelope, which exists for the length of one delivery.
+        envelope_args = dict(args)
+        if (
+            operation == DOCKER_IMAGE_OPERATION
+            and str(envelope_args.get("action", "")) == "push"
+            and self._registry_credential is not None
+        ):
+            credential = await self._registry_credential.registry_credential_for(
+                session,
+                project_id=admitted.project_id,
+                registry=str(envelope_args.get("registry", "") or ""),
+            )
+            if credential is not None:
+                username, secret = credential
+                envelope_args["registry_user"] = username
+                envelope_args["registry_secret"] = secret
+
         envelope = CommandEnvelope(
             command_id=str(uuid.uuid4()),
             device_id=str(admitted.device_id),
             operation=operation,
-            args=dict(args),
-            approval_id=str(approval_id),
+            args=envelope_args,
+            approval_id="" if approval_id is None else str(approval_id),
             policy_context=PolicyContextPayload(bundle_digest=admitted.bundle_digest, decision=decision.result),
             nonce=nonce,
             seq=seq,
@@ -2028,23 +3394,43 @@ class GovernanceChokepoint:
         )
         digest = envelope_digest(envelope)
 
-        blast_radius = _report_radius(report)
-        authority: MutationAuthority = mint_authority(
-            change_set_id=change_set_id,
-            approval_id=approval_id,
-            policy_bundle_digest=admitted.bundle_digest,
-            blast_radius=blast_radius,
-            audit_seq=audit_seq,
-            envelope_digest=digest,
-        )
+        # THE AUTHORITY IS CONDITIONAL; THE SIGNING IS NOT.
+        #
+        # A read mints no `MutationAuthority`. An authority names a change set, an approval and an audit
+        # sequence; a read has none of the three, and `mint_authority` rightly refuses an `audit_seq` below
+        # 1 -- so minting one would mean inventing all three to satisfy a constructor, which is the defect
+        # class this repository keeps digging out.
+        #
+        # But the SIGNING stays a single call site, and that is not a stylistic preference. The first
+        # version of the read branch returned early with its own `envelope_key` / `signing_key_scope` /
+        # `sign_envelope` sequence, and three unit tests failed immediately -- `sign_envelope is called from
+        # one place` and its two siblings count call sites across this module, because two places to sign is
+        # two places to get signing wrong and one of them will be the one nobody re-reads. The tests were
+        # right and the branch was wrong. Everything conditional now happens BEFORE the signature, and the
+        # signature happens once.
+        authority: MutationAuthority | None = None
+        if not is_read:
+            assert approval_id is not None  # noqa: S101 - a mutation always carries one; see the guard above
+            authority = mint_authority(
+                change_set_id=change_set_id,
+                approval_id=approval_id,
+                policy_bundle_digest=admitted.bundle_digest,
+                blast_radius=_report_radius(report),
+                audit_seq=audit_seq,
+                envelope_digest=digest,
+            )
+
         key = await envelope_key(session, device_id=admitted.device_id, pepper=self._pepper)
         with signing_key_scope(key.get_secret_value()):
             signature = sign_envelope(envelope)
+
         # The authority is not passed on: nothing downstream of the mint takes one yet, because
-        # the hub is leaf 8.4. It is constructed here because construction IS the check — the
+        # the hub is leaf 8.4. It is constructed above because construction IS the check -- the
         # mint refuses an `audit_seq` below 1 and an empty bundle digest, so an envelope cannot be
-        # signed for a transit that wrote no audit record or named no bundle.
-        assert authority.envelope_digest == digest  # noqa: S101 - the mint's own postcondition
+        # signed for a MUTATING transit that wrote no audit record or named no bundle. A read is
+        # exempt from that check because it makes no such claim, not because the check is optional.
+        if authority is not None:
+            assert authority.envelope_digest == digest  # noqa: S101 - the mint's own postcondition
         await session.execute(
             text("UPDATE agent_devices SET last_seq = :seq WHERE id = :id AND last_seq < :seq"),
             {"seq": seq, "id": admitted.device_id},

@@ -21,8 +21,9 @@ import httpx
 import redis.asyncio as aioredis
 from fastapi import FastAPI, Request
 from fastapi.responses import ORJSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from .ai.custom_endpoints import load_custom_endpoints, merge_custom_endpoints
 from .ai.embeddings import EmbeddingOrchestrator, SelfHostedEmbedder
@@ -47,7 +48,7 @@ from .auth.sessions import SessionService
 from .auth.verifier import AppTokenVerifier
 from .core.config import Settings, get_settings
 from .core.db import create_db_engine, create_sessionmaker
-from .core.errors import PROBLEM_CONTENT_TYPE, install_problem_handlers
+from .core.errors import PROBLEM_CONTENT_TYPE, TYPE_BASE, ProblemDetail, _render, install_problem_handlers
 from .core.logging import configure_logging
 from .core.middleware import AccessLogMiddleware, RequestIdMiddleware
 from .core.tenancy import TenantContextMiddleware
@@ -266,7 +267,14 @@ class _ChangeSetResultRecorder:
         self._sessionmaker = sessionmaker
         self._chokepoint = chokepoint
 
-    async def record(self, *, change_set_id: uuid.UUID, status: str, backup_manifest: Any) -> str:
+    async def record(
+        self,
+        *,
+        change_set_id: uuid.UUID,
+        status: str,
+        backup_manifest: Any = None,
+        output: Any = None,
+    ) -> str:
         chokepoint = self._chokepoint()
         if chokepoint is None:
             raise RuntimeError("the governance chokepoint is not composed yet")
@@ -276,6 +284,7 @@ class _ChangeSetResultRecorder:
                 change_set_id=change_set_id,
                 status=status,
                 backup_manifest=backup_manifest,
+                output=output,
             )
 
     async def record_rolled_back(self, *, change_set_id: uuid.UUID, reason: str) -> str:
@@ -337,6 +346,63 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # which is a cost paid by more than a thousand tests to benefit one route. Lazy creation charges
     # only the request that needs it, and leaves an unreachable Redis as a readiness matter (§4.4).
     app.state.arq_pool = None
+    from .core.tasks import LazyTaskDispatcher
+    from .deployments import tasks as _deployment_tasks  # noqa: F401
+
+    app.state.task_dispatcher = LazyTaskDispatcher(settings, app.state)
+
+    # --- 2.10: OTel instrumentation ------------------------------------------
+    #
+    # A NO-OP WHEN NO COLLECTOR IS CONFIGURED, and constructed unconditionally so `app.state.telemetry`
+    # always exists -- a caller checking for the attribute would be a second way to be off.
+    from .monitoring.telemetry import Telemetry
+
+    telemetry = Telemetry(
+        endpoint=getattr(settings, "forgeops_otel_endpoint", ""),
+        service_name="forgeops-backend",
+    )
+    app.state.telemetry = telemetry
+    # Health and readiness are EXCLUDED inside `instrument_app`: a liveness probe every second would
+    # otherwise be the overwhelming majority of every trace sample and every request-rate panel.
+    telemetry.instrument_app(app)
+    # 2.4's second source for CPU and memory. Narrowly configured -- see `instrument_process` for why
+    # the collector was NOT given the Docker socket to read container stats instead.
+    telemetry.instrument_process()
+
+    # The read side of 2.10. A separate URL from the OTLP endpoint above, because writing telemetry
+    # and querying it are different services -- the collector receives, Prometheus answers -- and a
+    # deployment can legitimately do one without the other.
+    from .monitoring.reader import MetricsReader
+
+    app.state.metrics_reader = MetricsReader(
+        base_url=getattr(settings, "forgeops_prometheus_url", ""),
+    )
+    # 2.11's metrics evidence source, implementing `core.metrics_port.MetricsEvidencePort`. Composed
+    # here so `incidents` never names `monitoring`: the analysis depends on the Protocol, and this is
+    # the one place the concrete reader and the consumer meet.
+    from .monitoring.incident_evidence import MetricsEvidence
+
+    app.state.metrics_evidence = MetricsEvidence(app.state.metrics_reader)
+
+    # --- 2.2 and 2.4a: the durable deployment pipeline ------------------------
+    #
+    # The pipeline's steps are engine-agnostic handlers in `deployments/pipeline.py`; they need a session
+    # factory, the chokepoint and a way to load the principal they act as. Composed HERE because that is
+    # where all three are in scope, and because a step reaching for `app.state` itself would be
+    # untestable without a running app.
+    #
+    # The chokepoint is passed as a CALLABLE. It is composed further down this same lifespan, so reading
+    # it eagerly here would capture `None` and every pipeline apply would fail with an error about the
+    # chokepoint rather than about anything real.
+    from .deployments.pipeline import compose_pipeline
+
+    compose_pipeline(_PipelineContext(sessionmaker, lambda: getattr(app.state, "governance_chokepoint", None)))
+
+    # The engine's functions are served only when the engine is the configured dispatcher. Registering
+    # them unconditionally would publish an endpoint that answers for a client this deployment never
+    # built, and Inngest's discovery would then list functions nothing can enqueue.
+    if getattr(settings, "task_dispatcher", "inline") == "inngest":
+        _serve_inngest(app, settings)
 
     # --- MCP Gateway collaborators (§11.1, §11.4) ---------------------------
     # All constructed non-destructively: the shared HTTP client, the JWKS-caching
@@ -415,6 +481,53 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # startup and nothing to close at shutdown; it is composed rather than constructed lazily
     # only so §0.4.1's wiring test can see it on `app.state`.
     app.state.audit_writer = AuditWriter(advisory_lock_key=settings.audit_advisory_lock_key)
+    # ── The per-user GitHub account link (Part 2) ──────────────────────────────
+    # Composed here rather than per request for the reason the chokepoint is: the key derivation is
+    # the security property, and a service assembled at a call site could be assembled with a
+    # different key. The derivation reads `ENVELOPE_PEPPER`, which §13.1 already requires to be
+    # non-empty in every environment, so there is no new configuration and nothing to fail here
+    # that would not already have failed.
+    #
+    # UNCONFIGURED IS NOT A COMPOSITION FAILURE. A deployment with no GitHub App client credentials
+    # still gets a service; it answers `configured: false` and the status route reports what to set.
+    # Refusing to compose would turn "the operator has not finished setup" into a broken deployment,
+    # and every fresh install is in that state.
+    # §2.1's service. The same pepper every other sealing derives from, under its own HKDF label so a
+    # ciphertext from one domain cannot open in another.
+    from .deployments.service import DeploymentService
+    from .environments.service import EnvironmentService
+    from .integrations.github_link import GitHubOAuthClient, GitHubUserClient, derive_link_key
+    from .integrations.service import GitHubLinkService
+    from .notifications.channels import compose_channels
+    from .notifications.service import NotificationService
+
+    # 2.6. Channels whose configuration is absent are ABSENT from the map rather than present and broken:
+    # the service records "no adapter for this channel is composed" against a preference that names one,
+    # which is a true statement an operator can act on.
+    app.state.notification_service = NotificationService(channels=compose_channels(settings))
+    from .deployments.dispatcher import DeploymentDispatcher
+    from .deployments.settler import DeploymentSettler
+
+    # 2.11: the deployment service files an incident when an apply it sent actually failed. Composed
+    # here because this is the only place both domains are in scope -- `deployments` depends on a
+    # Protocol it declares itself, so it never names `incidents`.
+    from .incidents.recorders import DeploymentIncidents
+    from .secrets.registry_credentials import SecretStoreRegistryCredentials
+
+    app.state.deployment_incidents = DeploymentIncidents()
+    app.state.deployment_service = DeploymentService(incidents=app.state.deployment_incidents)
+    app.state.environment_service = EnvironmentService(pepper=settings.envelope_pepper.get_secret_value())
+
+    app.state.github_link_service = GitHubLinkService(
+        oauth=GitHubOAuthClient(
+            client_id=settings.github_app_client_id,
+            oauth_credential=settings.github_app_oauth_credential.get_secret_value(),
+            oauth_base_url=settings.github_oauth_base_url,
+            api_base_url=settings.github_api_base_url,
+        ),
+        users=GitHubUserClient(api_base_url=settings.github_api_base_url),
+        link_key=derive_link_key(settings.envelope_pepper.get_secret_value()),
+    )
     # ── The governance chokepoint (§2.2, §11.6, leaf 7.5) ─────────────────────
     # Composed here rather than constructed per request, and composed with its collaborators
     # named explicitly, because §2.2's claim is that the six stages "cannot be skipped and
@@ -551,7 +664,37 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         sink=app.state.command_sink,
         envelope_pepper=settings.envelope_pepper.get_secret_value(),
         envelope_max_age_seconds=settings.envelope_max_age_seconds,
+        # THE DEPENDENCY POINTS INWARD. `governance/` declares `CloneCredentialProvider` and TID251
+        # forbids it importing `integrations/`, so the composition root is the only place the two can
+        # meet. The lambda adapts the link service's `usable_token` to the protocol's shape: the
+        # chokepoint knows a clone needs a credential for a user and nothing about how one is stored,
+        # refreshed or revoked.
+        #
+        # The tenant is the CHANGE SET's, passed through by the chokepoint, so a link written under
+        # this deployment's deferred NULL and one written under a real tenant are both found. A plain
+        # `=` against NULL never matched and made every link unreadable once; the link table uses
+        # `IS NOT DISTINCT FROM` because of it.
+        clone_credential_provider=lambda session, *, user_id, tenant_id: (
+            app.state.github_link_service.usable_token(session, user_id=user_id, tenant_id=tenant_id)
+        ),
+        # 2.2 and 2.6. Without this, `DeploymentService.complete` had no production caller at all: a real
+        # deployment stayed `applying` for ever and `rollback_target` never found anything. Composed here
+        # because `governance/` may not import `deployments/` and must not learn what a deployment is.
+        change_set_settler=DeploymentSettler(
+            deployments=app.state.deployment_service,
+            notifications=app.state.notification_service,
+        ),
+        # THE APPROVAL-TIME HALF, beside the result-time half it mirrors. A deployment's row is written
+        # `pending_approval` from this chokepoint's verdict at request time, and nothing advanced it when
+        # the verdict changed -- the same missing listener as `DeploymentService.complete` having no
+        # production caller, which is why `DeploymentSettler` above exists.
+        change_set_dispatcher=DeploymentDispatcher(),
+        # 2.2. A registry push needs a credential at the instant the envelope is signed and at no
+        # other time. Composed here for the same reason the clone provider is: the chokepoint knows a
+        # push needs one and must not learn that this deployment keeps it in Infisical.
+        registry_credential_provider=SecretStoreRegistryCredentials(app.state.secret_store),
     )
+    app.state.chokepoint = app.state.governance_chokepoint
     app.state.mcp_task_store = mcp_task_store
     app.state.mcp_app_registry = McpAppRegistry()
     app.state.mcp_gateway = McpGateway(
@@ -780,6 +923,31 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         logger.info("shutdown complete")
 
 
+class CatchAllExceptionsMiddleware(BaseHTTPMiddleware):
+    """Ensure any unhandled exception caught inside the application produces an
+    RFC 9457 Problem Details response that propagates through CORSMiddleware.
+    """
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            logger.exception("unhandled application exception: %s", exc)
+            return _render(
+                request,
+                ProblemDetail(
+                    type=f"{TYPE_BASE}/internal",
+                    title="Internal Server Error",
+                    status=500,
+                    detail="An unexpected error occurred. Quote the trace_id when reporting this.",
+                ),
+            )
+
+
 def create_app() -> FastAPI:
     """Application factory (§11.1)."""
     settings = get_settings()
@@ -796,14 +964,23 @@ def create_app() -> FastAPI:
     # Starlette PREPENDS middleware, so registration order is the REVERSE of
     # execution order. Registering innermost-first yields the §4.3 stack:
     # ServerError(1) -> RequestId(2) -> TraceContext(3) -> AccessLog(4) -> CORS(5)
-    #                -> TenantContext(6)
+    #                -> CatchAllExceptions(6) -> TenantContext(7)
     #
-    # Row 6 is the innermost, and that placement is the point: it runs INSIDE
+    # Row 7 is the innermost, and that placement is the point: it runs INSIDE
     # authentication, so it reads an already-verified principal rather than trusting a
     # request header (§4.3, §6.7, D-35). Registered FIRST because Starlette reverses
     # the order.
-    app.add_middleware(TenantContextMiddleware)  # executes 6th, innermost
+    app.add_middleware(TenantContextMiddleware)  # executes 7th, innermost
+    app.add_middleware(CatchAllExceptionsMiddleware)  # executes 6th, inside CORS to guarantee CORS headers on 500
     cors_origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
+    for default_origin in [
+        "http://localhost:13000",
+        "http://127.0.0.1:13000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]:
+        if default_origin not in cors_origins:
+            cors_origins.append(default_origin)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -841,8 +1018,10 @@ def create_app() -> FastAPI:
     # and because the pairing routers above carry authentication decisions that this one must not be
     # able to blur.
     from .agents.connection_info_routes import router as agent_connection_info_router
+    from .agents.uninstall_routes import router as agent_uninstall_router
 
     app.include_router(agent_connection_info_router)
+    app.include_router(agent_uninstall_router)
 
     # The device READ surface (§3.7, criterion 10 step 4). Pairing was write-only — a POST to mint,
     # a public POST to exchange, a DELETE to revoke, and no GET — so a paired agent could not be
@@ -870,6 +1049,105 @@ def create_app() -> FastAPI:
     from .projects.routes import router as projects_router
 
     app.include_router(projects_router)
+
+    # The per-user GitHub account link (Part 2). TWO ROUTERS, and the split is the same one the device
+    # routes make: `router` carries `require_principal` on every route, while `callback_router` holds
+    # the single route a BROWSER REDIRECT FROM GITHUB reaches — which carries no bearer token and is
+    # authenticated instead by a single-use `state` this server minted and bound to the user who asked.
+    # A route whose authentication `require_principal` cannot express must not sit under it and look as
+    # though it does. Neither router adds a way to sign in: Authentik OIDC remains the only one.
+    from .integrations.routes import callback_router as github_callback_router
+    from .integrations.routes import router as integrations_router
+
+    app.include_router(integrations_router)
+    app.include_router(github_callback_router)
+
+    # §2.1. Every route under `require_principal` at the router, and every mutation audited. It is NOT a
+    # chokepoint transit and the module docstring says why: an environment row changes this platform's
+    # own configuration and sends nothing to an agent, so a change item for it would be a row claiming a
+    # file write nobody made.
+    from .environments.routes import router as environments_router
+
+    app.include_router(environments_router)
+
+    # §2.2. The one mutating route here goes through `GovernanceChokepoint.deploy_manifests`, and
+    # `check-chokepoint.sh` asserts mechanically that `send_command` stays confined to `governance/`, so
+    # this router cannot grow a second path to an agent.
+    from .deployments.routes import router as deployments_router
+
+    app.include_router(deployments_router)
+
+    # 2.2's live log stream. A separate module from the deployment routes because it is the only SSE
+    # producer here and its lifecycle is a subscription rather than a request.
+    from .deployments.logs import router as deployment_logs_router
+
+    app.include_router(deployment_logs_router)
+
+    # 2.2 and 2.4a. Starting a durable run and releasing its gate. Mounted unconditionally even though
+    # the engine may not be configured: the routes answer a 503 naming the setting, which is a better
+    # failure than a 404 on a route that exists in the product's documentation.
+    from .deployments.pipeline_routes import router as pipeline_router
+
+    app.include_router(pipeline_router)
+
+    # Stage 7: Autonomous Deployment Orchestrator REST, SSE and WebSocket streaming surface.
+    from .deployments.autonomous_routes import router as autonomous_deployments_router
+
+    app.include_router(autonomous_deployments_router)
+
+    # 2.7. ArgoCD manifest rendering, the governed sync, and the webhook that RECORDS rather than
+    # syncing -- an unauthenticated request causing a production deployment would be a hole straight
+    # through the chokepoint.
+    from .argocd.routes import router as argocd_router
+
+    app.include_router(argocd_router, prefix=settings.api_prefix)
+    from .monitoring.routes import router as monitoring_router
+
+    app.include_router(monitoring_router, prefix=settings.api_prefix)
+
+    from .incidents.routes import router as incidents_router
+
+    app.include_router(incidents_router, prefix=settings.api_prefix)
+
+    from .incidents.healing_routes import router as healing_router
+
+    app.include_router(healing_router, prefix=settings.api_prefix)
+
+    from .learning.routes import router as learning_router
+
+    app.include_router(learning_router, prefix=settings.api_prefix)
+
+    # 2.13's seam, composed here for the same reason the metrics-evidence port is: this is the only place
+    # both sides are in scope, so `generation` depends on `core.memory_port` and never on `learning`.
+    from .learning.memory import LearningMemory
+
+    app.state.memory_port = LearningMemory()
+
+    from .commands.routes import router as commands_router
+
+    app.include_router(commands_router, prefix=settings.api_prefix)
+
+    from .knowledge.routes import router as knowledge_router
+
+    app.include_router(knowledge_router, prefix=settings.api_prefix)
+
+    # 2.4 and 2.9. The combined agent operation proxy for Docker AND Kubernetes: one whitelist, one
+    # signing path, one transit per mutating call. Its reads go through the chokepoint's read_inventory
+    # and its writes through transit_host_action, and there is no third path -- check-chokepoint.sh
+    # asserts that send_command stays confined to governance/, so this router cannot grow one.
+    # 2.1's promotion box and 2.3. Promotion and rollback are DEPLOYMENTS: both travel deploy_manifests,
+    # so the target environment's approval requirement applies without anyone having to remember it.
+    from .notifications.routes import router as notifications_router
+
+    app.include_router(notifications_router)
+
+    from .releases.routes import router as releases_router
+
+    app.include_router(releases_router)
+
+    from .hostops.routes import router as hostops_router
+
+    app.include_router(hostops_router)
 
     from .ai.routes import read_router as ai_read_router
     from .ai.routes import router as ai_router
@@ -1020,3 +1298,95 @@ def create_app() -> FastAPI:
         )
 
     return app
+
+
+class _PipelineContext:
+    """What a durable pipeline step needs from the application. 2.2, 2.4a.
+
+    Satisfies `deployments.pipeline.PipelineContext` structurally. Each step opens its OWN session from
+    the factory, because a durable step may run hours after the one before it and a session held across
+    that gap is a connection leaked for the duration.
+    """
+
+    def __init__(self, sessionmaker: Any, chokepoint: Callable[[], Any]) -> None:
+        self._sessionmaker = sessionmaker
+        self._chokepoint = chokepoint
+
+    @property
+    def sessions(self) -> Any:
+        return self._sessionmaker
+
+    @property
+    def chokepoint(self) -> Any:
+        resolved = self._chokepoint()
+        if resolved is None:
+            raise RuntimeError(
+                "the governance chokepoint is not composed yet, so a pipeline step cannot run; "
+                "every mutating step goes through it and there is no path that skips it"
+            )
+        return resolved
+
+    async def principal_for(self, session: Any, user_id: uuid.UUID) -> Any:
+        """Load the principal a step acts as, from the database, at the moment the step runs.
+
+        RE-READ AND NOT CARRIED IN THE EVENT. A principal serialised into a durable payload is an
+        authorisation snapshot that outlives the human's access: a run suspended overnight would apply in
+        the morning with permissions revoked at midnight. Re-reading means a revoked user's suspended
+        pipeline fails, which is the correct outcome.
+        """
+        from sqlalchemy import text as _text
+
+        from .auth.principal import Principal
+
+        row = (
+            (
+                await session.execute(
+                    _text("SELECT id, email, tenant_id, oidc_subject FROM users WHERE id = :id"),
+                    {"id": str(user_id)},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            raise RuntimeError(f"user {user_id} no longer exists, so the suspended pipeline has nobody to act as")
+        return Principal(
+            subject=str(row["oidc_subject"] or row["id"]),
+            email=row["email"],
+            user_id=row["id"],
+            tenant_id=row["tenant_id"],
+        )
+
+
+def _serve_inngest(app: FastAPI, settings: Any) -> None:
+    """Mount the engine's discovery endpoint. 2.4a.
+
+    The import lives inside this function because `core/tasks.py` is the only module permitted to import
+    the engine SDK, and `inngest.fast_api.serve` is framework glue rather than business logic -- it is
+    here, at the composition edge, and reaches nothing but the translator.
+    """
+    # THE ENGINE'S ENDPOINT IS NOT BEHIND A PRINCIPAL, and it is the one route in this application that
+    # is not. It cannot be: the engine calls it to invoke functions and holds no user session. What
+    # authenticates it is a SIGNING KEY the SDK verifies on every request -- and a deployment that
+    # enabled the engine in production without one would expose an endpoint that runs deployment
+    # pipelines to anybody who can reach the port. So that combination is refused at startup, loudly,
+    # rather than left as a configuration mistake nobody notices.
+    if bool(getattr(settings, "inngest_is_production", False)) and not getattr(settings, "inngest_event_key", None):
+        raise RuntimeError(
+            "TASK_DISPATCHER=inngest with INNGEST_IS_PRODUCTION=true requires INNGEST_EVENT_KEY: "
+            "without it the /api/inngest endpoint is unauthenticated, and anyone who can reach it "
+            "can start a deployment pipeline. Set the key, or run the dev server with "
+            "INNGEST_IS_PRODUCTION=false."
+        )
+
+    from .core.tasks import build_inngest_client, inngest_functions
+
+    client = build_inngest_client(settings)
+    functions = inngest_functions(client)
+    app.state.inngest_client = client
+    # Kept so a route can send the approval event that releases a gated step without rebuilding a client.
+    app.state.inngest_functions = functions
+
+    import inngest.fast_api
+
+    inngest.fast_api.serve(app, client, functions)

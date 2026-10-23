@@ -1,0 +1,150 @@
+# OTel Collector — TIER 2: the GATEWAY, one per deployment.
+#
+# Phase 2 §2.10's two-tier architecture, far side. This is where the decisions that need a whole trace are
+# made, and where telemetry meets the stores.
+#
+# THE HYBRID SAMPLING §2.10 ASKS FOR IS HERE AND CANNOT BE ANYWHERE ELSE:
+#
+#   * HEAD-BASED 10% for routine traffic. A `probabilistic` policy, applied to traces that are otherwise
+#     unremarkable. Ten per cent of a healthy system is plenty to see latency distributions and saves
+#     ninety per cent of the storage.
+#
+#   * TAIL-BASED 100% for errors and outliers. `status_code` and `latency` policies keep every trace that
+#     went wrong. This is the half that makes the other half acceptable: sampling is only safe when the
+#     interesting traces are exempt from it.
+#
+# WHY TAIL SAMPLING CANNOT LIVE IN THE AGENT. The decision needs every span of a trace in one place, and a
+# trace crosses hosts. An agent sampling locally would decide on fragments, and the case it would most often
+# get wrong is the one that matters: an error span whose siblings were dropped looks like a complete,
+# uneventful trace.
+#
+# THE POLICIES ARE `or`-ed, NOT `and`-ed. `tail_sampling` keeps a trace if ANY policy says keep. That is why
+# a 10% probabilistic policy sitting beside a 100% error policy yields "10% of normal traffic plus all of the
+# errors" rather than "10% of the errors".
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        # 0.0.0.0 HERE, unlike the agent: this tier exists to accept from off-box. What limits who may send
+        # is the network, and in a fleet deployment TLS with client certificates.
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # TAIL SAMPLING BEFORE THE BATCHER. It needs complete traces, so it buffers by trace id for
+  # `decision_wait`; batching first would hand it arbitrary groupings and it would decide on partial traces.
+  tail_sampling:
+    # How long to wait for a trace's spans before deciding. Ten seconds covers a slow request; a trace whose
+    # spans arrive later than this is decided on what arrived, which is why the value is not one second.
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 200
+    policies:
+      # 1. EVERY ERROR, without exception. First in the list for legibility only — the policies are or-ed,
+      #    so order does not change the outcome.
+      - name: all-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+
+      # 2. EVERY SLOW TRACE. An outlier is as informative as an error and is invisible in an average.
+      #    Two seconds rather than a percentile, because a percentile threshold needs a baseline the
+      #    collector does not have and would silently change meaning as traffic changed.
+      - name: slow-traces
+        type: latency
+        latency:
+          threshold_ms: 2000
+
+      # 3. EVERY GENERATION. A `gen_ai` span is expensive, rare and the thing this product exists to do;
+      #    sampling it away to save storage would be saving the wrong thing. This is the policy that makes
+      #    per-tenant cost attribution complete rather than an estimate scaled up from a sample.
+      - name: all-generations
+        type: string_attribute
+        string_attribute:
+          key: gen_ai.system
+          values: [".+"]
+          enabled_regex_matching: true
+
+      # 4. TEN PER CENT OF EVERYTHING ELSE. The head-based half of the hybrid.
+      - name: routine-sample
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  resource:
+    attributes:
+      - key: forgeops.tier
+        value: gateway
+        action: upsert
+
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+exporters:
+  # Prometheus scrapes THIS endpoint rather than the collector pushing. A pull model means a Prometheus
+  # restart loses nothing and a collector restart loses one scrape interval, whereas remote-write in both
+  # directions doubles the number of places a failure can hide.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # EXEMPLARS ON. This is what makes a metric clickable through to a trace, and it is the single feature
+    # that turns "latency rose at 14:02" into "here is a request that was slow". Without it the frontend's
+    # trace correlation has nothing to correlate.
+    enable_open_metrics: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Long-term metrics go to Mimir by remote write. Prometheus keeps a short local window for fast queries;
+  # Mimir keeps the retention an audit needs, and the split is the whole reason both exist.
+  prometheusremotewrite/mimir:
+    endpoint: ${env:FORGEOPS_MIMIR_ENDPOINT}
+    tls:
+      insecure: ${env:FORGEOPS_MIMIR_INSECURE}
+    resource_to_telemetry_conversion:
+      enabled: true
+    retry_on_failure:
+      enabled: true
+
+  otlphttp/loki:
+    endpoint: ${env:FORGEOPS_LOKI_ENDPOINT}
+    tls:
+      insecure: ${env:FORGEOPS_LOKI_INSECURE}
+
+  otlp/tempo:
+    endpoint: ${env:FORGEOPS_TEMPO_ENDPOINT}
+    tls:
+      insecure: ${env:FORGEOPS_TEMPO_INSECURE}
+
+service:
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      address: 0.0.0.0:8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      # tail_sampling BEFORE batch. See the processor's comment: it needs whole traces.
+      processors: [memory_limiter, tail_sampling, resource, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      # METRICS ARE NEVER SAMPLED. A sampled counter is a wrong number, not a cheaper one: a 10% sample of
+      # `gen_ai.cost.total` would under-report every tenant's bill by an order of magnitude, and nothing
+      # downstream could tell that had happened.
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, prometheusremotewrite/mimir]
+    logs:
+      receivers: [otlp]
+      # LOGS ARE NEVER SAMPLED EITHER, and for a sharper reason: the one log line an operator needs during
+      # an incident is exactly the one a sampler would have dropped.
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki]

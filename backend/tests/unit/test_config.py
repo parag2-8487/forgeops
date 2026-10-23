@@ -231,3 +231,33 @@ class TestSettingsProductionIssuer:
             }
         )
         assert settings.mcp_oidc_issuers == "https://auth.example.com/"
+
+    def test_reconciles_agent_tls_host_port_when_backend_port_is_customized(self):
+        """When BACKEND_PORT is 18000 and AGENT_TLS_HOST_PORT is default 8443, it reconciles to 18443."""
+        settings = get_settings(
+            explicit={
+                "DATABASE_URL": "postgresql+asyncpg://localhost:5432/db",
+                "REDIS_URL": "redis://localhost:6379/0",
+                "APP_ENV": "development",
+                "ENVELOPE_PEPPER": "config-test-pepper",
+                "BACKEND_PORT": "18000",
+            }
+        )
+        assert settings.backend_port == 18000
+        assert settings.agent_tls_host_port == 18443
+        assert settings.agent_session_ws_url == "wss://localhost:18443/api/v1/ws/agent"
+
+    def test_preserves_explicit_agent_tls_host_port(self):
+        """When AGENT_TLS_HOST_PORT is explicitly configured, it is preserved."""
+        settings = get_settings(
+            explicit={
+                "DATABASE_URL": "postgresql+asyncpg://localhost:5432/db",
+                "REDIS_URL": "redis://localhost:6379/0",
+                "APP_ENV": "development",
+                "ENVELOPE_PEPPER": "config-test-pepper",
+                "BACKEND_PORT": "18000",
+                "AGENT_TLS_HOST_PORT": "9443",
+            }
+        )
+        assert settings.agent_tls_host_port == 9443
+        assert settings.agent_session_ws_url == "wss://localhost:9443/api/v1/ws/agent"

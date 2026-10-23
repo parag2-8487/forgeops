@@ -1,0 +1,26 @@
+# Grafana dashboard provisioning -- Phase 2 §2.10.
+#
+# PROVISIONED FROM FILES, for the same reason the datasources are: a dashboard built by clicking exists only
+# in one machine's Grafana database, so what this product ships would be an empty Grafana on every other
+# installation -- and nobody would find out until an incident.
+#
+# `allowUiUpdates: false` is deliberate and is the part worth arguing. It means an operator cannot save an
+# edit to these dashboards from the UI. That is a real cost: exploring during an incident and wanting to keep
+# a panel is a reasonable thing to want. It buys something worth more, which is that the dashboard an
+# engineer sees is the dashboard in the repository. With UI updates allowed, a provisioned dashboard silently
+# diverges, and then an on-call engineer reading a panel edited nine months ago by someone who has left is
+# reading something nobody reviewed. Exploration belongs in a new dashboard, which this does not prevent.
+
+apiVersion: 1
+
+providers:
+  - name: forgeops
+    orgId: 1
+    folder: ForgeOps
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/forgeops
+      foldersFromFilesStructure: false

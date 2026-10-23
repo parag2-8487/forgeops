@@ -357,3 +357,358 @@ def test_validate_artifacts_reports_every_finding_not_the_first() -> None:
 
 def test_validate_artifacts_over_nothing_is_empty() -> None:
     assert validate_artifacts([]) == []
+
+
+def test_cross_artifact_port_mismatch_dockerfile_and_k8s() -> None:
+    dockerfile = """FROM node:22-slim
+WORKDIR /app
+COPY . .
+ENV PORT=3000
+EXPOSE 3000
+USER 10001
+CMD ["node", "server.js"]
+"""
+    deployment = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio
+spec:
+  selector:
+    matchLabels:
+      app: portfolio
+  template:
+    metadata:
+      labels:
+        app: portfolio
+    spec:
+      containers:
+      - name: portfolio
+        image: portfolio:1.0.0
+        ports:
+        - containerPort: 8080
+"""
+    findings = validate_artifacts(
+        [
+            _Artifact("Dockerfile", dockerfile),
+            _Artifact("k8s/deployment.yaml", deployment),
+        ]
+    )
+    assert any("cross-artifact: port mismatch" in f and "3000" in f and "8080" in f for f in findings), findings
+
+
+def test_cross_artifact_port_mismatch_dockerfile_and_compose() -> None:
+    dockerfile = """FROM node:22-slim
+WORKDIR /app
+COPY . .
+EXPOSE 3000
+USER 10001
+CMD ["node", "server.js"]
+"""
+    compose = """services:
+  app:
+    image: my-app:1.0.0
+    ports:
+      - "8080:8080"
+"""
+    findings = validate_artifacts(
+        [
+            _Artifact("Dockerfile", dockerfile),
+            _Artifact("docker-compose.yml", compose),
+        ]
+    )
+    assert any("cross-artifact: port mismatch" in f for f in findings), findings
+
+
+def test_cross_artifact_matching_ports_pass() -> None:
+    dockerfile = """FROM node:22-slim
+WORKDIR /app
+COPY . .
+EXPOSE 3000
+USER 10001
+CMD ["node", "server.js"]
+"""
+    compose = """services:
+  app:
+    image: my-app:1.0.0
+    ports:
+      - "3000:3000"
+"""
+    deployment = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: my-app
+        image: my-app:1.0.0
+        ports:
+        - containerPort: 3000
+"""
+    service = """apiVersion: v1
+kind: Service
+metadata:
+  name: my-app
+spec:
+  selector:
+    app: my-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+"""
+    findings = validate_artifacts(
+        [
+            _Artifact("Dockerfile", dockerfile),
+            _Artifact("docker-compose.yml", compose),
+            _Artifact("k8s/deployment.yaml", deployment),
+            _Artifact("k8s/service.yaml", service),
+        ]
+    )
+    assert not any("cross-artifact:" in f for f in findings), findings
+
+
+def test_cross_artifact_k8s_selector_mismatch() -> None:
+    deployment = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: my-app
+        image: my-app:1.0.0
+        ports:
+        - containerPort: 3000
+"""
+    service = """apiVersion: v1
+kind: Service
+metadata:
+  name: my-app
+spec:
+  selector:
+    app: wrong-label
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+"""
+    findings = validate_artifacts(
+        [
+            _Artifact("k8s/deployment.yaml", deployment),
+            _Artifact("k8s/service.yaml", service),
+        ]
+    )
+    assert any("cross-artifact:" in f and "selector" in f for f in findings), findings
+
+
+def test_cross_artifact_ingress_backend_mismatch() -> None:
+    service = """apiVersion: v1
+kind: Service
+metadata:
+  name: real-service
+spec:
+  selector:
+    app: my-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+"""
+    ingress = """apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: my-ingress
+spec:
+  rules:
+  - host: app.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: non-existent-service
+            port:
+              number: 80
+"""
+    findings = validate_artifacts(
+        [
+            _Artifact("k8s/service.yaml", service),
+            _Artifact("k8s/ingress.yaml", ingress),
+        ]
+    )
+    assert any("cross-artifact:" in f and "references backend service" in f for f in findings), findings
+
+
+def test_dockerfile_with_workspace_install_ordering_reported() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY code-review/package*.json ./code-review/
+RUN npm run build --workspace=code-review
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any(
+        "runs dependency installation (`RUN npm ci` or `install`) before copying workspace package manifests" in f
+        for f in findings
+    )
+
+
+def test_dockerfile_with_correct_workspace_install_ordering_passes() -> None:
+    good_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+COPY code-review/package*.json ./code-review/
+RUN npm ci --only=production
+RUN npm run build --workspace=code-review
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(good_df)
+    assert findings == []
+
+
+def test_validate_artifacts_with_existing_workspaces_enforces_manifest_copies() -> None:
+    df_omitting_workspaces = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    existing = {"package.json": '{"name": "root", "workspaces": ["code-review", "live classroom"]}'}
+    findings = validate_artifacts([_Artifact("Dockerfile", df_omitting_workspaces)], existing=existing)
+    assert any(
+        "Workspace repository runs dependency installation before copying workspace package manifests" in f
+        for f in findings
+    )
+
+    df_with_all_workspaces = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+COPY code-review/package*.json ./code-review/
+COPY ["live classroom/package*.json", "./live classroom/"]
+RUN npm ci
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings_valid = validate_artifacts([_Artifact("Dockerfile", df_with_all_workspaces)], existing=existing)
+    assert findings_valid == []
+
+
+def test_dockerfile_with_build_error_suppression_is_rejected() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build || true
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings)
+
+    bad_exit_zero = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build || exit 0
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings_exit_zero = validate_dockerfile(bad_exit_zero)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings_exit_zero)
+
+
+def test_dockerfile_with_legitimate_build_command_passes() -> None:
+    good_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+COPY code-review/package*.json ./code-review/
+RUN npm ci
+COPY . .
+RUN npm run build --workspace=code-review
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(good_df)
+    assert findings == []
+
+
+def test_dockerfile_with_npm_install_suppression_fails() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm install || true
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings)
+
+
+def test_dockerfile_with_npm_ci_suppression_fails() -> None:
+    bad_df = """FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci || exit 0
+COPY . .
+RUN npm run build
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app ./
+USER 10001
+CMD ["npm", "start"]
+"""
+    findings = validate_dockerfile(bad_df)
+    assert any("Dockerfile suppresses build or install failure" in f for f in findings)

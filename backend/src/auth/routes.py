@@ -28,6 +28,7 @@ produce a redirect to another origin from this endpoint.
 from __future__ import annotations
 
 from typing import Any, Final
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +91,86 @@ def _wants_html(request: Request) -> bool:
     programmatic, so the default for anything ambiguous is the JSON body the tests rely on.
     """
     return "text/html" in request.headers.get("accept", "").lower()
+
+
+def _resolve_redirect_url(request: Request, configured_redirect_url: str) -> str:
+    """Resolve the public callback redirect URI for the OIDC authorization request.
+
+    Respects reverse-proxy headers (X-Forwarded-Proto, X-Forwarded-Host, X-Forwarded-Port)
+    or the incoming request Host header when running in containerised/remote environments
+    (such as Ubuntu published on non-default ports like 18000 or public IP addresses),
+    while preserving explicit non-local configured URLs and test environments.
+    """
+    if not configured_redirect_url:
+        configured_redirect_url = "http://localhost:8000/api/v1/auth/callback"
+    parsed = urlsplit(configured_redirect_url)
+    if parsed.hostname == "testserver" or request.url.hostname == "testserver":
+        return configured_redirect_url
+    callback_path = parsed.path or "/api/v1/auth/callback"
+
+    settings = getattr(request.app.state, "settings", None)
+    backend_port = getattr(settings, "backend_port", None)
+
+    # Forwarded / reverse-proxy headers or direct request host
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    forwarded_host = (
+        (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc)
+        .split(",")[0]
+        .strip()
+    )
+    forwarded_port = (request.headers.get("x-forwarded-port") or "").split(",")[0].strip()
+
+    if forwarded_host:
+        host = forwarded_host
+        if (
+            forwarded_port
+            and ":" not in host
+            and not ((proto == "http" and forwarded_port == "80") or (proto == "https" and forwarded_port == "443"))
+        ):
+            host = f"{host}:{forwarded_port}"
+        elif ":" not in host and backend_port and backend_port not in (80, 443):
+            host = f"{host}:{backend_port}"
+
+        if parsed.hostname in ("localhost", "127.0.0.1", "testserver", None) or parsed.netloc == host:
+            return urlunsplit((proto, host, callback_path, "", ""))
+
+    if settings and parsed.hostname in ("localhost", "127.0.0.1"):
+        if backend_port and parsed.port != backend_port:
+            return urlunsplit((parsed.scheme, f"{parsed.hostname}:{backend_port}", callback_path, "", ""))
+
+    return configured_redirect_url
+
+
+def _resolve_frontend_landing(request: Request, next_path: str) -> str:
+    """Resolve the browser landing URL after successful authentication.
+
+    Ensures the user returns to the publicly accessible application origin on Ubuntu
+    (whether accessed via localhost, LAN IP, or reverse proxy), respecting frontend
+    port configuration (e.g. 13000 vs 3000).
+    """
+    settings = request.app.state.settings
+    configured = str(settings.frontend_base_url or "").rstrip("/")
+    if not configured:
+        configured = "http://localhost:3000"
+
+    parsed = urlsplit(configured)
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
+    forwarded_host = (
+        (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc)
+        .split(",")[0]
+        .strip()
+    )
+
+    fe_port = getattr(settings, "frontend_port", None) or parsed.port
+    if not fe_port and parsed.hostname in ("localhost", "127.0.0.1"):
+        fe_port = 13000 if getattr(settings, "backend_port", None) == 18000 else 3000
+
+    if parsed.hostname in ("localhost", "127.0.0.1") and forwarded_host:
+        req_host_only = forwarded_host.split(":")[0]
+        port_suffix = f":{fe_port}" if fe_port and fe_port not in (80, 443) else ""
+        return f"{proto}://{req_host_only}{port_suffix}{next_path}"
+
+    return f"{configured}{next_path}"
 
 
 def _client(request: Request) -> OidcClient:
@@ -189,8 +270,9 @@ async def login(request: Request) -> RedirectResponse:
     caller has to reimplement.
     """
     client = _client(request)
+    redirect_uri = _resolve_redirect_url(request, client.redirect_url)
     next_path = _safe_next(request.query_params.get("next"))
-    authorization, pending = await client.authorization_request(next_path=next_path)
+    authorization, pending = await client.authorization_request(next_path=next_path, redirect_uri=redirect_uri)
     await _store_pending(request, authorization.state, pending)
     # 302 and not 307: the browser must issue a GET to the IdP regardless of how it
     # reached /login, and 307 would preserve a POST.
@@ -218,7 +300,11 @@ async def callback(
         raise problem("unauthenticated")
 
     client = _client(request)
-    tokens = await client.exchange_code(code=code, verifier=pending.verifier)
+    tokens = await client.exchange_code(
+        code=code,
+        verifier=pending.verifier,
+        redirect_uri=pending.redirect_uri or None,
+    )
     body = await _open_session(request, session, tokens, nonce=pending.nonce)
     body["next"] = pending.next_path
 
@@ -232,8 +318,7 @@ async def callback(
         # log along the way. The session cookie set below is `httpOnly`, and the app mints its
         # access token from it by calling `POST /auth/refresh` once it loads — so the credential
         # never becomes part of a URL, and the SPA still gets a bearer token to send.
-        settings = request.app.state.settings
-        landing = settings.frontend_base_url.rstrip("/") + pending.next_path
+        landing = _resolve_frontend_landing(request, pending.next_path)
         response = RedirectResponse(url=landing, status_code=302)
     else:
         response = JSONResponse(body)

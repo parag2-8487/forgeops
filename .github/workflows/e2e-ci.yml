@@ -23,7 +23,7 @@ name: End-to-End Journey CI
 on:
   workflow_dispatch:
   push:
-    branches: [phase-1-implementation, phase-1-02, main]
+    branches: [phase-1-implementation, phase-1-02, phase-2-implementation, main]
   pull_request:
     branches: [main]
 
@@ -372,6 +372,18 @@ jobs:
             /bin/ollama list
           curl -fsS http://localhost:11434/v1/models >/dev/null
           python scripts/ci/check-embedding-width.py
+          # WARM THE GENERATION MODEL, measured rather than guessed at: loading `qwen2.5-coder:7b`'s
+          # weights costs 45s on top of every completion, and a CI runner is always a cold start. Paying
+          # it here, in a step named for it, keeps it out of the journey's generation budget -- where it
+          # would have been indistinguishable from a slow model call and would have eaten the margin that
+          # exists for the gate's retries.
+          #
+          # A trivial prompt with `max_tokens` of 8: the point is to resident the weights, not to generate
+          # anything. Measured at 48s cold and 2.9s warm for exactly this request.
+          curl -fsS http://localhost:11434/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d "{\"model\": \"${SELF_HOSTED_MODEL_ID:-qwen2.5-coder:7b}\", \"messages\": [{\"role\": \"user\", \"content\": \"ready\"}], \"max_tokens\": 8}" \
+            >/dev/null
 
       - name: Create Authentik's database
         env:
@@ -595,6 +607,25 @@ jobs:
           E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: cd frontend && npx playwright test --project=paint
 
+      # THE SELF-HEALING CRITERION: deploy, inject failure, AI detects, AI suggests, human approves.
+      #
+      # The failure is REAL rather than inserted. `DeploymentService.fail` is the only site that files
+      # an incident, and reaching it means the agent ran the command and it failed; a policy deny, a
+      # held approval and a timeout all return earlier and produce none. This job has no Kubernetes
+      # cluster, so the apply genuinely cannot succeed -- the criterion's 'inject failure' is the
+      # absence of a cluster, which is an honest failure and not a fixture.
+      #
+      # Its own step rather than a member of the journey, for the reason the two above are: it is
+      # serial and stateful, and it makes a real RCA model call that the journey's per-step bound
+      # would cut off.
+      - name: Assert a failed deploy is detected, explained and its fix approved by a human
+        env:
+          FORGEOPS_E2E_EXTERNAL_STACK: "1"
+          E2E_FRONTEND_URL: http://localhost:3000
+          E2E_API_BASE_URL: http://localhost:8000/api/v1
+          E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
+        run: cd frontend && npx playwright test --project=self-healing
+
       # PART F: the printed commands, executed verbatim, with the agent as a HOST PROCESS.
       #
       # THE GAP THIS CLOSES. Every spec above runs the agent with `composeExec("agent", [...])` —
@@ -605,15 +636,26 @@ jobs:
       # once carried `scan --path`, a flag that has never existed.
       #
       # This reads the commands out of the DOM and runs them unmodified. Go is needed because the
-      # published archive is not available in CI, but the INSTALL and CONNECT commands are the printed
-      # ones — what is under test is whether they run, not where the binary came from.
+      # published archive is not available in CI — and GoReleaser with it, because the printed install
+      # command installs an ARCHIVE, not a binary. That distinction is what kept this spec red: it placed
+      # a bare `go build` output where the command looks for `forgeops-agent_*_linux_*.tar.gz`, the command
+      # correctly reported finding no tarball and exited 0, and the next line failed with `command not
+      # found`. `scripts/package-agent.sh` builds the archive through the release's own configuration, so
+      # what gets installed here has a real download's layout.
       #
       # Runs last because it pairs a device of its own and leaves an agent resident, and the specs
       # above are stateful about which devices exist.
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
         with:
           go-version: "1.26"
           cache-dependency-path: agent/go.sum
+      # `install-only`: nothing is released here. The spec needs the packaging tool so the archive the
+      # printed install command finds is built the way a real download is.
+      - uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
+        with:
+          install-only: true
+          distribution: goreleaser
+          version: "v2.17.1"
       - name: Follow the onboarding screen's printed instructions literally
         # BOUNDED, because this step once consumed the whole job. `connect` is resident by design, and a
         # SYNCHRONOUS spawn of it blocked Node's event loop — which is where Playwright enforces its own
@@ -629,7 +671,6 @@ jobs:
           E2E_API_BASE_URL: http://localhost:8000/api/v1
           E2E_OIDC_PUBLIC_BASE_URL: http://localhost:9000
         run: cd frontend && npx playwright test --project=printed-instructions
-
       # ?8.3.2: "Playwright traces and the agent's logs are uploaded on failure, because an e2e
       # failure with no artifacts is a rerun rather than a diagnosis."
       - name: Collect the agent and service logs

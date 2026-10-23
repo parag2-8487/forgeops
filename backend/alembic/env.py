@@ -38,9 +38,23 @@ from src.analysis.models import (  # noqa: F401, E402
     FileDependency,
     FileTreeEntry,
 )
+from src.argocd.models import ArgocdRepositoryEvent  # noqa: F401, E402
 from src.audit.models import AuditEvent  # noqa: F401, E402
 from src.auth.device_models import AgentDevice  # noqa: F401, E402
 from src.auth.models import Session, User  # noqa: F401, E402
+from src.commands.models import CommandHistory  # noqa: F401, E402
+from src.deployments.models import (  # noqa: F401, E402
+    AutonomousDeployment,
+    AutonomousDeploymentLog,
+    AutonomousDeploymentOutbox,
+    AutonomousDeploymentStage,
+    Deployment,
+    DeploymentCircuitBreaker,
+)
+from src.environments.models import (  # noqa: F401, E402
+    Environment,
+    EnvironmentVariable,
+)
 from src.generation.models import GenerationRun  # noqa: F401, E402
 from src.governance.models import (  # noqa: F401, E402
     Approval,
@@ -48,6 +62,25 @@ from src.governance.models import (  # noqa: F401, E402
     ChangeSet,
     RollbackHandle,
     Validation,
+)
+from src.incidents.models import (  # noqa: F401, E402
+    HealingAction,
+    Incident,
+    IncidentAnalysis,
+    IncidentEvidence,
+    IncidentFixSuggestion,
+    IncidentPostmortem,
+)
+from src.integrations.models import GitHubAccountLink  # noqa: F401, E402
+from src.learning.models import (  # noqa: F401, E402
+    LearningFeedback,
+    LearningPreference,
+    LearningSession,
+    LearningSkillFile,
+)
+from src.notifications.models import (  # noqa: F401, E402
+    Notification,
+    NotificationPreference,
 )
 from src.policies.models import Policy, PolicyBundle, PolicyEvaluation  # noqa: F401, E402
 from src.projects.models import Project, ProjectTag  # noqa: F401, E402

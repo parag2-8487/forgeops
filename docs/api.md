@@ -1,4 +1,4 @@
-# ForgeOps API — Phase 0
+# ForgeOps API â€” Phase 0
 
 > **Stale as of 2026-08-21, and kept rather than deleted so the gap stays visible.** This
 > document describes the **Phase 0** API surface. Phase 1 has since shipped and this file was not
@@ -10,11 +10,26 @@
 >
 > It also **documents none of the Phase 1 surfaces**. `projects`, `policies`, `audit` and
 > `approvals` are not mentioned once, and twelve routers are registered in `create_app`. Until this
-> file is rewritten, the accurate and self-updating source is the generated schema — Swagger UI at
-> <http://localhost:8000/api/v1/docs> and `openapi.json` beside it — because it is produced from the
+> file is rewritten, the accurate and self-updating source is the generated schema â€” Swagger UI at
+> <http://localhost:8000/api/v1/docs> and `openapi.json` beside it â€” because it is produced from the
 > routers themselves and cannot drift from them.
+>
+> **Phase 2 Autonomous Deployment API & G1–G7 Verification Gates:**
+> Phase 2 adds `/api/v1/projects/{project_id}/autonomous-deploy` and its associated routes for orchestrating multi-target deployments across Docker, GitHub, and Vercel. Autonomous deployments transition through 7 sequential verification gates:
+> - **G1 (Blueprint Baseline)**: Strategy constraints validation, required target configuration checks, workspace path verification, and R0 readiness assessment.
+> - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis, consolidated `ENV` instructions (`ENV NODE_ENV=production PORT=...`), stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and post-generation readiness (R1).
+> - **G3 (Cross-artifact Consistency)**: Static pre-execution consistency audit verifying port ranges (1–65535), immutability of reserved environment variables, and rejection of all 77 Chromium/WHATWG browser-restricted host ports (such as `4045` with `ERR_UNSAFE_PORT`).
+> - **G4 (Build & Compile)**: Direct Docker Engine daemon integration via Unix Domain Socket (`/var/run/docker.sock`) utilizing the native **BuildKit HTTP API** (`version=2`) with tar streaming, BuildKit trace streaming (`moby.buildkit.trace`), and protobuf decoding. Evaluates the build graph directly without intermediate container commits (saving 808s on Code Review Platform), with sensitive credential exclusion (`.env*`, `*.pem`, `*.key`), symlink boundary confinement, and automatic graceful fallback to the legacy Docker V1 builder if BuildKit negotiation fails.
+> - **G5 (Apply)**: Container launch via Docker Engine API over Unix Domain Socket with strict runtime port authority, conflict detection with immutable startup commands, and environment variable injection (`PORT`, `HOST=0.0.0.0`).
+> - **G6 (Workload Convergence)**: Real-time container inspect publication check and live HTTP readiness probing with fast-failure on connection refusal or non-200 responses.
+> - **G7 (Final Verification & Cryptographic Receipt)**: Comprehensive multi-target sign-off verifying exact physical container port bindings (`HostConfig.PortBindings`), live remote GitHub commit presence via Git Data API, and Vercel assigned production alias accessibility with SSO redirect bypass and synthetic placeholder rejection.
+>
+> Executions run on the active 14-service compose topology (10–14 active: `postgres`, `redis`, `opa`, `cerbos`, `authentik-server`, `authentik-worker`, `backend`, `backend-agent`, `worker`, `frontend`, `ollama`, `ollama-secondary`, `inngest`).
+> For complete schemas, endpoints, request/response models, and error behaviors, consult:
+> - Master Reference: [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md)
+> - OpenAPI interactive documentation: <http://localhost:8000/api/v1/docs>
 
-Authority: `.antigravity/specs/phase-0-foundation/design.md` §4.2, §4.3, §4.4, §11, §14.2, §15.2.
+Authority: `.antigravity/specs/phase-0-foundation/design.md` Â§4.2, Â§4.3, Â§4.4, Â§11, Â§14.2, Â§15.2.
 Only the surfaces listed here exist in Phase 0.
 
 ## Versioning
@@ -27,21 +42,21 @@ not move when the API version bumps.
 ## Authentication
 
 Phase 0 has **no general user authentication**. There is no login flow, no session or
-refresh-token lifecycle, no user records, and no RBAC; those arrive in Phase 1 §1.11.
+refresh-token lifecycle, no user records, and no RBAC; those arrive in Phase 1 Â§1.11.
 
 Two surfaces verify an OAuth 2.1/OIDC bearer token:
 
-- `/api/v1/mcp*` — the MCP Gateway. Verification runs before routing.
-- `POST /api/v1/ai/complete` — verification supplies the `sub` that keys the per-caller
+- `/api/v1/mcp*` â€” the MCP Gateway. Verification runs before routing.
+- `POST /api/v1/ai/complete` â€” verification supplies the `sub` that keys the per-caller
   rate-limit bucket.
 
 Verification enforces the JWT signature against JWKS fetched from the token issuer, an
 `iss` value inside an explicit allowlist (required to be non-empty when
 `APP_ENV=production`), the required `aud`, and `exp`/`nbf`/`iat`. Failures return `401`
 problem documents. Every other route is unauthenticated in Phase 0, which is why the
-Phase 0 topology is local-development-only — see `docs/deployment.md`.
+Phase 0 topology is local-development-only â€” see `docs/deployment.md`.
 
-## Error contract — RFC 9457
+## Error contract â€” RFC 9457
 
 Every non-2xx response carries `Content-Type: application/problem+json` and this shape:
 
@@ -74,7 +89,7 @@ not RFC 9457 conforming.
 
 | Route                | Purpose                 | Dependency I/O                                         | Success                                                                                | Failure                                                           |
 | :------------------- | :---------------------- | :----------------------------------------------------- | :------------------------------------------------------------------------------------- | :---------------------------------------------------------------- |
-| `GET /health`        | Liveness                | none                                                   | `200 {"status":"ok","version":"…","commit":"…"}`, including during a dependency outage | only when the process is dead or wedged                           |
+| `GET /health`        | Liveness                | none                                                   | `200 {"status":"ok","version":"â€¦","commit":"â€¦"}`, including during a dependency outage | only when the process is dead or wedged                           |
 | `GET /health/ready`  | Readiness               | PostgreSQL `SELECT 1` + Redis `PING`, 2 s timeout each | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}`                       | RFC 9457 `503`, one `errors[]` item per failed or timed-out check |
 | `GET /api/v1/health` | Versioned liveness echo | none                                                   | `200`                                                                                  | process-level failure only                                        |
 
@@ -89,26 +104,26 @@ not RFC 9457 conforming.
 | `/api/v1/mcp/servers`     | `GET`  | Registered MCP servers, OPA-filtered                                                                                                                  |
 | `/api/v1/mcp/apps/{name}` | `GET`  | MCP Apps descriptor `{name, title, entry_url, capabilities, csp}`                                                                                     |
 
-`tools/list` order: verify bearer/OIDC → route from headers → Redis TTL cache or upstream
-list → OPA filter on every response (cache hit or miss) → return. Only the unfiltered
+`tools/list` order: verify bearer/OIDC â†’ route from headers â†’ Redis TTL cache or upstream
+list â†’ OPA filter on every response (cache hit or miss) â†’ return. Only the unfiltered
 upstream list is cached. A Redis failure is treated as a cache miss; an OPA failure returns
 an empty allowed set.
 
-`tools/call` order: verify bearer/OIDC → route from headers → parse the called tool →
-resolve tool metadata locally or from an already-valid cache entry with no upstream I/O →
-OPA authorise → invoke upstream only on allow. Invalid bearer, malformed call, unresolved
+`tools/call` order: verify bearer/OIDC â†’ route from headers â†’ parse the called tool â†’
+resolve tool metadata locally or from an already-valid cache entry with no upstream I/O â†’
+OPA authorise â†’ invoke upstream only on allow. Invalid bearer, malformed call, unresolved
 metadata, unknown tool, policy denial, and policy error all return before any upstream
 operation.
 
 Status codes: `400` for missing routing headers, `401` for token failures, `403` for policy
-denial, `404` for an unknown server or task, `504` for an upstream timeout — all as RFC 9457
+denial, `404` for an unknown server or task, `504` for an upstream timeout â€” all as RFC 9457
 problems.
 
 ### Tasks Extension
 
 Task states are `submitted`, `working`, `input_required`, `completed`, `failed`,
 `cancelled`. Terminal states absorb further transitions, and `tasks/cancel` on a terminal
-task returns that state with `200` — cancellation is idempotent. Records live in Redis so
+task returns that state with `200` â€” cancellation is idempotent. Records live in Redis so
 any replica can serve `tasks/get`; concurrent updates use compare-and-set so only one
 writer wins.
 
@@ -117,7 +132,7 @@ writer wins.
 The host page sets
 `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'`
 and the iframe carries `sandbox="allow-scripts allow-forms"` without `allow-same-origin`.
-The parent↔app channel is `postMessage` with the envelope `{v: 1, type, requestId, payload}`
+The parentâ†”app channel is `postMessage` with the envelope `{v: 1, type, requestId, payload}`
 and the parent drops messages whose origin does not match the descriptor origin. Phase 0
 ships one descriptor, for the agent's `agent.health` tool.
 
@@ -126,7 +141,7 @@ ships one descriptor, for the agent's `agent.health` tool.
 | Route                 | Method | Notes                                                                                                                    |
 | :-------------------- | :----- | :----------------------------------------------------------------------------------------------------------------------- |
 | `/api/v1/ai/tiers`    | `GET`  | The six tiers with protocol, availability reason, and circuit-breaker state                                              |
-| `/api/v1/ai/complete` | `POST` | Fixed order: OIDC verify → require `claims.sub` → Redis token-bucket limiter → semantic cache → registry/router/provider |
+| `/api/v1/ai/complete` | `POST` | Fixed order: OIDC verify â†’ require `claims.sub` â†’ Redis token-bucket limiter â†’ semantic cache â†’ registry/router/provider |
 
 Before admission completes, no semantic-cache or provider operation runs. Invalid bearer
 returns `401`; a Redis or limiter script failure fails closed with `503`; an exhausted
@@ -144,7 +159,7 @@ Malformed plan documents return RFC 9457 `422` with JSON-pointer field detail.
 ## Streaming
 
 Server-to-browser streaming uses SSE through FastAPI's native support with a fixed
-six-value event vocabulary; `sse-starlette` is not a dependency. The agent↔backend protocol
+six-value event vocabulary; `sse-starlette` is not a dependency. The agentâ†”backend protocol
 is JSON-RPC 2.0 over WSS, outbound-only, and in Phase 0 only the transport mechanics exist.
 
 <!-- BEGIN GENERATED ENDPOINTS -->
@@ -152,7 +167,7 @@ is JSON-RPC 2.0 over WSS, outbound-only, and in Phase 0 only the transport mecha
 <!-- Generated by scripts/dump-openapi.py from the live app. Do not edit by hand:
      `python scripts/dump-openapi.py --check` fails the build when this drifts. -->
 
-The application publishes **74 operations across 61 paths**.
+The application publishes **167 operations across 143 paths**.
 
 ### `agents`
 
@@ -161,9 +176,11 @@ The application publishes **74 operations across 61 paths**.
 | `GET` | `/api/v1/agents/connection-info` | What an agent needs in order to connect to this backend | principal |
 | `GET` | `/api/v1/agents/devices` | List paired agent devices | principal |
 | `GET` | `/api/v1/agents/devices/{device_id}` | Read one agent device | principal |
+| `GET` | `/api/v1/agents/installations` | Discover registered and local agent installations | principal |
 | `POST` | `/api/v1/agents/pair/exchange` | Exchange a pairing code for device credentials (public) | public |
 | `POST` | `/api/v1/agents/pairing-codes` | Issue a single-use pairing code for a project | principal |
 | `POST` | `/api/v1/agents/self/abandon` | Surrender the calling device (agent, authenticated by its own device token) | public |
+| `POST` | `/api/v1/agents/uninstall` | Safely uninstall, disconnect, and revoke agent installations | principal |
 | `DELETE` | `/api/v1/agents/{device_id}` | Revoke a device | principal |
 
 ### `ai`
@@ -203,6 +220,14 @@ The application publishes **74 operations across 61 paths**.
 | `POST` | `/api/v1/approvals/{change_set_id}/reject` | Reject a pending change set | principal |
 | `POST` | `/api/v1/approvals/{change_set_id}/revert` | Revert an applied change set | principal |
 
+### `argocd`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/argocd/webhook` | Record a repository change (does NOT sync) | public |
+| `POST` | `/api/v1/projects/{project_id}/argocd/manifests` | Render an ArgoCD or Rollouts manifest | principal |
+| `POST` | `/api/v1/projects/{project_id}/argocd/sync` | Sync one ArgoCD Application | principal |
+
 ### `audit`
 
 | Method | Path | Summary | Auth |
@@ -222,12 +247,122 @@ The application publishes **74 operations across 61 paths**.
 | `POST` | `/api/v1/auth/logout` | Logout | public |
 | `POST` | `/api/v1/auth/refresh` | Refresh | public |
 
+### `autonomous-deploy`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/projects/{project_id}/autonomous-deploy` | Create or retrieve an autonomous deployment run (idempotent) | principal |
+| `GET` | `/api/v1/projects/{project_id}/autonomous-deploy/{run_id}` | Get authoritative run snapshot and stages | principal |
+| `POST` | `/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/cancel` | Request cooperative cancellation of an autonomous deployment run | principal |
+| `GET` | `/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/events` | Real-time Server-Sent Events (SSE) streaming with outbox replay and live Redis relay | principal |
+| `GET` | `/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/logs` | Cursor-paginated log retrieval strictly ordered by monotonic log_seq ASC | principal |
+| `POST` | `/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/reconcile` | Reconcile an existing cloud deployment stage (e.g. Vercel) and verify without redeploying | principal |
+| `POST` | `/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/retry` | Create a new immutable attempt for a failed or rolled-back run | principal |
+| `POST` | `/api/v1/projects/{project_id}/autonomous-deploy/{run_id}/start` | Initiate execution of a pending autonomous deployment run | principal |
+
+### `commands`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/commands/catalogue` | Read Catalogue | principal |
+| `POST` | `/api/v1/commands/execute` | Execute | principal |
+| `GET` | `/api/v1/commands/history` | History | principal |
+| `POST` | `/api/v1/commands/interpret` | Interpret | principal |
+
+### `deployments`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/projects/{project_id}/deployments` | List Deployments | principal |
+| `POST` | `/api/v1/projects/{project_id}/deployments` | Request Deployment | principal |
+| `GET` | `/api/v1/projects/{project_id}/deployments/detected-manifests` | Get Detected Manifests | principal |
+| `GET` | `/api/v1/projects/{project_id}/deployments/rollback-target` | Rollback Target | principal |
+| `GET` | `/api/v1/projects/{project_id}/deployments/{deployment_id}` | Read Deployment | principal |
+| `GET` | `/api/v1/projects/{project_id}/deployments/{deployment_id}/logs` | Live deployment output as SSE `log` events | principal |
+| `POST` | `/projects/{project_id}/pipelines/deployment` | Start the durable deployment pipeline | principal |
+| `POST` | `/projects/{project_id}/pipelines/deployment/release` | Release a gated pipeline step (does not replace the environment's own approval) | principal |
+
+### `environments`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/projects/{project_id}/environments` | List Environments | principal |
+| `POST` | `/api/v1/projects/{project_id}/environments` | Create Environment | principal |
+| `PATCH` | `/api/v1/projects/{project_id}/environments/{environment_id}` | Update Environment | principal |
+| `DELETE` | `/api/v1/projects/{project_id}/environments/{environment_id}` | Delete Environment | principal |
+| `GET` | `/api/v1/projects/{project_id}/environments/{environment_id}/promotion` | Promotion | principal |
+| `GET` | `/api/v1/projects/{project_id}/environments/{environment_id}/variables` | List Variables | principal |
+| `PUT` | `/api/v1/projects/{project_id}/environments/{environment_id}/variables` | Set Variable | principal |
+
 ### `generation`
 
 | Method | Path | Summary | Auth |
 | --- | --- | --- | --- |
 | `POST` | `/api/v1/generation/runs` | Generate deployment artifacts, streaming progress as SSE | principal |
 | `GET` | `/api/v1/generation/runs/{run_id}` | Read one generation run and the prompt it was given | principal |
+
+### `host-operations`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/projects/{project_id}/devtools/run` | Run the project's own tests, linters, build, compose stack or migrations | principal |
+| `POST` | `/api/v1/projects/{project_id}/docker/containers/actions` | Start, stop, restart or remove one container (through the chokepoint) | principal |
+| `GET` | `/api/v1/projects/{project_id}/docker/containers/{container}/logs` | One container's recent output | principal |
+| `POST` | `/api/v1/projects/{project_id}/docker/images/actions` | Build, push, pull or remove one image (through the chokepoint) | principal |
+| `GET` | `/api/v1/projects/{project_id}/docker/inventory` | Containers, images, volumes and networks on the agent's host | principal |
+| `GET` | `/api/v1/projects/{project_id}/kubernetes/inventory` | Namespaces, nodes, pods, workloads, services and config | principal |
+| `GET` | `/api/v1/projects/{project_id}/kubernetes/namespaces/{namespace}/pods/{pod}` | One pod's logs AND its events | principal |
+| `GET` | `/api/v1/projects/{project_id}/kubernetes/namespaces/{namespace}/rollouts/{rollout}` | One Argo Rollout's progress: weight, step, replicas and analysis verdicts | principal |
+| `POST` | `/api/v1/projects/{project_id}/kubernetes/workloads/actions` | Scale, restart or roll back one workload (through the chokepoint) | principal |
+
+### `incidents`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/incidents/{incident_id}` | Read Incident | principal |
+| `POST` | `/api/v1/incidents/{incident_id}/analysis` | Analyse Incident | principal |
+| `GET` | `/api/v1/incidents/{incident_id}/suggestions/{suggestion_id}/preview` | Preview Suggestion | principal |
+| `POST` | `/api/v1/incidents/{incident_id}/suggestions/{suggestion_id}/submit` | Submit Suggestion | principal |
+| `GET` | `/api/v1/projects/{project_id}/incidents` | List Incidents | principal |
+
+### `integrations`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/integrations/github` | Whether this user has linked GitHub | principal |
+| `DELETE` | `/api/v1/integrations/github` | Disconnect and revoke | principal |
+| `GET` | `/api/v1/integrations/github/callback` | Finish linking a GitHub account (browser redirect target) | public |
+| `POST` | `/api/v1/integrations/github/connect` | Begin linking a GitHub account | principal |
+| `GET` | `/api/v1/integrations/github/repositories` | The repositories this user's linked account can reach | principal |
+| `POST` | `/api/v1/integrations/github/repositories` | Create a new GitHub repository for this user | principal |
+| `GET` | `/api/v1/integrations/github/repositories/check-availability` | Check if a repository name is available under the linked account | principal |
+| `GET` | `/api/v1/integrations/github/repositories/{owner}/{repo}/branches` | The branches and permissions for a specific GitHub repository | principal |
+| `PUT` | `/api/v1/integrations/github/token` | Link a GitHub account with a token, without leaving ForgeOps | principal |
+| `GET` | `/api/v1/integrations/vercel` | Get current user's Vercel integration status | principal |
+| `DELETE` | `/api/v1/integrations/vercel` | Disconnect Vercel account | principal |
+| `POST` | `/api/v1/integrations/vercel/test` | Test current Vercel connection | principal |
+| `PUT` | `/api/v1/integrations/vercel/token` | Link a Vercel account with a personal access token | principal |
+
+### `knowledge`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/knowledge/topics` | List Topics | principal |
+| `POST` | `/api/v1/projects/{project_id}/knowledge/ask` | Ask | principal |
+
+### `learning`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `PATCH` | `/api/v1/learning/preferences/{preference_id}` | Correct Preference | principal |
+| `DELETE` | `/api/v1/learning/preferences/{preference_id}` | Forget Preference | principal |
+| `POST` | `/api/v1/projects/{project_id}/learning/feedback` | Record Feedback | principal |
+| `GET` | `/api/v1/projects/{project_id}/learning/history` | Read History | principal |
+| `GET` | `/api/v1/projects/{project_id}/learning/preferences` | List Preferences | principal |
+| `POST` | `/api/v1/projects/{project_id}/learning/preferences` | State Preference | principal |
+| `POST` | `/api/v1/projects/{project_id}/learning/reflect` | Run Reflection | principal |
+| `GET` | `/api/v1/projects/{project_id}/learning/skill-file` | Read Skill File | principal |
+| `POST` | `/api/v1/projects/{project_id}/learning/turns` | Record Turn | principal |
 
 ### `mcp`
 
@@ -237,6 +372,23 @@ The application publishes **74 operations across 61 paths**.
 | `GET` | `/api/v1/mcp/apps/{name}` | Get App Descriptor | principal |
 | `GET` | `/api/v1/mcp/apps/{name}/host` | Get App Host Page | principal |
 | `GET` | `/api/v1/mcp/servers` | List Servers | principal |
+
+### `monitoring`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/monitoring/queries` | List Queries | principal |
+| `POST` | `/api/v1/monitoring/query` | Run Query | principal |
+| `GET` | `/api/v1/monitoring/readiness` | Monitoring Readiness | principal |
+
+### `notifications`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/projects/{project_id}/notifications` | This project's notifications, newest first | principal |
+| `GET` | `/api/v1/projects/{project_id}/notifications/preferences` | This user's channel preferences for this project | principal |
+| `PUT` | `/api/v1/projects/{project_id}/notifications/preferences` | Set one channel-and-kind preference | principal |
+| `POST` | `/api/v1/projects/{project_id}/notifications/{notification_id}/read` | Mark one notification read | principal |
 
 ### `policies`
 
@@ -258,18 +410,33 @@ The application publishes **74 operations across 61 paths**.
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/projects` | List the caller's projects | principal |
 | `POST` | `/api/v1/projects` | Create a project | principal |
+| `POST` | `/api/v1/projects/from-github` | Create a project from a repository on the caller's linked GitHub account | principal |
 | `POST` | `/api/v1/projects/import/github` | Import a GitHub repository as a project | principal |
 | `GET` | `/api/v1/projects/tags` | Every tag in use in this tenant | principal |
 | `GET` | `/api/v1/projects/{project_id}` | Read one project | principal |
 | `DELETE` | `/api/v1/projects/{project_id}` | Delete a project and its dependent rows | principal |
 | `GET` | `/api/v1/projects/{project_id}/activity` | Project activity | principal |
 | `POST` | `/api/v1/projects/{project_id}/archive` | Archive a project (soft) | principal |
+| `POST` | `/api/v1/projects/{project_id}/clone` | Clone the project's GitHub repository onto the paired agent's machine | principal |
 | `PUT` | `/api/v1/projects/{project_id}/favourite` | Mark as this caller's favourite | principal |
 | `DELETE` | `/api/v1/projects/{project_id}/favourite` | Unstar | principal |
+| `POST` | `/api/v1/projects/{project_id}/github/push` | Push project codebase to GitHub | principal |
 | `GET` | `/api/v1/projects/{project_id}/readiness` | Readiness score | principal |
+| `POST` | `/api/v1/projects/{project_id}/scan` | Trigger an agent codebase scan for this project | principal |
 | `PUT` | `/api/v1/projects/{project_id}/tags` | Add a tag to a project | principal |
 | `DELETE` | `/api/v1/projects/{project_id}/tags/{tag}` | Remove a tag | principal |
 | `POST` | `/api/v1/projects/{project_id}/unarchive` | Restore an archived project | principal |
+| `GET` | `/api/v1/projects/{project_id}/vercel/config-check` | Check project Vercel deployment configuration | principal |
+| `POST` | `/api/v1/projects/{project_id}/vercel/deploy` | Deploy project to Vercel | principal |
+
+### `releases`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/projects/{project_id}/releases/diff` | Diff between two deployments | principal |
+| `POST` | `/api/v1/projects/{project_id}/releases/promote` | Promote an environment's stable state to the next | principal |
+| `POST` | `/api/v1/projects/{project_id}/releases/rollback` | Roll an environment back to a stable deployment | principal |
+| `GET` | `/api/v1/projects/{project_id}/releases/timeline` | Deployment history with version metadata | principal |
 
 ### `secrets`
 
@@ -279,6 +446,17 @@ The application publishes **74 operations across 61 paths**.
 | `POST` | `/api/v1/secrets` | Create Secret | principal |
 | `PATCH` | `/api/v1/secrets/{secret_id}` | Update Secret | principal |
 | `DELETE` | `/api/v1/secrets/{secret_id}` | Delete Secret | principal |
+
+### `self-healing`
+
+| Method | Path | Summary | Auth |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/healing/remedies` | List Remedies | principal |
+| `POST` | `/api/v1/incidents/{incident_id}/heal` | Heal | principal |
+| `POST` | `/api/v1/incidents/{incident_id}/heal/propose` | Propose | principal |
+| `GET` | `/api/v1/incidents/{incident_id}/healing` | Healing Log | principal |
+| `GET` | `/api/v1/incidents/{incident_id}/postmortem` | Read Postmortems | principal |
+| `POST` | `/api/v1/incidents/{incident_id}/postmortem` | Write Postmortem | principal |
 
 ### `untagged`
 

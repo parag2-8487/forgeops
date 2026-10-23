@@ -182,7 +182,7 @@ This document presents a comprehensive technology research study for building an
 ## 3. Detailed Findings per Research Question
 
 > **Note on Rejected/Deferred Proposals:** During the July 2026 technology audit, several alternatives were evaluated and intentionally rejected or deferred:
-> - **Dagger.io** → Deferred to Phase 5. The project's CI/CD approach (standard GitHub Actions + goreleaser) is sufficient. Dagger's programmable pipelines add unnecessary complexity for current needs.
+> - **Dagger.io** → Deferred to Phase 4. The project's CI/CD approach (standard GitHub Actions + goreleaser) is sufficient. Dagger's programmable pipelines add unnecessary complexity for current needs.
 > - **SOPS** → Rejected. Infisical is already chosen and provides a web dashboard, RBAC, audit logs, and secret rotation — capabilities SOPS lacks.
 > - **Dependabot** → Rejected. Renovate is already chosen and is significantly more configurable (grouping, scheduling, monorepo support, merge confidence).
 > - **Checkly** → Rejected. Synthetic monitoring is a small subset of the full observability stack; not comprehensive enough for platform needs.
@@ -1577,7 +1577,7 @@ Based on community forums, GitHub issues of competitor projects, Reddit/ HN disc
 |:---|:---|:---|
 | **Built-in secret management** | Reddit r/devops, GitHub issues | Critical |
 | **GitOps integration** (PR-driven changes, not direct writes) | HN discussion on AI infra tools | High |
-| **Multi-agent team rooms** (humans + agents collaborating) | Community forums | Medium (Phase 5+) |
+| **Multi-agent team rooms** (humans + agents collaborating) | Community forums | Medium (Phase 4+) |
 | **Cost estimation BEFORE deployment** | Reddit r/kubernetes | High |
 | **Comprehensive audit trails** (regulatory compliance) | Enterprise feedback | High |
 | **Agent Governance Control Plane** (policy+approval+audit+change-set+rollback as one chokepoint) | Enterprise / architecture critique | Critical (P1) |
@@ -1608,16 +1608,16 @@ Based on community forums, GitHub issues of competitor projects, Reddit/ HN disc
 
 | Feature | Defer To | Effort | Value | Rationale |
 |:---|:---|:---|:---|:---|
-| **AI Architecture Diagram Generator** | Phase 5+ | High | ★★☆☆☆ | Novelty feature, not core to DevOps |
-| **Visual Pipeline Designer (drag-and-drop)** | Phase 4+ | High | ★★★☆☆ | Useful but complex; code editor + YAML generation is cheaper initially |
-| **Backup & DR (scheduled, retention)** | Phase 4+ | Medium | ★★★☆☆ | Important but not MVP. Start with simple export |
-| **API Explorer** | Phase 5+ | Medium | ★★☆☆☆ | Nice-to-have, limited usage |
-| **Dependency Health (full scanner)** | Phase 3+ | Medium | ★★★☆☆ | Valuable but complex across all ecosystems |
-| **Cost Analysis** | Phase 4+ | Medium | ★★★☆☆ | Valuable but estimates can be misleading |
-| **Team Collaboration (full RBAC)** | Phase 4+ | High | ★★★★☆ | Important but complex; start with simple sharing |
+| **AI Architecture Diagram Generator** | Phase 4+ | High | ★★☆☆☆ | Novelty feature, not core to DevOps |
+| **Visual Pipeline Designer (drag-and-drop)** | Phase 3+ | High | ★★★☆☆ | Useful but complex; code editor + YAML generation is cheaper initially |
+| **Backup & DR (scheduled, retention)** | Phase 3+ | Medium | ★★★☆☆ | Important but not MVP. Start with simple export |
+| **API Explorer** | Phase 4+ | Medium | ★★☆☆☆ | Nice-to-have, limited usage |
+| **Dependency Health (full scanner)** | Phase 2+ | Medium | ★★★☆☆ | Valuable but complex across all ecosystems |
+| **Cost Analysis** | Phase 3+ | Medium | ★★★☆☆ | Valuable but estimates can be misleading |
+| **Team Collaboration (full RBAC)** | Phase 3+ | High | ★★★★☆ | Important but complex; start with simple sharing |
 | **Multi-Environment Management** | Phase 2+ | High | ★★★★☆ | Important but complex; start with single env |
-| **Analytics Dashboard** | Phase 4+ | High | ★★★☆☆ | Nice-to-have, scope creep in early phases |
-| **Knowledge Base Mode** | Phase 5+ | Medium | ★★★☆☆ | Content creation, not core automation |
+| **Analytics Dashboard** | Phase 3+ | High | ★★★☆☆ | Nice-to-have, scope creep in early phases |
+| **Knowledge Base Mode** | Phase 4+ | Medium | ★★★☆☆ | Content creation, not core automation |
 
 **Recommended simplified feature set for MVP (Phase 1):**
 1. ✅ Local agent installation + pairing
@@ -1751,7 +1751,7 @@ StackGen is arguably the most advanced pure-play in autonomous infrastructure. U
 | Feature | StackGen | This Project (Advantage) |
 |:---|:---|:---|
 | IaC Generation | Mature | Planned |
-| Drift Detection | Yes | Planned (Phase 3+) |
+| Drift Detection | Yes | Planned (Phase 2+) |
 | Codebase Analysis | None | Core differentiator |
 | Readiness Scoring | None | Unique |
 | Multi-env Mgmt | Yes | Planned |
@@ -1857,7 +1857,7 @@ The risk is execution — not competition. The market is validated and growing. 
 
 ### 5.1 Prioritized Architecture Change Plan — What to Change First
 
-Not all architecture changes have equal urgency. This section ranks each recommended change as **P0 (Must Do Before Launch)**, **P1 (Should Do — Phase 1/2)**, or **P2 (Nice to Have — Phase 3+).**
+Not all architecture changes have equal urgency. This section ranks each recommended change as **P0 (Must Do Before Launch)**, **P1 (Should Do — Phase 1/2)**, or **P2 (Nice to Have — Phase 2+).**
 
 #### P0 — Must Do Before Launch (Foundation)
 
@@ -1884,7 +1884,7 @@ Important for scaling, security, and developer experience, but not strictly requ
 | 9 | **Use SQLite for local agent state** | Low | YELLOW MEDIUM — Dependency on network for basic operations | The local agent should function offline. SQLite provides zero-config local storage without needing a server process. |
 | 10 | **Use Novu for notifications** | Low | GREEN LOW — Manual notification code | Custom notifications work for MVP. Add Novu when the notification surface area grows (templates, preferences, digests). |
 
-#### P2 — Nice to Have (Phase 3+)
+#### P2 — Nice to Have (Phase 2+)
 
 Defer these to focus on core platform differentiation and stability.
 
@@ -1920,7 +1920,7 @@ Phase 2 (Scale) - P1 + P2 Changes:
 ├── Pulumi as secondary IaC option
 ├── Visual pipeline designer (React Flow overlay)
 
-Phase 3+ - P2 Changes:
+Phase 2+ - P2 Changes:
 ├── Rust migration for local agent (if needed)
 ├── Go backend split (if performance requires)
 ```
@@ -1960,12 +1960,12 @@ Phase 3+ - P2 Changes:
 
 | Feature | Current Phase | Action | Reason |
 |:---|:---|:---|:---|
-| **AI Architecture Diagram Generator** | Feature 4.20 | Move to Phase 5+ | Novelty feature, complex to implement well |
+| **AI Architecture Diagram Generator** | Feature 4.20 | Move to Phase 4+ | Novelty feature, complex to implement well |
 | **Visual Pipeline Designer (drag-and-drop)** | Feature 4.8 | Simplify to YAML-first with visual preview | Complex UI; YAML + validation is enough for v1 |
-| **API Explorer** | Feature 4.23 | Move to Phase 5+ | Limited utility, complex to implement |
+| **API Explorer** | Feature 4.23 | Move to Phase 4+ | Limited utility, complex to implement |
 | **Backup & DR (scheduled, retention)** | Feature 4.15 | Start with manual export | Important but not MVP |
-| **Analytics Dashboard (deployment analytics)** | Feature 4.27 | Move to Phase 4+ | Value depends on having deployment history first |
-| **Cost Analysis** | Feature 4.26 | Move to Phase 4+ | Estimates are hard to get right without usage data |
+| **Analytics Dashboard (deployment analytics)** | Feature 4.27 | Move to Phase 3+ | Value depends on having deployment history first |
+| **Cost Analysis** | Feature 4.26 | Move to Phase 3+ | Estimates are hard to get right without usage data |
 | **Dependency Health (full scanner)** | Feature 4.21 | Start with simple vulnerability scan | Full dependency health is complex across multiple ecosystems |
 | **Self-Healing (full)** | Feature 4.13 | Start with auto-restart only | Guard-railed auto-healing requires maturity |
 | **Team Collaboration (full RBAC)** | Feature 4.24 | Start with simple role-based access | RBAC is complex; get the core working first |

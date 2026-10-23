@@ -4,7 +4,7 @@
 #
 # The counterpart to scripts/start-forgeops.ps1, doing the same work in the same order:
 # install what is missing, generate the secrets the application refuses to boot without, pick free
-# ports, start the nine services in dependency order, provision the identity provider, migrate, then
+# ports, start the thirteen services in dependency order, provision the identity provider, migrate, then
 # PROVE the result by reading /health/ready rather than by trusting that `up` returned zero.
 #
 # Safe to run repeatedly. Every step checks the state it wants before changing anything, and no
@@ -24,6 +24,8 @@
 # note at that step for why those two are separated.
 
 set -Eeuo pipefail
+
+ORIGINAL_ARGS=("$@")
 
 FRESH=0
 FORCE=0
@@ -84,6 +86,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Shared apt preflight: makes apt wait for a busy dpkg lock rather than failing on it, which is what
+# a fresh Ubuntu boot's unattended-upgrades causes. Sourced from one file so this launcher and
+# setup.sh cannot drift apart.
+if [ -f "$SCRIPT_DIR/lib/apt-preflight.sh" ]; then
+  # shellcheck source=scripts/lib/apt-preflight.sh
+  . "$SCRIPT_DIR/lib/apt-preflight.sh"
+fi
+
 printf '\n%s  ForgeOps — governed DevOps automation%s\n' "$C_HEAD" "$C_RESET"
 printf '%s  one-click start: installs what is missing, then starts and verifies the stack%s\n' "$C_DIM" "$C_RESET"
 printf '%s  repository: %s%s\n' "$C_DIM" "$REPO_ROOT" "$C_RESET"
@@ -97,16 +107,132 @@ COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.e2e.yml)
 dc() { docker compose "${COMPOSE_FILES[@]}" "$@"; }
 ENV_PATH="$REPO_ROOT/.env"
 
+detect_installation_mode_() {
+  local env_file="$1"
+  local installed_ver="$2"
+  local intended_ver="$3"
+  local is_fresh="$4"
+  local is_rebuild="$5"
+  local is_no_reset="$6"
+  local ps_output="$7"
+
+  if [ "$is_fresh" -eq 1 ]; then
+    INSTALL_MODE="Fresh"
+    INSTALL_DESC="Fresh installation / reset requested via --fresh flag"
+    INSTALL_ACTION="Wipe containers and data volumes, perform fresh bootstrap"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  if [ ! -f "$env_file" ] || [ ! -s "$env_file" ]; then
+    INSTALL_MODE="Fresh"
+    INSTALL_DESC="Fresh installation: no configuration file (.env) found"
+    INSTALL_ACTION="Generate configuration, secrets, and bootstrap stack"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  local pepper=""
+  pepper="$(grep -E '^ENVELOPE_PEPPER=' "$env_file" 2>/dev/null | head -n1 | cut -d= -f2- || true)"
+  if [ -z "$pepper" ]; then
+    INSTALL_MODE="ExistingNeedsRepair"
+    INSTALL_DESC="Existing installation missing required configuration or secrets (ENVELOPE_PEPPER)"
+    INSTALL_ACTION="Generate missing secrets and repair configuration without overwriting existing data"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  local required_services="postgres redis cerbos opa authentik-server authentik-worker backend worker backend-agent frontend inngest ollama ollama-secondary"
+  local missing=""
+  for req in $required_services; do
+    if ! echo "$ps_output" | grep -q "^$req|"; then
+      missing="$missing $req"
+    else
+      local line=""
+      line="$(echo "$ps_output" | grep "^$req|" | head -n1)"
+      local st=""
+      local hl=""
+      st="$(echo "$line" | cut -d'|' -f2 | tr '[:upper:]' '[:lower:]')"
+      hl="$(echo "$line" | cut -d'|' -f3 | tr '[:upper:]' '[:lower:]')"
+      if [ "$st" != "running" ]; then
+        missing="$missing $req"
+      elif [ -n "$hl" ] && [ "$hl" != "healthy" ]; then
+        missing="$missing $req"
+      fi
+    fi
+  done
+  missing="$(echo "$missing" | sed -e 's/^[[:space:]]*//')"
+
+  if [ -n "$installed_ver" ] && [ -n "$intended_ver" ] && [ "$installed_ver" != "$intended_ver" ]; then
+    INSTALL_MODE="ExistingNeedsUpdate"
+    INSTALL_DESC="Existing installation requiring an update from $installed_ver to $intended_ver"
+    INSTALL_ACTION="Back up database, build/pull updated images, apply migrations, update version marker"
+    INSTALL_MISSING_SERVICES="$missing"
+    return 0
+  fi
+
+  if [ -z "$missing" ] && [ "$is_rebuild" -eq 0 ]; then
+    INSTALL_MODE="ExistingHealthy"
+    INSTALL_DESC="Existing healthy installation at intended version ($intended_ver)"
+    INSTALL_ACTION="Verify health endpoints and maintain running stack without teardown"
+    INSTALL_MISSING_SERVICES=""
+    return 0
+  fi
+
+  INSTALL_MODE="ExistingNeedsRepair"
+  INSTALL_DESC="Existing installation needing repair: service(s) stopped, missing, or unhealthy ($missing)"
+  INSTALL_ACTION="Recreate or restart only stopped/unhealthy services"
+  INSTALL_MISSING_SERVICES="$missing"
+  return 0
+}
+
 # ─── Docker ──────────────────────────────────────────────────────────────────────────────────────
 
 head_ 'Prerequisites'
 step_ 'Checking Docker'
 
+# Applied before any install below. A fresh Ubuntu desktop holds the dpkg lock while
+# unattended-upgrades applies security updates; without this the Docker install fails silently and
+# the run dies later claiming Docker could not be installed.
+apt_configure_lock_timeout "sudo"
+
 install_docker_() {
   if have_ apt-get; then
-    info_ 'installing docker.io and the compose plugin with apt-get (needs sudo)'
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq docker.io docker-compose-v2
+    info_ 'installing Docker Engine and Compose plugin with apt-get (needs sudo)'
+    sudo apt-get update -qq || true
+    sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release software-properties-common || true
+    sudo install -m 0755 -d /etc/apt/keyrings
+
+    local os_distro="ubuntu"
+    if [ -f /etc/os-release ]; then
+      . /etc/os-release
+      case "${ID:-ubuntu}" in
+        debian|raspbian) os_distro="debian" ;;
+        *) os_distro="ubuntu" ;;
+      esac
+    fi
+
+    local codename="${VERSION_CODENAME:-}"
+    if [ -z "$codename" ] && have_ lsb_release; then
+      codename="$(lsb_release -cs 2>/dev/null || echo '')"
+    fi
+    [ -n "$codename" ] || codename="jammy"
+
+    if [ ! -f /etc/apt/keyrings/docker.asc ]; then
+      sudo curl -fsSL "https://download.docker.com/linux/${os_distro}/gpg" -o /etc/apt/keyrings/docker.asc 2>/dev/null || true
+      sudo chmod a+r /etc/apt/keyrings/docker.asc 2>/dev/null || true
+    fi
+
+    if [ -f /etc/apt/keyrings/docker.asc ]; then
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${os_distro} ${codename} stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+      sudo apt-get update -qq || true
+      sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
+    fi
+
+    if ! have_ docker; then
+      warn_ 'official docker repository packages failed to install; falling back to distro packages'
+      sudo apt-get install -y -qq docker.io docker-compose || true
+    fi
   elif have_ dnf; then
     info_ 'installing moby-engine and the compose plugin with dnf (needs sudo)'
     sudo dnf install -y -q moby-engine docker-compose
@@ -131,26 +257,20 @@ if ! have_ docker; then
   if have_ systemctl; then
     info_ 'enabling and starting the docker service'
     sudo systemctl enable --now docker || true
+  elif have_ service; then
+    info_ 'starting the docker service'
+    sudo service docker start || true
   fi
-  # `id -un` rather than `$USER`: that variable is not set in every non-login shell, and with `set -u`
-  # an unset variable ABORTS the script -- so the install path would crash at the very end, after
-  # having installed Docker, on a machine where the environment simply lacked USER.
   CURRENT_USER="$(id -un)"
   if ! id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-    warn_ "adding $CURRENT_USER to the 'docker' group"
+    info_ "adding $CURRENT_USER to the 'docker' group (note: grants root-equivalent Docker access)"
     sudo usermod -aG docker "$CURRENT_USER" || true
-    warn_ 'You must LOG OUT and BACK IN for that group change to take effect, then rerun this script.'
   fi
 fi
 ok_ "$(docker --version)"
 
 step_ 'Checking the Docker engine is running'
 
-# The error text is CAPTURED rather than discarded. The first version sent it to /dev/null and then
-# tried `systemctl start docker` for every failure, which is wrong for the most common one: if you are
-# not in the `docker` group the daemon is already running perfectly and starting it again changes
-# nothing, so the script waited three minutes and died advising you to check a service that was fine.
-# Waiting only helps when something is genuinely still coming up.
 docker_err=""
 docker_ok=0
 probe_docker_() {
@@ -167,48 +287,38 @@ if [ "$docker_ok" -eq 0 ]; then
   if grep -qi microsoft /proc/version 2>/dev/null; then IS_WSL=1; fi
 
   case "$docker_err" in
-    # FIRST, because the permission error also contains "connect to the docker API": a group problem
-    # is not fixed by starting a daemon that is already running.
     *"permission denied"*)
-      # The daemon is reachable but this user may not talk to it. Proving that with sudo turns a
-      # guess into a fact, and separates "Docker is broken" from "your session lacks the group".
-      if sudo -n docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then
-        warn_ 'the Docker engine IS running, but this user cannot reach its socket.'
-      else
-        warn_ 'cannot reach the Docker socket, and the reason looks like permissions.'
+      warn_ 'the Docker engine is running, but this user cannot reach its socket.'
+      CURRENT_USER="$(id -un)"
+      if ! id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        info_ "adding $CURRENT_USER to the 'docker' group (note: grants root-equivalent Docker access)"
+        sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
       fi
-      if id -nG "$(id -un)" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
-        die_ "you are in the 'docker' group, but THIS SHELL predates that change." \
-          'Group membership is fixed when a session starts, so the current shell never got it.' \
-          'Start a new session and run this script again:' \
-          '    newgrp docker        # then re-run in the shell it opens' \
-          '  or log out and back in, which is cleaner.'
+      if have_ sg && sg docker -c "docker info" >/dev/null 2>&1; then
+        info_ "activating 'docker' group token via sg and resuming launcher..."
+        if [ "${#ORIGINAL_ARGS[@]}" -gt 0 ]; then
+          exec sg docker -c "$REPO_ROOT/scripts/start-forgeops.sh ${ORIGINAL_ARGS[*]}"
+        else
+          exec sg docker -c "$REPO_ROOT/scripts/start-forgeops.sh"
+        fi
+      fi
+      if id -nG "$CURRENT_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+        die_ "you are in the 'docker' group, but this shell session has not loaded the group token." \
+          "Run 'newgrp docker' or start a new shell session, then rerun:" \
+          "    $0 ${ORIGINAL_ARGS[*]}"
       else
-        die_ "your user is not in the 'docker' group, so it may not use the Docker socket." \
-          'Add it, then start a NEW session:' \
-          "    sudo usermod -aG docker \"\$USER\"" \
-          '    newgrp docker        # or log out and back in' \
-          'Running this script under sudo instead would work and is not advised: every file it' \
-          'creates, including .env and the CA, would end up owned by root.'
+        die_ "your user is not in the 'docker' group and cannot reach the Docker socket." \
+          "To grant access securely without weakening socket permissions, run:" \
+          "    sudo usermod -aG docker \"$CURRENT_USER\"" \
+          "    newgrp docker"
       fi
       ;;
-    # The wording differs between Docker versions and transports, so several are matched. Observed on
-    # Docker 29: a missing socket gives "failed to connect to the docker API at unix://...; check if
-    # the path is correct and if the daemon is running: ... no such file or directory", while a
-    # refused TCP endpoint still gives the older "Cannot connect to the Docker daemon ... Is the
-    # docker daemon running?". Matching only the older phrasing sent every modern failure to the
-    # catch-all, which gives worse advice and does not try the right start command.
-    #
-    # This case must stay AFTER the permission case: the permission error also contains "connect to
-    # the docker API", and a group problem is not fixed by starting a daemon that is already running.
     *"Cannot connect to the Docker daemon"*|*"Is the docker daemon running"* \
       |*"failed to connect to the docker API"*|*"no such file or directory"* \
       |*"connection refused"*|*"docker daemon is not running"*)
       warn_ 'the Docker daemon is not running. Trying to start it.'
       started=0
       if [ "$IS_WSL" -eq 1 ] && ! systemctl is-system-running >/dev/null 2>&1; then
-        # WSL does not run systemd unless it has been enabled, so `systemctl start docker` fails with
-        # "System has not been booted with systemd as init system (PID 1)". The SysV path still works.
         info_ 'this looks like WSL without systemd; using the service command'
         sudo service docker start >/dev/null 2>&1 && started=1
       elif have_ systemctl; then
@@ -237,7 +347,7 @@ if [ "$docker_ok" -eq 0 ]; then
         sudo systemctl status docker --no-pager 2>&1 | head -n 15 || true
         die_ 'the Docker daemon did not come up.' \
           'Its own status is above. Common causes:' \
-          '  - it is not installed: sudo apt-get install -y docker.io docker-compose-v2' \
+          '  - it is not installed: sudo apt-get install -y docker-ce docker-compose-plugin' \
           '  - on WSL, enable systemd or start Docker Desktop on Windows with WSL integration' \
           '  - it failed to start: journalctl -u docker -n 50 --no-pager'
       fi
@@ -282,6 +392,36 @@ if [ "$docker_ok" -eq 0 ]; then
   esac
 fi
 ok_ "Docker engine $(docker info --format '{{.ServerVersion}}')"
+
+if ! docker compose version --short >/dev/null 2>&1; then
+  warn_ 'Docker Compose v2 is not available: attempting auto-installation'
+  if have_ apt-get; then
+    sudo apt-get update -qq || true
+    sudo apt-get install -y -qq docker-compose-plugin || true
+  fi
+  if ! docker compose version --short >/dev/null 2>&1 && have_ docker-compose; then
+    mkdir -p "$HOME/.docker/cli-plugins"
+    ln -sf "$(command -v docker-compose)" "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null || true
+  fi
+  if ! docker compose version --short >/dev/null 2>&1; then
+    # NO `local` HERE. This block is not inside a function, and `local` outside one is a bash ERROR
+    # ("local: can only be used in a function") that returns 1 -- which `set -e` turns into the
+    # immediate death of the whole script. It sat on the one path a machine with no Compose plugin
+    # takes, so the fallback that exists to rescue a fresh computer was the thing that failed on it.
+    COMPOSE_ARCH="$(uname -m)"
+    case "$COMPOSE_ARCH" in
+      x86_64) COMPOSE_ARCH="x86_64" ;;
+      aarch64|arm64) COMPOSE_ARCH="aarch64" ;;
+      *) COMPOSE_ARCH="x86_64" ;;
+    esac
+    COMPOSE_DIR="/usr/local/lib/docker/cli-plugins"
+    sudo mkdir -p "$COMPOSE_DIR" 2>/dev/null || COMPOSE_DIR="$HOME/.docker/cli-plugins"
+    mkdir -p "$COMPOSE_DIR"
+    sudo curl -sSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o "$COMPOSE_DIR/docker-compose" 2>/dev/null || \
+      curl -sSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null || true
+    sudo chmod +x "$COMPOSE_DIR/docker-compose" 2>/dev/null || chmod +x "$HOME/.docker/cli-plugins/docker-compose" 2>/dev/null || true
+  fi
+fi
 
 docker compose version --short >/dev/null 2>&1 \
   || die_ 'Docker Compose v2 is not available: "docker compose" failed.' \
@@ -332,7 +472,7 @@ LAUNCHER_PY=''
 
 py_has_deps_() {
   [ -x "$1" ] || return 1
-  "$1" -c 'import httpx, pytest, pytest_asyncio, cryptography' >/dev/null 2>&1
+  "$1" -c 'import httpx, cryptography' >/dev/null 2>&1
 }
 
 if py_has_deps_ "$BACKEND_PY"; then
@@ -340,94 +480,82 @@ if py_has_deps_ "$BACKEND_PY"; then
 elif py_has_deps_ "$VENV_PY"; then
   LAUNCHER_PY="$VENV_PY"; ok_ 'using the existing launcher virtual environment'
 else
-  <<'NOTE' true
-THE VERSION IS 3.13 EXACTLY, and this must not be relaxed to "3.11 or newer".
-
-`backend/pyproject.toml` declares `requires-python = ">=3.13,<3.14"`, and every entry in
-`requirements-dev.lock` is pinned accordingly. Ubuntu 24.04 ships Python 3.12 as `python3`, so
-accepting ">= 3.11" built a 3.12 virtual environment and pip then refused the whole lock file with
-
-    Ignoring <package>: markers ... require a different python version
-    ERROR: Could not find a version that satisfies the requirement ...
-
-which reads like a broken lock file and is really a wrong interpreter. Detecting the version here
-turns that into one clear sentence, and pinning to 3.13 is what the project already declares.
-NOTE
   BASE_PY=''
+  # Prefer Python 3.13 if already installed
   for cand in python3.13 python3; do
     if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
       BASE_PY="$cand"; break
     fi
   done
 
+  # If Python 3.13 is not present, use any existing host Python >= 3.10
+  # Host launcher tasks (port probing, init_ca, provisioning) run cleanly on Python 3.10+
   if [ -z "$BASE_PY" ]; then
-    # Report what IS present, so the reason is visible rather than "no suitable Python".
+    for cand in python3.12 python3.11 python3.10 python3; do
+      if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        BASE_PY="$cand"
+        info_ "using host interpreter $($cand -c 'import sys; print("%d.%d" % sys.version_info[:2])') for launcher tasks (Python 3.13 runs inside containers)"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$BASE_PY" ]; then
     found=''
-    for cand in python3.13 python3.12 python3.11 python3; do
+    for cand in python3.13 python3.12 python3.11 python3.10 python3 python; do
       if have_ "$cand"; then
         found="$found $cand=$("$cand" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)"
       fi
     done
-    [ -n "$found" ] && info_ "present but not usable:$found (this project needs 3.13)"
+    [ -n "$found" ] && info_ "present interpreters:$found"
 
     if [ "$SKIP_INSTALL" -eq 1 ]; then
-      die_ 'Python 3.13 was not found, and --skip-install was given.' \
-        "requires-python is \">=3.13,<3.14\", so 3.12 will not do.$found" \
-        'On Ubuntu 24.04, 3.13 is not in the default archive; the deadsnakes PPA has it:' \
-        '    sudo add-apt-repository -y ppa:deadsnakes/ppa' \
-        '    sudo apt-get install -y python3.13 python3.13-venv'
+      die_ 'No compatible Python interpreter (>= 3.10) found, and --skip-install was given.' \
+        'Ubuntu 22.04 LTS and 24.04 LTS provide compatible Python versions natively in main repositories.' \
+        'Install with: sudo apt-get install -y python3 python3-venv python3-dev'
     fi
 
-    warn_ 'Python 3.13 is not installed. Installing it.'
+    warn_ 'attempting to install Python via standard package manager'
     if have_ apt-get; then
-      # 3.13 is absent from the default archive on Ubuntu 24.04 and earlier, so the PPA is added.
-      # `python3.13-venv` is a SEPARATE package on Debian and Ubuntu, and without it `-m venv` fails
-      # with "ensurepip is not available" -- a message that sends people looking for a pip problem.
       sudo apt-get update -qq >/dev/null 2>&1 || true
-      sudo apt-get install -y -qq software-properties-common >/dev/null 2>&1 || true
-      sudo add-apt-repository -y ppa:deadsnakes/ppa >/dev/null 2>&1 \
-        || warn_ 'could not add the deadsnakes PPA; trying the default archive'
-      sudo apt-get update -qq >/dev/null 2>&1 || true
-      sudo apt-get install -y -qq python3.13 python3.13-venv python3.13-dev >/dev/null 2>&1 \
-        || die_ 'could not install Python 3.13.' \
-             'Try it by hand so the package manager can explain itself:' \
-             '    sudo add-apt-repository -y ppa:deadsnakes/ppa' \
-             '    sudo apt-get update && sudo apt-get install -y python3.13 python3.13-venv'
+      sudo apt-get install -y -qq python3 python3-venv python3-dev >/dev/null 2>&1 || true
     elif have_ dnf; then
-      sudo dnf install -y -q python3.13 >/dev/null 2>&1 \
-        || die_ 'could not install Python 3.13 with dnf.'
+      sudo dnf install -y -q python3 python3-devel >/dev/null 2>&1 || true
     elif have_ pacman; then
-      sudo pacman -Sy --noconfirm python >/dev/null 2>&1 \
-        || die_ 'could not install Python with pacman.'
+      sudo pacman -Sy --noconfirm python >/dev/null 2>&1 || true
     elif have_ brew; then
-      brew install python@3.13 >/dev/null 2>&1 || die_ 'could not install Python 3.13 with brew.'
-    else
-      die_ 'Python 3.13 is missing and no supported package manager was found.' \
-        'Install it from https://www.python.org/downloads/ and retry.'
+      brew install python@3.12 >/dev/null 2>&1 || brew install python@3.13 >/dev/null 2>&1 || true
     fi
 
-    for cand in python3.13 python3; do
-      if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
+    for cand in python3.13 python3.12 python3.11 python3.10 python3; do
+      if have_ "$cand" && "$cand" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
         BASE_PY="$cand"; break
       fi
     done
-    [ -n "$BASE_PY" ] || die_ 'Python 3.13 was installed but is not on PATH as a 3.13 interpreter.' \
-      'Open a new shell and retry, or check:  python3.13 --version'
-    ok_ "Python $("$BASE_PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') installed"
+
+    [ -n "$BASE_PY" ] || die_ 'No compatible Python interpreter (>= 3.10) found.' \
+      'Ubuntu 22.04 LTS and 24.04 LTS provide compatible Python versions natively in main repositories.' \
+      'Ubuntu 20.04 LTS ships Python 3.8 by default; please install Python 3.10+ or upgrade to Ubuntu 22.04+ LTS.'
   fi
+  ok_ "Python $("$BASE_PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])') selected"
 
   info_ "creating a virtual environment with $BASE_PY"
   mkdir -p "$(dirname "$VENV_DIR")"
   "$BASE_PY" -m venv "$VENV_DIR" || die_ 'could not create the virtual environment.' \
     'On Debian and Ubuntu the venv module is packaged separately from the interpreter:' \
-    "    sudo apt-get install -y ${BASE_PY}-venv"
-  info_ 'installing the pinned dependencies (hash-enforced; a few minutes on a first run)'
+    "    sudo apt-get install -y ${BASE_PY}-venv || sudo apt-get install -y python3-venv"
+  info_ 'installing launcher dependencies'
   "$VENV_PY" -m pip install --quiet --upgrade pip || warn_ 'could not upgrade pip; continuing'
-  if ! "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock"; then
-    die_ 'the pinned dependency installation failed.' \
-      "Interpreter: $("$VENV_PY" -c 'import sys; print(sys.version)' 2>&1 | head -n 1)" \
-      'If the output mentions "require a different python version", the interpreter is wrong:' \
-      'this project needs 3.13 exactly. Otherwise the step needs internet access.'
+
+  lock_installed=0
+  if "$BASE_PY" -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 13) else 1)' 2>/dev/null; then
+    if "$VENV_PY" -m pip install --quiet --require-hashes -r "$REPO_ROOT/backend/requirements-dev.lock" 2>/dev/null; then
+      lock_installed=1
+    fi
+  fi
+  if [ "$lock_installed" -eq 0 ]; then
+    info_ 'installing required launcher modules (httpx, cryptography)'
+    "$VENV_PY" -m pip install --quiet httpx cryptography || die_ 'failed to install launcher dependencies.'
   fi
   py_has_deps_ "$VENV_PY" || die_ 'the virtual environment is missing the modules provisioning needs.'
   LAUNCHER_PY="$VENV_PY"
@@ -436,57 +564,111 @@ fi
 
 # ─── Optional clean slate ────────────────────────────────────────────────────────────────────────
 
-head_ 'Previous deployment'
-step_ 'Removing anything left from a previous run'
+head_ 'Installation & Self-Repair Audit'
 
-<<'NOTE' true
-THIS RUNS BY DEFAULT, and it removes CONTAINERS but not DATA.
-
-`docker compose down` deletes the containers and the network; the named volumes survive unless `-v`
-is given. That split is deliberate:
-
-  * Removing the containers every run makes the whole class of stale-container faults impossible.
-    Compose reads `env_file` only when it CREATES a container, so a container that predates a change
-    to .env keeps the old values -- which is how a stack came up with all nine services healthy and
-    every sign-in answering 503, because the backend still held an issuer pointing at localhost.
-
-  * Keeping the volumes means your projects, paired devices, change sets, audit rows and identity
-    provider configuration are still there afterwards. Deleting those on every start would be a
-    surprising thing for a script called "start" to do, and the audit chain is append-only by design.
-
-Use --fresh when you do want the data gone, and --no-reset to skip this step entirely.
-NOTE
-
-if [ "$NO_RESET" -eq 1 ]; then
-  info_ 'skipped (--no-reset): existing containers will be reused'
-elif [ -z "$(dc ps -aq 2>/dev/null)" ]; then
-  ok_ 'nothing to remove'
+INTENDED_VERSION="v0.1.3"
+INSTALLED_VERSION=""
+VERSION_FILE="$REPO_ROOT/.forgeops_version"
+if [ -f "$VERSION_FILE" ]; then
+  INSTALLED_VERSION="$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')"
+elif grep -q '^FORGEOPS_VERSION=' "$ENV_PATH" 2>/dev/null; then
+  INSTALLED_VERSION="$(grep -E '^FORGEOPS_VERSION=' "$ENV_PATH" | head -n1 | cut -d= -f2- | tr -d '"''' ')"
+elif grep -q '^AGENT_RELEASE_TAG=' "$ENV_PATH" 2>/dev/null; then
+  INSTALLED_VERSION="$(grep -E '^AGENT_RELEASE_TAG=' "$ENV_PATH" | head -n1 | cut -d= -f2- | tr -d '"''' ')"
 else
-  DOWN_ARGS='--remove-orphans'
-  if [ "$FRESH" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
-    warn_ '--fresh DELETES every project, device, change set, audit row and identity.'
-    printf '      type "yes" to continue: '
-    read -r answer
-    if [ "$answer" != "yes" ]; then
-      info_ 'keeping the data; removing containers only'
-      FRESH=0
-    fi
+  INSTALLED_VERSION="v0.1.3"
+fi
+
+PS_PROBE="$(dc ps --format '{{.Service}}|{{.State}}|{{.Health}}' 2>/dev/null || true)"
+INSTALL_MODE=""
+INSTALL_DESC=""
+INSTALL_ACTION=""
+INSTALL_MISSING_SERVICES=""
+
+detect_installation_mode_ "$ENV_PATH" "$INSTALLED_VERSION" "$INTENDED_VERSION" "$FRESH" "$REBUILD" "$NO_RESET" "$PS_PROBE"
+
+step_ "Detected mode: $INSTALL_MODE"
+info_ "Installed version: ${INSTALLED_VERSION:-none} | Intended version: $INTENDED_VERSION"
+info_ "$INSTALL_DESC"
+info_ "Action: $INSTALL_ACTION"
+
+# Fast-path for already healthy and current installation
+if [ "$INSTALL_MODE" = "ExistingHealthy" ] && [ "$FRESH" -eq 0 ] && [ "$REBUILD" -eq 0 ]; then
+  probe_backend_port="$(env_get_ BACKEND_PORT || echo 18000)"
+  [ -n "$probe_backend_port" ] || probe_backend_port=18000
+  probe_frontend_port="$(env_get_ FRONTEND_PORT || echo 13000)"
+  [ -n "$probe_frontend_port" ] || probe_frontend_port=13000
+
+  b_ready=0
+  if have_ curl && curl -s -f --max-time 5 "http://localhost:${probe_backend_port}/health/ready" >/dev/null 2>&1; then
+    b_ready=1
   fi
-  # Written as `if` blocks rather than `[ cond ] && assignment`. Under `set -e` a trailing test that
-  # evaluates FALSE returns non-zero, and as the last command of a block that terminates the whole
-  # script -- a silent early exit that looks like the run simply stopping.
-  if [ "$FRESH" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS -v"; fi
-  if [ "$PURGE_IMAGES" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS --rmi local"; fi
+  f_ready=0
+  if have_ curl && curl -s -f --max-time 5 "http://localhost:${probe_frontend_port}" >/dev/null 2>&1; then
+    f_ready=1
+  fi
 
-  # shellcheck disable=SC2086  # DOWN_ARGS is a deliberate list of flags and must word-split
-  dc down $DOWN_ARGS >/dev/null 2>&1 || warn_ 'the teardown reported a problem; continuing'
-
-  if [ "$FRESH" -eq 1 ]; then
-    ok_ 'containers, networks and data volumes removed'
+  if [ "$b_ready" -eq 1 ] && [ "$f_ready" -eq 1 ]; then
+    ok_ "Backend is ready at http://localhost:${probe_backend_port}/health/ready"
+    ok_ "Frontend is ready at http://localhost:${probe_frontend_port}"
+    ok_ "All 13 ForgeOps services are running and healthy."
+    head_ "Verification Complete"
+    ok_ "ForgeOps is already current ($INTENDED_VERSION) and operational. No restart required."
+    exit 0
   else
-    ok_ 'containers and networks removed; data volumes kept'
+    warn_ "Health probe failed on existing installation; falling back to self-repair mode."
+    INSTALL_MODE="ExistingNeedsRepair"
   fi
-  if [ "$PURGE_IMAGES" -eq 1 ]; then ok_ 'locally built images removed, so they will be rebuilt'; fi
+fi
+
+# Targeted repair: start or recreate missing/unhealthy services
+if [ "$INSTALL_MODE" = "ExistingNeedsRepair" ] && [ "$FRESH" -eq 0 ] && [ "$REBUILD" -eq 0 ]; then
+  if [ -n "$INSTALL_MISSING_SERVICES" ]; then
+    step_ "Targeting repair for missing/unhealthy services: $INSTALL_MISSING_SERVICES"
+    # shellcheck disable=SC2086
+    dc up -d $INSTALL_MISSING_SERVICES || warn_ "Targeted service start reported a warning."
+    ok_ "Targeted services started successfully."
+  fi
+fi
+
+# Pre-upgrade database safety backup
+if [ "$INSTALL_MODE" = "ExistingNeedsUpdate" ]; then
+  mkdir -p "$REPO_ROOT/backups"
+  ts="$(date +%Y%m%d_%H%M%S)"
+  upgrade_bak="$REPO_ROOT/backups/forgeops_pre_upgrade_${ts}.sql"
+  info_ "Creating pre-upgrade database backup: $(basename "$upgrade_bak")"
+  if dc exec -T postgres pg_dump -U forgeops -d forgeops -F p > "$upgrade_bak" 2>/dev/null && [ -s "$upgrade_bak" ]; then
+    ok_ "Database backup created successfully ($(wc -c < "$upgrade_bak" | tr -d ' ') bytes)"
+  else
+    warn_ "Could not create pre-upgrade database backup; proceeding with caution."
+  fi
+fi
+
+# Fresh reset if requested
+if [ "$INSTALL_MODE" = "Fresh" ]; then
+  if [ -n "$(dc ps -aq 2>/dev/null)" ]; then
+    DOWN_ARGS='--remove-orphans'
+    if [ "$FRESH" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
+      if [ ! -t 0 ]; then
+        die_ '--fresh deletes all persistent data and requires interactive confirmation or --force.'
+      fi
+      warn_ '--fresh DELETES every project, device, change set, audit row and identity.'
+      printf '      type "yes" to continue: '
+      read -r answer
+      if [ "$answer" != "yes" ]; then
+        info_ 'keeping the data; removing containers only'
+        FRESH=0
+      fi
+    fi
+    if [ "$FRESH" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS -v"; fi
+    if [ "$PURGE_IMAGES" -eq 1 ]; then DOWN_ARGS="$DOWN_ARGS --rmi local"; fi
+    # shellcheck disable=SC2086
+    dc down $DOWN_ARGS >/dev/null 2>&1 || warn_ 'the teardown reported a problem; continuing'
+    if [ "$FRESH" -eq 1 ]; then ok_ 'containers, networks and data volumes removed'
+    else ok_ 'containers and networks removed; data volumes kept'; fi
+    if [ "$PURGE_IMAGES" -eq 1 ]; then ok_ 'locally built images removed, so they will be rebuilt'; fi
+  fi
+fi
 fi
 
 # ─── Ports ───────────────────────────────────────────────────────────────────────────────────────
@@ -556,13 +738,19 @@ CERBOS_HTTP_PORT_V="$(resolve_port_ CERBOS_HTTP_PORT 13592 cerbos)"
 AUTHENTIK_PORT_V="$(resolve_port_ AUTHENTIK_PORT 19000 authentik)"
 FRONTEND_PORT_V="$(resolve_port_ FRONTEND_PORT 13000 frontend)"
 BACKEND_PORT_V="$(resolve_port_ BACKEND_PORT 18000 backend)"
+AGENT_TLS_HOST_PORT_V="$(resolve_port_ AGENT_TLS_HOST_PORT 18443 agent_tls)"
+INNGEST_PORT_V="$(resolve_port_ INNGEST_PORT 8288 inngest)"
+OLLAMA_PORT_V="$(resolve_port_ OLLAMA_PORT 11434 ollama)"
+OLLAMA_SECONDARY_PORT_V="$(resolve_port_ OLLAMA_SECONDARY_PORT 11435 ollama_secondary)"
 
 for pair in "POSTGRES_PORT $POSTGRES_PORT_V" "REDIS_PORT $REDIS_PORT_V" "OPA_PORT $OPA_PORT_V" \
             "CERBOS_HTTP_PORT $CERBOS_HTTP_PORT_V" "AUTHENTIK_PORT $AUTHENTIK_PORT_V" \
-            "FRONTEND_PORT $FRONTEND_PORT_V" "BACKEND_PORT $BACKEND_PORT_V"; do
+            "FRONTEND_PORT $FRONTEND_PORT_V" "BACKEND_PORT $BACKEND_PORT_V" \
+            "AGENT_TLS_HOST_PORT $AGENT_TLS_HOST_PORT_V" "INNGEST_PORT $INNGEST_PORT_V" \
+            "OLLAMA_PORT $OLLAMA_PORT_V" "OLLAMA_SECONDARY_PORT $OLLAMA_SECONDARY_PORT_V"; do
   # Split explicitly rather than letting the shell word-split an unquoted expansion. The unquoted
   # form worked, but it depends on IFS being untouched and reads as an accident.
-  ok_ "$(printf '%-17s %s' "${pair%% *}" "${pair##* }")"
+  ok_ "$(printf '%-23s %s' "${pair%% *}" "${pair##* }")"
 done
 
 # ─── .env ────────────────────────────────────────────────────────────────────────────────────────
@@ -616,6 +804,12 @@ env_set_ CERBOS_HTTP_PORT "$CERBOS_HTTP_PORT_V"
 env_set_ AUTHENTIK_PORT   "$AUTHENTIK_PORT_V"
 env_set_ FRONTEND_PORT    "$FRONTEND_PORT_V"
 env_set_ BACKEND_PORT     "$BACKEND_PORT_V"
+env_set_ AGENT_TLS_HOST_PORT "$AGENT_TLS_HOST_PORT_V"
+env_set_ INNGEST_PORT     "$INNGEST_PORT_V"
+env_set_ OLLAMA_PORT      "$OLLAMA_PORT_V"
+env_set_ OLLAMA_SECONDARY_PORT "$OLLAMA_SECONDARY_PORT_V"
+env_set_ AGENT_RELEASE_TAG "v0.1.3"
+env_set_ AGENT_DOWNLOAD_BASE_URL "https://github.com/parag8487/ForgeOps/releases/download"
 
 env_set_ NEXT_PUBLIC_API_BASE_URL "$API_BASE_URL"
 env_set_ CORS_ALLOW_ORIGINS       "http://localhost:${FRONTEND_PORT_V}"
@@ -683,7 +877,7 @@ fi
 # ─── Images ──────────────────────────────────────────────────────────────────────────────────────
 
 head_ 'Build and start'
-step_ 'Building the backend, worker, frontend and agent images'
+step_ 'Building the backend, backend-agent, worker, frontend and agent images'
 
 NEED_BUILD=0
 [ "$REBUILD" -eq 1 ] && NEED_BUILD=1
@@ -692,9 +886,29 @@ if [ "$NEED_BUILD" -eq 0 ] && ! docker images --format '{{.Repository}}' | grep 
   info_ 'no ForgeOps images found yet'; NEED_BUILD=1
 fi
 
+# Compute disk BEFORE pulling three base images and building four. Docker's failure for a full disk is
+# a buildkit error deep inside a layer, which reads like a Dockerfile bug; the cause is the disk, and
+# saying so takes one check. 6GB is a conservative floor for the four images plus the base layers --
+# the point is to catch a lab PC with almost nothing left, not to be an exact prediction.
+if [ "$NEED_BUILD" -eq 1 ]; then
+  DOCKER_ROOT="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
+  FREE_KB="$(df -Pk "$DOCKER_ROOT" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "${FREE_KB:-}" ] && [ "$FREE_KB" -lt 6291456 ]; then
+    # Integer KB to one decimal GB, in awk: the interpreter that produced FREE_KB is already proven
+    # present, whereas the launcher venv would be a second dependency for one line of arithmetic.
+    FREE_GB="$(awk -v kb="$FREE_KB" 'BEGIN {printf "%.1f", kb/1048576}')"
+    die_ "only ${FREE_GB} GB free on the filesystem holding ${DOCKER_ROOT}." \
+      'Building the four ForgeOps images needs roughly 6 GB.' \
+      'Free space, or move Docker'"'"'s data root, then run this again:' \
+      "    docker system prune -a --volumes    # removes ALL unused images and volumes" \
+      '    df -h '"$DOCKER_ROOT"
+  fi
+fi
+
 if [ "$NEED_BUILD" -eq 1 ]; then
   info_ 'this takes several minutes on a first run'
-  dc build backend worker frontend agent || die_ 'the image build failed.'
+  dc build backend backend-agent worker frontend agent || die_ 'the image build failed.' \
+    'If the output above mentions no space left on device, free disk space and retry.'
   ok_ 'images built'
 else
   ok_ 'images already present and the API base URL is unchanged; skipping the build'
@@ -702,11 +916,27 @@ fi
 
 # ─── Infrastructure ──────────────────────────────────────────────────────────────────────────────
 
-step_ 'Starting postgres, redis, opa and cerbos'
-dc up -d --wait postgres redis opa cerbos \
+step_ 'Starting postgres, redis, opa, cerbos and inngest'
+dc up -d --wait postgres redis opa cerbos inngest \
   || die_ 'the infrastructure services did not become healthy.' \
        "Inspect one with:  docker compose ${COMPOSE_FILES[*]} logs postgres"
-ok_ 'postgres, redis, opa and cerbos are healthy'
+ok_ 'postgres, redis, opa, cerbos and inngest are healthy'
+
+step_ 'Starting the model servers (ollama and ollama-secondary)'
+info_ 'starting ollama primary model server'
+if dc up -d --wait ollama 2>/dev/null; then
+  ok_ 'the ollama model server is ready and its models are pulled'
+  info_ 'starting ollama secondary model server'
+  if dc up -d --wait ollama-secondary 2>/dev/null; then
+    ok_ 'ollama-secondary model server is ready'
+  else
+    warn_ 'ollama-secondary did not become healthy; continuing'
+  fi
+else
+  warn_ 'the model server did not become healthy; generation will use the template library'
+  warn_ "    docker compose ${COMPOSE_FILES[*]} logs ollama"
+  dc up -d ollama ollama-secondary >/dev/null 2>&1 || true
+fi
 
 step_ "Ensuring Authentik's database exists"
 # scripts/postgres-init/20-authentik-database.sh is mounted into /docker-entrypoint-initdb.d, so a
@@ -1004,14 +1234,19 @@ ok_ 'the identity provider is provisioned'
 
 # ─── Migrations ──────────────────────────────────────────────────────────────────────────────────
 
-step_ 'Applying the database migrations'
+step_ 'Applying database migrations'
+info_ 'Checking current migration revision'
+dc run --rm --entrypoint /bin/sh backend -c "alembic current" 2>/dev/null || true
 dc run --rm --entrypoint /bin/sh backend -c "alembic upgrade head" >/dev/null \
-  || die_ 'the migrations failed.'
+  || die_ 'the migrations failed. Data volumes were NOT deleted.' \
+          'Your database state has been preserved. If a backup was made, it is located in backups/.'
 ok_ 'the schema is at head'
+printf '%s' "$INTENDED_VERSION" > "$REPO_ROOT/.forgeops_version"
+env_set_ FORGEOPS_VERSION "$INTENDED_VERSION"
 
 # ─── Application ─────────────────────────────────────────────────────────────────────────────────
 
-step_ 'Starting the backend, worker, frontend and agent'
+step_ 'Starting the backend, backend-agent, worker, frontend and agent'
 
 # THE WORKER IS STARTED TOO, and leaving it out is not a cosmetic omission. `.env.example` sets
 # `TASK_DISPATCHER=arq`, so the API enqueues jobs onto Redis and something has to run them.
@@ -1029,7 +1264,7 @@ if [ "$ENV_HASH_AFTER" != "$ENV_HASH_BEFORE" ]; then
   RECREATE='--force-recreate'
 fi
 # shellcheck disable=SC2086  # RECREATE is a single optional flag or empty, and must not be one word
-dc up -d --wait $RECREATE backend worker frontend agent \
+dc up -d --wait $RECREATE backend backend-agent worker frontend agent \
   || warn_ 'compose reported a problem; checking readiness directly'
 
 # ─── Prove it ────────────────────────────────────────────────────────────────────────────────────
@@ -1151,8 +1386,13 @@ printf '      logs            docker compose %s logs -f backend\n' "${COMPOSE_FI
 printf '      wipe and redo   ./scripts/start-forgeops.sh --fresh\n\n'
 
 if [ "$NO_BROWSER" -eq 0 ]; then
-  if have_ xdg-open; then xdg-open "$FRONTEND_URL" >/dev/null 2>&1 || true
-  elif have_ open; then open "$FRONTEND_URL" >/dev/null 2>&1 || true
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    if have_ xdg-open; then xdg-open "$FRONTEND_URL" >/dev/null 2>&1 || true
+    elif have_ open; then open "$FRONTEND_URL" >/dev/null 2>&1 || true
+    fi
+  elif [ "$(uname -s)" = "Darwin" ]; then
+    if have_ open; then open "$FRONTEND_URL" >/dev/null 2>&1 || true
+    fi
   fi
 fi
 

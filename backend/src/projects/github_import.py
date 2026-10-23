@@ -40,6 +40,13 @@ import httpx
 import jwt
 
 from src.core.config import get_settings
+from src.core.github import (
+    AUTH_HEADER,
+    BEARER_SCHEME,
+    COMMON_HEADERS,
+    GitHubAppError,
+    GitHubAppNotConfiguredError,
+)
 
 #: GitHub rejects an App JWT whose `exp` is more than ten minutes out. Nine leaves room for clock skew
 #: between this host and GitHub without ever crossing the limit.
@@ -57,36 +64,22 @@ _TOKEN_REFRESH_MARGIN_SECONDS: Final[int] = 5 * 60
 #: rather than taken from configuration — an algorithm read from settings is how `alg: none` happens.
 _JWT_ALGORITHM: Final[str] = "RS256"
 
-#: The authorization header name and its scheme, assembled from fragments so no source line carries the
-#: shape `check-added-shapes` refuses. See the module docstring for why that rule is shape-based.
-_AUTH_HEADER: Final[str] = "Author" + "ization"
-_BEARER_SCHEME: Final[str] = "Bear" + "er"
-
-#: The headers every request to the API carries, apart from the credential.
-_COMMON_HEADERS: Final[dict[str, str]] = {
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-}
+#: THE HEADERS AND THE TWO ERROR TYPES NOW LIVE IN `src.core.github`, and are re-exported here under
+#: the names this module has always used. They moved because the user-to-server half of the same GitHub
+#: App lives in `src.integrations` and needs them too, and `TID251` refuses an import between two
+#: feature domains -- correctly: two feature modules that import each other are one module with two
+#: names. Re-exported rather than renamed at the call sites so nothing that already imports
+#: `GitHubAppError` from here has to change to accommodate a file move.
+_AUTH_HEADER: Final[str] = AUTH_HEADER
+_BEARER_SCHEME: Final[str] = BEARER_SCHEME
+_COMMON_HEADERS: Final[dict[str, str]] = COMMON_HEADERS
 
 _MAX_IMPORT_BYTES: Final[int] = 64 * 1024
 
 
-class GitHubAppNotConfiguredError(RuntimeError):
-    """Raise when an App credential is needed and none is configured.
-
-    A distinct type rather than a generic error so the route can map it to a 503 that says the server is
-    not configured, instead of a 500 that reads as a bug, or — as before — a fabricated token that reads
-    as success.
-    """
-
-
-class GitHubAppError(RuntimeError):
-    """Raise when GitHub refuses a request. Carries the status, never the response body verbatim."""
-
-    def __init__(self, action: str, status_code: int, detail: str = "") -> None:
-        self.status_code = status_code
-        suffix = f": {detail}" if detail else ""
-        super().__init__(f"GitHub refused to {action} (HTTP {status_code}){suffix}")
+# `GitHubAppNotConfiguredError` and `GitHubAppError` are imported from `src.core.github` above and
+# remain importable from this module under those names. They were defined here until the user-to-server
+# half of the same App needed them from another domain; see the note on the header constants.
 
 
 @dataclass(frozen=True, slots=True)
