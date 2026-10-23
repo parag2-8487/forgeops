@@ -113,6 +113,13 @@ def test_resolve_redirect_url_preserves_external_configured_domain() -> None:
     assert resolved == external_url
 
 
+def test_resolve_redirect_url_preserves_testserver_host() -> None:
+    req = _make_request(headers={"host": "testserver"})
+    testserver_url = "http://testserver/api/v1/auth/callback"
+    resolved = _resolve_redirect_url(req, testserver_url)
+    assert resolved == testserver_url
+
+
 def test_resolve_frontend_landing_default() -> None:
     settings = _make_dummy_settings()
     req = _make_request(headers={"host": "localhost:8000"}, settings=settings)

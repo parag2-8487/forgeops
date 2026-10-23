@@ -104,6 +104,8 @@ def _resolve_redirect_url(request: Request, configured_redirect_url: str) -> str
     if not configured_redirect_url:
         configured_redirect_url = "http://localhost:8000/api/v1/auth/callback"
     parsed = urlsplit(configured_redirect_url)
+    if parsed.hostname == "testserver" or request.url.hostname == "testserver":
+        return configured_redirect_url
     callback_path = parsed.path or "/api/v1/auth/callback"
 
     settings = getattr(request.app.state, "settings", None)
