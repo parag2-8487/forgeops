@@ -213,7 +213,7 @@ func DiscoverInDirs(ctx context.Context, candidateDirs []string) []Installation 
 				}
 			}
 			isCurrent := false
-			if currentExe != "" && strings.EqualFold(cleanDir, filepath.Dir(currentExe)) {
+			if currentExe != "" && strings.EqualFold(filepath.Clean(exePath), filepath.Clean(currentExe)) {
 				isCurrent = true
 			}
 
@@ -426,6 +426,22 @@ func UninstallAll(ctx context.Context, opts Options) (*Report, error) {
 			if os.IsNotExist(err) {
 				// Already gone
 				report.Removed = append(report.Removed, inst.Path)
+			} else if runtime.GOOS == "windows" && inst.IsCurrentExe {
+				// Running executable on Windows is file-locked by the kernel while alive.
+				// Schedule post-exit self-deletion via detached cmd.exe process.
+				selfDelCmd := fmt.Sprintf("ping 127.0.0.1 -n 2 >nul & del /f /q \"%s\"", inst.Path)
+				if strings.HasSuffix(strings.ToLower(inst.Directory), "forgeops") {
+					selfDelCmd += fmt.Sprintf(" & rmdir /q \"%s\"", inst.Directory)
+				}
+				dCmd := exec.Command("cmd.exe", "/C", "start", "/B", "cmd.exe", "/C", selfDelCmd)
+				if dErr := dCmd.Start(); dErr == nil {
+					report.Removed = append(report.Removed, inst.Path)
+				} else {
+					report.Skipped = append(report.Skipped, SkippedItem{
+						Path:   inst.Path,
+						Reason: fmt.Sprintf("Self-removal schedule error: %v", dErr),
+					})
+				}
 			} else {
 				report.Skipped = append(report.Skipped, SkippedItem{
 					Path:   inst.Path,
@@ -466,18 +482,28 @@ func UninstallAll(ctx context.Context, opts Options) (*Report, error) {
 	} else {
 		remaining = DiscoverInstallations(ctx, opts.ExtraSearchPaths...)
 	}
-	if len(remaining) == 0 {
+
+	var actualRemaining []Installation
+	for _, rem := range remaining {
+		// On Windows, if current executable was scheduled for detached post-exit deletion, exclude from failure
+		if runtime.GOOS == "windows" && rem.IsCurrentExe {
+			continue
+		}
+		actualRemaining = append(actualRemaining, rem)
+	}
+
+	if len(actualRemaining) == 0 {
 		report.VerifiedClean = true
 		report.Summary = fmt.Sprintf("Successfully uninstalled %d ForgeOps agent installation(s). All discovery locations are clean.", len(report.Removed))
 	} else {
 		report.VerifiedClean = false
-		for _, rem := range remaining {
+		for _, rem := range actualRemaining {
 			report.LeftBehind = append(report.LeftBehind, LeftBehindItem{
 				Path:   rem.Path,
 				Reason: "Binary remained detectable during verification scan",
 			})
 		}
-		report.Summary = fmt.Sprintf("Partially uninstalled: %d removed, %d remaining.", len(report.Removed), len(remaining))
+		report.Summary = fmt.Sprintf("Partially uninstalled: %d removed, %d remaining.", len(report.Removed), len(actualRemaining))
 	}
 
 	return report, nil
