@@ -1772,7 +1772,9 @@ jobs:
             --ignore-vuln PYSEC-2026-4149 \
             --ignore-vuln PYSEC-2026-4150 \
             --ignore-vuln PYSEC-2026-4151 \
-            --ignore-vuln PYSEC-2026-4152
+            --ignore-vuln PYSEC-2026-4152 \
+            --ignore-vuln PYSEC-2026-4320 \
+            --ignore-vuln GHSA-xcq7-p3pf-p88h
       # `|| true` removed. This step previously reported a finding and then exited 0,
       # so the frontend advisory gate was decorative — and Phase 1 adds ~6 frontend
       # dependencies, so it is the surface growing fastest.

@@ -70,6 +70,7 @@ export const AGENT_COMMANDS = {
   watch: { verb: "watch", flags: ["project", "debounce", "once"] },
   doctor: { verb: "doctor", flags: [] },
   version: { verb: "version", flags: [] },
+  uninstall: { verb: "uninstall", flags: ["dry-run", "force", "wipe-credentials", "json"] },
 } as const;
 
 export type Verb = keyof typeof AGENT_COMMANDS;
@@ -246,6 +247,7 @@ const WINDOWS_INSTALL =
   "Sort-Object LastWriteTime -Descending | Select-Object -First 1; " +
   "if (-not $zip) { throw ('No forgeops-agent zip found in ' + (Get-Location).Path + ' or ' + " +
   "(Join-Path $env:USERPROFILE 'Downloads') + '. Download it in step 1 first.') }; " +
+  "Get-Process -Name 'forgeops-agent' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; " +
   "$d = Join-Path $env:LOCALAPPDATA 'Programs\\ForgeOps'; " +
   "New-Item -ItemType Directory -Force $d | Out-Null; " +
   "$tmp = Join-Path $env:TEMP ('forgeops-' + [guid]::NewGuid().ToString('N')); " +
@@ -254,8 +256,8 @@ const WINDOWS_INSTALL =
   "Remove-Item -Recurse -Force $tmp; " +
   "$u = [Environment]::GetEnvironmentVariable('PATH','User'); " +
   "if ($u -notlike ('*' + $d + '*')) " +
-  "{ [Environment]::SetEnvironmentVariable('PATH', ($u + ';' + $d), 'User') }; " +
-  "$env:PATH = ($env:PATH + ';' + $d)";
+  "{ [Environment]::SetEnvironmentVariable('PATH', ($d + ';' + $u), 'User') }; " +
+  "$env:PATH = ($d + ';' + $env:PATH)";
 
 export function installOnPathCommand(platform: Platform, shell: Shell): string {
   switch (platform) {

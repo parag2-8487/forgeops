@@ -18,6 +18,14 @@ import { useState, useSyncExternalStore } from "react";
 import { api } from "@/lib/api";
 
 import { CommandBlock } from "./CommandBlock";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { UninstallDialog } from "./UninstallDialog";
 import {
   archiveName,
   detectPlatform,
@@ -153,6 +161,16 @@ export function AgentConnectPanel({
     flags: { wipe: true },
   });
 
+  const uninstallCommand = renderCommand({
+    verb: "uninstall",
+    platform: active,
+    shell: activeShell,
+    location: { kind: "on-path" },
+    flags: { force: true },
+  });
+
+  const [uninstallOpen, setUninstallOpen] = useState(false);
+
   return (
     <section
       aria-labelledby="connect-heading"
@@ -241,6 +259,41 @@ export function AgentConnectPanel({
       <details className="text-xs">
         <summary className="cursor-pointer font-medium">Something went wrong?</summary>
         <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/20 p-2">
+            <span className="text-xs text-muted-foreground">Agent Command Menu:</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="agent-commands-dropdown"
+                  className="h-7 text-xs"
+                >
+                  Agent Commands ▾
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => {}} data-testid="dropdown-cmd-help">
+                  Help
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {}} data-testid="dropdown-cmd-doctor">
+                  Doctor
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {}} data-testid="dropdown-cmd-wipe">
+                  Wipe
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setUninstallOpen(true)}
+                  data-testid="dropdown-cmd-uninstall"
+                  className="text-destructive focus:text-destructive font-medium"
+                >
+                  Uninstall All ForgeOps Agents
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
           <CommandBlock
             command={doctorCommand}
             caption="Reports Docker, Kubernetes, OpenTofu, the credential store — including whether a device credential will fit in it — and the pairing state."
@@ -251,8 +304,21 @@ export function AgentConnectPanel({
             caption="Wipes stored device credentials from this machine if previously paired to another project or encountering unauthenticated errors."
             testId="wipe-command"
           />
+          <CommandBlock
+            command={uninstallCommand}
+            caption="Uninstalls all verified ForgeOps agents from this machine and cleans user PATH registrations."
+            testId="uninstall-command"
+          />
         </div>
       </details>
+
+      <UninstallDialog
+        open={uninstallOpen}
+        onOpenChange={setUninstallOpen}
+        platform={active}
+        shell={activeShell}
+        projectId={projectId}
+      />
     </section>
   );
 }

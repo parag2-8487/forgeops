@@ -1018,8 +1018,10 @@ def create_app() -> FastAPI:
     # and because the pairing routers above carry authentication decisions that this one must not be
     # able to blur.
     from .agents.connection_info_routes import router as agent_connection_info_router
+    from .agents.uninstall_routes import router as agent_uninstall_router
 
     app.include_router(agent_connection_info_router)
+    app.include_router(agent_uninstall_router)
 
     # The device READ surface (§3.7, criterion 10 step 4). Pairing was write-only — a POST to mint,
     # a public POST to exchange, a DELETE to revoke, and no GET — so a paired agent could not be
