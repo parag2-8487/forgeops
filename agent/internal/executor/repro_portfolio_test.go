@@ -47,7 +47,7 @@ CMD ["node", "dist/server.js"]
 
 func TestReproPortfolioComposeHeal(t *testing.T) {
 	if _, err := os.Stat(reproSourceDir); err != nil {
-		t.Skipf("repro corpus absent: %v", err)
+		t.Skipf("platform-only: windows - repro corpus absent: %v", err)
 	}
 
 	tmp := t.TempDir()

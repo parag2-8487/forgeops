@@ -27,13 +27,13 @@ import (
 // docker daemon and the `node:22-slim` base image.
 func TestReproPortfolioEndToEnd(t *testing.T) {
 	if os.Getenv("FORGEOPS_PORTFOLIO_E2E") != "1" {
-		t.Skip("set FORGEOPS_PORTFOLIO_E2E=1 to build the real repository")
+		t.Skip("platform-only: windows - set FORGEOPS_PORTFOLIO_E2E=1 to build the real repository")
 	}
 	if _, err := os.Stat(reproSourceDir); err != nil {
-		t.Skipf("repro corpus absent: %v", err)
+		t.Skipf("platform-only: windows - repro corpus absent: %v", err)
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not on PATH")
+		t.Skip("platform-only: windows - docker not on PATH")
 	}
 
 	// The repository is COPIED, never modified: the point of the exercise is that ForgeOps adapts to

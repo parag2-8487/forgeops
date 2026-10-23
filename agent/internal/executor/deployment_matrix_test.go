@@ -391,7 +391,7 @@ func TestDeploymentArchetypeMatrix(t *testing.T) {
 // so it is not part of the default unit run.
 func TestDeploymentArchetypeMatrixDockerBuild(t *testing.T) {
 	if os.Getenv("FORGEOPS_DOCKER_E2E") != "1" {
-		t.Skip("set FORGEOPS_DOCKER_E2E=1 to run real container builds")
+		t.Skip("platform-only: windows - set FORGEOPS_DOCKER_E2E=1 to run real container builds")
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not on PATH")
