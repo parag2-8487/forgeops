@@ -567,8 +567,10 @@ describe("Autonomous Deploy UX Improvements", () => {
     // Valid branch clears error and enables submit
     await user.clear(branchInput);
     await user.type(branchInput, "feature/valid-branch");
-    expect(screen.queryByTestId("branch-validation-error")).not.toBeInTheDocument();
-    expect(submitBtn).toBeEnabled();
+    await waitFor(() => {
+      expect(screen.queryByTestId("branch-validation-error")).not.toBeInTheDocument();
+      expect(submitBtn).toBeEnabled();
+    });
   });
 
   it("successfully submits deployment and navigates to the run dashboard", async () => {
