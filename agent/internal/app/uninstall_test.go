@@ -4,6 +4,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -176,4 +179,165 @@ func TestUninstallCmd_InteractiveWarning(t *testing.T) {
 	// Without --force and without --dry-run
 	cmd.SetArgs([]string{})
 	_ = cmd.ExecuteContext(context.Background())
+}
+
+func setupFakeAgentOnPath(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	binName := "forgeops-agent"
+	if runtime.GOOS == "windows" {
+		binName = "forgeops-agent.exe"
+	}
+	binPath := filepath.Join(tmp, binName)
+	content := []byte("#!/bin/sh\ngithub.com/parag8487/ForgeOps/agent\nForgeOps local agent\n")
+	if err := os.WriteFile(binPath, content, 0o755); err != nil {
+		t.Fatalf("write fake agent: %v", err)
+	}
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", tmp+string(filepath.ListSeparator)+origPath)
+	return binPath
+}
+
+func TestUninstallCmd_WithDiscovered_InteractiveNotice(t *testing.T) {
+	setupFakeAgentOnPath(t)
+
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.3"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Found") || !strings.Contains(out, "Notice: Device pairing credentials") {
+		t.Errorf("unexpected output from interactive notice: %s", out)
+	}
+}
+
+func TestUninstallCmd_WithDiscovered_InteractiveNoticeWipe(t *testing.T) {
+	setupFakeAgentOnPath(t)
+
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.3"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--wipe-credentials"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "WARNING: --wipe-credentials was passed") {
+		t.Errorf("unexpected output from interactive notice with wipe: %s", out)
+	}
+}
+
+func TestUninstallCmd_WithDiscovered_DryRun(t *testing.T) {
+	setupFakeAgentOnPath(t)
+
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.3"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--dry-run"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "[DRY RUN] Would remove") {
+		t.Errorf("unexpected output from dry run with discovered installation: %s", out)
+	}
+}
+
+func TestUninstallCmd_WithDiscovered_ForceExecution(t *testing.T) {
+	setupFakeAgentOnPath(t)
+
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.3"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--force"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Uninstall summary:") || !strings.Contains(out, "Removed") {
+		t.Errorf("unexpected output from force execution: %s", out)
+	}
+}
+
+func TestUninstallCmd_WithDiscovered_JSON(t *testing.T) {
+	setupFakeAgentOnPath(t)
+
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.3"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--force", "--json"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "\"found\":") || !strings.Contains(out, "\"verified_clean\": true") {
+		t.Errorf("unexpected json output: %s", out)
+	}
+}
+
+func TestUninstallCmd_WithDiscovered_ForceWipeCredentials(t *testing.T) {
+	setupFakeAgentOnPath(t)
+
+	cfg := &config.Config{}
+	app, err := New(cfg, BuildInfo{Version: "0.1.3"})
+	if err != nil {
+		t.Fatalf("New app: %v", err)
+	}
+	defer app.Close()
+
+	cmd := newUninstallCmd(app)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--force", "--wipe-credentials"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("cmd.ExecuteContext: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Uninstall summary:") {
+		t.Errorf("unexpected output: %s", out)
+	}
 }

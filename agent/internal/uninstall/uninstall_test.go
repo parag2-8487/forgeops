@@ -276,6 +276,159 @@ func TestVerifyBinary_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestVerifyBinary_WithRealVersionOutput(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	binName := TargetBinaryName()
+	binPath := filepath.Join(tmp, binName)
+
+	if runtime.GOOS == "windows" {
+		src := `package main
+import (
+	"fmt"
+	"os"
+)
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println("forgeops-agent 0.1.3 (commit: abc1234, built: 2026-10-24T00:00:00Z)")
+		return
+	}
+}
+`
+		srcPath := filepath.Join(tmp, "main.go")
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write main.go: %v", err)
+		}
+		buildCmd := exec.Command("go", "build", "-o", binPath, srcPath)
+		if err := buildCmd.Run(); err != nil {
+			t.Fatalf("go build fake agent: %v", err)
+		}
+	} else {
+		script := `#!/bin/sh
+if [ "$1" = "version" ]; then
+	echo "forgeops-agent 0.1.3 (commit: abc1234, built: 2026-10-24T00:00:00Z)"
+fi
+`
+		if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+			t.Fatalf("write fake agent script: %v", err)
+		}
+	}
+
+	ok, ver, commit, date := VerifyBinary(ctx, binPath)
+	if !ok {
+		t.Fatalf("VerifyBinary failed for version-answering binary")
+	}
+	if ver != "0.1.3" {
+		t.Errorf("expected version 0.1.3, got %s", ver)
+	}
+	if commit != "abc1234" {
+		t.Errorf("expected commit abc1234, got %s", commit)
+	}
+	if date != "2026-10-24T00:00:00Z" {
+		t.Errorf("expected date 2026-10-24T00:00:00Z, got %s", date)
+	}
+}
+
+func TestDiscoverInDirs_DefaultAndCurrentExe(t *testing.T) {
+	ctx := context.Background()
+	currentExe, err := os.Executable()
+	if err != nil || currentExe == "" {
+		t.Skip("no current executable")
+	}
+	defDirs := KnownDefaultDirectories()
+	candidateDirs := []string{defDirs[0], filepath.Dir(currentExe), ""}
+	_ = DiscoverInDirs(ctx, candidateDirs)
+}
+
+func TestStopProcess_LiveProcess(t *testing.T) {
+	ctx := context.Background()
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("ping", "127.0.0.1", "-n", "10")
+	} else {
+		cmd = exec.Command("sleep", "10")
+	}
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start dummy process: %v", err)
+	}
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
+	err := StopProcess(ctx, ProcessInfo{PID: cmd.Process.Pid, Name: "dummy"})
+	if err != nil {
+		t.Errorf("StopProcess failed: %v", err)
+	}
+}
+
+func TestUninstallAll_ForgeOpsDirectoryCleanup(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	binName := TargetBinaryName()
+
+	// 1. Directory that should be removed when empty
+	dirEmpty := filepath.Join(tmp, "TestEmpty", "ForgeOps")
+	createFakeAgentBinary(t, dirEmpty, binName, true)
+
+	// 2. Directory that should be preserved because it has other files
+	dirNonEmpty := filepath.Join(tmp, "TestNonEmpty", "ForgeOps")
+	createFakeAgentBinary(t, dirNonEmpty, binName, true)
+	if err := os.WriteFile(filepath.Join(dirNonEmpty, "user-config.yaml"), []byte("config"), 0o644); err != nil {
+		t.Fatalf("write user-config: %v", err)
+	}
+
+	report, err := UninstallAll(ctx, Options{
+		SearchDirs: []string{dirEmpty, dirNonEmpty},
+	})
+	if err != nil {
+		t.Fatalf("UninstallAll failed: %v", err)
+	}
+	if !report.VerifiedClean {
+		t.Errorf("expected VerifiedClean = true")
+	}
+
+	// dirEmpty should be deleted
+	if _, err := os.Stat(dirEmpty); !os.IsNotExist(err) {
+		t.Errorf("expected empty ForgeOps dir %s to be deleted", dirEmpty)
+	}
+	// dirNonEmpty should be preserved
+	if _, err := os.Stat(dirNonEmpty); os.IsNotExist(err) {
+		t.Errorf("expected non-empty ForgeOps dir %s to be preserved", dirNonEmpty)
+	}
+}
+
+func TestUninstallAll_PartiallyUninstalledWhenFileLocked(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	binName := TargetBinaryName()
+	agentDir := filepath.Join(tmp, "locked_dir")
+	fakePath := createFakeAgentBinary(t, agentDir, binName, true)
+
+	// Keep an exclusive handle to the file so os.Remove fails on Windows / platforms with mandatory locking
+	f, err := os.OpenFile(fakePath, os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("cannot lock file: %v", err)
+	}
+	defer f.Close()
+
+	report, err := UninstallAll(ctx, Options{
+		SearchDirs: []string{agentDir},
+	})
+	if err != nil {
+		t.Fatalf("UninstallAll failed: %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		if report.VerifiedClean {
+			t.Errorf("expected VerifiedClean = false for locked file")
+		}
+		if len(report.Skipped) == 0 && len(report.LeftBehind) == 0 {
+			t.Errorf("expected skipped or left behind items for locked file")
+		}
+	}
+}
+
 func TestUninstallAll_WithRunningProcess(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("skipping Windows-specific process stop test")
