@@ -166,7 +166,22 @@ The platform declares 14 containerized services in `docker-compose.yml`, with 10
 
 ## Core Features & Capabilities
 
-### 1. Codebase Analysis & Production Readiness Scoring
+### 1. ForgeOps Control Plane Web Dashboard (v2.4)
+
+The web dashboard (<http://localhost:13000>) serves as the unified single-pane-of-glass operations center:
+
+- **Executive Platform Health**: Live unauthenticated health monitoring via `/api/v1/health` displaying engine status, version, and commit SHA with instant visual feedback.
+- **Distributed Subsystems Status**: Instant visibility into the native BuildKit Engine API (v2) over UDS, ARQ/Redis asynchronous task queue with worker fencing, Open Policy Agent (port 18182), and Cerbos RBAC chokepoint (port 3592).
+- **Multi-Target Autonomous Strategy Matrix**: One-click visual orchestration across four core strategies:
+  1. `docker_github_vercel`: Full-spectrum local container, GitHub release, and Vercel edge deployment with alias verification.
+  2. `docker_github`: Containerized workload with BuildKit multi-stage synthesis and synchronized GitHub repository tree.
+  3. `vercel_only`: Direct frontend edge deployment with SSO-bypass verification and placeholder detection.
+  4. `github_only`: Cloud Git Data API repository synchronization via low-level Blobs, Trees, and Commits.
+- **Interactive Verification Gate Pipeline (G1–G8)**: Comprehensive stage visualizer representing the sequential gate transitions (G1 Blueprint -> G2 Synthesis -> G3 Consistency -> G4 BuildKit -> G5 Container Apply -> G6 Workload Probing -> G7 Final Verification -> G8 Self-Healing Sweeper).
+- **Workspaces & Command Hub**: Direct navigation to Projects Hub (`/projects`), Deployment Readiness (`/readiness`), Approvals (`/approvals`), Model Tiers (`/models`), Audit Log (`/audit`), and Integrations (`/settings/integrations`).
+- **Architectural Honesty & Boundary Clarity**: Explicitly states unobservable facts (such as policy bundle publish state, agent attestation vs staleness, on-demand readiness evaluation, and passive model tier monitoring) instead of rendering fabricated or synthetic data.
+
+### 2. Codebase Analysis & Production Readiness Scoring
 
 - Scans target codebases across five operational pillars: Docker, CI/CD, Kubernetes, Observability, and Cloud/IaC.
 - Indexes project files into PostgreSQL with `pgvector` semantic vector embeddings powered by Ollama.

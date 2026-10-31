@@ -12,9 +12,13 @@ The system addresses the fundamental security vulnerability of traditional CI/CD
 
 ```
 +===================================================================================================================+
-| 1. CLIENT / PRESENTATION PLANE (Port 3000)                                                                        |
+| 1. CLIENT / PRESENTATION PLANE (Port 3000 / Host Port 13000)                                                      |
 |    Next.js 16 Web Dashboard (React 19 Server & Client Components, Turbopack, Tailwind CSS)                        |
 |                                                                                                                   |
+|    +-----------------------------+   +-----------------------------+   +-----------------------------+            |
+|    | ForgeOps Control Dashboard  |   | Multi-Target Strategies     |   | G1–G8 Gate Pipeline         |            |
+|    | - Live /health Echo Panel   |   | - docker_github_vercel      |   | - G1 Baseline to G7 Verify  |            |
+|    | - Control Plane Telemetry   |   | - Deterministic Port Safety |   | - G8 Sweeper & Self-Healing |            |
 |    +-----------------------------+   +-----------------------------+   +-----------------------------+            |
 |    | TanStack Query v5 Cache     |   | Native WebSocket Client     |   | In-Memory Session Token     |            |
 |    | - 5s Container Stat Polling |   | - Real-Time Terminal Stream |   | - Ephemeral Token State     |            |

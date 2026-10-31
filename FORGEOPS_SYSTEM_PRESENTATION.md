@@ -36,6 +36,26 @@ ForgeOps solves this problem by providing a deterministic, policy-governed, agen
 
 ---
 
+### Module 0: ForgeOps Web Operations Dashboard (v2.4)
+
+#### What It Is
+
+The single-pane-of-glass operator web interface (`http://localhost:13000`) built with Next.js 16 (React 19), Tailwind CSS, TanStack Query, and Lucide React. It provides real-time health telemetry, autonomous deployment strategy selection, interactive gate pipeline visualizers, and direct workspace management.
+
+#### Why It Is Needed
+
+Traditional DevOps platforms force operators to switch between multiple decoupled consoles (Docker CLI, GitHub, Vercel, cloud logs). ForgeOps unifies local containerization, cloud Git commits, and edge hosting into one interactive interface while practicing strict architectural honesty (declining to render fabricated data when an API fact is unobservable).
+
+#### How It Is Implemented
+
+- **Platform & Engine Health Panel**: Live unauthenticated polling of `/api/v1/health` providing immediate status, version, and commit validation.
+- **Distributed Subsystems Status**: Instant monitoring for the native BuildKit Engine API (v2) over UDS, ARQ/Redis task queues with worker fencing, Open Policy Agent (18182), and Cerbos RBAC (3592).
+- **Multi-Target Autonomous Strategy Matrix**: One-click visual launch for `docker_github_vercel`, `docker_github`, `vercel_only`, and `github_only`.
+- **G1–G8 Interactive Verification Pipeline**: Stage progression cards displaying G1 Blueprint, G2 Synthesis, G3 Port Consistency, G4 BuildKit Engine, G5 Container Apply, G6 Workload Verification, G7 Final Verification, and G8 Self-Healing Recovery.
+- **Navigation Command Hub**: Direct links to Projects, Deployment Readiness, Approvals, Model Tiers, Audit Trail, and Integrations.
+
+---
+
 ### Module 1: Project Onboarding & GitHub Integration
 
 #### What It Is

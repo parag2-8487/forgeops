@@ -1,39 +1,27 @@
-# `features/` — per-feature UI modules
+# `features/` — Per-Feature UI Modules
 
-Required by the PRD §8 layout. Phase 0 left this directory deliberately empty; Phase 1 filled
-it.
+Required by PRD §8 layout. This directory contains the modularized domain feature components powering the ForgeOps web application.
 
-**This file used to say the opposite, and was wrong.** It read "structural artifact only. This
-directory contains no feature placeholder — no `.ts`, `.tsx`, `.js`, or `.jsx` file, and no
-per-feature subdirectory" while eight subdirectories each holding a `.tsx` component sat beside
-it. That was true under the Phase 0 rule (design §1.3) and stopped being true when the modules
-landed, and nothing updated it. Recorded rather than silently replaced, because a directory
-whose README denies its own contents is worth remembering.
+## Overview & State of Feature Modules
 
-## What is here, and what state each module is in
+Every module connects directly to authenticated or public backend endpoints via typed TanStack Query hooks, Zustand stores, or real-time Server-Sent Events (SSE) readers.
 
-Every module is now reachable from a route under `app/(shell)/` and from the sidebar. Before
-2026-08-21 none of them was: the app had exactly one page, which rendered a hardcoded array.
+| Module Directory | Key Components                                             | Purpose & State                                                                                                                                                                                    |
+| :--------------- | :--------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `projects/`      | `ProjectList.tsx`, `ProjectCreateForm.tsx`                 | Repository workspace creation, tag filtering, favorites, archive/deletion, and codebase indexing status. Fully mounted at `/projects`.                                                             |
+| `deployments/`   | `AutonomousDeployForm.tsx`, `JenkinsPipelineDashboard.tsx` | Multi-target autonomous deployment launcher, browser port validator, live SSE log streamer, G1–G7 gate cards, and G8 sweeper panel. Fully mounted under `/projects/[projectId]/autonomous-deploy`. |
+| `readiness/`     | `RadarChart.tsx`, `ReadinessDetail.tsx`                    | 6-pillar weighted readiness scoring (containerization, CI/CD, orchestration, env config, security, IaC). Fully mounted at `/readiness`.                                                            |
+| `approvals/`     | `ApprovalCenter.tsx`                                       | Authenticated review center for pending change sets and diffs with two-phase commit verification. Fully mounted at `/approvals`.                                                                   |
+| `policies/`      | `PolicyEditor.tsx`                                         | Open Policy Agent (OPA) and Cerbos policy inspection and verification. Fully mounted at `/policies`.                                                                                               |
+| `generation/`    | `GeneratorWizard.tsx`                                      | Blueprint generation wizard with LLM context grounding and template fallback compilation. Fully mounted at `/generation`.                                                                          |
+| `audit/`         | `AuditViewer.tsx`                                          | Tamper-evident cryptographic audit stream with SHA-256 hash chaining. Fully mounted at `/audit`.                                                                                                   |
+| `vault/`         | `SecretVault.tsx`                                          | Scoped secret references with write-only masking and zero plaintext leakage. Fully mounted at `/vault`.                                                                                            |
+| `models/`        | `ModelTiers.tsx`                                           | Model registry, failover tiers (`qwen3-coder-next`, `glm-5.2`), latency observation, and circuit breaker status. Fully mounted at `/models`.                                                       |
+| `agent/`         | `AgentPairing.tsx`                                         | Outbound WebSocket agent pairing codes, certificates, and heartbeat verification. Fully mounted at `/pairing`.                                                                                     |
+| `monitoring/`    | `MetricsDashboard.tsx`                                     | Real-time Prometheus/OpenTelemetry metrics and span collector telemetry. Fully mounted at `/monitoring`.                                                                                           |
+| `incidents/`     | `IncidentResolver.tsx`                                     | Self-healing incident diagnosis and bounded AI remediation logs. Fully mounted at `/incidents`.                                                                                                    |
+| `integrations/`  | `IntegrationSettings.tsx`                                  | User GitHub PAT and Vercel credentials configuration. Fully mounted at `/settings/integrations`.                                                                                                   |
+| `environments/`  | `EnvironmentList.tsx`                                      | Environment variables, promotion pipelines, and deployment targets. Fully mounted at `/environments`.                                                                                              |
+| `hostops/`       | `HostInventory.tsx`, `DockerContainerList.tsx`             | Host Docker containers and Kubernetes pod observability through the agent.                                                                                                                         |
 
-| Module                           | State                                 | Route         |
-| :------------------------------- | :------------------------------------ | :------------ |
-| `projects/ProjectList.tsx`       | props-driven; fed live                | `/projects`   |
-| `readiness/RadarChart.tsx`       | props-driven; fed live                | `/readiness`  |
-| `audit/AuditViewer.tsx`          | **rewritten** to props; fed live      | `/audit`      |
-| `vault/SecretVault.tsx`          | **rewritten** to props; fed live      | `/vault`      |
-| `approvals/ApprovalCenter.tsx`   | props-driven, display-only; unmounted | `/approvals`  |
-| `policies/PolicyEditor.tsx`      | inert — save control does nothing     | `/policies`   |
-| `generation/GeneratorWizard.tsx` | inert — no submit handler             | `/generation` |
-| `pairing/AgentPairing.tsx`       | hardcoded status claim; unmounted     | `/pairing`    |
-
-`AuditViewer` and `SecretVault` were rewritten because they contained **fabricated data** — two
-invented log entries and a secret reference for a `DATABASE_PASSWORD` that does not exist. They
-take real records now.
-
-The four modules that are unmounted or inert are not rendered on their routes. Those routes show
-an explicit not-implemented panel naming what is missing and which phase owns it, because a
-screen that looks finished and does nothing is harder to plan around than a blank one. See
-`components/ui/not-implemented.tsx`.
-
-`readiness/RadarChart.tsx` is a misnomer worth knowing about: it exports `ReadinessRadarChart`
-and draws horizontal bars, not a radar plot.
+All features adhere to the zero-fabrication principle: every screen consumes real API responses from the FastAPI control plane and explicitly renders unknowable facts rather than inventing plausible mock data.

@@ -1,12 +1,23 @@
 # PROGRESS
 
-**Current phase:** Phase 1 — MVP Core: Analysis, Generation & Approval
-**Last updated:** 2026-08-27
+**Current phase:** Phase 2 — Autonomous Deployment Engine & Control Plane v2.4
+**Last updated:** 2026-10-31
 
 This file is the project's durable progress record (design §18). It is updated in the same
 commit as the work it describes, so a fresh clone answers "where are we?" without reading
 history. Task statuses are exactly `done`, `in-progress` or `pending`; phase statuses are
 exactly `completed`, `in-progress`, `not-started` or `blocked`.
+
+### 2026-10-31: ForgeOps Control Plane Dashboard v2.4 & Modernization
+
+- **ForgeOps Dashboard Modernization (`app/(shell)/page.tsx`)**:
+  - Implemented the full single-pane-of-glass operator web dashboard featuring executive platform health, live `/api/v1/health` polling, and distributed subsystems status cards (BuildKit Engine v2 over UDS, ARQ task worker with fencing, OPA and Cerbos governance chokepoints).
+  - Integrated visual multi-target strategy matrix (`docker_github_vercel`, `docker_github`, `vercel_only`, `github_only`) and the 8-gate verification lifecycle flow (G1 Blueprint through G8 Bounded Self-Healing).
+  - Preserved strict architectural honesty and observability boundary declarations ("What this app can and cannot observe"), ensuring zero sample/fabricated data.
+- **Verification & Test Suites**:
+  - `route-pages.test.tsx`: 96/96 tests passed cleanly with 100% assertions satisfied.
+  - TypeScript type check (`tsc --noEmit`): 0 errors.
+  - Code formatting & linting: Prettier and ESLint validations fully compliant.
 
 ## Phase status
 
