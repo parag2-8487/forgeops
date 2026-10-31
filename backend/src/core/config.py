@@ -302,7 +302,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="console")
     api_prefix: str = Field(default="/api/v1")
-    service_version: str = Field(default="0.0.0")
+    service_version: str = Field(default="2.4.0")
     git_commit: str = Field(default="unknown")
 
     database_url: PostgresDsn

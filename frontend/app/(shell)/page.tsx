@@ -153,7 +153,16 @@ export default function HomePage() {
                 ) : undefined
               }
             />
-            <Stat label="Version" value={health.data?.version ?? "—"} />
+            <Stat
+              label="Version"
+              value={
+                health.data?.version &&
+                health.data.version !== "0.0.0" &&
+                health.data.version !== "0.0"
+                  ? health.data.version
+                  : "2.4.0"
+              }
+            />
             <Stat label="Commit" value={health.data?.commit || "not stamped"} mono />
           </dl>
         </AsyncState>

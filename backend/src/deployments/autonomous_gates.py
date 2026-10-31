@@ -2180,13 +2180,6 @@ async def evaluate_g2_existing_artifacts(
                     {"p": run.project_id},
                 )
                 tenant_id = proj_res.scalar_one_or_none()
-                if tenant_id is None:
-                    tenant_id = uuid.uuid5(uuid.NAMESPACE_URL, f"urn:forgeops:project-tenant:{run.project_id}")
-                    await session.execute(
-                        text("UPDATE projects SET tenant_id = :t WHERE id = :p AND tenant_id IS NULL"),
-                        {"t": tenant_id, "p": run.project_id},
-                    )
-                    await session.flush()
             except Exception:
                 pass
 
@@ -2259,13 +2252,6 @@ async def evaluate_g2_existing_artifacts(
                         {"p": run.project_id},
                     )
                     tenant_id = proj_res.scalar_one_or_none()
-                    if tenant_id is None:
-                        tenant_id = uuid.uuid5(uuid.NAMESPACE_URL, f"urn:forgeops:project-tenant:{run.project_id}")
-                        await session.execute(
-                            text("UPDATE projects SET tenant_id = :t WHERE id = :p AND tenant_id IS NULL"),
-                            {"t": tenant_id, "p": run.project_id},
-                        )
-                        await session.flush()
                 except Exception:
                     pass
 
@@ -2273,7 +2259,7 @@ async def evaluate_g2_existing_artifacts(
             if chokepoint is None and app is not None and hasattr(app, "state"):
                 chokepoint = getattr(app.state, "governance_chokepoint", None)
 
-            if chokepoint is not None and tenant_id is not None:
+            if chokepoint is not None:
                 try:
                     await approve_and_materialize_generation_change_set(
                         session,

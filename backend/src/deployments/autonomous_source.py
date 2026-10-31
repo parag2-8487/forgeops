@@ -590,11 +590,6 @@ async def establish_codebase_index(
         proj = await session.get(Project, run.project_id)
         if proj:
             tenant_id = proj.tenant_id
-            if tenant_id is None:
-                tenant_id = uuid.uuid5(uuid.NAMESPACE_URL, f"urn:forgeops:project-tenant:{run.project_id}")
-                proj.tenant_id = tenant_id
-                session.add(proj)
-                await session.flush()
     except Exception:
         pass
 

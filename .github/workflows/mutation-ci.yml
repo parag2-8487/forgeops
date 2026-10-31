@@ -17,8 +17,20 @@ on:
   workflow_dispatch:
   push:
     branches: [phase-1-implementation, phase-1-02, phase-2-implementation, main]
+    paths:
+      - 'backend/**'
+      - 'mutations.toml'
+      - 'tests/mutation/**'
+      - 'tests/property/**'
+      - '.github/workflows/mutation-ci.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'backend/**'
+      - 'mutations.toml'
+      - 'tests/mutation/**'
+      - 'tests/property/**'
+      - '.github/workflows/mutation-ci.yml'
 
 jobs:
   mutation-tests:

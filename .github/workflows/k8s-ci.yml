@@ -4,8 +4,18 @@ on:
   workflow_dispatch:
   push:
     branches: [phase-1-implementation, phase-1-02, phase-2-implementation, main]
+    paths:
+      - 'agent/**'
+      - 'k8s/**'
+      - 'deploy/**'
+      - '.github/workflows/k8s-ci.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'agent/**'
+      - 'k8s/**'
+      - 'deploy/**'
+      - '.github/workflows/k8s-ci.yml'
 
 jobs:
   k8s-spire-test:

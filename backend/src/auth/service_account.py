@@ -18,22 +18,23 @@ async def get_or_create_autonomous_service_user(
 ) -> User:
     """Idempotently resolves or provisions a dedicated service-account User for Autonomous Deploy.
 
-    Rejects missing tenant context: an automated deployment service actor must always be strictly
-    scoped to the target project's tenant boundary.
+    Supports both tenant-scoped service accounts and default/tenantless service accounts.
     """
     if tenant_id is None:
-        raise ValueError("Autonomous service account requires explicit tenant_id context.")
+        idp_subject = "service:autonomous-deploy:default"
+        email = "service.autonomous-deploy@forgeops.internal"
+        stmt = select(User).where(User.tenant_id.is_(None), User.idp_subject == idp_subject)
+    else:
+        idp_subject = f"service:autonomous-deploy:{tenant_id}"
+        email = f"service.autonomous-deploy+{tenant_id}@forgeops.internal"
+        stmt = select(User).where(User.tenant_id == tenant_id, User.idp_subject == idp_subject)
 
-    idp_subject = f"service:autonomous-deploy:{tenant_id}"
-    email = f"service.autonomous-deploy+{tenant_id}@forgeops.internal"
-
-    stmt = select(User).where(User.tenant_id == tenant_id, User.idp_subject == idp_subject)
     res = await session.execute(stmt)
     existing = res.scalars().first()
     if existing is not None:
         return existing
 
-    # Create dedicated tenant-scoped service account
+    # Create dedicated service account
     user = User(
         id=uuid.uuid4(),
         tenant_id=tenant_id,

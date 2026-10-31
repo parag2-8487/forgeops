@@ -24,8 +24,24 @@ on:
   workflow_dispatch:
   push:
     branches: [phase-1-implementation, phase-1-02, phase-2-implementation, main]
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - 'agent/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'docker-compose*.yml'
+      - '.github/workflows/e2e-ci.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - 'agent/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'docker-compose*.yml'
+      - '.github/workflows/e2e-ci.yml'
 
 # A journey that pairs a device and applies a change set must not race another run against the same
 # fixture. Cancel-in-progress rather than queue: the newer commit is the one worth knowing about.
