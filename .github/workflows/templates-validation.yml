@@ -18,15 +18,15 @@ on:
   push:
     branches: [phase-1-implementation, phase-1-02, phase-2-implementation, main]
     paths:
-      - 'backend/src/generation/templates/**'
-      - 'tests/generation/**'
-      - '.github/workflows/templates-validation.yml'
+      - "backend/src/generation/templates/**"
+      - "tests/generation/**"
+      - ".github/workflows/templates-validation.yml"
   pull_request:
     branches: [main]
     paths:
-      - 'backend/src/generation/templates/**'
-      - 'tests/generation/**'
-      - '.github/workflows/templates-validation.yml'
+      - "backend/src/generation/templates/**"
+      - "tests/generation/**"
+      - ".github/workflows/templates-validation.yml"
 
 env:
   # Kept equal to ci.yml's PYTHON_VERSION on purpose. A second version here is a second thing to
