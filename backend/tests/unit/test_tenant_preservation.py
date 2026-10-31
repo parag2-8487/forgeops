@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import create_autospec
 
 import pytest
+from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.models import User, UserRole
 from src.auth.service_account import get_or_create_autonomous_service_user
@@ -14,12 +15,11 @@ from src.auth.service_account import get_or_create_autonomous_service_user
 
 @pytest.mark.asyncio
 async def test_get_or_create_autonomous_service_user_none_tenant() -> None:
-    session = MagicMock(spec=AsyncSession)
-    session.execute = AsyncMock()
-    session.flush = AsyncMock()
-    mock_res = MagicMock()
+    session = create_autospec(AsyncSession, spec_set=True, instance=True)
+    mock_res = create_autospec(Result, spec_set=True, instance=True)
     mock_res.scalars.return_value.first.return_value = None
     session.execute.return_value = mock_res
+    session.flush.return_value = None
 
     user = await get_or_create_autonomous_service_user(session, tenant_id=None)
 
@@ -33,12 +33,11 @@ async def test_get_or_create_autonomous_service_user_none_tenant() -> None:
 
 @pytest.mark.asyncio
 async def test_get_or_create_autonomous_service_user_with_tenant() -> None:
-    session = MagicMock(spec=AsyncSession)
-    session.execute = AsyncMock()
-    session.flush = AsyncMock()
-    mock_res = MagicMock()
+    session = create_autospec(AsyncSession, spec_set=True, instance=True)
+    mock_res = create_autospec(Result, spec_set=True, instance=True)
     mock_res.scalars.return_value.first.return_value = None
     session.execute.return_value = mock_res
+    session.flush.return_value = None
     t_id = uuid.uuid4()
 
     user = await get_or_create_autonomous_service_user(session, tenant_id=t_id)
@@ -53,9 +52,9 @@ async def test_get_or_create_autonomous_service_user_with_tenant() -> None:
 
 @pytest.mark.asyncio
 async def test_get_or_create_autonomous_service_user_existing() -> None:
-    session = MagicMock(spec=AsyncSession)
-    session.execute = AsyncMock()
-    session.flush = AsyncMock()
+    session = create_autospec(AsyncSession, spec_set=True, instance=True)
+    mock_res = create_autospec(Result, spec_set=True, instance=True)
+    session.flush.return_value = None
     existing_user = User(
         id=uuid.uuid4(),
         tenant_id=None,
@@ -65,7 +64,6 @@ async def test_get_or_create_autonomous_service_user_existing() -> None:
         idp_subject="service:autonomous-deploy:default",
         is_active=True,
     )
-    mock_res = MagicMock()
     mock_res.scalars.return_value.first.return_value = existing_user
     session.execute.return_value = mock_res
 
