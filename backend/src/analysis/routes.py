@@ -103,7 +103,9 @@ async def analyse_plan(body: PlanAnalysisRequest) -> PlanAnalysisResponse:
             __import__("json").dumps(body.plan)
         )
     except ValueError as exc:
-        from core.errors import ProblemException
+        # `..core`, not `core`: the bare form only resolves with `src/` on sys.path, so inside the app this
+        # import itself raised and every rejected plan became a 500.
+        from ..core.errors import ProblemException
 
         raise ProblemException(
             status=422,
