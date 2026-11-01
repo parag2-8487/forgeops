@@ -38,7 +38,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import URL, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 from src.deployments.autonomous_gates import (
@@ -68,23 +68,19 @@ from src.deployments.autonomous_worker import (
 pytestmark = [pytest.mark.mandatory]
 
 
-def _build_test_pg_url() -> URL | str:
+def _build_test_pg_url() -> str | None:
+    """The database these tests may WRITE to, or None to skip.
+
+    NEVER A DEFAULT. This used to fall back to `forgeops` on 127.0.0.1:15432 -- the developer's LIVE stack --
+    and the worker under test commits, so the fixture's rollback could not undo it: every local run left
+    `test-project-*` rows in the user's real project list (eight on 2026-10-15, four more on 2026-11-02).
+    CI sets DATABASE_URL to its own throwaway service; locally, point FORGEOPS_TEST_DATABASE_URL at a
+    disposable database.
+    """
     if direct := os.getenv("DATABASE_URL"):
         if "@localhost" in direct or "@127.0.0.1" in direct:
             return direct
-    port = int(os.getenv("PGPORT") or os.getenv("POSTGRES_PORT") or "15432")
-    password = os.getenv("FORGEOPS_APP_DB_PASSWORD") or "change-me-locally"
-    user = os.getenv("FORGEOPS_APP_DB_USER") or "forgeops_app"
-    host = os.getenv("PGHOST") or os.getenv("POSTGRES_HOST") or "127.0.0.1"
-    db = os.getenv("POSTGRES_DB") or "forgeops"
-    auth_kwargs = {"user" + "name": user, "pass" + "word": password}
-    return URL.create(
-        drivername="postgresql+asyncpg",
-        host=host,
-        port=port,
-        database=db,
-        **auth_kwargs,
-    )
+    return os.getenv("FORGEOPS_TEST_DATABASE_URL") or None
 
 
 TEST_PG_URL = _build_test_pg_url()
@@ -93,6 +89,8 @@ TEST_PG_URL = _build_test_pg_url()
 @pytest.fixture
 async def pg_session():
     """AsyncSession connected to PostgreSQL container, rolled back cleanly after each test."""
+    if TEST_PG_URL is None:
+        pytest.skip("set DATABASE_URL (CI) or FORGEOPS_TEST_DATABASE_URL to a DISPOSABLE database to run this")
     engine = create_async_engine(TEST_PG_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:

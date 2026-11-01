@@ -866,6 +866,19 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             tier_config.tiers[ModelTier(settings.generation_tier)].ordered_ids(),
         )
 
+    # ORPHANED GENERATION RUNS. A run streams inside its HTTP request, so no run outlives the process that
+    # served it; one still `running` past the run deadline was abandoned and would otherwise read as
+    # "still working" forever. Best-effort: a database that is not up yet must not stop the app starting.
+    try:
+        from .generation.routes import reap_orphaned_runs
+
+        async with sessionmaker() as reap_session:
+            reaped = await reap_orphaned_runs(reap_session, older_than_seconds=settings.generation_run_deadline_seconds)
+        if reaped:
+            logger.warning("generation: recorded %d orphaned run(s) as failed at startup", reaped)
+    except Exception:  # noqa: BLE001
+        logger.warning("generation: could not reap orphaned runs at startup", exc_info=True)
+
     # `ai/routes.py` reads `app.state.ai_deps` and the Phase 0 lifespan never set
     # it, so every request to `/api/v1/ai/tiers` and `/api/v1/ai/complete` raised
     # AttributeError. That is the same class of defect as D-23: a registered route

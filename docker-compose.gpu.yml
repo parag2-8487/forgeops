@@ -1,0 +1,21 @@
+# NVIDIA GPU for the primary model server. Opt-in, because a device reservation on a host without the
+# NVIDIA container runtime makes the container refuse to start.
+#
+# Enable on a GPU machine by adding to .env (Windows uses `;`, Linux/macOS `:`):
+#     COMPOSE_FILE=docker-compose.yml;docker-compose.gpu.yml
+#
+# WHY. Measured 2026-11-02 on CPU only: a qwen2.5-coder:7b generation for a real project did not produce
+# its first token within 15 minutes. Ollama offloads as many layers as fit in VRAM and runs the rest on
+# CPU, so even a 4 GB laptop GPU (RTX 3050) takes most of the 7B model off the CPU.
+#
+# Only the PRIMARY gets the GPU: the standby and the primary sharing one small card would evict each
+# other's weights on every failover.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

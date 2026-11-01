@@ -220,6 +220,12 @@ services:
   ollama:
     image: ollama/ollama:0.12.6@sha256:a61a8fd395dbb931cc8cb1b5da7a2510746575c87113fdc45b647ee59ef7f808
     env_file: *service-env
+    environment:
+      # MEASURED 2026-11-01: the compiled generation prompt for a real project was 5,369 tokens and
+      # Ollama's default 4,096-token window truncated it from the FRONT ("truncating input prompt
+      # limit=4096 prompt=5369 keep=4") -- the model never saw the start of its instructions. 8,192
+      # holds the prompt plus a full answer; the KV cache it adds is ~450 MiB for a 7B model.
+      OLLAMA_CONTEXT_LENGTH: "${OLLAMA_CONTEXT_LENGTH:-8192}"
     # The image's entrypoint is `/bin/ollama` and `serve` blocks, so the pull cannot be a
     # second command — it has to run against the server this process starts. Pulling at
     # first boot rather than baking weights into an image is also what keeps the reference
@@ -276,6 +282,10 @@ services:
   ollama-secondary:
     image: ollama/ollama:0.12.6@sha256:a61a8fd395dbb931cc8cb1b5da7a2510746575c87113fdc45b647ee59ef7f808
     env_file: *service-env
+    environment:
+      # The same window as the primary: a failover that truncated what the primary did not would make
+      # the two endpoints answer different questions.
+      OLLAMA_CONTEXT_LENGTH: "${OLLAMA_CONTEXT_LENGTH:-8192}"
     # WAITS FOR THE PRIMARY, so the weights are already in the shared volume and this container's own
     # `pull` is a no-op. Without it, a fresh volume means both servers pull the same model at the same
     # time into the same directory — twice the download, and two writers racing on one blob store.

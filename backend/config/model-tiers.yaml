@@ -126,3 +126,17 @@ endpoints:
     key_ref: google
     timeout_seconds: 60
     rank_source: internal_golden
+  gemini-3.8-flash:
+    provider: google
+    # VERIFIED, not assumed: `models/gemini-3.8-flash` was listed by `GET /v1beta/models` on 2026-11-02
+    # with `generateContent` among its supported methods (1,048,576 input / 65,536 output tokens).
+    # Selectable on the Manual Generation page; a run pinned here calls this endpoint and nothing else.
+    model: gemini-3.8-flash
+    protocol: google_native
+    base_url: ${GOOGLE_BASE_URL}
+    key_ref: google
+    # MEASURED 2026-11-02: under Google's "high demand" the first streamed byte arrived after 262s, and
+    # 503 UNAVAILABLE was returned on other calls minutes apart. 300s bounds a stalled stream without
+    # cutting off one Google is merely queueing.
+    timeout_seconds: 300
+    rank_source: unranked

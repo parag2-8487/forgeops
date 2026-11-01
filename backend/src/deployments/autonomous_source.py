@@ -249,38 +249,75 @@ async def clone_repository_to_workspace(
             s = s.replace(github_token, "REDACTED")
         return redact_secrets(s)
 
-    try:
-        cmd = [
-            "git",
-            "clone",
-            "--depth",
-            "1",
-            "--branch",
-            branch,
-            auth_url,
-            str(clean_target),
-        ]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
-        if proc.returncode != 0:
-            err_msg = _sanitize(stderr.decode("utf-8", errors="replace").strip())
-            return False, None, f"Git clone failed (exit code {proc.returncode}): {err_msg}"
+    # NO CREDENTIAL PROMPT, EVER. Without this a rejected token makes git ask for a username on a terminal
+    # that does not exist, and the clone sits there until the timeout -- reported minutes later as a
+    # "timeout" rather than immediately as an authentication failure.
+    git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
 
-        sha_proc = await asyncio.create_subprocess_exec(
+    async def _git(*args: str, cwd: Path | None = None, timeout: float) -> tuple[int, str, str]:
+        proc = await asyncio.create_subprocess_exec(
             "git",
-            "rev-parse",
-            "HEAD",
-            cwd=str(clean_target),
+            *args,
+            cwd=str(cwd) if cwd else None,
+            env=git_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        sha_out, _ = await asyncio.wait_for(sha_proc.communicate(), timeout=10.0)
-        commit_sha = sha_out.decode("utf-8", errors="replace").strip() if sha_proc.returncode == 0 else "unknown"
-        return True, commit_sha, None
+        try:
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            # `wait_for` cancels the read, not the process. Left alone, a hung git keeps running, keeps the
+            # directory locked, and the next attempt collides with it.
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.wait()
+            raise
+        return (
+            proc.returncode if proc.returncode is not None else -1,
+            out.decode("utf-8", errors="replace").strip(),
+            err.decode("utf-8", errors="replace").strip(),
+        )
+
+    try:
+        code, _out, err = await _git(
+            "clone", "--depth", "1", "--branch", branch, auth_url, str(clean_target), timeout=timeout_seconds
+        )
+        if code != 0:
+            return False, None, f"Git clone failed (exit code {code}): {_sanitize(err)}"
+
+        # THE TOKEN DOES NOT STAY ON DISK. `git clone <url-with-token>` writes that URL into .git/config,
+        # where anything that reads the workspace -- a scanner, an upload, a support bundle -- can find it.
+        public_url = clone_url if clone_url and "@" not in clone_url else f"https://github.com/{repo_full_name}.git"
+        await _git("remote", "set-url", "origin", public_url, cwd=clean_target, timeout=10.0)
+
+        code, local_sha, _err = await _git("rev-parse", "HEAD", cwd=clean_target, timeout=10.0)
+        if code != 0 or not local_sha:
+            return False, None, "Git clone produced no resolvable HEAD; the checkout is unusable"
+
+        # THE FETCHED COMMIT IS VERIFIED AGAINST THE REMOTE BRANCH HEAD. A clone that silently checked out a
+        # different ref -- a default branch, a stale mirror -- would otherwise be deployed as if it were the
+        # requested branch. `ls-remote` asks the server directly, with the same credentials.
+        code, remote_out, err = await _git(
+            "ls-remote", auth_url, f"refs/heads/{branch}", timeout=min(timeout_seconds, 60.0)
+        )
+        if code != 0:
+            return False, None, f"Could not verify the remote branch head (exit code {code}): {_sanitize(err)}"
+        remote_sha = remote_out.split()[0] if remote_out else ""
+        if not remote_sha:
+            return False, None, f"Remote branch '{branch}' does not exist on {repo_full_name or public_url}"
+        if remote_sha != local_sha:
+            # Not necessarily an error in the repository -- a push may have landed between the clone and this
+            # check -- but the checkout is not the head the run claims to deploy, so it must not proceed.
+            return (
+                False,
+                None,
+                (
+                    f"Fetched commit {local_sha[:12]} does not match the remote head of '{branch}' "
+                    f"({remote_sha[:12]}); the branch moved during the fetch. Retry the deployment."
+                ),
+            )
+        return True, local_sha, None
     except TimeoutError:
         return False, None, f"Git clone timed out after {timeout_seconds} seconds"
     except FileNotFoundError:

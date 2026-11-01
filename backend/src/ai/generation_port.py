@@ -42,10 +42,14 @@ class RoutedArtifactModel:
         model: str,
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        pinned_endpoint_id: str | None = None,
+        pinned_provider: str | None = None,
     ) -> None:
         self._router = router
         self._tier = tier
         self._model = model
+        self._pinned_endpoint_id = pinned_endpoint_id
+        self._pinned_provider = pinned_provider
         # ZERO, not 0.1, and the previous comment is why: it already said "the same request twice
         # should produce the same answer". At 0.1 that is false. Sampling with a non-zero temperature
         # is still sampling — a user who submitted an identical prompt twice got a different NUMBER OF
@@ -68,14 +72,85 @@ class RoutedArtifactModel:
 
     @property
     def tier_name(self) -> str:
-        return self._tier.value
+        # A pinned run records its PROVIDER in `generation_runs.tier`: it did not route through a tier.
+        return self._pinned_provider or self._tier.value
 
     @property
     def model_name(self) -> str:
         return self._model
 
     @property
+    def pinned_endpoint_id(self) -> str | None:
+        return self._pinned_endpoint_id
+
+    def pinned_to(self, endpoint_id: str) -> RoutedArtifactModel:
+        """A port that calls `endpoint_id` and nothing else -- no cascade, no cache.
+
+        Raises `KeyError` for an endpoint the tier configuration does not declare, so the route can answer
+        422 before a run row exists.
+
+        The cache is bypassed for pinned runs (see `complete`) because an operator who chose a provider is
+        asking that provider; a hit would answer without calling it and the run could not prove the choice
+        was honoured.
+
+        GEMINI GETS A LARGER OUTPUT BUDGET. Gemini 3.x reasons before answering and its reasoning tokens
+        count against `maxOutputTokens`; at Ollama's 4096 a multi-file artifact set was cut off mid-file.
+        """
+        descriptor = self._router._tier_config.endpoints[endpoint_id]
+        max_tokens = 32768 if descriptor.protocol.value == "google_native" else self._max_tokens
+        return RoutedArtifactModel(
+            router=self._router,
+            tier=self._tier,
+            model=descriptor.model,
+            temperature=self._temperature,
+            max_tokens=max_tokens,
+            pinned_endpoint_id=endpoint_id,
+            pinned_provider=descriptor.provider,
+        )
+
+    def endpoint_choices(self, extra_endpoint_ids: list[str]) -> list[dict[str, Any]]:
+        """What the Manual Generation page may offer: this tier's own chain, then each listed endpoint.
+
+        An extra endpoint is reported with `available` from the registry -- an adapter exists AND its
+        credential resolves -- and the reason when it is not, so the page can say "no Gemini key configured"
+        rather than silently omitting the option. Unknown ids are skipped: they name nothing to offer.
+        """
+        config = self._router._tier_config
+        registry = self._router._registry
+        primary = self.primary_endpoint_descriptor
+        choices: list[dict[str, Any]] = [
+            {
+                "endpoint_id": None,
+                "provider": getattr(primary, "provider", "self_hosted"),
+                "model": self._model,
+                "protocol": getattr(getattr(primary, "protocol", None), "value", None),
+                "available": True,
+                "reason": None,
+                "default": True,
+            }
+        ]
+        for eid in extra_endpoint_ids:
+            descriptor = config.endpoints.get(eid)
+            if descriptor is None:
+                continue
+            availability = registry.get_availability(eid)
+            choices.append(
+                {
+                    "endpoint_id": eid,
+                    "provider": descriptor.provider,
+                    "model": descriptor.model,
+                    "protocol": descriptor.protocol.value,
+                    "available": bool(availability and availability.available),
+                    "reason": availability.reason if availability else "not registered",
+                    "default": False,
+                }
+            )
+        return choices
+
+    @property
     def primary_endpoint_descriptor(self) -> Any:
+        if self._pinned_endpoint_id is not None:
+            return self._router._tier_config.endpoints.get(self._pinned_endpoint_id)
         chain = self._router._tier_config.tiers.get(self._tier)
         if chain is None:
             return None
@@ -123,8 +198,9 @@ class RoutedArtifactModel:
                 request=request,
                 prompt=prompt,
                 on_token=on_token,
-                may_serve_from_cache=may_serve_from_cache,
+                may_serve_from_cache=may_serve_from_cache and self._pinned_endpoint_id is None,
                 store_in_cache=store_in_cache,
+                only_endpoint=self._pinned_endpoint_id,
             )
         except Exception as exc:  # noqa: BLE001 - reported as a failed completion, not a crash
             # The router classifies per-endpoint failures into attempt records; an exception

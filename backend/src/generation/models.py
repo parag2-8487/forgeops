@@ -117,3 +117,18 @@ class GenerationRun(SQLModel, table=True):
     #: than attempted and rejected — only the first is fixed by narrowing the request.
     addressed_checks: list | None = Field(default=None, sa_column=Column("addressed_checks", JSONB, nullable=True))
     deferred_checks: list | None = Field(default=None, sa_column=Column("deferred_checks", JSONB, nullable=True))
+
+    # ─── Revision 0040: what was ASKED FOR, where the time went, and why it failed ──
+    #
+    # `requested_endpoint_id` is the provider the operator pinned the run to, or NULL for the tier's own
+    # chain. It sits beside `endpoint_id` (what ANSWERED) so an audit can prove a selected provider was
+    # never silently swapped for another.
+    requested_endpoint_id: str | None = Field(default=None, max_length=100)
+    requested_model: str | None = Field(default=None, max_length=200)
+    #: Per-phase wall-clock seconds, e.g. `context_seconds`, `model_seconds`, `first_token_seconds`.
+    timings: dict | None = Field(
+        default=None,
+        sa_column=Column("timings", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    )
+    #: Why a run ended `failed` -- including runs abandoned mid-stream, which used to stay `running`.
+    failure_reason: str | None = Field(default=None, sa_column=Column("failure_reason", Text, nullable=True))

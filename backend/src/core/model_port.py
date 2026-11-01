@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from ..secrets.redaction import RedactedPrompt
 
@@ -89,6 +89,24 @@ class ArtifactModelPort(Protocol):
 
     @property
     def tier_name(self) -> str: ...
+
+    @property
+    def pinned_endpoint_id(self) -> str | None:
+        """The one endpoint this port may call, or None when it routes through its tier's chain.
+
+        Exposed because a domain must behave differently for an operator's explicit choice: a pinned run
+        that fails is reported as failed with the provider's reason, never papered over with a template or
+        another provider's answer.
+        """
+        ...
+
+    def pinned_to(self, endpoint_id: str) -> ArtifactModelPort:
+        """A port that calls `endpoint_id` only. Raises `KeyError` for an undeclared endpoint."""
+        ...
+
+    def endpoint_choices(self, extra_endpoint_ids: list[str]) -> list[dict[str, Any]]:
+        """The default chain plus each listed endpoint, with whether it can be called and why not."""
+        ...
 
     async def complete(
         self,

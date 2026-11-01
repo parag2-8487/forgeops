@@ -138,7 +138,7 @@ describe("a run with no recorded instruction", () => {
     await reveal();
     // "Not recorded" and "the model was sent nothing" are different claims, and only the first is true.
     await waitFor(() =>
-      expect(screen.getByTestId("compiled-prompt-absent")).toHaveTextContent(/free-text prompt/i),
+      expect(screen.getByTestId("compiled-prompt-absent")).toHaveTextContent(/did not record/i),
     );
     expect(screen.queryByTestId("compiled-prompt")).toBeNull();
   });
@@ -188,5 +188,50 @@ describe("re-reading", () => {
     // A run's prompt is written before the stream and never updated, so re-reading it would spend a
     // request to redisplay text that cannot have changed.
     expect(mockGet).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a click made while the run is still preparing (the reported defect)", () => {
+  it("does not lock in 'not recorded': the next click re-reads and shows the instruction", async () => {
+    // The backend used to commit the instruction only when the model finished, and this panel cached the
+    // first answer for ever -- so an early click showed "did not record a compiled instruction" even after
+    // the row held one.
+    mockGet
+      .mockResolvedValueOnce(record({ status: "running", compiled_prompt: null }))
+      .mockResolvedValueOnce(record({ status: "running" }));
+    await reveal();
+    await waitFor(() => expect(screen.getByTestId("compiled-prompt-pending")).toBeInTheDocument());
+    expect(screen.queryByTestId("compiled-prompt-absent")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("show-compiled-prompt")); // hide
+    await userEvent.click(screen.getByTestId("show-compiled-prompt")); // show again -> re-read
+    await waitFor(() => expect(screen.getByTestId("compiled-prompt")).toHaveTextContent(/ESTABLISHED FACTS/));
+    expect(mockGet).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the selected provider is shown beside the instruction", () => {
+  it("names the selected model and what answered", async () => {
+    mockGet.mockResolvedValue(
+      record({
+        requested_endpoint_id: "gemini-3.8-flash",
+        requested_model: "gemini-3.8-flash",
+        endpoint_id: "gemini-3.8-flash",
+      }),
+    );
+    await reveal();
+    await waitFor(() =>
+      expect(screen.getByTestId("run-provider")).toHaveTextContent(
+        /gemini-3\.8-flash.*answered by gemini-3\.8-flash/,
+      ),
+    );
+  });
+
+  it("shows why a failed run failed", async () => {
+    mockGet.mockResolvedValue(
+      record({ status: "failed", failure_reason: "The selected model (gemini-3.8-flash) did not produce a usable result" }),
+    );
+    await reveal();
+    await waitFor(() => expect(screen.getByTestId("run-failure-reason")).toHaveTextContent(/did not produce/));
   });
 });

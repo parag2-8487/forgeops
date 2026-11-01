@@ -610,6 +610,18 @@ class Settings(BaseSettings):
         "low_logs",
         "self_hosted",
     ] = "self_hosted"
+    #: The WHOLE-RUN wall-clock bound for one generation, across every attempt and endpoint.
+    #:
+    #: Without it the bound was the product of per-endpoint timeouts: 3 attempts x 2 self-hosted endpoints
+    #: x 1200s, so a CPU-only run could legitimately stay `running` for two hours. Measured on the 8 GB,
+    #: CPU-only Docker VM this ships on, a qwen2.5-coder:7b attempt takes 2-14 minutes; 900s allows one
+    #: full attempt plus a repair and then ends the run as `failed` with that reason, instead of leaving the
+    #: user watching a spinner.
+    generation_run_deadline_seconds: float = Field(default=900.0, gt=0, le=7200)
+    #: Endpoints, beyond the generation tier's own chain, that the Manual Generation page may pin a run to.
+    #: Comma-separated endpoint ids from the tier configuration. Each is offered only while its credential
+    #: is configured.
+    generation_selectable_endpoints: str = "gemini-3.8-flash"
 
     # ─── Phase 1 §1.7 §1.9 §1.10 governance, policy, audit ───────────────────
     governance_policy_package: str = Field(default="forgeops/governance")

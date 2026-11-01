@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import uuid
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import httpx
@@ -48,6 +49,10 @@ class GitHubPushResponse(BaseModel):
     branch: str
     commit_sha: str
     files_count: int
+    #: The SHA GitHub reported for the branch AFTER the push, read back from the remote. Equal to
+    #: `commit_sha` whenever this response is returned; a mismatch is a failed push, never a success.
+    remote_verified_sha: str | None = None
+    verified_at: str | None = None
 
 
 async def push_project_to_github(
@@ -233,7 +238,10 @@ async def push_project_to_github(
             update_ref_resp = await client.patch(
                 f"https://api.github.com/repos/{owner}/{repo}/git/refs/heads/{branch}",
                 headers=headers,
-                json={"sha": new_commit_sha, "force": True},
+                # NOT FORCED. `parents` was read from this ref moments ago; a forced update would silently
+                # discard any commit pushed in between. Unforced, GitHub answers 422 "not a fast forward"
+                # and the operator sees the divergence instead of losing someone's work.
+                json={"sha": new_commit_sha, "force": False},
             )
             if update_ref_resp.status_code not in (200, 201):
                 raise problem(
@@ -253,6 +261,22 @@ async def push_project_to_github(
                 )
 
         # 8. Update Project's repo_url in DB if not set
+        # SUCCESS IS WHAT THE REMOTE SAYS, NOT WHAT WE SENT. The ref is read back from GitHub and must name
+        # the commit just created; anything else is reported as a failed push with both SHAs.
+        verify_resp = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/git/ref/heads/{branch}",
+            headers={**headers, "Cache-Control": "no-cache"},
+        )
+        remote_sha = verify_resp.json().get("object", {}).get("sha") if verify_resp.status_code == 200 else None
+        if remote_sha != new_commit_sha:
+            raise problem(
+                "github-ref-failed",
+                detail=(
+                    f"The push was not confirmed: GitHub reports refs/heads/{branch} at "
+                    f"{remote_sha or f'HTTP {verify_resp.status_code}'}, expected {new_commit_sha}."
+                ),
+            )
+
         await session.execute(
             text(
                 "UPDATE projects SET repo_url = :url, updated_at = now() "
@@ -269,4 +293,6 @@ async def push_project_to_github(
             branch=branch,
             commit_sha=new_commit_sha,
             files_count=len(files),
+            remote_verified_sha=remote_sha,
+            verified_at=datetime.now(UTC).isoformat(),
         )

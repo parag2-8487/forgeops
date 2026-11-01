@@ -23,6 +23,7 @@ from .endpoints import (
     CompletionResponse,
     EndpointRegistry,
     MalformedResponseError,
+    ProviderRequestError,
     StreamingModelEndpoint,
     TokenSink,
 )
@@ -119,8 +120,14 @@ class ModelRouter:
         on_token: TokenSink | None = None,
         may_serve_from_cache: bool = True,
         store_in_cache: bool = True,
+        only_endpoint: str | None = None,
     ) -> RoutingResult:
         """Route a completion request through the tier cascade.
+
+        `only_endpoint` PINS THE CALL TO ONE ENDPOINT and disables the cascade for it. An operator who picked
+        a provider by hand asked for THAT provider: falling through to another one would answer with a model
+        they did not choose and report it as success. A pinned call that fails ends EXHAUSTED with the one
+        attempt's reason, and the caller decides what to tell them.
 
         Returns a RoutingResult with outcome OK or EXHAUSTED.
 
@@ -177,15 +184,21 @@ class ModelRouter:
                 staleness_seconds=cache_hit.staleness_seconds,
             )
 
-        # 2. Build deduplicated chain from tier config
-        tier_chain = self._tier_config.tiers.get(tier)
-        if tier_chain is None:
-            return RoutingResult(
-                outcome=RoutingOutcome.EXHAUSTED,
-                attempts=attempts,
-            )
+        if only_endpoint is not None:
+            if only_endpoint not in self._tier_config.endpoints:
+                attempts.append(Attempt(endpoint_id=only_endpoint, result="skipped", reason="unknown_endpoint"))
+                return RoutingResult(outcome=RoutingOutcome.EXHAUSTED, attempts=attempts)
+            endpoint_ids = [only_endpoint]
+        else:
+            # 2. Build deduplicated chain from tier config
+            tier_chain = self._tier_config.tiers.get(tier)
+            if tier_chain is None:
+                return RoutingResult(
+                    outcome=RoutingOutcome.EXHAUSTED,
+                    attempts=attempts,
+                )
 
-        endpoint_ids = tier_chain.ordered_ids()
+            endpoint_ids = tier_chain.ordered_ids()
 
         # 3. Iterate through chain, invoke at most once per endpoint
         invoked: set[str] = set()
@@ -327,6 +340,9 @@ class ModelRouter:
                 # the endpoint is not speaking the protocol we validated against.
                 if isinstance(exc, MalformedResponseError):
                     attempt_result = "malformed_response"
+                elif isinstance(exc, ProviderRequestError):
+                    # The category (invalid_credential, quota_exceeded, ...) leads the reason string.
+                    attempt_result = "error"
                 elif isinstance(exc, httpx.TimeoutException):
                     attempt_result = "timeout"
                 else:

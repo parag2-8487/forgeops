@@ -29,6 +29,13 @@ export interface GenerationRunRecord {
   prompt_token_budget: number | null;
   addressed_checks: string[];
   deferred_checks: string[];
+  /** What the operator selected (null = the default chain) and what actually answered. */
+  requested_endpoint_id?: string | null;
+  requested_model?: string | null;
+  endpoint_id?: string | null;
+  tier?: string | null;
+  timings?: Record<string, number>;
+  failure_reason?: string | null;
 }
 
 export function CompiledPromptPanel({ runId }: { runId: string }) {
@@ -38,9 +45,11 @@ export function CompiledPromptPanel({ runId }: { runId: string }) {
   const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
-    // Fetched once and then toggled. Re-reading on every click would spend a request to redisplay text
-    // that cannot have changed: a run's prompt is written before the stream and never updated.
-    if (record !== null) {
+    // Fetched once and then toggled -- BUT ONLY ONCE THERE IS SOMETHING TO KEEP. The previous version
+    // cached the first answer unconditionally, so a click made before the instruction was committed
+    // locked in "this run did not record a compiled instruction" for good, even after the row had it.
+    // A record with no prompt, or a run still in progress, is re-read on the next click.
+    if (record !== null && (open || (record.compiled_prompt !== null && record.status !== "running"))) {
       setOpen((previous) => !previous);
       return;
     }
@@ -65,7 +74,7 @@ export function CompiledPromptPanel({ runId }: { runId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [record, runId]);
+  }, [open, record, runId]);
 
   return (
     <section aria-label="Instruction given to the model" className="space-y-2">
@@ -91,13 +100,27 @@ export function CompiledPromptPanel({ runId }: { runId: string }) {
 
       {open && record !== null ? (
         <div className="space-y-2">
-          {record.compiled_prompt === null ? (
+          <p className="text-xs text-muted-foreground" data-testid="run-provider">
+            Model: {record.requested_endpoint_id ?? "default chain"}
+            {record.requested_model ? ` (${record.requested_model})` : ""}
+            {record.endpoint_id ? ` · answered by ${record.endpoint_id}` : ""} · status {record.status}
+          </p>
+          {record.failure_reason ? (
+            <p className="text-xs text-destructive" data-testid="run-failure-reason">
+              {record.failure_reason}
+            </p>
+          ) : null}
+          {record.compiled_prompt === null && record.status === "running" ? (
+            <p className="text-sm text-muted-foreground" data-testid="compiled-prompt-pending">
+              The run is still preparing its instruction. Click again in a moment to load it.
+            </p>
+          ) : record.compiled_prompt === null ? (
             /* NOT the same as an empty prompt. A run made before the compiler existed, or one driven by
                free text with no readiness findings behind it, recorded nothing here — and saying so is
                honest, where an empty box would claim the model was sent nothing. */
             <p className="text-sm text-muted-foreground" data-testid="compiled-prompt-absent">
-              This run did not record a compiled instruction. Runs driven by a free-text prompt, and
-              runs made before the compiler existed, have nothing stored here.
+              This run did not record a compiled instruction. Runs made before instructions were
+              recorded, and runs that failed before one was compiled, have nothing stored here.
             </p>
           ) : (
             <>

@@ -60,9 +60,16 @@ def db_session() -> MockDbSession:
 
 
 @pytest.mark.asyncio
-async def test_service_user_requires_explicit_tenant(db_session: MockDbSession):
-    with pytest.raises(ValueError, match="requires explicit tenant_id"):
-        await get_or_create_autonomous_service_user(db_session, tenant_id=None)
+async def test_a_tenantless_project_gets_a_tenantless_service_user(db_session: MockDbSession):
+    """Commit 70a47fc: a tenantless project is deployed by a TENANTLESS service account.
+
+    This used to require a tenant, and the deployer satisfied it by stamping a tenant derived from the
+    project id onto the project -- which hid the project from its owner's tenant-scoped list. The service
+    account now follows the project's own (absent) tenant instead of the project following the account.
+    """
+    user = await get_or_create_autonomous_service_user(db_session, tenant_id=None)
+    assert user.tenant_id is None
+    assert user.idp_subject == "service:autonomous-deploy:default"
 
 
 @pytest.mark.asyncio

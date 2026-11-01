@@ -140,6 +140,14 @@ class GenerationOutcome:
     #: Provider attempts consumed, bounded by §3.8's three. `0` for a cache hit or a run with no
     #: router configured, which is the truth in both cases: neither called a provider.
     iterations_used: int = 0
+    #: Per-phase wall-clock seconds (revision 0040). Filled by the route (context, compile, submit) and by
+    #: the service (model, first token, validation), so "where did the ten minutes go" is in the row.
+    timings: dict[str, float] = field(default_factory=dict)
+    #: Why the run ended `failed`, in words an operator can act on.
+    failure_reason: str | None = None
+    #: The exact (redacted) text the FIRST attempt sent to the provider. Persisted as the run's
+    #: instruction, because the compiled plan alone omits the operator's own request section.
+    sent_prompt: str | None = None
 
 
 def _kubernetes_name(raw: str) -> str:
@@ -386,6 +394,44 @@ class GenerationService:
         """
         return self._model.tier_name if self._model is not None else "template"
 
+    @property
+    def pinned_endpoint_id(self) -> str | None:
+        """The one endpoint this run may call, when the operator chose one."""
+        return getattr(self._model, "pinned_endpoint_id", None) if self._model is not None else None
+
+    def opening_prompt(
+        self,
+        prompt: str,
+        *,
+        project: Mapping[str, Any] | None,
+        retrieval: RetrievalContext | None,
+        compiled: CompiledPrompt | None,
+    ) -> str:
+        """The exact redacted text attempt 1 sends, so the route can persist it BEFORE the stream.
+
+        One definition used by both the route and the attempt loop, so the recorded instruction and the
+        transmitted one cannot drift apart.
+        """
+        app_name = _kubernetes_name(str((project or {}).get("name") or "")) or "forgeops-app"
+        facts = facts_from_project(project=project, operator_prompt=prompt, default_app_name=app_name)
+        if compiled is not None:
+            text_value = compiled.text
+            if prompt and prompt.strip():
+                # NUMBERED PAST THE COMPILED PLAN'S OWN SECTIONS. The plan numbers its sections 1-4 and uses
+                # 5 for the checks it cannot address, so `## 6` is the first heading the plan never claims.
+                text_value = (
+                    text_value + "\n## 6. OPERATOR REPAIR REQUEST & DEPLOYMENT ERROR\n\n" + prompt.strip() + "\n"
+                )
+        else:
+            text_value = build_generation_prompt(
+                operator_prompt=prompt,
+                facts=facts,
+                previous_findings=(),
+                attempt=1,
+                context_lines=render_context_section(retrieval) if retrieval is not None else (),
+            )
+        return str(create_redacted_prompt(text_value))
+
     async def stream_generation(
         self,
         project_id: uuid.UUID,
@@ -417,6 +463,7 @@ class GenerationService:
         )
 
         provider_findings: tuple[str, ...] = ()
+        pinned = self.pinned_endpoint_id
         if self.routes_to_a_model:
             report = _ModelReport()
             async for frame in self._stream_from_model(
@@ -435,6 +482,25 @@ class GenerationService:
                 # The provider path emitted its own terminal frame. §7.4 permits exactly one.
                 return
             provider_findings = report.findings
+            if pinned is not None:
+                # AN EXPLICIT CHOICE FAILS AS ITSELF. The operator picked this provider; answering with
+                # canned templates would report a run "completed" that the chosen model never produced, and
+                # answering with another provider is the silent swap this pin exists to forbid.
+                reason = (
+                    f"The selected model ({pinned}) did not produce a usable result: "
+                    + ("; ".join(provider_findings) if provider_findings else "no attempt returned content")
+                    + ". No other provider was called. Choose another model or retry."
+                )
+                if outcome is not None:
+                    outcome.status = "failed"
+                    outcome.failure_reason = reason[:2000]
+                    # The provider that was TRIED, not the `template` default: nothing rendered a template.
+                    outcome.tier = self.attempted_tier
+                yield format_event(
+                    SSEEventType.ERROR,
+                    {"run_id": str(run_id), "state": "provider_failed", "endpoint_id": pinned, "detail": reason},
+                )
+                return
         # Falling through means either no router is configured or every provider attempt failed.
         # Either way the template is now a genuine fallback rather than the only path, and the row
         # will say `template`.
@@ -512,6 +578,8 @@ class GenerationService:
                     "attempt": attempt,
                     "max_attempts": self._max_attempts,
                     "tier": self._model.tier_name,
+                    "endpoint_id": self.pinned_endpoint_id,
+                    "model": getattr(self._model, "model_name", None),
                 },
             )
 
@@ -590,6 +658,8 @@ class GenerationService:
             # only thing handed to the provider. Redacting here rather than inside the port keeps
             # the guarantee at the boundary where raw operator text last exists.
             redacted = create_redacted_prompt(model_prompt)
+            if attempt == 1 and outcome is not None:
+                outcome.sent_prompt = str(redacted)
             if attempt == 1:
                 # THE CACHE KEY OF THE WHOLE RUN, kept because a later attempt's prompt is not one any
                 # future run will present: it carries the previous attempt's gate findings appended to
@@ -627,11 +697,30 @@ class GenerationService:
             # it. Draining after the call returned would be the 120-character slicing this
             # replaced, wearing a different name.
             token_count = 0
+            first_token_at: float | None = None
             try:
                 while True:
                     drain = asyncio.ensure_future(deltas.get())
                     done, _ = await asyncio.wait({drain, task}, return_when=asyncio.FIRST_COMPLETED)
                     if drain in done:
+                        if first_token_at is None:
+                            first_token_at = time.monotonic()
+                            # FIRST-TOKEN LATENCY IS ITS OWN FACT. On CPU most of an attempt is spent before
+                            # the first token (model load + prompt evaluation); on a hosted model it is
+                            # queueing. A user watching a silent screen needs to know which phase it is in.
+                            if outcome is not None:
+                                outcome.timings[f"attempt_{attempt}_first_token_seconds"] = round(
+                                    first_token_at - attempt_started, 3
+                                )
+                            yield format_event(
+                                SSEEventType.PROGRESS,
+                                {
+                                    "run_id": str(run_id),
+                                    "state": "model_streaming",
+                                    "attempt": attempt,
+                                    "first_token_seconds": round(first_token_at - attempt_started, 3),
+                                },
+                            )
                         token_count += 1
                         yield format_event(
                             SSEEventType.TOKEN,
@@ -660,6 +749,9 @@ class GenerationService:
 
             result = await task
             attempt_seconds = round(time.monotonic() - attempt_started, 3)
+            if outcome is not None:
+                outcome.timings[f"attempt_{attempt}_model_seconds"] = attempt_seconds
+                outcome.timings["model_seconds"] = round(outcome.timings.get("model_seconds", 0.0) + attempt_seconds, 3)
 
             def _record_attempt(
                 verdict: str,
@@ -694,6 +786,37 @@ class GenerationService:
                 # reason to fail the run while the template fallback is still available.
                 findings = result.failure_reasons
                 _record_attempt("no_content", "; ".join(findings))
+                joined = " ".join(findings)
+                if self.pinned_endpoint_id is not None and any(
+                    category in joined
+                    for category in (
+                        "invalid_credential",
+                        "model_unavailable",
+                        "quota_exceeded",
+                        "bad_request",
+                        "unknown_endpoint",
+                    )
+                ):
+                    # A wrong key, a missing model or an exhausted quota will not change in the next few
+                    # seconds; retrying would spend the operator's time (and quota) to report the same thing.
+                    break
+                if (
+                    self.pinned_endpoint_id is not None
+                    and "provider_unavailable" in joined
+                    and attempt < self._max_attempts
+                ):
+                    # A 503 "high demand" from a hosted provider is transient by its own description. A short,
+                    # bounded backoff -- 3s then 6s -- is the honest retry; hammering it immediately is not.
+                    yield format_event(
+                        SSEEventType.PROGRESS,
+                        {
+                            "run_id": str(run_id),
+                            "state": "provider_busy_retrying",
+                            "attempt": attempt,
+                            "wait_seconds": 3 * attempt,
+                        },
+                    )
+                    await asyncio.sleep(3 * attempt)
                 continue
 
             served_from = result.served_from

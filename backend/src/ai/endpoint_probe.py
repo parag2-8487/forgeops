@@ -41,6 +41,9 @@ class ProbeResult:
     detail: str
     model_reported: str | None = None
     latency_ms: int = 0
+    #: `connected`, or the kind of refusal (`invalid_credential`, `quota_exceeded`, ...). None lets the route
+    #: derive it from `ok` for adapters that do not classify.
+    category: str | None = None
 
 
 def _detail_from_body(status: int, body: str) -> str:

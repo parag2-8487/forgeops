@@ -124,6 +124,31 @@ export default function ModelTiersPage() {
         </p>
       </div>
 
+      {/* GEMINI HAS ITS OWN SECTION because it is selected per run on the Manual Generation page rather
+          than reached through a tier's cascade. The model id is the one verified against Google's model
+          list; the key is write-only like every other here. */}
+      <section
+        className="rounded-lg border border-border p-4"
+        aria-label="Google Gemini"
+        data-testid="gemini-provider"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-base font-semibold">Google Gemini</h2>
+          <span className="text-xs text-muted-foreground">
+            Provider: Google Gemini · Selected model: <code>gemini-3.8-flash</code>
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Selectable on the Generation page. A run that selects Gemini calls Gemini only; if it is
+          unavailable the run fails with Google&rsquo;s reason and nothing else is called.
+        </p>
+        <ProviderCredentialForm
+          keyRef="google"
+          endpointId="gemini-3.8-flash"
+          configured={credentials.data?.find((entry) => entry.key_ref === "google")}
+        />
+      </section>
+
       <AsyncState
         isPending={tiers.isPending}
         error={tiers.error}
