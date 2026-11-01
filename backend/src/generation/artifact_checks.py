@@ -101,17 +101,20 @@ def validate_dockerfile(content: str) -> list[str]:
         findings.append("Dockerfile does not drop root with a USER instruction")
     for line in content.splitlines():
         stripped = line.strip()
-        if stripped.startswith("COPY ") and not stripped.startswith("COPY --from="):
-            after_copy = stripped[5:].strip()
-            if not after_copy.startswith("[") and (" " in after_copy):
-                tokens = after_copy.split()
-                non_flags = [t for t in tokens if not t.startswith("--")]
-                if len(non_flags) > 2:
-                    findings.append(
-                        f"Dockerfile instruction '{stripped}' has unquoted arguments containing spaces. "
-                        "Docker splits on spaces. Use Docker JSON array syntax for paths with spaces, e.g.: "
-                        'COPY ["dir with space/package*.json", "./dir with space/"]'
-                    )
+        # MULTIPLE SOURCES ARE LEGAL; A NON-DIRECTORY DESTINATION IS NOT. This used to reject every COPY with
+        # more than two arguments as "unquoted arguments containing spaces", which refused the ordinary
+        # `COPY package.json package-lock.json ./` -- Gemini's correct Node Dockerfile was refused on all three
+        # attempts and replaced by a broken fallback (2026-11-02). Docker's actual rule: with several sources,
+        # the destination must be a directory and end with `/`.
+        copy = re.match(r"(?i)^(COPY|ADD)\s+(.*)$", stripped)
+        if copy and not copy.group(2).lstrip().startswith("["):
+            operands = [t for t in copy.group(2).split() if not t.startswith("--")]
+            if len(operands) > 2 and not operands[-1].endswith("/"):
+                findings.append(
+                    f"Dockerfile instruction '{stripped}' copies {len(operands) - 1} sources to "
+                    f"'{operands[-1]}', which is not a directory. With more than one source Docker requires the "
+                    "destination to end with '/', e.g. './'."
+                )
         if re.search(r"COPY\s+--from=\S+\s+\./(dist|build|public|out)\b", stripped, re.IGNORECASE):
             findings.append(
                 "Dockerfile uses relative path in COPY --from=... (e.g. './dist'). "
@@ -862,6 +865,31 @@ def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None 
     findings.extend(validate_cross_artifact_consistency(files))
 
     if existing:
+        # A PATH WITH A SPACE, judged against the project's REAL paths rather than guessed from token counts:
+        # an unquoted `COPY live classroom/ ./` is two sources to Docker. Flagged only when the joined
+        # operands name a path that actually exists with a space in it.
+        spaced = {p.replace("\\", "/") for p in existing if " " in p}
+        spaced_dirs = {"/".join(p.split("/")[: i + 1]) for p in spaced for i in range(p.count("/") + 1)}
+        spaced_prefixes = {d for d in spaced_dirs if " " in d}
+        for artifact in files:
+            if checker_for(getattr(artifact, "path", "")) is not validate_dockerfile:
+                continue
+            for line in artifact.content.splitlines():
+                copy = re.match(r"(?i)^\s*(COPY|ADD)\s+(.*)$", line)
+                if not copy or copy.group(2).lstrip().startswith("["):
+                    continue
+                operands = [t for t in copy.group(2).split() if not t.startswith("--")]
+                for i in range(len(operands) - 1):
+                    joined = f"{operands[i]} {operands[i + 1]}".lstrip("./").rstrip("/")
+                    if any(
+                        prefix == joined or prefix.startswith(joined + "/") or joined.startswith(prefix)
+                        for prefix in spaced_prefixes
+                    ):
+                        findings.append(
+                            f"{artifact.path}: '{line.strip()}' names the path '{joined}', which contains a space; "
+                            'Docker splits unquoted operands, so use JSON array syntax, e.g. COPY ["a b/", "./a b/"]'
+                        )
+                        break
         ws_dirs: list[str] = []
         if "package.json" in existing:
             try:

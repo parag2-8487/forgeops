@@ -651,6 +651,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Promptness only. The correctness guarantee is the per-message `SISMEMBER` inside the hub, so
     # this task failing is a slower close and never a missed revocation.
     revocation_task = asyncio.create_task(agent_hub.subscribe_revocations(channel=REVOCATION_CHANNEL))
+    # A change set whose agent can no longer answer is settled as failed instead of staying `applying`.
+    unanswered_task = asyncio.create_task(agent_hub.run_unanswered_command_sweeper())
 
     app.state.governance_chokepoint = GovernanceChokepoint(
         policy=app.state.governance_policy,
@@ -940,6 +942,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     finally:
         # Cancelled before Redis closes: the subscriber holds a connection from the same pool, and
         # tearing the pool down under it produces a shutdown traceback that hides real failures.
+        unanswered_task.cancel()
         revocation_task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await revocation_task
