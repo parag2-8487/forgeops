@@ -49,7 +49,10 @@ export function CompiledPromptPanel({ runId }: { runId: string }) {
     // cached the first answer unconditionally, so a click made before the instruction was committed
     // locked in "this run did not record a compiled instruction" for good, even after the row had it.
     // A record with no prompt, or a run still in progress, is re-read on the next click.
-    if (record !== null && (open || (record.compiled_prompt !== null && record.status !== "running"))) {
+    if (
+      record !== null &&
+      (open || (record.compiled_prompt !== null && record.status !== "running"))
+    ) {
       setOpen((previous) => !previous);
       return;
     }
@@ -103,7 +106,8 @@ export function CompiledPromptPanel({ runId }: { runId: string }) {
           <p className="text-xs text-muted-foreground" data-testid="run-provider">
             Model: {record.requested_endpoint_id ?? "default chain"}
             {record.requested_model ? ` (${record.requested_model})` : ""}
-            {record.endpoint_id ? ` · answered by ${record.endpoint_id}` : ""} · status {record.status}
+            {record.endpoint_id ? ` · answered by ${record.endpoint_id}` : ""} · status{" "}
+            {record.status}
           </p>
           {record.failure_reason ? (
             <p className="text-xs text-destructive" data-testid="run-failure-reason">

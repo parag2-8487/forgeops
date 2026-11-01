@@ -81,8 +81,12 @@ const PHASE_LABEL: Record<string, string> = {
 function describeProgress(payload: ProgressPayload): string {
   const label = PHASE_LABEL[payload.state ?? ""] ?? payload.state ?? "Working";
   const parts = [label];
-  if (payload.attempt) parts.push(`attempt ${payload.attempt}${payload.max_attempts ? ` of ${payload.max_attempts}` : ""}`);
-  if (payload.first_token_seconds !== undefined) parts.push(`first token after ${payload.first_token_seconds.toFixed(1)}s`);
+  if (payload.attempt)
+    parts.push(
+      `attempt ${payload.attempt}${payload.max_attempts ? ` of ${payload.max_attempts}` : ""}`,
+    );
+  if (payload.first_token_seconds !== undefined)
+    parts.push(`first token after ${payload.first_token_seconds.toFixed(1)}s`);
   if (payload.wait_seconds) parts.push(`waiting ${payload.wait_seconds}s`);
   return parts.join(" · ");
 }
@@ -263,31 +267,47 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
           onChange={(event) => setEndpointId(event.target.value)}
           className="w-full rounded-md border border-border bg-background p-2 text-sm"
         >
-          {(models ?? [{ endpoint_id: null, provider: "self_hosted", model: "default", available: true, reason: null, default: true }]).map(
-            (choice) => (
-              <option
-                key={choice.endpoint_id ?? "default"}
-                value={choice.endpoint_id ?? ""}
-                disabled={!choice.available}
-              >
-                {choice.default
-                  ? `Ollama · ${choice.model} (default)`
-                  : `${choice.provider === "google" ? "Google Gemini" : choice.provider} · ${choice.model}`}
-                {choice.available ? "" : " — not configured"}
-              </option>
-            ),
-          )}
+          {(
+            models ?? [
+              {
+                endpoint_id: null,
+                provider: "self_hosted",
+                model: "default",
+                available: true,
+                reason: null,
+                default: true,
+              },
+            ]
+          ).map((choice) => (
+            <option
+              key={choice.endpoint_id ?? "default"}
+              value={choice.endpoint_id ?? ""}
+              disabled={!choice.available}
+            >
+              {choice.default
+                ? `Ollama · ${choice.model} (default)`
+                : `${choice.provider === "google" ? "Google Gemini" : choice.provider} · ${choice.model}`}
+              {choice.available ? "" : " — not configured"}
+            </option>
+          ))}
         </select>
         {models
           ?.filter((choice) => !choice.available && choice.reason)
           .map((choice) => (
-            <p key={choice.endpoint_id ?? "default"} className="text-xs text-amber-600" data-testid="model-unavailable">
+            <p
+              key={choice.endpoint_id ?? "default"}
+              className="text-xs text-amber-600"
+              data-testid="model-unavailable"
+            >
               {choice.model}: {choice.reason}. Configure it under Model tiers.
             </p>
           ))}
       </div>
 
-      <Button disabled={state === "streaming" || prompt.trim() === "" || selected?.available === false} onClick={() => void run()}>
+      <Button
+        disabled={state === "streaming" || prompt.trim() === "" || selected?.available === false}
+        onClick={() => void run()}
+      >
         {state === "streaming" ? "Generating…" : "Generate artifacts"}
       </Button>
 

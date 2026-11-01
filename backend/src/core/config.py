@@ -621,7 +621,8 @@ class Settings(BaseSettings):
     #: Endpoints, beyond the generation tier's own chain, that the Manual Generation page may pin a run to.
     #: Comma-separated endpoint ids from the tier configuration. Each is offered only while its credential
     #: is configured.
-    generation_selectable_endpoints: str = "gemini-3.8-flash"
+    #: Ordered as the page lists them: the fastest measured first (2026-11-02), the newest and busiest last.
+    generation_selectable_endpoints: str = "gemini-2.5-flash,gemini-3.5-flash,gemini-3.8-flash"
 
     # ─── Phase 1 §1.7 §1.9 §1.10 governance, policy, audit ───────────────────
     governance_policy_package: str = Field(default="forgeops/governance")

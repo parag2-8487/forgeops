@@ -16,8 +16,22 @@ vi.mock("@/lib/api", async () => {
 });
 
 const PROJECT = "00000000-0000-0000-0000-000000000001";
-const OLLAMA = { endpoint_id: null, provider: "self_hosted", model: "qwen2.5-coder:7b", available: true, reason: null, default: true };
-const GEMINI = { endpoint_id: "gemini-3.8-flash", provider: "google", model: "gemini-3.8-flash", available: true, reason: null, default: false };
+const OLLAMA = {
+  endpoint_id: null,
+  provider: "self_hosted",
+  model: "qwen2.5-coder:7b",
+  available: true,
+  reason: null,
+  default: true,
+};
+const GEMINI = {
+  endpoint_id: "gemini-3.8-flash",
+  provider: "google",
+  model: "gemini-3.8-flash",
+  available: true,
+  reason: null,
+  default: false,
+};
 
 function frame(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -40,14 +54,20 @@ beforeEach(() => {
   mockStream.mockReset();
   mockGet.mockReset();
   mockStream.mockResolvedValue(
-    sse([frame("status", { run_id: "r1" }), frame("complete", { run_id: "r1", state: "accepted" })]),
+    sse([
+      frame("status", { run_id: "r1" }),
+      frame("complete", { run_id: "r1", state: "accepted" }),
+    ]),
   );
 });
 
 async function start(choose?: string) {
   render(<GeneratorWizard projectId={PROJECT} />);
-  await waitFor(() => expect(screen.getByTestId("generation-model")).toHaveTextContent(/qwen2\.5-coder/));
-  if (choose !== undefined) await userEvent.selectOptions(screen.getByTestId("generation-model"), choose);
+  await waitFor(() =>
+    expect(screen.getByTestId("generation-model")).toHaveTextContent(/qwen2\.5-coder/),
+  );
+  if (choose !== undefined)
+    await userEvent.selectOptions(screen.getByTestId("generation-model"), choose);
   await userEvent.type(screen.getByLabelText(/what should be generated/i), "a static site");
   await userEvent.click(screen.getByRole("button", { name: /generate artifacts/i }));
   await waitFor(() => expect(mockStream).toHaveBeenCalledTimes(1));
@@ -68,9 +88,14 @@ describe("the model selector", () => {
   });
 
   it("offers an unconfigured Gemini as disabled, with the reason", async () => {
-    mockGet.mockResolvedValue([OLLAMA, { ...GEMINI, available: false, reason: "no credential is configured for 'google'" }]);
+    mockGet.mockResolvedValue([
+      OLLAMA,
+      { ...GEMINI, available: false, reason: "no credential is configured for 'google'" },
+    ]);
     render(<GeneratorWizard projectId={PROJECT} />);
-    await waitFor(() => expect(screen.getByTestId("model-unavailable")).toHaveTextContent(/no credential/));
+    await waitFor(() =>
+      expect(screen.getByTestId("model-unavailable")).toHaveTextContent(/no credential/),
+    );
     const option = screen.getByRole("option", { name: /gemini-3\.8-flash/ }) as HTMLOptionElement;
     expect(option.disabled).toBe(true);
   });
@@ -85,10 +110,14 @@ describe("the model selector", () => {
           start(controller) {
             controller.enqueue(encoder.encode(frame("status", { run_id: "r2" })));
             controller.enqueue(
-              encoder.encode(frame("progress", { state: "requesting_model", attempt: 1, max_attempts: 3 })),
+              encoder.encode(
+                frame("progress", { state: "requesting_model", attempt: 1, max_attempts: 3 }),
+              ),
             );
             release = () => {
-              controller.enqueue(encoder.encode(frame("complete", { run_id: "r2", state: "accepted" })));
+              controller.enqueue(
+                encoder.encode(frame("complete", { run_id: "r2", state: "accepted" })),
+              );
               controller.close();
             };
           },
@@ -98,7 +127,9 @@ describe("the model selector", () => {
     );
     await start("gemini-3.8-flash");
     await waitFor(() =>
-      expect(screen.getByTestId("generation-phase")).toHaveTextContent(/gemini-3\.8-flash: Waiting for the model.*attempt 1 of 3/),
+      expect(screen.getByTestId("generation-phase")).toHaveTextContent(
+        /gemini-3\.8-flash: Waiting for the model.*attempt 1 of 3/,
+      ),
     );
     release();
     await waitFor(() => expect(screen.queryByTestId("generation-phase")).toBeNull());

@@ -772,6 +772,22 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # without a restart.
     key_resolver = LayeredKeyResolver(fallback=EnvKeyResolver())
     app.state.key_resolver = key_resolver
+    # KEYS SAVED ON THE MODELS PAGE ARE LOADED AT STARTUP. The snapshot used to be filled only when someone
+    # saved or tested a key, so after every restart a stored Gemini key read as "not configured" and the
+    # Generation page refused Gemini until an operator pressed Test connection (found 2026-11-02).
+    # Best-effort: a database that is not reachable yet leaves the environment fallback in place.
+    try:
+        from .ai.provider_credentials import derive_seal_key
+        from .ai.routes import load_provider_credentials
+
+        async with sessionmaker() as credential_session:
+            stored = await load_provider_credentials(
+                credential_session, seal_key=derive_seal_key(settings.local_secret_seal_key.get_secret_value())
+            )
+        key_resolver.replace_snapshot({ref: value for ref, (value, _record) in stored.items()})
+        logger.info("ai: loaded %d stored provider credential(s): %s", len(stored), sorted(stored))
+    except Exception:  # noqa: BLE001
+        logger.warning("ai: could not load stored provider credentials at startup", exc_info=True)
     endpoint_registry = EndpointRegistry.from_config(tier_config, http=model_http, key_resolver=key_resolver)
     breakers = {
         endpoint_id: CircuitBreaker(

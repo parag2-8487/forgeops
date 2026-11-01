@@ -205,7 +205,9 @@ describe("a click made while the run is still preparing (the reported defect)", 
 
     await userEvent.click(screen.getByTestId("show-compiled-prompt")); // hide
     await userEvent.click(screen.getByTestId("show-compiled-prompt")); // show again -> re-read
-    await waitFor(() => expect(screen.getByTestId("compiled-prompt")).toHaveTextContent(/ESTABLISHED FACTS/));
+    await waitFor(() =>
+      expect(screen.getByTestId("compiled-prompt")).toHaveTextContent(/ESTABLISHED FACTS/),
+    );
     expect(mockGet).toHaveBeenCalledTimes(2);
   });
 });
@@ -229,9 +231,14 @@ describe("the selected provider is shown beside the instruction", () => {
 
   it("shows why a failed run failed", async () => {
     mockGet.mockResolvedValue(
-      record({ status: "failed", failure_reason: "The selected model (gemini-3.8-flash) did not produce a usable result" }),
+      record({
+        status: "failed",
+        failure_reason: "The selected model (gemini-3.8-flash) did not produce a usable result",
+      }),
     );
     await reveal();
-    await waitFor(() => expect(screen.getByTestId("run-failure-reason")).toHaveTextContent(/did not produce/));
+    await waitFor(() =>
+      expect(screen.getByTestId("run-failure-reason")).toHaveTextContent(/did not produce/),
+    );
   });
 });
