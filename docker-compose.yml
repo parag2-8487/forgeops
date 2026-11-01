@@ -237,8 +237,13 @@ services:
         set -e
         /bin/ollama serve &
         until /bin/ollama list >/dev/null 2>&1; do sleep 1; done
-        /bin/ollama pull "$${SELF_HOSTED_MODEL_ID}"
-        /bin/ollama pull "$${SELF_HOSTED_EMBEDDING_MODEL_ID}"
+        # A PULL IS A REFRESH, NOT A PRECONDITION, when the weights are already in the volume. Under
+        # `set -e` a transient registry error ("pull model manifest: 503 ... connection timeout",
+        # 2026-11-02) killed this container with the model on disk, and every generation silently
+        # failed over to the CPU-only standby. Fatal only when the model is genuinely absent.
+        for model in "$${SELF_HOSTED_MODEL_ID}" "$${SELF_HOSTED_EMBEDDING_MODEL_ID}"; do
+          /bin/ollama pull "$$model" || /bin/ollama list | grep -Fq "$$model"
+        done
         wait
     ports:
       - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
@@ -298,7 +303,8 @@ services:
         set -e
         /bin/ollama serve &
         until /bin/ollama list >/dev/null 2>&1; do sleep 1; done
-        /bin/ollama pull "$${SELF_HOSTED_MODEL_ID}"
+        # Same rule as the primary: a registry hiccup must not take down a server whose model is present.
+        /bin/ollama pull "$${SELF_HOSTED_MODEL_ID}" || /bin/ollama list | grep -Fq "$${SELF_HOSTED_MODEL_ID}"
         wait
     ports:
       - "127.0.0.1:${OLLAMA_SECONDARY_PORT:-11435}:11434"
