@@ -32,6 +32,10 @@ from jwt import PyJWKClient
 from .errors import ProblemException
 
 
+#: Tolerance for the IdP's and this host's clocks disagreeing, applied to `exp`, `iat` and `nbf`.
+_CLOCK_SKEW_SECONDS = 30
+
+
 @runtime_checkable
 class VerifiedClaims(Protocol):
     """The subset of verified token claims that callers outside the gateway rely on.
@@ -155,6 +159,10 @@ class OidcTokenVerifier:
                 audience=self._audience,
                 issuer=issuer,
                 options={"require": ["exp", "iat", "iss", "aud"]},
+                # Clock skew between the IdP and this process. A token minted this second has `iat`
+                # equal to the IdP's clock; a backend container one second behind read it as issued in
+                # the future and answered 401 to every fresh login (2026-11-02).
+                leeway=_CLOCK_SKEW_SECONDS,
             )
         except jwt.ExpiredSignatureError as e:
             raise self._reject("expired", "Token expired", "The token has expired.") from e
