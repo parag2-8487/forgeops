@@ -40,6 +40,7 @@ An artifact that passes here has been parsed and shaped, not grepped.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
@@ -960,6 +961,52 @@ def dockerfile_script_findings(dockerfile: str, existing: Mapping[str, str]) -> 
     return findings
 
 
+_COMPOSE_NAMES: Final[frozenset[str]] = frozenset(
+    {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+)
+
+
+def compose_missing_dockerfiles(files: Sequence[Any], existing: Mapping[str, str]) -> list[str]:
+    """Compose services that build from a Dockerfile which will not exist once this set is applied.
+
+    Observed 2026-11-02: a generation run's Dockerfile was rejected and withheld, but its compose file -- which
+    builds from `Dockerfile` -- was delivered. The deployment then built from a Dockerfile the agent made up
+    on the spot, so what ran was not what the run produced.
+    """
+    available = {str(p).replace("\\", "/").lower().removeprefix("./") for p in existing}
+    available |= {str(getattr(f, "path", "")).replace("\\", "/").lower().removeprefix("./") for f in files}
+    findings: list[str] = []
+    for artifact in files:
+        path = str(getattr(artifact, "path", "")).replace("\\", "/")
+        if path.rsplit("/", 1)[-1].lower() not in _COMPOSE_NAMES:
+            continue
+        try:
+            document = yaml.safe_load(artifact.content) or {}
+        except yaml.YAMLError:
+            continue
+        services = document.get("services") if isinstance(document, Mapping) else None
+        if not isinstance(services, Mapping):
+            continue
+        base = path.rsplit("/", 1)[0] if "/" in path else ""
+        for name, service in services.items():
+            build = service.get("build") if isinstance(service, Mapping) else None
+            if build is None:
+                continue
+            context = build if isinstance(build, str) else str((build or {}).get("context") or ".")
+            dockerfile = (
+                "Dockerfile" if isinstance(build, str) else str((build or {}).get("dockerfile") or "Dockerfile")
+            )
+            if (not isinstance(build, str)) and (build or {}).get("dockerfile_inline"):
+                continue
+            joined = posixpath.normpath(posixpath.join(base, context, dockerfile)).removeprefix("./")
+            if joined.lower() not in available:
+                findings.append(
+                    f"{path}: service '{name}' builds from '{joined}', which is neither in this change set nor "
+                    "in the project; deliver that Dockerfile or point the build at one that exists"
+                )
+    return findings
+
+
 def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None = None) -> list[str]:
     """Check every generated artifact that has a checker, and report every finding.
 
@@ -974,6 +1021,7 @@ def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None 
         for finding in checker(artifact.content):
             findings.append(f"{artifact.path}: {finding}")
     findings.extend(validate_cross_artifact_consistency(files))
+    findings.extend(compose_missing_dockerfiles(files, existing or {}))
 
     if existing:
         # THE DOCKERFILE MUST BUILD THIS PROJECT. Without this the gate accepted a Python Dockerfile for a Node

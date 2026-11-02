@@ -62,3 +62,17 @@ def test_the_gate_reports_it_against_the_dockerfile() -> None:
         [_Artifact("Dockerfile", 'FROM node:22\nUSER node\nCMD ["npm", "start"]\n')], existing=VITE
     )
     assert any(f.startswith("Dockerfile: ") and "'start'" in f for f in findings)
+
+
+def test_compose_may_not_build_from_a_dockerfile_that_will_not_exist() -> None:
+    from src.generation.artifact_checks import compose_missing_dockerfiles
+
+    compose = _Artifact(
+        "docker-compose.yml", "services:\n  app:\n    build:\n      context: .\n      dockerfile: Dockerfile\n"
+    )
+    assert compose_missing_dockerfiles([compose], {"package.json": "{}"}), "a withheld Dockerfile must fail the set"
+    assert compose_missing_dockerfiles([compose, _Artifact("Dockerfile", "FROM node:22\n")], {}) == []
+    assert compose_missing_dockerfiles([compose], {"Dockerfile": "FROM node:22\n"}) == []
+    nested = _Artifact("docker-compose.yml", "services:\n  web:\n    build: ./web\n")
+    assert compose_missing_dockerfiles([nested], {"web/Dockerfile": "x"}) == []
+    assert "web/Dockerfile" in compose_missing_dockerfiles([nested], {})[0]

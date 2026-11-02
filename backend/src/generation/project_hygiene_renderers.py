@@ -375,13 +375,7 @@ def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = N
     environment:
       PORT: "{svc_port}"
       NODE_ENV: "production"
-    restart: unless-stopped{depends_block}{cmd_block}
-    healthcheck:
-      test: ["CMD-SHELL", "exit 0"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s""")
+    restart: unless-stopped{depends_block}{cmd_block}""")
 
         vols_block = ""
         if volumes_needed:
@@ -421,10 +415,4 @@ services:
     environment:
 {environment}
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "exit 0"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
 """

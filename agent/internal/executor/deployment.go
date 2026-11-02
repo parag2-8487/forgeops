@@ -2096,10 +2096,13 @@ waitLoop:
 					ready = false
 					detail = fmt.Sprintf("container crashed: %s", row.Status)
 				} else if hasHealthCheck {
+					// A PUBLISHED PORT MUST ANSWER. A health status alone is not enough: a compose healthcheck of
+					// `exit 0` reported a container that served nothing on its published port as healthy, and this
+					// used to accept it after 10 seconds anyway (2026-11-02). The health timeout bounds the wait.
 					if isHealthy {
-						if hostPort > 0 && !isPortResponding && time.Since(waitStart) < 10*time.Second {
+						if hostPort > 0 && !isPortResponding {
 							ready = false
-							detail = fmt.Sprintf("healthy internally, awaiting port %d HTTP response...", hostPort)
+							detail = fmt.Sprintf("healthy internally, but nothing answers on published port %d yet", hostPort)
 						} else {
 							ready = true
 						}
@@ -2111,10 +2114,17 @@ waitLoop:
 						detail = fmt.Sprintf("unhealthy: %s", row.Status)
 					}
 				} else if stateLower == "running" {
-					if isPortResponding || time.Since(waitStart) >= 4*time.Second {
+					switch {
+					case hostPort > 0:
+						// Same rule: a running container whose published port never answers is not deployed.
+						ready = isPortResponding
+						if !ready {
+							detail = fmt.Sprintf("running, but nothing answers on published port %d yet", hostPort)
+						}
+					case time.Since(waitStart) >= 4*time.Second:
+						// No published port (a worker, a job): staying up is the only observable health.
 						ready = true
-					} else {
-						ready = false
+					default:
 						detail = "starting (stabilizing...)"
 					}
 				}
