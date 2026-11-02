@@ -1103,15 +1103,6 @@ func inferLanguageFromDockerfile(dockerfile string) Language {
 	return LangUnknown
 }
 
-// clientSecretSuffix is the two-word environment-variable suffix, assembled from fragments so that no
-// source line in this package carries the credential SHAPE FO-SEC001 refuses.
-//
-// The values it builds are obvious mocks, and that is not the point: the gate reads shape, not
-// sensitivity, because a scanner cannot tell a mock from a live value and an allowlist would put a
-// human back in the loop for every future miss. This is the repository's own established remedy
-// (`backend/tests/synthetic_secrets.py`, `scripts/start-forgeops.sh`), applied rather than exempted.
-const clientSecretSuffix = "CLIENT_" + "SEC" + "RET"
-
 // composeFileNames are the file names the platform treats as an existing compose stack, in the order
 // compose itself resolves them.
 var composeFileNames = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}

@@ -1606,6 +1606,11 @@
       "ConnectionTestResponse": {
         "description": "What happened when a real request was sent.\n\n`ok` IS EVIDENCE, NOT CONFIGURATION. The whole defect this feature answers is a screen that reported\n\"available\" from a static fact; a test that only checked the key was non-empty would repeat it one layer\ndown. So this sends an actual completion and reports the status line the provider returned.",
         "properties": {
+          "category": {
+            "default": "provider_error",
+            "title": "Category",
+            "type": "string"
+          },
           "detail": {
             "title": "Detail",
             "type": "string"
@@ -2736,9 +2741,84 @@
         "title": "GenerationEventEnvelope",
         "type": "object"
       },
+      "GenerationModelChoice": {
+        "description": "One model the Manual Generation page may offer. No credential or base URL is ever included.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "default": {
+            "default": false,
+            "title": "Default",
+            "type": "boolean"
+          },
+          "endpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Id"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protocol"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "endpoint_id",
+          "provider",
+          "model",
+          "available"
+        ],
+        "title": "GenerationModelChoice",
+        "type": "object"
+      },
       "GenerationRequest": {
         "description": "What a caller asks to have generated.",
         "properties": {
+          "endpoint_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Id"
+          },
           "environment": {
             "anyOf": [
               {
@@ -2807,6 +2887,14 @@
             "title": "Addressed Checks",
             "type": "array"
           },
+          "attempts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Attempts",
+            "type": "array"
+          },
           "compiled_prompt": {
             "anyOf": [
               {
@@ -2822,6 +2910,17 @@
             "default": 0,
             "title": "Completion Tokens",
             "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
           },
           "deferred_checks": {
             "items": {
@@ -2840,6 +2939,28 @@
               }
             ],
             "title": "Endpoint Id"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
           },
           "id": {
             "format": "uuid",
@@ -2883,6 +3004,28 @@
             "title": "Prompt Tokens",
             "type": "integer"
           },
+          "requested_endpoint_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Endpoint Id"
+          },
+          "requested_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Model"
+          },
           "served_from": {
             "anyOf": [
               {
@@ -2908,6 +3051,13 @@
               }
             ],
             "title": "Tier"
+          },
+          "timings": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Timings",
+            "type": "object"
           }
         },
         "required": [
@@ -3289,6 +3439,17 @@
             "title": "Files Count",
             "type": "integer"
           },
+          "remote_verified_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remote Verified Sha"
+          },
           "repo_full_name": {
             "title": "Repo Full Name",
             "type": "string"
@@ -3300,6 +3461,17 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
           }
         },
         "required": [
@@ -6786,7 +6958,7 @@
   },
   "info": {
     "title": "ForgeOps API",
-    "version": "0.0.0"
+    "version": "2.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -8819,6 +8991,32 @@
         "summary": "Interpret",
         "tags": [
           "commands"
+        ]
+      }
+    },
+    "/api/v1/generation/models": {
+      "get": {
+        "description": "The default chain (local Ollama) plus each selectable endpoint, with whether it can be called now.\n\nAn unconfigured provider is LISTED as unavailable with its reason rather than omitted, so the page can\ntell the operator what to fix instead of leaving them wondering why Gemini is missing.",
+        "operationId": "list_generation_models_api_v1_generation_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GenerationModelChoice"
+                  },
+                  "title": "Response List Generation Models Api V1 Generation Models Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "The models a manual generation run may be pinned to",
+        "tags": [
+          "generation"
         ]
       }
     },

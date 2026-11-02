@@ -16,6 +16,7 @@
 >
 > **Phase 2 Autonomous Deployment API & G1–G7 Verification Gates:**
 > Phase 2 adds `/api/v1/projects/{project_id}/autonomous-deploy` and its associated routes for orchestrating multi-target deployments across Docker, GitHub, and Vercel. Autonomous deployments transition through 7 sequential verification gates:
+>
 > - **G1 (Blueprint Baseline)**: Strategy constraints validation, required target configuration checks, workspace path verification, and R0 readiness assessment.
 > - **G2 (Synthesis & Template Library)**: Existing manifest evaluation or deterministic multi-stage Dockerfile synthesis, consolidated `ENV` instructions (`ENV NODE_ENV=production PORT=...`), stable tenant/project-scoped npm cache mounts (`id=npm-{clean_tenant}-{clean_proj}`), and post-generation readiness (R1).
 > - **G3 (Cross-artifact Consistency)**: Static pre-execution consistency audit verifying port ranges (1–65535), immutability of reserved environment variables, and rejection of all 77 Chromium/WHATWG browser-restricted host ports (such as `4045` with `ERR_UNSAFE_PORT`).
@@ -26,6 +27,7 @@
 >
 > Executions run on the active 14-service compose topology (10–14 active: `postgres`, `redis`, `opa`, `cerbos`, `authentik-server`, `authentik-worker`, `backend`, `backend-agent`, `worker`, `frontend`, `ollama`, `ollama-secondary`, `inngest`).
 > For complete schemas, endpoints, request/response models, and error behaviors, consult:
+>
 > - Master Reference: [FORGEOPS_PROJECT_MASTER_DOCUMENT.md](file:///C:/IMP/antigravity-cli/Major%20Project/Devops%20Automation/FORGEOPS_PROJECT_MASTER_DOCUMENT.md)
 > - OpenAPI interactive documentation: <http://localhost:8000/api/v1/docs>
 
@@ -87,11 +89,11 @@ not RFC 9457 conforming.
 
 ## Health and readiness
 
-| Route                | Purpose                 | Dependency I/O                                         | Success                                                                                | Failure                                                           |
-| :------------------- | :---------------------- | :----------------------------------------------------- | :------------------------------------------------------------------------------------- | :---------------------------------------------------------------- |
+| Route                | Purpose                 | Dependency I/O                                         | Success                                                                                    | Failure                                                           |
+| :------------------- | :---------------------- | :----------------------------------------------------- | :----------------------------------------------------------------------------------------- | :---------------------------------------------------------------- |
 | `GET /health`        | Liveness                | none                                                   | `200 {"status":"ok","version":"â€¦","commit":"â€¦"}`, including during a dependency outage | only when the process is dead or wedged                           |
-| `GET /health/ready`  | Readiness               | PostgreSQL `SELECT 1` + Redis `PING`, 2 s timeout each | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}`                       | RFC 9457 `503`, one `errors[]` item per failed or timed-out check |
-| `GET /api/v1/health` | Versioned liveness echo | none                                                   | `200`                                                                                  | process-level failure only                                        |
+| `GET /health/ready`  | Readiness               | PostgreSQL `SELECT 1` + Redis `PING`, 2 s timeout each | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}`                           | RFC 9457 `503`, one `errors[]` item per failed or timed-out check |
+| `GET /api/v1/health` | Versioned liveness echo | none                                                   | `200`                                                                                      | process-level failure only                                        |
 
 `/health` is the container liveness check. `/health/ready` is the gate polled by
 `scripts/dev-up.sh` after startup.
@@ -138,9 +140,9 @@ ships one descriptor, for the agent's `agent.health` tool.
 
 ## Model routing
 
-| Route                 | Method | Notes                                                                                                                    |
-| :-------------------- | :----- | :----------------------------------------------------------------------------------------------------------------------- |
-| `/api/v1/ai/tiers`    | `GET`  | The six tiers with protocol, availability reason, and circuit-breaker state                                              |
+| Route                 | Method | Notes                                                                                                                            |
+| :-------------------- | :----- | :------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/v1/ai/tiers`    | `GET`  | The six tiers with protocol, availability reason, and circuit-breaker state                                                      |
 | `/api/v1/ai/complete` | `POST` | Fixed order: OIDC verify â†’ require `claims.sub` â†’ Redis token-bucket limiter â†’ semantic cache â†’ registry/router/provider |
 
 Before admission completes, no semantic-cache or provider operation runs. Invalid bearer
@@ -167,7 +169,7 @@ is JSON-RPC 2.0 over WSS, outbound-only, and in Phase 0 only the transport mecha
 <!-- Generated by scripts/dump-openapi.py from the live app. Do not edit by hand:
      `python scripts/dump-openapi.py --check` fails the build when this drifts. -->
 
-The application publishes **167 operations across 143 paths**.
+The application publishes **168 operations across 144 paths**.
 
 ### `agents`
 
@@ -298,6 +300,7 @@ The application publishes **167 operations across 143 paths**.
 
 | Method | Path | Summary | Auth |
 | --- | --- | --- | --- |
+| `GET` | `/api/v1/generation/models` | The models a manual generation run may be pinned to | principal |
 | `POST` | `/api/v1/generation/runs` | Generate deployment artifacts, streaming progress as SSE | principal |
 | `GET` | `/api/v1/generation/runs/{run_id}` | Read one generation run and the prompt it was given | principal |
 
