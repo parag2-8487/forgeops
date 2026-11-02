@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -84,6 +85,7 @@ from .policy import (
 )
 from .sequencing import EnvelopeSequencer, generate_nonce
 
+logger = logging.getLogger(__name__)
 __all__ = [
     "APPLY_OPERATION",
     "REVERT_OPERATION",
@@ -3005,6 +3007,67 @@ class GovernanceChokepoint:
             ).scalar_one()
         )
 
+    async def _reflect_applied_files(self, session: AsyncSession, *, change_set_id: uuid.UUID) -> int:
+        """Write each file an applied change set created or updated into the project's index; drop deleted ones.
+
+        The stored text is exactly what the agent wrote, so it is recorded with `redaction_count = 0` and its
+        own SHA-256 -- which is what lets a later change set offer it as a verified pre-image.
+        """
+        head = (
+            await session.execute(
+                text("SELECT project_id, operation FROM change_sets WHERE id = :id"), {"id": change_set_id}
+            )
+        ).first()
+        if head is None or head[1] not in (None, "", "changeset.apply"):
+            return 0
+        project_id = head[0]
+        items = (
+            await session.execute(
+                text("SELECT file_path, action, new_content FROM change_items WHERE change_set_id = :id"),
+                {"id": change_set_id},
+            )
+        ).all()
+        reflected = 0
+        for raw_path, action, content in items:
+            path = str(raw_path).replace("\\", "/").removeprefix("./")
+            if action == "delete":
+                await session.execute(
+                    text("DELETE FROM file_tree WHERE project_id = :p AND path = :path"),
+                    {"p": project_id, "path": path},
+                )
+                reflected += 1
+                continue
+            if content is None:
+                continue
+            body = str(content).replace("\x00", "")
+            file_id = (
+                await session.execute(
+                    text(
+                        "INSERT INTO file_tree (id, project_id, path, content_hash, size_bytes, last_modified, created_at) "
+                        "VALUES (:id, :p, :path, :hash, :size, now() AT TIME ZONE 'utc', now() AT TIME ZONE 'utc') "
+                        "ON CONFLICT (project_id, path) DO UPDATE SET content_hash = EXCLUDED.content_hash, "
+                        "size_bytes = EXCLUDED.size_bytes, last_modified = EXCLUDED.last_modified RETURNING id"
+                    ),
+                    {
+                        "id": uuid.uuid4(),
+                        "p": project_id,
+                        "path": path,
+                        "hash": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                        "size": len(body.encode("utf-8")),
+                    },
+                )
+            ).scalar_one()
+            await session.execute(
+                text(
+                    "INSERT INTO file_contents (file_id, content, language, redaction_count, updated_at) "
+                    "VALUES (:f, :c, NULL, 0, now()) ON CONFLICT (file_id) DO UPDATE SET content = EXCLUDED.content, "
+                    "redaction_count = 0, updated_at = now()"
+                ),
+                {"f": file_id, "c": body},
+            )
+            reflected += 1
+        return reflected
+
     async def record_command_result(
         self,
         session: AsyncSession,
@@ -3071,6 +3134,17 @@ class GovernanceChokepoint:
             # and re-reporting is a legitimate consequence of at-least-once delivery.
             await session.commit()
             return "ignored"
+
+        if succeeded:
+            # THE INDEX FOLLOWS THE APPLY. The files a change set wrote existed on disk and nowhere in the
+            # index, so Deploy's manifest detection -- which reads the index -- answered "no manifests found"
+            # for a docker-compose.yml applied seconds earlier, and the next change set's pre-images were
+            # computed from stale text (2026-11-02). Nested, so a failure here cannot undo the transition.
+            try:
+                async with session.begin_nested():
+                    await self._reflect_applied_files(session, change_set_id=change_set_id)
+            except Exception:  # noqa: BLE001 - the recorded outcome matters more than the index refresh
+                logger.warning("could not reflect applied files into the index", exc_info=True)
 
         # Resolve report from backup_manifest or output (structured JSON report from agent)
         report = backup_manifest if isinstance(backup_manifest, dict) else None
