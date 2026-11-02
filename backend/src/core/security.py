@@ -21,6 +21,7 @@ here. `src/mcp/auth.py` re-exports it so the gateway's imports are unchanged.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -31,9 +32,16 @@ from jwt import PyJWKClient
 
 from .errors import ProblemException
 
+#: Why a token was refused, for the operator. The caller gets a bare 401 on purpose; without this line
+#: the server log could not tell clock skew from a wrong audience either (2026-11-02).
+_log = logging.getLogger(__name__)
+
 
 #: Tolerance for the IdP's and this host's clocks disagreeing, applied to `exp`, `iat` and `nbf`.
 _CLOCK_SKEW_SECONDS = 30
+
+#: How soon a failed OIDC discovery is retried, instead of waiting out the whole JWKS TTL.
+_DISCOVERY_RETRY_SECONDS = 30
 
 
 @runtime_checkable
@@ -173,6 +181,7 @@ class OidcTokenVerifier:
                 "The token audience does not match this gateway.",
             ) from e
         except (jwt.InvalidTokenError, jwt.PyJWKClientError) as e:
+            _log.warning("token refused: %s: %s", type(e).__name__, e)
             raise self._reject(
                 "signature",
                 "Token verification failed",
@@ -207,6 +216,22 @@ class OidcTokenVerifier:
                 return self._jwks_clients[issuer]
 
         jwks_url = await self._resolve_jwks_uri(issuer)
+        fallback = f"{issuer.rstrip('/')}/.well-known/jwks.json"
+        if jwks_url == fallback:
+            # Discovery failed, or the issuer has none. A single slow discovery request used to
+            # replace a working client with the guessed URL — which Authentik does not serve — and
+            # cache it for the whole TTL, so every token was refused for ten minutes at a time and
+            # refreshing could not help (2026-11-02). Keep the client that worked, and retry soon.
+            retry_at = now - self._jwks_ttl + _DISCOVERY_RETRY_SECONDS
+            previous = self._jwks_clients.get(issuer)
+            if previous is not None and previous.uri != fallback:
+                _log.warning("OIDC discovery for %s failed; keeping the last known JWKS URI", issuer)
+                self._jwks_cache_times[issuer] = retry_at
+                return previous
+            client = PyJWKClient(jwks_url, cache_keys=True, lifespan=self._jwks_ttl)
+            self._jwks_clients[issuer] = client
+            self._jwks_cache_times[issuer] = retry_at
+            return client
         client = PyJWKClient(jwks_url, cache_keys=True, lifespan=self._jwks_ttl)
         self._jwks_clients[issuer] = client
         self._jwks_cache_times[issuer] = now
