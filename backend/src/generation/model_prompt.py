@@ -36,7 +36,7 @@ template path is a separate, LABELLED outcome in `service.py`.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -314,6 +314,74 @@ def _join(body: Sequence[str]) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
+#: A manifest file names its ecosystem more reliably than any language statistic: GitHub calls a Vite site
+#: "CSS", and an index can be empty on a project's first run. Checked in this order, by file name.
+_MANIFEST_RUNTIMES: tuple[tuple[str, str], ...] = (
+    ("package.json", "node"),
+    ("go.mod", "go"),
+    ("cargo.toml", "rust"),
+    ("pyproject.toml", "python"),
+    ("requirements.txt", "python"),
+    ("pipfile", "python"),
+    ("setup.py", "python"),
+)
+_LANGUAGE_RUNTIMES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("typescript", "javascript", "tsx", "jsx", "node"), "node"),
+    (("python", "py"), "python"),
+    (("go",), "go"),
+    (("rust",), "rust"),
+)
+_FRONTEND_FRAMEWORKS = ("next", "vite", "react", "vue", "nuxt", "svelte", "remix", "astro", "angular")
+
+
+def infer_runtime(
+    *, settings: Mapping[str, Any], inventory: Mapping[str, Any], paths: Iterable[str] = (), prompt: str = ""
+) -> str:
+    """The project's runtime, from the strongest evidence available.
+
+    Operator setting, then manifest files present in the project, then indexed languages, then the
+    operator's own words. ONE derivation for the model prompt and the template fallback, so they cannot
+    describe different applications.
+
+    THE OLD DEFAULT WAS PYTHON. With no indexed languages -- a project's first run, before its index exists
+    -- every project became Python, and a Vite site with a `package.json` got `pip install -r
+    requirements.txt` and `CMD ["python", "main.py"]` (2026-11-02).
+    """
+    configured = str(settings.get("runtime") or "").strip().lower()
+    if configured:
+        return configured
+    names = [str(m).replace("\\", "/").rsplit("/", 1)[-1].lower() for m in (inventory.get("manifests") or [])]
+    names += [str(m).replace("\\", "/").rsplit("/", 1)[-1].lower() for m in paths]
+    # The SHALLOWEST manifest wins, so a root `package.json` outranks a nested tool's `requirements.txt`.
+    ranked = sorted(
+        (str(m).replace("\\", "/").count("/"), order, runtime)
+        for m in [*(inventory.get("manifests") or []), *paths]
+        for order, (name, runtime) in enumerate(_MANIFEST_RUNTIMES)
+        if str(m).replace("\\", "/").rsplit("/", 1)[-1].lower() == name
+    )
+    if ranked:
+        return ranked[0][2]
+    languages = [str(lang).lower() for lang in (inventory.get("languages") or [])]
+    for aliases, runtime in _LANGUAGE_RUNTIMES:
+        if any(lang in aliases for lang in languages):
+            return runtime
+    lowered = prompt.lower()
+    for word, runtime in (("node", "node"), ("express", "node"), ("react", "node"), ("golang", "go"), ("rust", "rust")):
+        if word in lowered:
+            return runtime
+    return "python" if names or languages or "python" in lowered else "unknown"
+
+
+def is_frontend_project(*, inventory: Mapping[str, Any], prompt: str = "") -> bool:
+    """A build-then-serve frontend, from declared frameworks first and the operator's words second."""
+    frameworks = [
+        str(f.get("name") if isinstance(f, Mapping) else f).lower() for f in (inventory.get("frameworks") or [])
+    ]
+    if any(any(name in fw for name in _FRONTEND_FRAMEWORKS) for fw in frameworks):
+        return True
+    return any(k in prompt.lower() for k in ("vite", "react", "vue", "frontend", "spa", "static"))
+
+
 def facts_from_project(
     *,
     project: Mapping[str, Any] | None,
@@ -333,16 +401,12 @@ def facts_from_project(
         if isinstance(raw_settings, Mapping):
             settings = raw_settings
 
-    # Lowered once and unconditionally: `is_spa` below reads it whether or not `settings` supplied a
-    # runtime, so binding it inside the `if not runtime` branch would leave it unbound for every
-    # project that declares one.
-    lowered = operator_prompt.lower()
+    inventory: Mapping[str, Any] = {}
+    if project is not None and isinstance(project.get("inventory"), Mapping):
+        inventory = project["inventory"]
+    runtime = infer_runtime(settings=settings, inventory=inventory, prompt=operator_prompt)
 
-    runtime = str(settings.get("runtime") or "").strip().lower()
-    if not runtime:
-        runtime = "node" if ("node" in lowered or "express" in lowered) else "python"
-
-    is_spa = any(k in lowered for k in ("vite", "react", "vue", "frontend", "spa", "static"))
+    is_spa = is_frontend_project(inventory=inventory, prompt=operator_prompt)
     if runtime.startswith("node"):
         if is_spa:
             base_image, start, port = "node:22-alpine", ("npx", "serve", "-s", ".", "-l", "3000"), 3000

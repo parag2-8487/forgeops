@@ -499,6 +499,10 @@ async def create_generation_run(
             selected_check_ids=body.target_checks,
             target_strategy=effective_strat,
         )
+        # RELOADED AFTER THE COMPILE, because the compile is what indexes a project scanned for the first
+        # time. The row loaded above predates that scan, so a freshly imported project reached the template
+        # fallback with an empty inventory and was described as Python (2026-11-02).
+        project_row = await _load_project_for_generation(session, body.project_id) or project_row
         # 2.13: THIS PROJECT'S LEARNED PREFERENCES, injected into the instruction.
         #
         # After compilation and before recording, deliberately: the recorded prompt must be the text the

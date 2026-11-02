@@ -321,11 +321,17 @@ CMD ["node", "Backend/server.js"]
 	if !strings.Contains(healedD, "npm install -g serve") {
 		t.Fatalf("expected serve installed in Dockerfile, got:\n%s", healedD)
 	}
-	if !strings.Contains(healedD, `CMD ["serve", "-s", "Frontent/dist", "-l", "tcp://0.0.0.0:3000"]`) {
-		t.Fatalf("expected CMD healed to serve Frontent/dist, got:\n%s", healedD)
+	// A full-stack app's own server is kept. This used to be rewritten to a static `serve` of the frontend
+	// because one project's folder was named "Frontent" -- which threw the backend API away.
+	if !strings.Contains(healedD, `CMD ["node", "Backend/server.js"]`) {
+		t.Fatalf("expected the backend server command to be kept, got:\n%s", healedD)
 	}
-	if !strings.Contains(healedD, "GOOGLE_CLIENT_ID") {
-		t.Fatalf("expected fallback OAuth env vars in Dockerfile, got:\n%s", healedD)
+	// No credentials are ever invented: the healer used to inject one app's OAuth ids, secrets and a
+	// MONGO_URI into every project's image.
+	for _, invented := range []string{"GOOGLE_CLIENT_ID", "SESSION_SECRET", "JWT_SECRET", "MONGO_URI"} {
+		if strings.Contains(healedD, invented) {
+			t.Fatalf("healer invented %s in the Dockerfile:\n%s", invented, healedD)
+		}
 	}
 
 	healedCBytes, err := os.ReadFile(filepath.Join(tempDir, "docker-compose.yml"))
@@ -389,5 +395,39 @@ CMD ["node", "server.js"]
 	}
 	if regexp.MustCompile(`(?m)^HEALTHCHECK.*\|\| exit 0`).MatchString(healedD) {
 		t.Fatalf("a healthcheck that cannot fail is not a healthcheck, got:\n%s", healedD)
+	}
+}
+
+func TestHealerNeverAddsNpmToANonNodeImage(t *testing.T) {
+	tempDir := t.TempDir()
+	// A frontend marker file is present, which is what used to trigger the npm line regardless of base image.
+	if err := os.WriteFile(filepath.Join(tempDir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nUSER 1001\nCMD [\"python\", \"app.py\"]\n"
+	if err := os.WriteFile(filepath.Join(tempDir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	autoHealDockerfileForCompose(tempDir, SinkFunc(func(int, string, string) {}))
+	healed, err := os.ReadFile(filepath.Join(tempDir, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(healed), "npm install") {
+		t.Fatalf("npm added to a python image:\n%s", healed)
+	}
+}
+
+func TestFinalStageIsNode(t *testing.T) {
+	cases := map[string]bool{
+		"FROM node:22-alpine AS build\nFROM nginx:1.27-alpine\n":  false,
+		"FROM python:3.12 AS deps\nFROM node:20-slim\n":           true,
+		"FROM --platform=linux/amd64 docker.io/library/node:20\n": true,
+		"ARG X=1\n": false,
+	}
+	for dockerfile, want := range cases {
+		if got := finalStageIsNode(dockerfile); got != want {
+			t.Errorf("finalStageIsNode(%q) = %v, want %v", dockerfile, got, want)
+		}
 	}
 }

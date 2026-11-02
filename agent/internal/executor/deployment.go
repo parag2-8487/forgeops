@@ -1390,7 +1390,9 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 			}
 		}
 
-		if !strings.Contains(content, "npm install -g serve") {
+		// ONLY ON A NODE IMAGE. `npm` exists in no other base, so adding this to a Python or Go final stage
+		// produced an image that cannot build (a Vite project once got `FROM python` + `npm install -g serve`).
+		if !strings.Contains(content, "npm install -g serve") && finalStageIsNode(content) {
 			reUser := regexp.MustCompile(`(?m)^USER\s+.*`)
 			if reUser.MatchString(content) {
 				content = reUser.ReplaceAllString(content, "RUN npm install -g serve\n$0")
@@ -1402,21 +1404,12 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 			}
 		}
 
-		// Inject fallback environment variables so Node/OAuth apps never crash on missing credentials
-		if !strings.Contains(content, "GOOGLE_CLIENT_ID") {
-			envFallback := "ENV PORT=3000 NODE_ENV=production SESSION_SECRET=forgeops-dev-session-secret-1234567890 JWT_SECRET=forgeops-dev-jwt-secret-1234567890 GOOGLE_CLIENT_ID=forgeops-mock-google-client-id GOOGLE_" + clientSecretSuffix + "=forgeops-mock-google-client-secret GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback GITHUB_CLIENT_ID=forgeops-mock-github-client-id GITHUB_" + clientSecretSuffix + "=forgeops-mock-github-client-secret GITHUB_CALLBACK_URL=http://localhost:3000/auth/github/callback MONGO_URI=mongodb://localhost:27017/forgeops"
-			reUser := regexp.MustCompile(`(?m)^USER\s+.*`)
-			if reUser.MatchString(content) {
-				content = reUser.ReplaceAllString(content, envFallback+"\n$0")
-			} else {
-				reCmd := regexp.MustCompile(`(?m)^CMD\s+.*`)
-				if reCmd.MatchString(content) {
-					content = reCmd.ReplaceAllString(content, envFallback+"\n$0")
-				}
-			}
-		}
+		// NO CREDENTIALS ARE INVENTED. This block used to inject SESSION_SECRET, JWT_SECRET, Google/GitHub OAuth
+		// client ids and secrets and a MONGO_URI into EVERY project it deployed -- values for one particular app,
+		// baked into images as publicly known secrets. A project that needs configuration gets it from its
+		// environment's variables (ForgeOps Environments), and one that lacks it fails visibly at startup.
 
-		if profile.Framework == "vite" || profile.Framework == "react" || profile.Framework == "create-react-app" || strings.Contains(content, "serve -s") || (frontendDir != "" && strings.Contains(content, "Frontent")) {
+		if profile.Framework == "vite" || profile.Framework == "react" || profile.Framework == "create-react-app" || strings.Contains(content, "serve -s") {
 			serveCmd := fmt.Sprintf(`CMD ["serve", "-s", "%s", "-l", "tcp://0.0.0.0:3000"]`, distTarget)
 			reCmdNode := regexp.MustCompile(`(?m)^CMD\s+(\[.*node.*\]|.*node\s+.*)`)
 			if reCmdNode.MatchString(content) {
@@ -1774,27 +1767,7 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 					delete(servicesRaw, rem)
 				}
 
-				for _, sVal := range servicesRaw {
-					if sMap, ok := sVal.(map[string]interface{}); ok {
-						if _, hasEnv := sMap["environment"]; !hasEnv {
-							sMap["environment"] = []interface{}{
-								"PORT=3000",
-								"NODE_ENV=production",
-								"SESSION_SECRET=forgeops-dev-session-secret-1234567890",
-								"JWT_SECRET=forgeops-dev-jwt-secret-1234567890",
-								"GOOGLE_CLIENT_ID=mock-google-client-id",
-								// Shape assembled from fragments; see `clientSecretSuffix`.
-								"GOOGLE_" + clientSecretSuffix + "=mock-google-client-secret",
-								"GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback",
-								"GITHUB_CLIENT_ID=mock-github-client-id",
-								"GITHUB_" + clientSecretSuffix + "=mock-github-client-secret",
-								"GITHUB_CALLBACK_URL=http://localhost:3000/auth/github/callback",
-								"MONGO_URI=mongodb://localhost:27017/forgeops",
-							}
-							changed = true
-						}
-					}
-				}
+				// No `environment` is invented for a service that declares none: see the Dockerfile note above.
 
 				if changed && len(servicesRaw) > 0 {
 					if updatedBytes, err := yaml.Marshal(composeData); err == nil {
@@ -2209,4 +2182,15 @@ waitLoop:
 	sink.Progress(100, "deployment.apply_manifests",
 		fmt.Sprintf("compose project %s deployed: %d container(s), healthy=%v", projectName, len(report.Workloads), report.Healthy))
 	return Result{Status: status, Output: string(encoded)}, nil
+}
+
+// finalStageIsNode reports whether the LAST `FROM` (the image that runs) is a Node image.
+func finalStageIsNode(dockerfile string) bool {
+	from := regexp.MustCompile(`(?im)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)`)
+	matches := from.FindAllStringSubmatch(dockerfile, -1)
+	if len(matches) == 0 {
+		return false
+	}
+	image := strings.ToLower(matches[len(matches)-1][1])
+	return strings.HasPrefix(image, "node:") || image == "node" || strings.Contains(image, "/node:")
 }

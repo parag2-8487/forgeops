@@ -61,6 +61,7 @@ from .model_prompt import (
     ArtifactParseError,
     build_generation_prompt,
     facts_from_project,
+    infer_runtime,
     parse_artifacts,
 )
 from .models import MAX_GENERATION_ITERATIONS
@@ -1449,19 +1450,14 @@ class GenerationService:
         ]
         inv_manifests = [str(m).lower() for m in (inventory.get("manifests") or [])]
 
-        runtime = str(settings.get("runtime") or "").strip().lower()
-        if not runtime:
-            if any(lang in ("typescript", "javascript", "tsx", "jsx", "node") for lang in inv_languages):
-                runtime = "node"
-            elif any(lang in ("python", "py") for lang in inv_languages):
-                runtime = "python"
-            elif "go" in inv_languages:
-                runtime = "go"
-            elif "rust" in inv_languages:
-                runtime = "rust"
-            else:
-                lowered = prompt.lower()
-                runtime = "node" if ("node" in lowered or "express" in lowered) else "python"
+        # The SAME derivation the model prompt uses (`model_prompt.infer_runtime`): manifests present in the
+        # project first, so a project whose index has no language list yet is not mistaken for Python.
+        runtime = infer_runtime(
+            settings=settings,
+            inventory=inventory,
+            paths=list(existing.keys()) if isinstance(existing, Mapping) else (),
+            prompt=prompt,
+        )
 
         # Check for modern frontend frameworks (Next.js, Vite, React, Nuxt, Remix, Svelte, Vue)
         is_nextjs = any("next" in fw for fw in inv_frameworks) or any("next.config" in m for m in inv_manifests)
