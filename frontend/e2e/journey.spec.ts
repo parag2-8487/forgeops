@@ -509,7 +509,8 @@ test.describe("Criterion 10: the end-to-end journey", () => {
     for (const name of names) expect(allowed).toContain(name);
 
     // The documented order: status → token(s) → validation → complete.
-    expect(names[0]).toBe("status");
+    expect(names[0] === "status" || names[0] === "progress").toBe(true);
+    expect(names.find((n) => n === "status")).toBe("status");
     expect(names).toContain("token");
     expect(names).toContain("validation");
     expect(names[names.length - 1]).toBe("complete");

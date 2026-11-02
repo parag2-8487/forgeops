@@ -466,6 +466,10 @@ async def create_generation_run(
         # Only this function knows the real outcome, because the outcome includes whether the
         # chokepoint accepted the artifacts. So the terminal frame belongs here.
         withheld: str | None = None
+        yield format_event(
+            SSEEventType.STATUS,
+            {"run_id": str(run_id), "project_id": str(body.project_id), "state": "running"},
+        ).encode("utf-8")
         yield _progress(run_id, "preparing_context")
         phase_started = time.monotonic()
         # The project row, so the rendered manifests name the REAL application. Loaded here because
@@ -550,6 +554,8 @@ async def create_generation_run(
             if _is_terminal(frame):
                 withheld = frame
                 break
+            if frame.startswith(f"event: {SSEEventType.STATUS.value}\n"):
+                continue
             yield frame.encode("utf-8")
 
         try:
