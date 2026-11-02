@@ -11,7 +11,7 @@ plausibly is indistinguishable from a fact until it fails.
 So the model is told, rather than asked to infer. Everything in the output of this module comes from the
 index or from a readiness check that examined the repository; nothing is a default, a template value or
 an assumption. Where a fact is not known, the prompt says it is not known for that artifact instead of
-filling the gap â€” which is the same rule this codebase already applies to an absent embedding, to
+filling the gap — which is the same rule this codebase already applies to an absent embedding, to
 `served_from`, and to an unresolved dependency version.
 
 THE FOUR PROPERTIES THAT MAKE IT TRUSTWORTHY
@@ -19,7 +19,7 @@ THE FOUR PROPERTIES THAT MAKE IT TRUSTWORTHY
 * DERIVED. Two repositories produce visibly different prompts, because every section is built from
   their own paths, frameworks and findings. A template with substitutions would read the same.
 * VERIFIABLE. Every path the prompt states as existing is in the index, and every path it instructs a
-  write to is listed as a target. `test_every_path_in_a_compiled_prompt_is_real` asserts it â€” a prompt
+  write to is listed as a target. `test_every_path_in_a_compiled_prompt_is_real` asserts it — a prompt
   naming a path the scan never saw is the exact failure this module exists to prevent.
 * DETERMINISTIC. No clock, no randomness, no set iteration. The same index and the same failing checks
   compile byte-identically, so a generation run can be reproduced and two runs can be compared.
@@ -45,7 +45,7 @@ from .model_prompt import output_format_section
 #: Roughly four characters to a token for English prose and configuration. Deliberately an ESTIMATE and
 #: named as one: the real count depends on the tokeniser of whichever model the tier resolves to, and
 #: this module must not pretend to know that. Used only to decide whether to defer a section, and a
-#: pessimistic estimate errs towards deferring â€” which is the safe direction, because a deferred artifact
+#: pessimistic estimate errs towards deferring — which is the safe direction, because a deferred artifact
 #: is reported and a truncated one is not.
 CHARS_PER_TOKEN_ESTIMATE: Final = 4
 
@@ -57,8 +57,8 @@ CHARS_PER_TOKEN_ESTIMATE: Final = 4
 #: kind of overstatement this file exists to avoid.
 #: The BLOCKING gate's requirements, stated mechanically, per artifact kind.
 #:
-#: WHY PROSE WAS NOT ENOUGH. Section 2 already tells the model what is wrong â€” "declares no USER, so the
-#: image runs as root" â€” and that is a good explanation for a human. A 1.5b model given an explanation
+#: WHY PROSE WAS NOT ENOUGH. Section 2 already tells the model what is wrong — "declares no USER, so the
+#: image runs as root" — and that is a good explanation for a human. A 1.5b model given an explanation
 #: produced a Dockerfile that the gate then rejected for exactly the named fault, so the file was withheld
 #: and the user's most important recommendation went unaddressed. The prompt this replaced stated the same
 #: requirements LITERALLY ("contains a line that is exactly `USER 1001`") and its output passed.
@@ -71,13 +71,13 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "`FROM <image>:<exact-version> AS builder`). Do NOT write `ARG` anywhere in the "
         "Dockerfile; never define an `ARG` before `FROM` or anywhere else.",
         # AN EXACT, COPYABLE LINE, not a description of one. This requirement previously read "there is a
-        # `USER` instruction that switches to a non-root account, placed after the RUN instructions" â€” a
+        # `USER` instruction that switches to a non-root account, placed after the RUN instructions" — a
         # correct description that the model failed on all three attempts, every time for this same fault,
         # so the Dockerfile was withheld and the user's most important recommendation went unaddressed.
         # The prompt this work replaced said "contains a line that is exactly `USER 1001`" and its output
         # passed. A small model copies a literal; it does not reliably synthesise from a description.
         "It contains a line that is exactly `USER 10001`, placed after the last RUN instruction and "
-        "before CMD or ENTRYPOINT. Write that line verbatim â€” a numeric id is required because "
+        "before CMD or ENTRYPOINT. Write that line verbatim — a numeric id is required because "
         "Kubernetes' runAsNonRoot check reads the uid and cannot resolve a name from the image.",
         # THE SAME LESSON AS `USER 10001`, found the same way and by the harness rather than by review.
         # `dockerfile_base_pinned` was the check failing every attempt, and the only instruction the model
@@ -134,12 +134,12 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "lockfile is absent from section 1.",
         # STATED AS A RULE because a mismatch here is invisible to every other requirement, and one
         # reached a user: `EXPOSE 8080` against a CMD binding 3000 shipped, deployed, and reported
-        # healthy â€” the healthcheck probes inside the container, so it passed â€” while the browser got
+        # healthy — the healthcheck probes inside the container, so it passed — while the browser got
         # an empty response from the published port nothing was listening on.
         "EVERY PORT IN THE FILE IS THE SAME NUMBER. The port in `EXPOSE`, the port the CMD or "
         "ENTRYPOINT binds, and the port `ENV PORT` sets must all be "
         "identical. `EXPOSE` is a declaration no runtime reads, so a different number there does not "
-        "move the listener â€” it only misdirects whatever publishes the port, and the result is a "
+        "move the listener — it only misdirects whatever publishes the port, and the result is a "
         "container that reports healthy and answers nothing.",
         "The base image and the build steps match the language of THIS repository, as stated in the "
         "facts section above. Do not write a build for a different language.",
@@ -217,11 +217,11 @@ BASE_IMAGE_BY_LANGUAGE: Final[Mapping[str, str]] = {
 #:
 #: A Deployment with no Service is reachable by nothing: it applies cleanly, reports healthy, and serves no
 #: traffic. The readiness checks map one kind to one path, so generation produced exactly that and left the
-#: user to discover the gap. An Ingress is included for the same reason one step further out â€” a ClusterIP
+#: user to discover the gap. An Ingress is included for the same reason one step further out — a ClusterIP
 #: Service is reachable only from inside the cluster.
 #:
-#: A Dockerfile is deliberately NOT paired with a compose file. It is usable without one â€” the Kubernetes
-#: manifests are what deploy it â€” and a companion costs a write-target slot, which measurably pushed the
+#: A Dockerfile is deliberately NOT paired with a compose file. It is usable without one — the Kubernetes
+#: manifests are what deploy it — and a companion costs a write-target slot, which measurably pushed the
 #: CI workflow OUT of the capped set on a repository whose own failing check was about that workflow. The
 #: compose stack a local run needs is produced at deployment time by the agent, which knows the port, the
 #: detected profile and whether a stack already exists, rather than being provoked here from a prompt that
@@ -248,8 +248,8 @@ ARTIFACT_VALIDATORS: Final[Mapping[str, str]] = {
 #:
 #: A COUNT CAP AND A TOKEN CAP BOUND DIFFERENT THINGS. `token_budget` limits the instruction sent; this
 #: limits the answer expected, and nothing limited that before. A run whose write targets came from every
-#: failing check asked for eleven files, and a small model â€” the end-to-end journey uses
-#: `qwen2.5-coder:1.5b` â€” cannot emit eleven complete valid files in one response. It produced a handful,
+#: failing check asked for eleven files, and a small model — the end-to-end journey uses
+#: `qwen2.5-coder:1.5b` — cannot emit eleven complete valid files in one response. It produced a handful,
 #: malformed, none passed the gate, and the run fell back to canned templates: nothing delivered, for
 #: minutes of compute. A capable model handles the same prompt, which is why it was invisible until a
 #: small one ran it.
@@ -275,8 +275,8 @@ DIRECTORY_DEFAULT_FILENAME: Final[Mapping[str, str]] = {
 
 #: Where each ecosystem puts a linter configuration, keyed by the language the scan detected.
 #:
-#: The findings table gives a CONVENTION for these â€” "(depends on language: ruff.toml,
-#: eslint.config.mjs, .golangci.yml)" â€” because the table is repository-independent and cannot know
+#: The findings table gives a CONVENTION for these — "(depends on language: ruff.toml,
+#: eslint.config.mjs, .golangci.yml)" — because the table is repository-independent and cannot know
 #: which applies. Resolving it needs a fact, and the fact is in the inventory, so it is resolved here
 #: rather than left as a parenthetical the model would have to interpret.
 #:
@@ -635,13 +635,13 @@ def _resolve_target(
     """Turn a remedy path into a concrete file, or return "" when it cannot be known.
 
     A remedy path containing a parenthesis is a CONVENTION rather than a location, and one containing
-    `<â€¦>` carries a PLACEHOLDER the table cannot fill. Both need a fact from this repository, and the
+    `<…>` carries a PLACEHOLDER the table cannot fill. Both need a fact from this repository, and the
     facts come from the scan: the detected languages resolve a linter configuration, and the project's own
     name resolves a chart directory.
 
     Returning "" is deliberate for anything unresolvable. The artifact is then not requested and the
     reason appears in the prompt's "cannot address" section. Naming a plausible file instead would put a
-    fabricated path into an instruction â€” and `charts/<name>/Chart.yaml` reaching a model verbatim is
+    fabricated path into an instruction — and `charts/<name>/Chart.yaml` reaching a model verbatim is
     exactly that, because the model would either invent a name or write the angle brackets into the tree.
     """
     first = remedy_path.split(",")[0].strip() if remedy_path else ""
@@ -718,7 +718,7 @@ class ArtifactInstruction(BaseModel):
     #: Files this one does not work without, written in the same answer.
     #:
     #: A DEPLOYMENT ALONE RECEIVES NO TRAFFIC. The readiness checks map one artifact kind to one path, so
-    #: `kubernetes_manifests_present` produced `k8s/deployment.yaml` and nothing else â€” a manifest set that
+    #: `kubernetes_manifests_present` produced `k8s/deployment.yaml` and nothing else — a manifest set that
     #: applies cleanly, reports healthy, and cannot be reached by anything. The user is left to discover
     #: they need a Service themselves, which is the opposite of what generating manifests is for.
     #:
@@ -769,7 +769,7 @@ def _quote(path: str, body: str) -> tuple[str, int]:
     numbered = "\n".join(f"{n:>5} | {text}" for n, text in enumerate(shown, start=1))
     if len(lines) > MAX_QUOTED_LINES:
         numbered += (
-            f"\n      | â€¦ {len(lines) - MAX_QUOTED_LINES} further line(s) not shown. "
+            f"\n      | … {len(lines) - MAX_QUOTED_LINES} further line(s) not shown. "
             f"They are part of {path} and must be preserved."
         )
     return numbered, len(lines)
@@ -808,6 +808,103 @@ def _preserve_notes(body: str) -> tuple[str, ...]:
     return tuple(notes)
 
 
+#: The files that decide HOW a project builds and runs, matched by name at the root or in a first-level folder
+#: (workspaces). A model that is only told these files EXIST has to guess the build script, the output
+#: directory, the runtime version and the port -- and a guess that reads plausibly fails at `docker build`.
+_BUILD_INPUT_NAMES: Final[tuple[str, ...]] = (
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml",
+    "pipfile",
+    "go.mod",
+    "cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "gemfile",
+    "composer.json",
+    ".nvmrc",
+    ".node-version",
+    ".python-version",
+    "runtime.txt",
+    ".tool-versions",
+    "procfile",
+    ".env.example",
+)
+_BUILD_CONFIG_PREFIXES: Final[tuple[str, ...]] = (
+    "vite.config.",
+    "next.config.",
+    "nuxt.config.",
+    "svelte.config.",
+    "astro.config.",
+    "remix.config.",
+    "angular.json",
+    "webpack.config.",
+    "manage.py",
+)
+
+
+def _build_inputs_section(
+    *, paths: Sequence[str], contents: Mapping[str, str], inventory: Mapping[str, Any], budget_chars: int
+) -> list[str]:
+    """Quote the build-deciding files, most important first, within `budget_chars`.
+
+    Root manifests first, then workspace manifests, runtime pins, framework configs, `.env.example`, and
+    finally the entry points the scan identified (where a server's port and routes are declared). Lockfiles
+    are never quoted -- they are long and say nothing a Dockerfile needs beyond "this lockfile exists".
+    """
+    if budget_chars <= 0:
+        return []
+
+    def depth(path: str) -> int:
+        return path.count("/")
+
+    def name(path: str) -> str:
+        return path.rsplit("/", 1)[-1].lower()
+
+    candidates: list[tuple[int, int, str]] = []
+    for raw in paths:
+        path = raw.replace("\\", "/")
+        if depth(path) > 1 or path.startswith(("node_modules/", ".git/")) or path not in contents:
+            continue
+        base = name(path)
+        if base in _BUILD_INPUT_NAMES:
+            rank = 0 if base in ("package.json", "requirements.txt", "pyproject.toml", "go.mod", "cargo.toml") else 2
+        elif base.startswith(_BUILD_CONFIG_PREFIXES):
+            rank = 3
+        else:
+            continue
+        candidates.append((rank + depth(path), len(contents[path]), path))
+    for entry in inventory.get("entry_points") or []:
+        path = str(entry).replace("\\", "/")
+        if path in contents and all(path != c[2] for c in candidates):
+            candidates.append((5, len(contents[path]), path))
+    if not candidates:
+        return []
+
+    out = [
+        "",
+        "## 1A. BUILD INPUTS -- THE CONTENTS OF THE FILES THAT DECIDE HOW THIS PROJECT BUILDS AND RUNS",
+        "",
+        "Read these before writing anything. Take the install and build commands, the build output directory,",
+        "the runtime version, the start command and the listening port FROM THESE FILES. Where a value is not",
+        "in them, it is not known: do not invent one.",
+    ]
+    used = sum(len(line) + 1 for line in out)
+    omitted: list[str] = []
+    for _rank, _size, path in sorted(candidates):
+        quoted, total = _quote(path, contents[path])
+        block = f"\n### {path} ({total} line(s))\n{quoted}"
+        if used + len(block) > budget_chars:
+            omitted.append(path)
+            continue
+        out.append(block)
+        used += len(block)
+    if omitted:
+        out.append(f"\n(Not quoted, to stay within the instruction budget: {', '.join(omitted)}.)")
+    return out
+
+
 def _facts_section(
     *,
     paths: Sequence[str],
@@ -844,7 +941,7 @@ def _facts_section(
             note = (
                 "declared in a manifest, so you may rely on it"
                 if confidence == "declared"
-                else "INFERRED from the layout only, nothing declares it â€” do not rely on it"
+                else "INFERRED from the layout only, nothing declares it — do not rely on it"
             )
             out.append(f"  - {name} ({kind}), version {version}, from {evidence}: {note}")
     else:
@@ -913,6 +1010,7 @@ def compile_repair_prompts(
     project_name: str = "",
     target_strategy: str | None = None,
     architecture: ProjectArchitecture | None = None,
+    build_inputs_chars: int = 12_000,
 ) -> dict[str, CompiledPrompt]:
     """One prompt per artifact, each carrying ONLY that artifact's requirements, keyed by write target.
 
@@ -989,6 +1087,7 @@ def compile_repair_prompts(
             include_companions=False,
             target_strategy=target_strategy,
             architecture=architecture,
+            build_inputs_chars=build_inputs_chars,
         )
         for target in one.write_targets:
             # `setdefault`: the first kind to claim a path owns it. Two kinds naming one path would be
@@ -1010,6 +1109,7 @@ def compile_prompt(
     include_companions: bool = True,
     target_strategy: str | None = None,
     architecture: ProjectArchitecture | None = None,
+    build_inputs_chars: int = 12_000,
 ) -> CompiledPrompt:
     """Build the instruction for the failing checks a generated artifact can satisfy.
 
@@ -1092,7 +1192,7 @@ def compile_prompt(
         action = "modify" if existing else "create"
 
         fault_list = [
-            f"{c.found}{f' (line {c.line})' if c.line is not None else ''} â€” required: {c.looked_for}" for c in group
+            f"{c.found}{f' (line {c.line})' if c.line is not None else ''} — required: {c.looked_for}" for c in group
         ]
         fault_list.extend(GATE_REQUIREMENTS.get(artifact, ()))
 
@@ -1229,6 +1329,9 @@ def compile_prompt(
     def render(selected: Sequence[ArtifactInstruction]) -> str:
         body_lines = list(header)
         body_lines += _facts_section(paths=paths, inventory=inventory, devops_paths=devops_paths)
+        body_lines += _build_inputs_section(
+            paths=paths, contents=contents, inventory=inventory, budget_chars=build_inputs_chars
+        )
         body_lines += ["", "## 2. WHAT TO PRODUCE", ""]
         if not selected:
             body_lines.append(
@@ -1242,7 +1345,7 @@ def compile_prompt(
                 body_lines.append(f"This file does not exist in the repository. Create it at exactly `{item.path}`.")
             else:
                 body_lines.append(
-                    f"This file EXISTS, at {item.current_line_count} line(s). MODIFY it â€” do not replace "
+                    f"This file EXISTS, at {item.current_line_count} line(s). MODIFY it — do not replace "
                     "it and do not regenerate it from scratch. What is wrong with it:"
                 )
                 for fault in item.faults:
@@ -1265,7 +1368,7 @@ def compile_prompt(
             if item.companions:
                 body_lines.append("")
                 body_lines.append(
-                    "Write these alongside it, in the same answer and each with its own marker â€” this file "
+                    "Write these alongside it, in the same answer and each with its own marker — this file "
                     "does not work without them:"
                 )
                 for companion in item.companions:
@@ -1373,7 +1476,7 @@ def compile_prompt(
     #
     # THE FAILURE THIS FIXES, MEASURED. Deriving the write targets from the failing checks let one run ask
     # for eleven artifacts. The end-to-end journey's model is `qwen2.5-coder:1.5b`, and a 1.5-billion
-    # parameter model cannot emit eleven complete, valid files in one response â€” it produced a few,
+    # parameter model cannot emit eleven complete, valid files in one response — it produced a few,
     # malformed, none passed the gate, and the run fell back to templates. The user got nothing for eight
     # minutes of compute. On a capable model the same prompt succeeds, which is why this was invisible
     # until the journey ran it.

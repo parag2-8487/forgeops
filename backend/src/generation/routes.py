@@ -498,6 +498,9 @@ async def create_generation_run(
             project_id=body.project_id,
             selected_check_ids=body.target_checks,
             target_strategy=effective_strat,
+            # HOW MUCH OF THE PROJECT'S BUILD FILES TO QUOTE, by what the model can read. A hosted model takes
+            # a million tokens; the local CPU/GPU model runs in an 8K window that the plan already half fills.
+            build_inputs_chars=3_000 if service.attempted_tier in ("self_hosted", "template") else 40_000,
         )
         # RELOADED AFTER THE COMPILE, because the compile is what indexes a project scanned for the first
         # time. The row loaded above predates that scan, so a freshly imported project reached the template
@@ -728,6 +731,7 @@ async def _compile_generation_plan(
     project_id: uuid.UUID,
     selected_check_ids: list[str] | None,
     target_strategy: str | None = None,
+    build_inputs_chars: int = 12_000,
 ) -> tuple[CompiledPrompt | None, Mapping[str, str], dict[str, CompiledPrompt]]:
     """Build the instruction from this project's own index and its failing checks.
 
@@ -819,6 +823,7 @@ async def _compile_generation_plan(
             selected_check_ids=selected_check_ids,
             project_name=str(project_name),
             target_strategy=target_strategy,
+            build_inputs_chars=build_inputs_chars,
         ),
         evidence.contents,
         # ONE PROMPT PER ARTIFACT, for the repair loop. Built here, from the SAME readiness report that
@@ -832,6 +837,7 @@ async def _compile_generation_plan(
             selected_check_ids=selected_check_ids,
             project_name=str(project_name),
             target_strategy=target_strategy,
+            build_inputs_chars=build_inputs_chars,
         ),
     )
 

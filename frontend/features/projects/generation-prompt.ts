@@ -22,6 +22,8 @@ const ADDRESSABLE: Readonly<Record<string, string>> = {
   dockerfile_multi_stage: "use a multi-stage build so build tools are absent from the final image",
   dockerfile_non_root: "run as a non-root user created in the image",
   dockerfile_base_pinned: "pin the base image to an explicit version tag rather than latest",
+  dockerfile_matches_project_runtime:
+    "build with the toolchain of the manifests the project actually has (package.json, requirements.txt, go.mod, Cargo.toml)",
 
   // ── Compose: local development & container grouping ──
   compose_file_present:

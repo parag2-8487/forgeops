@@ -732,3 +732,92 @@ def pipeline_actions_pinned_audit(paths: Iterable[str], contents: Mapping[str, s
         detail=detail,
         line=line,
     )
+
+
+#: The manifest files that place a project in an ecosystem, matched by file name at any depth.
+_ECOSYSTEM_MANIFESTS: Final[dict[str, tuple[str, ...]]] = {
+    "node": ("package.json",),
+    "python": ("requirements.txt", "pyproject.toml", "pipfile", "setup.py"),
+    "go": ("go.mod",),
+    "rust": ("cargo.toml",),
+    "java": ("pom.xml", "build.gradle", "build.gradle.kts"),
+    "ruby": ("gemfile",),
+    "php": ("composer.json",),
+    "dotnet": (".csproj", ".fsproj", ".sln"),
+}
+#: Evidence, inside a Dockerfile, that it builds or runs a given ecosystem: base images and toolchain verbs.
+_ECOSYSTEM_IMAGE = re.compile(
+    r"(?im)^\s*FROM\s+(?:--platform=\S+\s+)?(?:\S+/)?(node|python|golang|go|rust|eclipse-temurin|openjdk|maven|gradle|"
+    r"ruby|php|composer|mcr\.microsoft\.com/dotnet\S*|dotnet)[:@\s]"
+)
+_IMAGE_ECOSYSTEM: Final[dict[str, str]] = {
+    "node": "node",
+    "python": "python",
+    "golang": "go",
+    "go": "go",
+    "rust": "rust",
+    "eclipse-temurin": "java",
+    "openjdk": "java",
+    "maven": "java",
+    "gradle": "java",
+    "ruby": "ruby",
+    "php": "php",
+    "composer": "php",
+    "dotnet": "dotnet",
+}
+_ECOSYSTEM_TOOLS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    ("node", re.compile(r"(?i)\b(npm|npx|yarn|pnpm)\s")),
+    ("python", re.compile(r"(?i)\b(pip3?|poetry|uv|pipenv)\s+(install|wheel|sync)|requirements\.txt")),
+    ("go", re.compile(r"(?i)\bgo\s+(build|mod)\b")),
+    ("rust", re.compile(r"(?i)\bcargo\s+(build|install)\b")),
+)
+
+
+def project_ecosystems(paths: Iterable[str]) -> set[str]:
+    """The ecosystems whose manifest files are present in the project."""
+    names = {str(p).replace("\\", "/").rsplit("/", 1)[-1].lower() for p in paths}
+    found: set[str] = set()
+    for ecosystem, manifests in _ECOSYSTEM_MANIFESTS.items():
+        if any(name == m or (m.startswith(".") and name.endswith(m)) for name in names for m in manifests):
+            found.add(ecosystem)
+    return found
+
+
+def dockerfile_runtime_mismatch(docker_body: str, paths: Iterable[str]) -> str | None:
+    """Why this Dockerfile does not build THIS project, or None when it plausibly does.
+
+    Two faults, both observed (2026-11-02, a Vite project given a Python Dockerfile):
+
+    * it installs with a toolchain whose manifest the project does not have (`pip install -r
+      requirements.txt` with no Python manifest) -- the build fails on the missing file;
+    * it uses none of the project's ecosystems at all.
+
+    Judged only when the project's ecosystems are known; with no manifests there is nothing to compare.
+    """
+    if not docker_body.strip():
+        return None
+    expected = project_ecosystems(paths)
+    if not expected:
+        return None
+    used: set[str] = set()
+    for match in _ECOSYSTEM_IMAGE.finditer(docker_body):
+        image = match.group(1).lower()
+        used.add("dotnet" if "dotnet" in image else _IMAGE_ECOSYSTEM.get(image, image))
+    tooled: set[str] = set()
+    for line in docker_body.splitlines():
+        if re.match(r"(?i)^\s*(RUN|CMD|ENTRYPOINT|COPY)\b", line):
+            for ecosystem, pattern in _ECOSYSTEM_TOOLS:
+                if pattern.search(line):
+                    tooled.add(ecosystem)
+    foreign = sorted(tooled - expected)
+    if foreign:
+        return (
+            f"the Dockerfile runs {', '.join(foreign)} tooling, but the project has no "
+            f"{'/'.join(foreign)} manifest (its manifests are {', '.join(sorted(expected))})"
+        )
+    if not (used | tooled) & expected:
+        return (
+            f"the Dockerfile builds none of the project's ecosystems ({', '.join(sorted(expected))}); "
+            f"its images and tools are {', '.join(sorted(used | tooled)) or 'unrecognised'}"
+        )
+    return None

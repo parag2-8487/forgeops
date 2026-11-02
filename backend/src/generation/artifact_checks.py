@@ -46,6 +46,8 @@ from typing import Any, Final
 
 import yaml
 
+from ..core.manifest_facts import dockerfile_runtime_mismatch
+
 #: Kubernetes objects must declare these. `metadata.name` is included because a manifest with an
 #: anonymous object is rejected by every cluster, and the substring gate accepted it.
 _K8S_REQUIRED: Final[tuple[str, ...]] = ("apiVersion", "kind")
@@ -865,6 +867,14 @@ def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None 
     findings.extend(validate_cross_artifact_consistency(files))
 
     if existing:
+        # THE DOCKERFILE MUST BUILD THIS PROJECT. Without this the gate accepted a Python Dockerfile for a Node
+        # project, because each of its instructions was individually valid (2026-11-02).
+        for artifact in files:
+            if checker_for(getattr(artifact, "path", "")) is not validate_dockerfile:
+                continue
+            mismatch = dockerfile_runtime_mismatch(artifact.content, list(existing))
+            if mismatch:
+                findings.append(f"{artifact.path}: {mismatch}")
         # A PATH WITH A SPACE, judged against the project's REAL paths rather than guessed from token counts:
         # an unquoted `COPY live classroom/ ./` is two sources to Docker. Flagged only when the joined
         # operands name a path that actually exists with a space in it.
