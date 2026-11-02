@@ -32,6 +32,8 @@ THE FOUR PROPERTIES THAT MAKE IT TRUSTWORTHY
 from __future__ import annotations
 
 import contextlib
+import json
+import re
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Final
 
@@ -121,10 +123,12 @@ GATE_REQUIREMENTS: Final[Mapping[str, tuple[str, ...]]] = {
         "Next.js outputs to `.next` (not `dist`). Multi-stage Dockerfiles must copy the built application "
         '(e.g. `COPY --from=builder /app ./`) and start with `CMD ["npm", "run", "start"]` '
         "or standalone output (`node server.js`). Never use `npx serve -s dist` for Next.js applications.",
-        "For frontend client applications (Vite, React, Vue, Svelte, static web apps) without a backend server, "
-        "if you run `npm start` in the final image, you MUST also `COPY package*.json ./` to the final stage so npm "
-        "can find package.json. Better yet, serve the built static directory with a lightweight static server "
-        "(e.g. `npx serve -s dist -l $PORT`) or copy `package*.json` so `npm` commands do not fail with ENOENT.",
+        "RUN ONLY SCRIPTS THE PROJECT DECLARES: every package-manager script the Dockerfile runs must be one listed "
+        "under SCRIPT FACTS in section 1A; where SCRIPT FACTS says a script does not exist, do not run it. A frontend "
+        "with no server of its own is built in one stage and its output directory served by a static web server "
+        "(for example nginx) in the final stage.",
+        "INSTALL WHAT THE BUILD NEEDS: a stage that runs a build whose tools are development dependencies must "
+        "install them in that stage; a production-only install belongs in a final stage that runs no build.",
         "For monorepos or repositories with workspace packages (e.g. package.json `workspaces` or nested packages), "
         "you MUST copy BOTH the root package manifests AND every workspace package manifest "
         "BEFORE executing dependency installation commands. Running install before copying workspace manifests fails with missing executables "
@@ -844,6 +848,33 @@ _BUILD_CONFIG_PREFIXES: Final[tuple[str, ...]] = (
 )
 
 
+def _script_facts(path: str, body: str) -> list[str]:
+    """Explicit, derived statements about one package.json's scripts -- what may be run and what each needs.
+
+    Small models follow a stated fact far more reliably than they read it out of raw JSON: a 7B model shown
+    the file still wrote `npm start` for a project with no `start` script on three consecutive attempts.
+    """
+    try:
+        data = json.loads(body)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    scripts = {str(k): str(v) for k, v in (data.get("scripts") or {}).items()}
+    dev = {str(k) for k in (data.get("devDependencies") or {})}
+    facts = [f"SCRIPT FACTS for {path}: declares {', '.join(sorted(scripts)) or 'no scripts'}."]
+    if "start" not in scripts:
+        facts.append(f"  - There is NO `start` script in {path}: `npm start` would fail.")
+    for name, command in sorted(scripts.items()):
+        needs = sorted(t for t in dev if re.search(rf"(?<![\w@/-]){re.escape(t)}\b", command))
+        if needs:
+            facts.append(
+                f"  - `{name}` runs `{command}`, which needs devDependencies ({', '.join(needs)}): install all "
+                "dependencies in the stage that runs it."
+            )
+    return facts
+
+
 def _build_inputs_section(
     *, paths: Sequence[str], contents: Mapping[str, str], inventory: Mapping[str, Any], budget_chars: int
 ) -> list[str]:
@@ -890,6 +921,10 @@ def _build_inputs_section(
         "the runtime version, the start command and the listening port FROM THESE FILES. Where a value is not",
         "in them, it is not known: do not invent one.",
     ]
+    # The derived facts come FIRST and are never cut: they are short, and they are what a small model needs most.
+    for _rank, _size, path in sorted(candidates):
+        if path.rsplit("/", 1)[-1].lower() == "package.json":
+            out += ["", *_script_facts(path, contents[path])]
     used = sum(len(line) + 1 for line in out)
     omitted: list[str] = []
     for _rank, _size, path in sorted(candidates):

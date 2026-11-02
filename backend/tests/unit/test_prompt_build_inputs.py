@@ -33,10 +33,10 @@ def test_build_files_are_quoted_and_lockfiles_are_not() -> None:
 
 
 def test_root_manifest_comes_first_and_the_budget_is_respected() -> None:
-    lines = _build_inputs_section(paths=PATHS, contents=CONTENTS, inventory={}, budget_chars=600)
+    lines = _build_inputs_section(paths=PATHS, contents=CONTENTS, inventory={}, budget_chars=800)
     text = "\n".join(lines)
     assert "### package.json" in text, "the root manifest is the most important input"
-    assert len(text) <= 600 + 200, "the section must stay within its budget (plus the omission note)"
+    assert len(text) <= 800 + 200, "the section must stay within its budget (plus the omission note)"
     assert "Not quoted" in text
 
 
@@ -58,3 +58,16 @@ def test_the_compiled_instruction_carries_the_build_inputs() -> None:
     compiled = compile_prompt(checks=report.checks, paths=PATHS, contents=dict(CONTENTS), inventory={})
     assert "BUILD INPUTS" in compiled.text and "vite build" in compiled.text
     assert "â€" not in compiled.text, "the instruction must not carry mis-decoded characters"
+
+
+def test_script_facts_state_what_may_be_run_and_what_it_needs() -> None:
+    text = "\n".join(_build_inputs_section(paths=PATHS, contents=CONTENTS, inventory={}, budget_chars=20_000))
+    assert "SCRIPT FACTS for package.json: declares build, preview." in text
+    assert "There is NO `start` script" in text
+    assert "needs devDependencies" not in text, "the fixture declares no devDependencies"
+
+
+def test_the_instruction_no_longer_suggests_npm_start_unconditionally() -> None:
+    report = ReadinessEngine().evaluate(IndexEvidence(paths=PATHS, contents=dict(CONTENTS)))
+    compiled = compile_prompt(checks=report.checks, paths=PATHS, contents=dict(CONTENTS), inventory={})
+    assert "if you run `npm start` in the final image" not in compiled.text
