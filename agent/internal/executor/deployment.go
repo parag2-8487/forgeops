@@ -43,11 +43,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1698,7 +1700,13 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 		//
 		// The host side is preserved, so a bookmarked URL keeps working; only the container half was
 		// ever wrong.
-		cContent = reconcileComposePort(cContent, boundPort)
+		//
+		// Only when ONE service publishes ports: boundPort is the listener of the one Dockerfile, so in a
+		// stack of several services it rewrote every mapping to it — a database became `5432->9002` and
+		// two apps fought over one container port (2026-11-02). Each service of a stack keeps its own.
+		if len(regexp.MustCompile(`(?m)^\s+ports:`).FindAllStringIndex(cContent, -1)) == 1 {
+			cContent = reconcileComposePort(cContent, boundPort)
+		}
 
 		reVersion := regexp.MustCompile(`(?m)^version:\s*['"][^'"]+['"]\s*\n?`)
 		cContent = reVersion.ReplaceAllString(cContent, "")
@@ -1987,6 +1995,7 @@ func applyComposeManifests(ctx context.Context, d *dispatcher, args deploymentAr
 		}
 
 		// Gate G5: Apply Phase
+		freeTakenHostPorts(ctx, runner, abs, projectName, sink)
 		sink.Progress(75, "deployment.apply_manifests", fmt.Sprintf("Gate G5: starting containers for %s...", filepath.Base(abs)))
 		outcome, err = runner.RunWithStreaming(ctx, func(line string) {
 			clean := strings.TrimSpace(line)
@@ -2309,4 +2318,60 @@ func probeForFinalImage(dockerfile string, port int) string {
 		return fmt.Sprintf("curl -fsS -o /dev/null %s || exit 1", url)
 	}
 	return ""
+}
+
+// freeTakenHostPorts moves a published host port that something OUTSIDE this compose project already
+// holds to the next free one, and says so.
+//
+// Another project's container (or any local process) on the same host port made `compose up` fail
+// with "port is already allocated" after the whole build had succeeded (2026-11-02: two test projects
+// both on 3000). Ports this project's own containers hold are left alone: `up` replaces those.
+func freeTakenHostPorts(ctx context.Context, runner *validator.Runner, composePath, projectName string, sink ProgressSink) {
+	raw, err := os.ReadFile(composePath)
+	if err != nil {
+		return
+	}
+	own := map[int]bool{}
+	if out, err := runner.Run(ctx, "docker", "ps", "--filter", "label=com.docker.compose.project="+projectName, "--format", "{{.Ports}}"); err == nil {
+		for _, m := range regexp.MustCompile(`:(\d{1,5})->`).FindAllStringSubmatch(out.Output, -1) {
+			own[atoiPort(m[1])] = true
+		}
+	}
+	re := regexp.MustCompile(`(?m)^(\s*-\s*"?)((?:[0-9.]+:)?)(\d{1,5}):(\d{1,5})("?(?:/(?:tcp|udp))?"?)[ \t]*$`)
+	inFile := map[int]bool{}
+	for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+		inFile[atoiPort(m[3])] = true
+	}
+	moved := false
+	content := re.ReplaceAllStringFunc(string(raw), func(line string) string {
+		m := re.FindStringSubmatch(line)
+		host := atoiPort(m[3])
+		if host <= 0 || own[host] || hostPortFree(host) {
+			return line
+		}
+		for candidate := host + 1; candidate < host+200 && candidate <= 65535; candidate++ {
+			if inFile[candidate] || own[candidate] || !hostPortFree(candidate) {
+				continue
+			}
+			inFile[candidate] = true
+			moved = true
+			sink.Progress(74, "deployment.apply_manifests",
+				fmt.Sprintf("host port %d is already in use by something outside this project; publishing on %d instead (http://localhost:%d)", host, candidate, candidate))
+			return m[1] + m[2] + strconv.Itoa(candidate) + ":" + m[4] + m[5]
+		}
+		return line
+	})
+	if moved {
+		_ = os.WriteFile(composePath, []byte(content), 0o644)
+	}
+}
+
+// hostPortFree reports whether a TCP port on this machine can be bound right now.
+func hostPortFree(port int) bool {
+	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
 }

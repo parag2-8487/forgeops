@@ -27,12 +27,17 @@
 package executor
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/parag8487/ForgeOps/agent/internal/validator"
 )
 
 func TestParseAppliedResource(t *testing.T) {
@@ -494,5 +499,25 @@ func TestHealerKeepsAWorkingProbeForAStaticSite(t *testing.T) {
 	healed, _ := os.ReadFile(filepath.Join(dir, "Dockerfile"))
 	if strings.Contains(string(healed), "node -e") {
 		t.Fatalf("a node probe was put into an nginx image:\n%s", healed)
+	}
+}
+
+func TestATakenHostPortIsMovedToAFreeOne(t *testing.T) {
+	busy, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	port := busy.Addr().(*net.TCPAddr).Port
+	dir := t.TempDir()
+	compose := filepath.Join(dir, "docker-compose.yml")
+	body := fmt.Sprintf("services:\n  web:\n    image: nginx\n    ports:\n      - \"%d:3000\"\n", port)
+	if err := os.WriteFile(compose, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	freeTakenHostPorts(context.Background(), &validator.Runner{Dir: dir}, compose, "forgeops-test-none", SinkFunc(func(int, string, string) {}))
+	got, _ := os.ReadFile(compose)
+	if strings.Contains(string(got), fmt.Sprintf("\"%d:3000\"", port)) || !strings.Contains(string(got), ":3000\"") {
+		t.Fatalf("the taken host port %d was not moved:\n%s", port, got)
 	}
 }
