@@ -38,6 +38,8 @@ package executor
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1793,7 +1795,11 @@ func applyComposeManifests(ctx context.Context, d *dispatcher, args deploymentAr
 
 	projectName := sanitizeComposeProject(filepath.Base(d.root))
 	if projectName == "" || projectName == "project" {
-		projectName = "portfolio"
+		// UNIQUE PER WORKSPACE, never a fixed name. This fell back to "portfolio" -- one project's name --
+		// so two unrelated workspaces shared a compose project, and `--remove-orphans` on one could remove
+		// the other's containers.
+		sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(d.root))))
+		projectName = "forgeops-" + hex.EncodeToString(sum[:])[:10]
 	}
 
 	for i, abs := range resolved {

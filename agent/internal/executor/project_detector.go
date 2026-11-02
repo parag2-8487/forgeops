@@ -1254,7 +1254,7 @@ func UniversalDockerfileHealer(content string, profile *ProjectProfile, baseDir 
 		// Hallucinated commands like `CMD ["node", "dist/server.js"]` or `CMD ["node", "server.js"]` crash immediately.
 		// Only apply when the root project is definitively a static SPA (not monorepo subproject detection).
 		if isStaticFrontend && strings.HasPrefix(upper, "CMD ") {
-			if strings.Contains(line, "server.js") || strings.Contains(line, "Backend/server.js") || strings.Contains(line, "node dist/") || strings.Contains(line, `node", "dist`) {
+			if strings.Contains(line, "server.js") || strings.Contains(line, "node dist/") || strings.Contains(line, `node", "dist`) {
 				serveCmd := fmt.Sprintf(`CMD ["serve", "-s", "%s", "-l", "tcp://0.0.0.0:3000"]`, distTarget)
 				line = serveCmd
 			}
