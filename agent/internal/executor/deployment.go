@@ -1452,7 +1452,13 @@ func autoHealDockerfileForCompose(baseDir string, sink ProgressSink) {
 		if port <= 0 {
 			port = 3000
 		}
-		probe := healthProbeCommand(profile.PrimaryLanguage, port, content)
+		// The probe must exist in the image that RUNS, not merely suit the project's language: a Node
+		// project whose final stage is nginx (every static site) got `node -e fetch(...)` and stayed
+		// unhealthy for ever, since an nginx image has no node (2026-11-02).
+		probe := probeForFinalImage(content, port)
+		if probe == "" {
+			probe = healthProbeCommand(profile.PrimaryLanguage, port, content)
+		}
 
 		reHealthBlock := regexp.MustCompile(`(?i)(?m)^HEALTHCHECK\s+[\s\S]*?(?:CMD\s+[^\n]+|NONE)`)
 		content = reHealthBlock.ReplaceAllStringFunc(content, func(m string) string {
@@ -2275,4 +2281,32 @@ func (s *buildFilesSnapshot) restore() []string {
 		}
 	}
 	return restored
+}
+
+// probeForFinalImage returns an HTTP health probe whose tool ships in the Dockerfile's final image, or ""
+// when that image is not one it can place.
+func probeForFinalImage(dockerfile string, port int) string {
+	from := regexp.MustCompile(`(?im)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)`)
+	matches := from.FindAllStringSubmatch(dockerfile, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	name := strings.ToLower(matches[len(matches)-1][1])
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	switch {
+	case name == "node" || strings.HasPrefix(name, "node:"):
+		return fmt.Sprintf(`node -e "fetch('%s').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"`, url)
+	case name == "python" || strings.HasPrefix(name, "python:"):
+		return fmt.Sprintf(`python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('%s', timeout=5).status < 400 else 1)"`, url)
+	case strings.Contains(name, "alpine") || strings.HasPrefix(name, "busybox"):
+		// BusyBox wget ships in every Alpine and BusyBox image.
+		return fmt.Sprintf("wget -q -O /dev/null %s || exit 1", url)
+	case strings.HasPrefix(name, "nginx") || strings.HasPrefix(name, "httpd"):
+		// The Debian-based official nginx and httpd images ship curl.
+		return fmt.Sprintf("curl -fsS -o /dev/null %s || exit 1", url)
+	}
+	return ""
 }

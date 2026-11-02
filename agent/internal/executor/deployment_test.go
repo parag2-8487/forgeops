@@ -461,3 +461,38 @@ func TestBuildFilesAreRestoredAfterHealing(t *testing.T) {
 		t.Fatalf("restoring an unchanged workspace changed %v", again)
 	}
 }
+
+func TestHealthProbeMatchesTheFinalImage(t *testing.T) {
+	cases := map[string]string{
+		"FROM node:22 AS b\nFROM nginxinc/nginx-unprivileged:1.27.3-alpine\n": "wget -q",
+		"FROM node:22 AS b\nFROM nginx:1.27\n":                                "curl -fsS",
+		"FROM node:22-slim\n":                                                 "node -e",
+		"FROM python:3.12-slim\n":                                             "python -c",
+		"FROM gcr.io/distroless/static\n":                                     "",
+	}
+	for dockerfile, want := range cases {
+		got := probeForFinalImage(dockerfile, 3000)
+		if (want == "" && got != "") || (want != "" && !strings.Contains(got, want)) {
+			t.Errorf("probeForFinalImage(%q) = %q, want it to contain %q", dockerfile, got, want)
+		}
+	}
+}
+
+func TestHealerKeepsAWorkingProbeForAStaticSite(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"vite build"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := "FROM node:22 AS builder\nWORKDIR /app\nCOPY . .\nRUN npm ci && npm run build\n" +
+		"FROM nginxinc/nginx-unprivileged:1.27.3-alpine\nCOPY --from=builder /app/dist /usr/share/nginx/html\n" +
+		"HEALTHCHECK --interval=30s CMD wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1\nUSER 101\n" +
+		"CMD [\"nginx\", \"-g\", \"daemon off;\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	autoHealDockerfileForCompose(dir, SinkFunc(func(int, string, string) {}))
+	healed, _ := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	if strings.Contains(string(healed), "node -e") {
+		t.Fatalf("a node probe was put into an nginx image:\n%s", healed)
+	}
+}
