@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
 from pydantic import BaseModel
 
@@ -323,6 +325,44 @@ class _ModelReport:
 
     succeeded: bool = False
     findings: tuple[str, ...] = ()
+
+
+#: The static server for built frontends: the unprivileged nginx build (runs as uid 101, binds any port), pinned.
+STATIC_SERVER_IMAGE: Final[str] = "nginxinc/nginx-unprivileged:1.27.3-alpine"
+
+
+def _static_frontend_output_dir(
+    *,
+    runtime: str,
+    is_frontend: bool,
+    is_nextjs: bool,
+    existing: Mapping[str, str] | None,
+    frameworks: Sequence[str],
+) -> str | None:
+    """The build output directory of a frontend with no server of its own, or None when it is not one.
+
+    A Node frontend that is not Next.js and whose root package.json declares no `start` script is a static
+    site. The directory comes from the project: an explicit Vite `outDir`, Create React App's `build`, or
+    Vite's default `dist`.
+    """
+    if not runtime.startswith("node") or not is_frontend or is_nextjs or not isinstance(existing, Mapping):
+        return None
+    try:
+        package = json.loads(existing.get("package.json") or "{}")
+    except (ValueError, TypeError):
+        return None
+    scripts = package.get("scripts") if isinstance(package, dict) else None
+    if not isinstance(scripts, dict) or "build" not in scripts or "start" in scripts:
+        return None
+    for name, body in existing.items():
+        if name.replace("\\", "/").rsplit("/", 1)[-1].startswith("vite.config.") and "/" not in name.replace("\\", "/"):
+            match = re.search(r"""outDir\s*:\s*['"]([^'"]+)['"]""", body or "")
+            if match:
+                return match.group(1).strip("./") or "dist"
+    deps = {**(package.get("dependencies") or {}), **(package.get("devDependencies") or {})}
+    if "react-scripts" in deps or any("create-react-app" in f for f in frameworks):
+        return "build"
+    return "dist"
 
 
 class GenerationService:
@@ -1763,6 +1803,37 @@ class GenerationService:
                 "",
             ]
         )
+        # A STATIC FRONTEND IS SERVED, NOT STARTED. The node final stage above ends in `npm start`, and a Vite /
+        # React / Vue site with no `start` script and no server of its own crash-looped on "Missing script:
+        # start" (2026-11-02). Such a project is built in the builder stage and its output served by nginx.
+        static_out = _static_frontend_output_dir(
+            runtime=runtime,
+            is_frontend=is_frontend_or_build,
+            is_nextjs=is_nextjs,
+            existing=existing,
+            frameworks=inv_frameworks,
+        )
+        if static_out is not None:
+            dockerfile = "\n".join(
+                [
+                    *builder,
+                    "",
+                    f"FROM {STATIC_SERVER_IMAGE}",
+                    "# Single-page-app fallback: unknown paths return index.html so client-side routes resolve.",
+                    # `\\n` is written literally: printf, not Python, turns it into the config's line breaks.
+                    r"RUN printf 'server {\n  listen "
+                    + str(port)
+                    + r";\n  root /usr/share/nginx/html;\n  location / { try_files $uri $uri/ /index.html; }\n}\n'"
+                    " > /etc/nginx/conf.d/default.conf",
+                    f"COPY --from=builder /app/{static_out} /usr/share/nginx/html",
+                    f"EXPOSE {port}",
+                    "HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \\",
+                    f"  CMD wget -q -O /dev/null http://127.0.0.1:{port}/ || exit 1",
+                    "USER 101",
+                    'CMD ["nginx", "-g", "daemon off;"]',
+                    "",
+                ]
+            )
         # The linter configuration is chosen by runtime, so the file is one the project's own linter
         # loads rather than a name that merely satisfies the path check.
         lint_path, lint_body = lint_config(runtime)
