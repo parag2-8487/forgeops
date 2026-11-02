@@ -418,6 +418,9 @@ def validate_compose(content: str) -> list[str]:
         return ["Compose file declares no services"]
 
     findings: list[str] = []
+    #: Host port -> the service that publishes it. Two services cannot bind one host port: the second
+    #: fails with "port is already allocated" after the whole build (2026-11-02, three services on 9002).
+    published: dict[str, str] = {}
     for name, service in services.items():
         if not isinstance(service, Mapping):
             findings.append(f"compose service `{name}` is not a mapping")
@@ -427,7 +430,41 @@ def validate_compose(content: str) -> list[str]:
         ports = service.get("ports")
         if ports is not None and (not isinstance(ports, Sequence) or isinstance(ports, str)):
             findings.append(f"compose service `{name}` has a `ports` that is not a list")
+            continue
+        targets: set[str] = set()
+        for entry in ports or ():
+            parts = str(entry).strip().strip("'\"").split("/", 1)[0].split(":")
+            targets.add(parts[-1])
+            if len(parts) < 2 or not parts[-2].isdigit():
+                continue
+            host = parts[-2]
+            if host in published:
+                findings.append(
+                    f"compose services `{published[host]}` and `{name}` both publish host port {host}; "
+                    "each service needs its own host port"
+                )
+            else:
+                published[host] = str(name)
+        listen = _env_value(service.get("environment"), "PORT")
+        if listen and listen.isdigit() and targets and listen not in targets:
+            findings.append(
+                f"compose service `{name}` sets PORT={listen} but publishes container port(s) "
+                f"{', '.join(sorted(targets))}; the published container port must be the one the app listens on"
+            )
     return findings
+
+
+def _env_value(environment: Any, key: str) -> str | None:
+    """A Compose `environment` value, from either the mapping or the `KEY=value` list form."""
+    if isinstance(environment, Mapping):
+        value = environment.get(key)
+        return None if value is None else str(value).strip()
+    if isinstance(environment, Sequence) and not isinstance(environment, str):
+        for item in environment:
+            name, sep, value = str(item).partition("=")
+            if sep and name.strip() == key:
+                return value.strip()
+    return None
 
 
 #: Which checker applies to which artifact, chosen by path. A path this does not recognise is checked

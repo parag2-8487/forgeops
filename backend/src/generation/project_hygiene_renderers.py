@@ -289,6 +289,7 @@ def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = N
             if not any(fe in s.name for fe in ("front", "client", "web", "ui"))
         ]
         db_services: list[str] = []
+        used_host_ports: set[int] = set()
 
         if getattr(architecture, "databases", ()):
             for db in architecture.databases:
@@ -296,6 +297,7 @@ def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = N
                     db_name = "postgres"
                     db_services.append(db_name)
                     volumes_needed.append("postgres_data")
+                    used_host_ports.add(5432)
                     services_lines.append(f"""  {db_name}:
     image: postgres:16-alpine
     container_name: {app_name}-{db_name}
@@ -317,6 +319,7 @@ def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = N
                     db_name = "redis"
                     db_services.append(db_name)
                     volumes_needed.append("redis_data")
+                    used_host_ports.add(6379)
                     services_lines.append(f"""  {db_name}:
     image: redis:7-alpine
     container_name: {app_name}-{db_name}
@@ -335,6 +338,11 @@ def compose_file(app_name: str, port: int, image_tag: str, architecture: Any = N
             s_slug = _slugify_compose_name(svc.name) or "service"
             svc_port = svc.port or port
             host_port = getattr(svc, "host_port", None) or svc_port
+            # Two services of one project often listen on the same port inside their containers; on the
+            # host each needs its own, or the second fails to start with "port is already allocated".
+            while host_port in used_host_ports:
+                host_port += 1
+            used_host_ports.add(host_port)
             is_fe = any(fe in s_slug for fe in ("front", "client", "web", "ui"))
             deps = list(svc.depends_on)
             if is_fe and backend_names:

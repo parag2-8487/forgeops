@@ -117,3 +117,23 @@ def test_copy_sources_must_exist_in_the_project() -> None:
     assert len(findings) == 1 and "'yarn.lock'" in findings[0]
     good = 'FROM node:22\nCOPY package*.json ./\nCOPY ["src", "./src"]\nCOPY public/ ./public/\nCOPY . .\n'
     assert dockerfile_missing_copy_sources(good, existing) == []
+
+
+def test_compose_services_may_not_share_a_host_port_or_publish_the_wrong_one() -> None:
+    from src.generation.artifact_checks import validate_compose
+
+    clash = (
+        "services:\n"
+        '  db:\n    image: postgres:16-alpine\n    ports: ["9002:9002"]\n'
+        '  web:\n    build: .\n    ports: ["9002:9002"]\n    environment:\n      PORT: "3000"\n'
+    )
+    findings = validate_compose(clash)
+    assert any("both publish host port 9002" in f for f in findings)
+    assert any("sets PORT=3000" in f for f in findings)
+    good = (
+        "services:\n"
+        '  db:\n    image: postgres:16-alpine\n    ports: ["5432:5432"]\n'
+        '  web:\n    build: .\n    ports: ["9002:3000"]\n    environment: ["PORT=3000"]\n'
+        '  admin:\n    build: ./admin\n    ports: ["127.0.0.1:9003:3000"]\n'
+    )
+    assert validate_compose(good) == []
