@@ -851,6 +851,115 @@ def validate_cross_artifact_consistency(files: Sequence[Any]) -> list[str]:
     return findings
 
 
+#: `npm start`, `npm run x`, `npm run-script x`, `yarn x`, `yarn run x`, `pnpm x`, `pnpm run x`, in RUN/CMD/ENTRYPOINT.
+_SCRIPT_CALL = re.compile(
+    r"\b(?:npm\s+(?:run(?:-script)?\s+(?P<npm>[\w:.-]+)|(?P<npmstart>start|test)\b)"
+    r"|(?:yarn|pnpm)\s+(?:run\s+)?(?P<other>[\w:.-]+))"
+)
+_PACKAGE_MANAGER_BUILTINS = frozenset(
+    {
+        "install",
+        "ci",
+        "add",
+        "remove",
+        "exec",
+        "dlx",
+        "i",
+        "audit",
+        "cache",
+        "config",
+        "prune",
+        "init",
+        "set",
+        "dedupe",
+        "fetch",
+        "import",
+        "link",
+        "pack",
+        "publish",
+        "rebuild",
+        "store",
+        "up",
+        "update",
+        "upgrade",
+        "why",
+        "workspace",
+        "workspaces",
+        "global",
+        "info",
+        "list",
+        "ls",
+        "outdated",
+    }
+)
+_PRODUCTION_INSTALL = re.compile(
+    r"(?i)\bnpm\s+(?:install|ci|i)\b[^&;|\n]*(?:--production|--omit[= ]dev|--only[= ]prod)"
+    r"|\byarn\s+install\b[^&;|\n]*--production"
+    r"|\bpnpm\s+install\b[^&;|\n]*(?:--prod\b|\s-P\b)"
+)
+
+
+def _package_scripts(existing: Mapping[str, str]) -> tuple[dict[str, str], set[str]]:
+    """Every script any package.json in the project declares, and every devDependency name."""
+    scripts: dict[str, str] = {}
+    dev: set[str] = set()
+    for path, body in existing.items():
+        norm = path.replace("\\", "/")
+        if norm.rsplit("/", 1)[-1] != "package.json" or "node_modules/" in norm:
+            continue
+        try:
+            data = json.loads(body)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict):
+            for name, command in (data.get("scripts") or {}).items():
+                scripts.setdefault(str(name), str(command))
+            dev.update(str(k) for k in (data.get("devDependencies") or {}))
+    return scripts, dev
+
+
+def dockerfile_script_findings(dockerfile: str, existing: Mapping[str, str]) -> list[str]:
+    """Package-manager scripts the Dockerfile runs that the project does not declare, and production-only
+    installs followed by a script that needs devDependencies.
+
+    Both observed on 2026-11-02 in a generated Dockerfile for a Vite project: `CMD ["npm", "start"]` where
+    package.json has no `start` (the container crash-looped on "Missing script"), and
+    `npm install --production` before `npm run build`, whose `tsc`/`vite` are devDependencies.
+    """
+    scripts, dev = _package_scripts(existing)
+    if not scripts and not dev:
+        return []
+    findings: list[str] = []
+    production_install = False
+    for line in dockerfile.splitlines():
+        stripped = line.strip()
+        if re.match(r"(?i)^FROM\s", stripped):
+            production_install = False
+            continue
+        if not re.match(r"(?i)^(RUN|CMD|ENTRYPOINT)\s", stripped):
+            continue
+        flat = re.sub(r'["\[\],]', " ", stripped)
+        if _PRODUCTION_INSTALL.search(flat):
+            production_install = True
+        for match in _SCRIPT_CALL.finditer(flat):
+            name = match.group("npm") or match.group("npmstart") or match.group("other")
+            if not name or name in _PACKAGE_MANAGER_BUILTINS or name.startswith("-"):
+                continue
+            if name not in scripts:
+                findings.append(
+                    f"'{stripped}' runs the script '{name}', but no package.json in the project declares it "
+                    f"(declared: {', '.join(sorted(scripts)) or 'none'})"
+                )
+                continue
+            needs_dev = sorted(t for t in dev if re.search(rf"(?<![\w@/-]){re.escape(t)}\b", scripts[name]))
+            if production_install and needs_dev:
+                findings.append(
+                    f"'{stripped}' runs '{name}' ({scripts[name]}), which needs the devDependencies "
+                    f"{', '.join(needs_dev)}, but this stage installed production dependencies only"
+                )
+    return findings
+
+
 def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None = None) -> list[str]:
     """Check every generated artifact that has a checker, and report every finding.
 
@@ -875,6 +984,7 @@ def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None 
             mismatch = dockerfile_runtime_mismatch(artifact.content, list(existing))
             if mismatch:
                 findings.append(f"{artifact.path}: {mismatch}")
+            findings.extend(f"{artifact.path}: {f}" for f in dockerfile_script_findings(artifact.content, existing))
         # A PATH WITH A SPACE, judged against the project's REAL paths rather than guessed from token counts:
         # an unquoted `COPY live classroom/ ./` is two sources to Docker. Flagged only when the joined
         # operands name a path that actually exists with a space in it.
