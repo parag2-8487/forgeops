@@ -605,7 +605,13 @@ COPY --from=builder /app ./
 USER 10001
 CMD ["npm", "start"]
 """
-    existing = {"package.json": '{"name": "root", "workspaces": ["code-review", "live classroom"]}'}
+    existing = {
+        "package.json": '{"name": "root", "workspaces": ["code-review", "live classroom"]}',
+        # The workspace manifests exist in a real workspace repository; without them every COPY of one would
+        # (correctly) be reported as copying a file the project does not have.
+        "code-review/package.json": '{"name": "code-review"}',
+        "live classroom/package.json": '{"name": "live-classroom"}',
+    }
     findings = validate_artifacts([_Artifact("Dockerfile", df_omitting_workspaces)], existing=existing)
     assert any(
         "Workspace repository runs dependency installation before copying workspace package manifests" in f

@@ -39,6 +39,7 @@ An artifact that passes here has been parsed and shaped, not grepped.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import posixpath
 import re
@@ -893,11 +894,6 @@ _PACKAGE_MANAGER_BUILTINS = frozenset(
         "outdated",
     }
 )
-_PRODUCTION_INSTALL = re.compile(
-    r"(?i)\bnpm\s+(?:install|ci|i)\b[^&;|\n]*(?:--production|--omit[= ]dev|--only[= ]prod)"
-    r"|\byarn\s+install\b[^&;|\n]*--production"
-    r"|\bpnpm\s+install\b[^&;|\n]*(?:--prod\b|\s-P\b)"
-)
 
 
 def _package_scripts(existing: Mapping[str, str]) -> tuple[dict[str, str], set[str]]:
@@ -919,29 +915,101 @@ def _package_scripts(existing: Mapping[str, str]) -> tuple[dict[str, str], set[s
     return scripts, dev
 
 
-def dockerfile_script_findings(dockerfile: str, existing: Mapping[str, str]) -> list[str]:
-    """Package-manager scripts the Dockerfile runs that the project does not declare, and production-only
-    installs followed by a script that needs devDependencies.
+_PRODUCTION_INSTALL = re.compile(
+    r"(?i)\bnpm\s+(?:install|ci|i)\b[^&;|\n]*(?:--prod(?:uction)?\b|--omit[= ]dev|--only[= ]prod)"
+    r"|\byarn\s+install\b[^&;|\n]*--prod(?:uction)?\b"
+    r"|\bpnpm\s+install\b[^&;|\n]*(?:--prod\b|\s-P\b)"
+)
+_ANY_INSTALL = re.compile(r"(?i)\b(?:npm\s+(?:install|ci|i)\b|yarn\s+install\b|yarn\s*$|pnpm\s+(?:install|i)\b)")
+#: Executables whose package has a different name. Without this `tsc` was never recognised as needing
+#: `typescript`, so a production-only install before `tsc -b` passed the gate.
+_BIN_PACKAGES: Final[dict[str, str]] = {
+    "tsc": "typescript",
+    "ng": "@angular/cli",
+    "vue-cli-service": "@vue/cli-service",
+    "react-scripts": "react-scripts",
+    "nest": "@nestjs/cli",
+    "svelte-kit": "@sveltejs/kit",
+    "tsx": "tsx",
+    "ts-node": "ts-node",
+}
 
-    Both observed on 2026-11-02 in a generated Dockerfile for a Vite project: `CMD ["npm", "start"]` where
-    package.json has no `start` (the container crash-looped on "Missing script"), and
-    `npm install --production` before `npm run build`, whose `tsc`/`vite` are devDependencies.
+
+def _tools_needed(command: str, dev: set[str]) -> list[str]:
+    """devDependencies a script command invokes, by package name or by the executable it provides."""
+    needed = {t for t in dev if re.search(rf"(?<![\w@/-]){re.escape(t)}\b", command)}
+    for binary, package in _BIN_PACKAGES.items():
+        if package in dev and re.search(rf"(?<![\w@/-]){re.escape(binary)}\b", command):
+            needed.add(package)
+    return sorted(needed)
+
+
+def _copy_brings(operands: list[str], source_root: str | None) -> tuple[bool, bool]:
+    """Whether a COPY's sources bring a package.json and/or a node_modules tree into the stage.
+
+    `source_root` is the WORKDIR of the stage named by `--from`, or None for the build context. Copying that
+    directory (or `.` from the context) brings the whole application; copying `/app/dist` does not.
+    """
+    manifest = modules = False
+    for source in operands:
+        norm = "." if source in (".", "./") else posixpath.normpath(source)
+        base = norm.rstrip("/").rsplit("/", 1)[-1]
+        if source_root is None:
+            whole_dir = norm == "."
+        else:
+            whole_dir = norm in (".", "/", posixpath.normpath(source_root))
+        if whole_dir or base == "package*.json" or (base.startswith("package") and base.endswith(".json")):
+            manifest = True
+        if (whole_dir and source_root is not None) or base == "node_modules":
+            modules = True
+    return manifest, modules
+
+
+def dockerfile_script_findings(dockerfile: str, existing: Mapping[str, str]) -> list[str]:
+    """Package-manager scripts that cannot run where the Dockerfile runs them.
+
+    Judged per build stage, because each `FROM` starts from nothing: a stage must have the package.json that
+    declares a script, and the dependencies the script's tools come from (installed in the stage, or copied
+    in with `node_modules`). Observed in generated Dockerfiles for a Vite project (2026-11-02):
+    `CMD ["npm", "start"]` with no start script; `npm install --prod` before `tsc -b && vite build`; and
+    `npm run preview` in a final stage holding only `dist/`.
     """
     scripts, dev = _package_scripts(existing)
     if not scripts and not dev:
         return []
     findings: list[str] = []
-    production_install = False
+    has_manifest, install, has_modules = False, "none", False
+    workdirs: dict[str, str] = {}
+    stage, workdir = "", "/"
     for line in dockerfile.splitlines():
         stripped = line.strip()
-        if re.match(r"(?i)^FROM\s", stripped):
-            production_install = False
+        start = re.match(r"(?i)^FROM\s+\S+(?:\s+AS\s+(\S+))?", stripped)
+        if start:
+            if stage:
+                workdirs[stage] = workdir
+            stage, workdir = (start.group(1) or "").lower(), "/"
+            has_manifest, install, has_modules = False, "none", False
+            continue
+        wd = re.match(r"(?i)^WORKDIR\s+(\S+)", stripped)
+        if wd:
+            workdir = posixpath.normpath(posixpath.join(workdir, wd.group(1).strip('"')))
+            continue
+        copy = re.match(r"(?i)^(?:COPY|ADD)\s+(.*)$", stripped)
+        if copy:
+            tokens = [t.strip('"[],') for t in copy.group(1).split()]
+            origin = next((t.split("=", 1)[1].lower() for t in tokens if t.lower().startswith("--from=")), None)
+            sources = [t for t in tokens if t and not t.startswith("--")][:-1]
+            manifest, modules = _copy_brings(sources, None if origin is None else workdirs.get(origin, "/"))
+            has_manifest = has_manifest or manifest
+            has_modules = has_modules or modules
             continue
         if not re.match(r"(?i)^(RUN|CMD|ENTRYPOINT)\s", stripped):
             continue
-        flat = re.sub(r'["\[\],]', " ", stripped)
+        flat = re.sub(r"[\"\[\],]", " ", stripped)
         if _PRODUCTION_INSTALL.search(flat):
-            production_install = True
+            install = "production"
+        elif _ANY_INSTALL.search(flat) and install == "none":
+            install = "all"
         for match in _SCRIPT_CALL.finditer(flat):
             name = match.group("npm") or match.group("npmstart") or match.group("other")
             if not name or name in _PACKAGE_MANAGER_BUILTINS or name.startswith("-"):
@@ -952,12 +1020,61 @@ def dockerfile_script_findings(dockerfile: str, existing: Mapping[str, str]) -> 
                     f"(declared: {', '.join(sorted(scripts)) or 'none'})"
                 )
                 continue
-            needs_dev = sorted(t for t in dev if re.search(rf"(?<![\w@/-]){re.escape(t)}\b", scripts[name]))
-            if production_install and needs_dev:
+            if not has_manifest:
+                findings.append(
+                    f"'{stripped}' runs '{name}' in a stage that never copies package.json, so the package "
+                    "manager cannot find the script"
+                )
+                continue
+            needs = _tools_needed(scripts[name], dev)
+            if needs and install == "production":
                 findings.append(
                     f"'{stripped}' runs '{name}' ({scripts[name]}), which needs the devDependencies "
-                    f"{', '.join(needs_dev)}, but this stage installed production dependencies only"
+                    f"{', '.join(needs)}, but this stage installed production dependencies only"
                 )
+            elif needs and install == "none" and not has_modules:
+                findings.append(
+                    f"'{stripped}' runs '{name}' ({scripts[name]}), which needs {', '.join(needs)}, but this "
+                    "stage neither installs dependencies nor copies node_modules from an earlier stage"
+                )
+    return findings
+
+
+def dockerfile_missing_copy_sources(dockerfile: str, existing: Mapping[str, str]) -> list[str]:
+    """`COPY`/`ADD` sources from the build context that do not exist in the project.
+
+    `COPY package.json yarn.lock ./` in a project that has package-lock.json fails the build on the missing
+    file. Sources copied from another stage (`--from`), URLs, variables and the whole context are not judged.
+    """
+    lowered = [p.replace("\\", "/").removeprefix("./").lower() for p in existing]
+    findings: list[str] = []
+    for line in dockerfile.splitlines():
+        stripped = line.strip()
+        copy = re.match(r"(?i)^(?:COPY|ADD)\s+(.*)$", stripped)
+        if not copy:
+            continue
+        body = copy.group(1).strip()
+        if any(t.lower().startswith("--from=") for t in body.split()):
+            continue
+        flags_removed = " ".join(t for t in body.split() if not t.startswith("--"))
+        if flags_removed.startswith("["):
+            try:
+                operands = [str(x) for x in json.loads(flags_removed)]
+            except ValueError:
+                continue
+        else:
+            operands = flags_removed.split()
+        for source in operands[:-1]:
+            clean = source.removeprefix("./").rstrip("/")
+            if clean in ("", ".") or "://" in clean or "$" in clean:
+                continue
+            target = clean.lower()
+            if any(c in target for c in "*?["):
+                matched = any(fnmatch.fnmatch(p, target) for p in lowered)
+            else:
+                matched = any(p == target or p.startswith(target + "/") for p in lowered)
+            if not matched:
+                findings.append(f"'{stripped}' copies '{source}', which does not exist in the project")
     return findings
 
 
@@ -1033,6 +1150,9 @@ def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None 
             if mismatch:
                 findings.append(f"{artifact.path}: {mismatch}")
             findings.extend(f"{artifact.path}: {f}" for f in dockerfile_script_findings(artifact.content, existing))
+            findings.extend(
+                f"{artifact.path}: {f}" for f in dockerfile_missing_copy_sources(artifact.content, existing)
+            )
         # A PATH WITH A SPACE, judged against the project's REAL paths rather than guessed from token counts:
         # an unquoted `COPY live classroom/ ./` is two sources to Docker. Flagged only when the joined
         # operands name a path that actually exists with a space in it.
