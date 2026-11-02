@@ -617,7 +617,7 @@ class Settings(BaseSettings):
     #: CPU-only Docker VM this ships on, a qwen2.5-coder:7b attempt takes 2-14 minutes; 900s allows one
     #: full attempt plus a repair and then ends the run as `failed` with that reason, instead of leaving the
     #: user watching a spinner.
-    generation_run_deadline_seconds: float = Field(default=900.0, gt=0, le=7200)
+    generation_run_deadline_seconds: float = Field(default=2400.0, gt=0, le=7200)
     #: Endpoints, beyond the generation tier's own chain, that the Manual Generation page may pin a run to.
     #: Comma-separated endpoint ids from the tier configuration. Each is offered only while its credential
     #: is configured.

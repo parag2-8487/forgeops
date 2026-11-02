@@ -385,7 +385,7 @@ async def create_generation_run(
     # Resolved BEFORE the stream, so a selection that cannot be honoured is a 422 the page can show next to
     # the selector, rather than a run row that fails a second later.
     service = _pinned_service(request, body, service)
-    deadline_seconds = float(getattr(request.app.state.settings, "generation_run_deadline_seconds", 900.0))
+    deadline_seconds = float(getattr(request.app.state.settings, "generation_run_deadline_seconds", 2400.0))
     sessionmaker = getattr(request.app.state, "sessionmaker", None)
 
     async def stream() -> AsyncGenerator[bytes]:
