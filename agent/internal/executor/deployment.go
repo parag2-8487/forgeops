@@ -36,6 +36,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1854,6 +1855,21 @@ func applyComposeManifests(ctx context.Context, d *dispatcher, args deploymentAr
 		// can build, gets one generated from its detected profile here — before the build starts, not
 		// after it has failed ten times. A repository that cannot be built at all is reported as such
 		// instead of being retried against a build that has nothing to run.
+		// THE OPERATOR'S FILES ARE PUT BACK. `ensureBuildableArtifacts` heals (and may create) the Dockerfile,
+		// the compose file and .dockerignore so the BUILD succeeds -- and it used to leave those edits in the
+		// working tree. That silently rewrote the user's source, and the next change set ForgeOps sent was
+		// refused as stale ("pre-image hash mismatch") because the workspace no longer matched the index
+		// (2026-11-02). The build uses the healed files; when this deployment ends, success or failure,
+		// every one is restored byte for byte, and any file the healer created is removed.
+		snapshot := snapshotBuildFiles(baseDir)
+		defer func() {
+			if restored := snapshot.restore(); len(restored) > 0 {
+				sink.Progress(99, "deployment.apply_manifests",
+					fmt.Sprintf("restored the workspace's own %s after the build (healed copies were used only for this deployment)",
+						strings.Join(restored, ", ")))
+			}
+		}()
+
 		profile, buildable := ensureBuildableArtifacts(baseDir, sink)
 		if !buildable {
 			return Result{}, fmt.Errorf(
@@ -2193,4 +2209,54 @@ func finalStageIsNode(dockerfile string) bool {
 	}
 	image := strings.ToLower(matches[len(matches)-1][1])
 	return strings.HasPrefix(image, "node:") || image == "node" || strings.Contains(image, "/node:")
+}
+
+// buildFileNames are the files the compose healer may rewrite or create in a project directory.
+var buildFileNames = []string{
+	"Dockerfile", ".dockerignore",
+	"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml",
+}
+
+// buildFilesSnapshot records each build file's exact bytes, or that it did not exist.
+type buildFilesSnapshot struct {
+	dir   string
+	files map[string][]byte // nil value: the file was absent
+}
+
+func snapshotBuildFiles(dir string) *buildFilesSnapshot {
+	snap := &buildFilesSnapshot{dir: dir, files: map[string][]byte{}}
+	for _, name := range buildFileNames {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			snap.files[name] = nil
+			continue
+		}
+		snap.files[name] = data
+	}
+	return snap
+}
+
+// restore puts every snapshotted file back as it was and returns the names it had to change.
+func (s *buildFilesSnapshot) restore() []string {
+	var restored []string
+	for _, name := range buildFileNames {
+		original, tracked := s.files[name]
+		if !tracked {
+			continue
+		}
+		path := filepath.Join(s.dir, name)
+		current, err := os.ReadFile(path)
+		exists := err == nil
+		switch {
+		case original == nil && exists:
+			if os.Remove(path) == nil {
+				restored = append(restored, name)
+			}
+		case original != nil && (!exists || !bytes.Equal(current, original)):
+			if os.WriteFile(path, original, 0o644) == nil {
+				restored = append(restored, name)
+			}
+		}
+	}
+	return restored
 }

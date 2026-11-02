@@ -431,3 +431,33 @@ func TestFinalStageIsNode(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildFilesAreRestoredAfterHealing(t *testing.T) {
+	dir := t.TempDir()
+	original := "FROM node:22-alpine\nUSER node\nCMD [\"node\", \"server.js\"]\n"
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snap := snapshotBuildFiles(dir)
+	// What a heal does: rewrite one file and create another.
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM node:22-alpine\n# healed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restored := snap.restore()
+	got, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	if err != nil || string(got) != original {
+		t.Fatalf("Dockerfile not restored byte for byte: %q (%v)", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "docker-compose.yml")); !os.IsNotExist(err) {
+		t.Fatalf("a file the healer created was left behind")
+	}
+	if len(restored) != 2 {
+		t.Fatalf("expected two restored files, got %v", restored)
+	}
+	if again := snap.restore(); len(again) != 0 {
+		t.Fatalf("restoring an unchanged workspace changed %v", again)
+	}
+}
