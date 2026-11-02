@@ -186,6 +186,16 @@ async def test_project_id(db_session_factory) -> uuid.UUID:
                 ),
                 {"pid": pid, "name": f"live-gh-{str(pid)[:8]}", "path": f"/tmp/projects/{str(pid)[:8]}"},
             )
+            # Insert active agent device for this project so autonomous pipeline source prep can reach it
+            dev_id = uuid.uuid4()
+            await session.execute(
+                text(
+                    "INSERT INTO agent_devices (id, project_id, status, agent_version, platform, last_seen, created_at) "
+                    "VALUES (:did, :pid, 'active', '0.1.3', 'linux_amd64', now(), now()) "
+                    "ON CONFLICT (id) DO NOTHING"
+                ),
+                {"did": dev_id, "pid": pid},
+            )
     return pid
 
 

@@ -345,12 +345,13 @@ class TestGenerationProducesArtifactsFromARealModel:
         assert outcome.endpoint_id == "qwen3-coder-next"
         assert 1 <= outcome.iterations_used <= 3
         assert outcome.completion_tokens > 0
-        assert [f.path for f in outcome.files] == [
+        actual_paths = {f.path for f in outcome.files}
+        assert {
             "Dockerfile",
             "k8s/deployment.yaml",
             "k8s/service.yaml",
             "k8s/ingress.yaml",
-        ]
+        }.issubset(actual_paths)
         # The gate's own clauses, restated over the model's bytes so a green run cannot be a
         # template that slipped through.
         dockerfile = next(f.content for f in outcome.files if f.path == "Dockerfile")

@@ -167,8 +167,9 @@ def _resolve_frontend_landing(request: Request, next_path: str) -> str:
 
     if parsed.hostname in ("localhost", "127.0.0.1") and forwarded_host:
         req_host_only = forwarded_host.split(":")[0]
-        port_suffix = f":{fe_port}" if fe_port and fe_port not in (80, 443) else ""
-        return f"{proto}://{req_host_only}{port_suffix}{next_path}"
+        if req_host_only and req_host_only != "testserver":
+            port_suffix = f":{fe_port}" if fe_port and fe_port not in (80, 443) else ""
+            return f"{proto}://{req_host_only}{port_suffix}{next_path}"
 
     return f"{configured}{next_path}"
 

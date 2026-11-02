@@ -1938,10 +1938,23 @@ class GovernanceChokepoint:
         document, so the text is bounded to a stated length as well.
         """
         if self._clone_credential is None:
-            return ""
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "this deployment has no GitHub integration composed, so a clone cannot be "
+                    "delivered. The change set stays pending: configure the integration and approve "
+                    "it again."
+                ),
+            )
         requester = row.get("created_by")
         if requester is None:
-            return ""
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "this clone records no requesting user, so there is no GitHub link to read a "
+                    "credential from. Re-request the clone as a signed-in user."
+                ),
+            )
         try:
             credential = await self._clone_credential(
                 session,
@@ -1951,9 +1964,28 @@ class GovernanceChokepoint:
                 # table's predicate is `IS NOT DISTINCT FROM` for exactly that reason.
                 tenant_id=row.get("tenant_id"),
             )
-        except Exception:
-            return ""
-        return credential or ""
+        except ProblemException:
+            # Already an RFC 9457 problem with its own reason. Re-raised untouched rather than
+            # rewrapped, because rewrapping would replace a specific cause with a general one.
+            raise
+        except Exception as exc:  # noqa: BLE001 - the provider's failure modes are the integration's
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "the requester's GitHub credential could not be read, so this clone cannot be "
+                    f"delivered: {str(exc)[:200]}. The change set stays pending: reconnect the "
+                    "GitHub account and approve it again."
+                ),
+            ) from exc
+        if not credential:
+            raise problem(
+                "change-set-conflict",
+                detail=(
+                    "the requester's GitHub link yielded an empty credential, so this clone cannot "
+                    "be delivered. Reconnect the GitHub account and approve it again."
+                ),
+            )
+        return credential
 
     async def reject(
         self,
