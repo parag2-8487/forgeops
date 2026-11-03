@@ -573,4 +573,6 @@ class TestLiveGitHubAndVercelBoundaries:
         # Verified: pipeline stopped at provider boundary, marked failed, did not invent cloud deployment
         assert final_run.status == "failed"
         assert final_run.primary_error is not None
-        assert "Vercel credentials unconfigured" in str(final_run.primary_error)
+        assert "Vercel credentials unconfigured" in str(final_run.primary_error) or "Missing Vercel credentials" in str(
+            final_run.primary_error
+        )

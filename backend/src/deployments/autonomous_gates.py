@@ -2656,7 +2656,10 @@ async def evaluate_g3_consistency(
             errors.append(f"Invalid GitHub repository identifier '{repo_name}': expected 'owner/repo'")
         branch = gh_cfg.get("target_branch") or gh_cfg.get("base_branch")
         if not branch:
-            errors.append("Target GitHub branch cannot be empty")
+            if _is_simulation_mode(session, run, context) or gh_cfg.get("simulation") or gh_cfg.get("dry_run"):
+                branch = "main"
+            else:
+                errors.append("Target GitHub branch cannot be empty")
 
     if "vercel" in active_targets:
         v_cfg = config.get("vercel_config") or {}

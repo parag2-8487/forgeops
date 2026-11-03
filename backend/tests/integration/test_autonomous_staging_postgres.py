@@ -396,7 +396,7 @@ class TestControlledStagingDeployments:
             else None
         )
         gh_cfg = (
-            GitHubConfigRequest(repository_name="forgeops/staging-repo")
+            GitHubConfigRequest(repository_name="forgeops/staging-repo", target_branch="main")
             if strategy
             in (
                 DeploymentStrategy.DOCKER_GITHUB_VERCEL,

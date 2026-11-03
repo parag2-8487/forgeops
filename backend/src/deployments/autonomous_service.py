@@ -340,6 +340,9 @@ class AutonomousDeploymentService:
                     )
                     request.github_config.target_branch = resolved_branch
                     request.github_config.base_branch = resolved_branch
+                elif request.simulation_mode:
+                    request.github_config.target_branch = "main"
+                    request.github_config.base_branch = "main"
 
         payload_hash = canonical_payload_hash(request)
 
