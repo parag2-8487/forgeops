@@ -17,6 +17,7 @@ import asyncio
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -90,6 +91,9 @@ async def db_session_factory(real_db_engine):
 async def test_project_id(db_session_factory) -> uuid.UUID:
     """Inserts a prerequisite project into the real PostgreSQL database."""
     pid = uuid.uuid4()
+    ws_path = Path(f"/tmp/projects/{str(pid)[:8]}")
+    ws_path.mkdir(parents=True, exist_ok=True)
+    (ws_path / "main.py").write_text("print('hello')\n", encoding="utf-8")
     async with db_session_factory() as session:
         async with session.begin():
             # Check if users table has a system user, or insert one
@@ -114,7 +118,7 @@ async def test_project_id(db_session_factory) -> uuid.UUID:
                     "VALUES (:pid, :name, :path, now(), now()) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"pid": pid, "name": f"proj-{str(pid)[:8]}", "path": f"/tmp/projects/{str(pid)[:8]}"},
+                {"pid": pid, "name": f"proj-{str(pid)[:8]}", "path": str(ws_path.as_posix())},
             )
             # Insert active agent device for this project so autonomous pipeline source prep can reach it
             dev_id = uuid.uuid4()
@@ -411,6 +415,7 @@ class TestControlledStagingDeployments:
             docker_config=docker_cfg,
             github_config=gh_cfg,
             vercel_config=vercel_cfg,
+            simulation_mode=True,
         )
 
         async with db_session_factory() as s_create:
@@ -426,6 +431,7 @@ class TestControlledStagingDeployments:
                 s_exec,
                 run_id=run_id,
                 worker_id="staging-pipeline-worker",
+                context={"simulation_mode": True},
             )
             await s_exec.commit()
 

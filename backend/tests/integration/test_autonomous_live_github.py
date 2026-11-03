@@ -176,6 +176,9 @@ async def db_session_factory():
 async def test_project_id(db_session_factory) -> uuid.UUID:
     """Ensures test project exists in staging database."""
     pid = uuid.uuid4()
+    ws_path = Path(f"/tmp/projects/{str(pid)[:8]}")
+    ws_path.mkdir(parents=True, exist_ok=True)
+    (ws_path / "main.py").write_text("print('hello')\n", encoding="utf-8")
     async with db_session_factory() as session:
         async with session.begin():
             await session.execute(
@@ -184,7 +187,7 @@ async def test_project_id(db_session_factory) -> uuid.UUID:
                     "VALUES (:pid, :name, :path, now(), now()) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"pid": pid, "name": f"live-gh-{str(pid)[:8]}", "path": f"/tmp/projects/{str(pid)[:8]}"},
+                {"pid": pid, "name": f"live-gh-{str(pid)[:8]}", "path": str(ws_path.as_posix())},
             )
             # Insert active agent device for this project so autonomous pipeline source prep can reach it
             dev_id = uuid.uuid4()
