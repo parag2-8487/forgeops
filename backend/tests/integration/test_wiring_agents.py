@@ -83,6 +83,8 @@ EXPECTED_ROUTES = {
     # the `--backend` value from its own configuration, because a literal in the UI would be wrong for
     # any deployment that publishes on another port -- which is what left the first run stuck.
     ("/api/v1/agents/connection-info", "GET"): True,
+    ("/api/v1/agents/installations", "GET"): True,
+    ("/api/v1/agents/uninstall", "POST"): True,
 }
 
 

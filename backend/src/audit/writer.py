@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Final
 
@@ -260,6 +260,35 @@ def _lock_key(value: str) -> int:
     return int.from_bytes(digest[:4], "big", signed=True)
 
 
+#: `audit_events` column widths (revision 0003). A value longer than its column would abort the caller's
+#: whole transaction, so it is cut here, once, for every writer.
+_COLUMN_LIMITS: dict[str, int] = {
+    "reason": 1024,
+    "resource_id": 128,
+    "action": 64,
+    "resource_kind": 64,
+    "outcome": 32,
+    "trace_id": 32,
+}
+_CUT_MARKER = " ...[truncated]"
+
+
+def _fit(value: str | None, limit: int) -> str | None:
+    if value is None or len(value) <= limit:
+        return value
+    return value[: limit - len(_CUT_MARKER)] + _CUT_MARKER
+
+
+def _fit_to_columns(draft: AuditDraft) -> AuditDraft:
+    """The draft with every bounded text field cut to its column width, marked where it was cut."""
+    changes = {
+        name: _fit(getattr(draft, name), limit)
+        for name, limit in _COLUMN_LIMITS.items()
+        if getattr(draft, name) is not None and len(getattr(draft, name)) > limit
+    }
+    return replace(draft, **changes) if changes else draft
+
+
 class AuditWriter:
     """Appends one immutable record, and recomputes the chain on demand.
 
@@ -287,6 +316,13 @@ class AuditWriter:
         before its audit row, and no audit row could be written without an authority.
         """
         draft.validate()
+        # FITTED TO THE COLUMNS BEFORE HASHING, so the stored row and the chain agree. A rolled-back
+        # deploy reports the agent's whole failure -- Docker build output included -- as its reason,
+        # and an over-long value made Postgres refuse the INSERT ("value too long for type character
+        # varying(1024)"). That aborted the transaction recording the outcome, so the change set and its
+        # deployment stayed `applying` for ever with no error shown (2026-11-02). The full text still
+        # lives on the change set's result; the audit row keeps the head of it and says it was cut.
+        draft = _fit_to_columns(draft)
 
         # One round-trip for both: the lock and the timestamp. `clock_timestamp()` rather than
         # `now()`, because `now()` is transaction start time and two records in one transit

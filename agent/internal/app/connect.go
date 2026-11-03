@@ -58,8 +58,23 @@ func newConnectCmd(a *App) *cobra.Command {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 
-			if strings.TrimSpace(code) == "" {
-				return errors.New("connect: --code is required (mint one from the ForgeOps UI)")
+			store, _ := a.CredentialStore()
+			var isPaired bool
+			if store != nil {
+				if creds, lerr := store.Load(ctx); lerr == nil && len(creds.DeviceToken) > 0 {
+					isPaired = true
+				}
+			}
+			if !isPaired || replace {
+				if strings.TrimSpace(code) == "" {
+					if replace {
+						return errors.New(
+							"connect: stage 1 (pair): --replace needs --code, because wiping the " +
+								"existing credential leaves this agent unpaired and only a " +
+								"pairing code can pair it again")
+					}
+					return errors.New("connect: --code is required (mint one from the ForgeOps UI)")
+				}
 			}
 
 			// Stage 0 is not a stage, it is the precondition: resolve the backend before anything
@@ -101,81 +116,45 @@ func newConnectCmd(a *App) *cobra.Command {
 			resolvedProject := strings.TrimSpace(projectID)
 			switch {
 			case paired:
-				// A DEVICE CERTIFICATE AUTHORISES EXACTLY ONE PROJECT, so keeping the existing
-				// credential while indexing a different one cannot work. The backend refuses the
-				// scan report with
-				//
-				//     403 Forbidden You do not have permission to perform this action
-				//
-				// which is the correct answer and names neither the project nor the credential. The
-				// shortcut used to take that path silently: it saw a usable credential, said
-				// "already paired", scanned a tree, and failed two stages later on an authorisation
-				// decision the agent had all the information to predict.
-				//
-				// Refused BEFORE the scan, because a scan walks the whole tree and uploads nothing.
-				//
-				// Only when both ids are known. An empty `pairedProject` is a credential written
-				// before the field existed, and an empty `resolvedProject` means the user named no
-				// project — in neither case is there a disagreement to report, so it behaves exactly
-				// as it did before rather than refusing on a fact it does not have.
-				if resolvedProject != "" && pairedProject != "" && resolvedProject != pairedProject {
-					// THE ONE-STEP PATH, and it is opt-in for a reason.
-					//
-					// Wiping a credential destroys this device's identity for the project it was
-					// paired to. Doing that automatically because `--project` disagreed would
-					// deauthorise a working agent on a mistyped id, so `--replace` makes the
-					// operator say it. What it does NOT do is make them run a second command and
-					// obtain a second code.
-					if replace {
-						if code == "" {
-							return fmt.Errorf(
-								"connect: stage 1 (pair): --replace needs --code, because wiping the "+
-									"credential for project %s leaves this agent unpaired and only a "+
-									"pairing code can pair it again",
-								pairedProject)
-						}
-						if err := manager.Wipe(ctx); err != nil {
-							return fmt.Errorf("connect: stage 1 (pair): unpairing from %s: %w", pairedProject, err)
-						}
-						_, _ = fmt.Fprintf(out,
-							"[1/3] pair   unpaired from project %s at your request; pairing to %s\n",
-							pairedProject, resolvedProject)
-						// SAID AT THE MOMENT IT HAPPENS, because nobody goes looking for it later.
-						//
-						// Wiping removes the credential from THIS machine. It does not revoke it: the
-						// certificate stays valid and `agent_devices` still lists the device as active,
-						// so a copy of the old credential store would still be authorised for the old
-						// project. `DELETE /api/v1/agents/{device_id}` is admin-only and the agent
-						// cannot revoke itself, so the operator has to do it — and cannot revoke a
-						// device nobody named.
-						if pairedDevice != "" {
-							_, _ = fmt.Fprintf(out,
-								"[1/3] pair   NOTE the old credential is removed from this machine but "+
-									"NOT revoked;\n"+
-									"             device %s stays authorised for project %s until an "+
-									"admin revokes it\n"+
-									"             (Agents screen, or DELETE /api/v1/agents/%s)\n",
-								pairedDevice, pairedProject, pairedDevice)
-						}
-						result, perr := manager.Pair(ctx, code, resolved)
-						if perr != nil {
-							return fmt.Errorf("connect: stage 1 (pair): %w", perr)
-						}
-						_, _ = fmt.Fprintf(out, "[1/3] pair   device %s, credentials in %s\n",
-							result.DeviceID, result.StoreBackend)
-						break
+				if replace {
+					if code == "" {
+						return fmt.Errorf(
+							"connect: stage 1 (pair): --replace needs --code, because wiping the " +
+								"existing credential leaves this agent unpaired and only a " +
+								"pairing code can pair it again")
 					}
-					// TWO OPTIONS, DISTINGUISHED BY A FACT ONLY THE OPERATOR HAS. A device certificate
-					// authorises one project, so this agent serves one project — that part is not a
-					// choice. What varies is whether the new project REPLACES the old one or sits
-					// beside it, and that depends on whether they are the same codebase.
-					//
-					// An earlier version of this message led with the multi-agent option as though it
-					// were generally better. It is not: several projects pointing at one directory is
-					// the common shape while somebody is finding their way around, and starting a
-					// second agent on the same folder indexes one tree into two projects for no
-					// benefit. Neither option is recommended over the other here, because the agent
-					// cannot see the other project's workspace path and so cannot know which applies.
+					if err := manager.Wipe(ctx); err != nil {
+						return fmt.Errorf("connect: stage 1 (pair): unpairing: %w", err)
+					}
+					if pairedProject != "" {
+						_, _ = fmt.Fprintf(out,
+							"[1/3] pair   unpaired from project %s at your request; pairing anew\n",
+							pairedProject)
+					} else {
+						_, _ = fmt.Fprintf(out,
+							"[1/3] pair   unpaired existing credential at your request; pairing anew\n")
+					}
+					if pairedDevice != "" {
+						_, _ = fmt.Fprintf(out,
+							"[1/3] pair   NOTE the old credential is removed from this machine but "+
+								"NOT revoked;\n"+
+								"             device %s stays authorised until an admin revokes it\n"+
+								"             (Agents screen, or DELETE /api/v1/agents/%s)\n",
+							pairedDevice, pairedDevice)
+					}
+					result, perr := manager.Pair(ctx, code, resolved)
+					if perr != nil {
+						return fmt.Errorf("connect: stage 1 (pair): %w", perr)
+					}
+					_, _ = fmt.Fprintf(out, "[1/3] pair   device %s, credentials in %s\n",
+						result.DeviceID, result.StoreBackend)
+					if resolvedProject == "" {
+						resolvedProject = result.ProjectID
+					}
+					break
+				}
+
+				if resolvedProject != "" && pairedProject != "" && resolvedProject != pairedProject {
 					return fmt.Errorf(
 						"connect: stage 1 (pair): this agent is already paired to project %s, but "+
 							"--project names %s. A device certificate authorises one project, so one "+
@@ -195,9 +174,19 @@ func newConnectCmd(a *App) *cobra.Command {
 						pairedProject, resolvedProject, resolvedProject,
 						shortID(resolvedProject), resolvedProject)
 				}
+
+				if code != "" {
+					return fmt.Errorf(
+						"connect: stage 1 (pair): this agent is already paired to project %s (device %s), "+
+							"but a pairing code was provided. Existing credentials are kept by default to avoid "+
+							"burning single-use codes.\n\n"+
+							"To replace the existing credential and pair anew with this code, re-run with:\n"+
+							"    --replace --code %s\n\n"+
+							"To continue using the existing pairing, omit --code.",
+						pairedProject, pairedDevice, code)
+				}
+
 				if resolvedProject == "" {
-					// The stored credential names the project, so the user need not repeat it — the
-					// same courtesy the freshly-paired branch below extends.
 					resolvedProject = pairedProject
 				}
 				_, _ = fmt.Fprintf(out,
@@ -211,10 +200,19 @@ func newConnectCmd(a *App) *cobra.Command {
 				_, _ = fmt.Fprintf(out, "[1/3] pair   device %s, credentials in %s\n",
 					result.DeviceID, result.StoreBackend)
 				if resolvedProject == "" {
-					// The code was minted for a project, so the user does not have to repeat it.
 					resolvedProject = result.ProjectID
 				}
 			}
+
+			if strings.TrimSpace(workspace) != "" {
+				if store, err := a.CredentialStore(); err == nil {
+					if creds, lerr := store.Load(ctx); lerr == nil {
+						creds.WorkspaceRoot = workspace
+						_ = store.Save(ctx, creds)
+					}
+				}
+			}
+			a.ResetSession()
 
 			if resolvedProject == "" {
 				// Reached only when the agent was already paired and no --project was given: the
@@ -226,6 +224,7 @@ func newConnectCmd(a *App) *cobra.Command {
 			}
 
 			// ── stage 2: scan ────────────────────────────────────────────────────────────
+			_, _ = fmt.Fprintf(out, "[2/3] scan   scanning codebase and submitting index to backend...\n")
 			indexer, err := a.codebaseIndexer()
 			if err != nil {
 				return fmt.Errorf("connect: stage 2 (scan): %w", err)
@@ -235,7 +234,7 @@ func newConnectCmd(a *App) *cobra.Command {
 				return fmt.Errorf("connect: stage 2 (scan): %w", err)
 			}
 			_, _ = fmt.Fprintf(out,
-				"[2/3] scan   %d file(s), %d chunk(s), %d dependency edge(s), %d redaction(s)\n",
+				"[2/3] scan   indexed %d file(s), %d chunk(s), %d dependency edge(s), %d redaction(s)\n",
 				summary.FilesIndexed, summary.ChunksIndexed, summary.Dependencies,
 				summary.RedactionCount)
 			if summary.VectorsAbsentReason != "" {
@@ -263,10 +262,9 @@ func newConnectCmd(a *App) *cobra.Command {
 
 	cmd.Flags().StringVar(&code, "code", "", "the one-time pairing code from the ForgeOps UI (required)")
 	cmd.Flags().BoolVar(&replace, "replace", false,
-		"when this agent is already paired to a DIFFERENT project, unpair from it and pair to the one "+
-			"--project names, using --code. Requires --code, because wiping leaves the agent unpaired. "+
-			"Opt-in rather than automatic: it destroys this device's identity for the old project, which "+
-			"a mistyped --project must not be able to do")
+		"when this agent is already paired, unpair from it and pair anew using --code. Requires --code, "+
+			"because wiping leaves the agent unpaired. Opt-in rather than automatic: it destroys this "+
+			"device's identity for the existing pairing, which a mistyped command must not do")
 	cmd.Flags().StringVar(&backend, "backend", "",
 		"backend URL; overrides AGENT_BACKEND_WSS_URL and any value discovered from .env")
 	cmd.Flags().StringVar(&projectID, "project", "",

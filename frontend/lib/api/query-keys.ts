@@ -104,4 +104,81 @@ export const queryKeys = {
     // would serve one project's references from another's cache entry.
     list: (projectId: string) => [...queryKeys.secrets.all, "list", projectId] as const,
   },
+  /**
+   * Per-user integrations. NOT scoped by user id in the key, deliberately: the key namespace is
+   * per browser session and the server answers for whoever the access token identifies, so putting a
+   * user id here would be a second source of truth about who is signed in. Sign-out clears the cache.
+   */
+  integrations: {
+    all: ["integrations"] as const,
+    github: () => [...queryKeys.integrations.all, "github"] as const,
+    vercel: () => [...queryKeys.integrations.all, "vercel"] as const,
+    /**
+     * The repository picker. The query and the page are part of the key for the reason the project
+     * filters are: two searches are two different responses, and a key that ignored the term would
+     * serve one from the other's cache entry, which looks exactly like a search that does not work.
+     */
+    githubRepositories: (query: string, page: number, perPage: number) =>
+      [...queryKeys.integrations.all, "github", "repositories", query, page, perPage] as const,
+  },
+  /**
+   * §2.1's environments. Scoped by project id for the same reason `secrets` is: environments belong to
+   * a project, and a key that ignored it would serve one project's pipeline from another's cache entry
+   * — which in a deployment UI means offering to deploy to an environment that is not there.
+   */
+  environments: {
+    all: ["environments"] as const,
+    list: (projectId: string) => [...queryKeys.environments.all, "list", projectId] as const,
+    variables: (environmentId: string) =>
+      [...queryKeys.environments.all, "variables", environmentId] as const,
+    promotion: (environmentId: string) =>
+      [...queryKeys.environments.all, "promotion", environmentId] as const,
+  },
+  /** §2.2. Scoped by project for the history, by environment for the rollback target. */
+  deployments: {
+    all: ["deployments"] as const,
+    list: (projectId: string) => [...queryKeys.deployments.all, "list", projectId] as const,
+    /**
+     * Keyed by ENVIRONMENT, not by project: the rollback target is per environment, and a key that
+     * ignored it would offer staging's stable deployment as production's rollback target.
+     */
+    rollbackTarget: (environmentId: string) =>
+      [...queryKeys.deployments.all, "rollback-target", environmentId] as const,
+    detectedManifests: (projectId: string) =>
+      [...queryKeys.deployments.all, "detected-manifests", projectId] as const,
+  },
+  /**
+   * 2.4 and 2.9's host inventories, read through the agent.
+   *
+   * THE STATS FLAG IS PART OF THE KEY, and that is not incidental. A list view asks without stats and a
+   * detail view asks with them; a shared key would serve the statless answer ? every measurement null ?
+   * to the panel that asked to measure, which renders as "this host reports nothing" on a host that is
+   * reporting fine. The namespace is in the Kubernetes key for the same reason it is in the environments
+   * key: one namespace's pods must never be served as another's.
+   */
+  /** 2.3's timeline and diff. The diff key carries both ids, so one pair is never served for another. */
+  releases: {
+    all: ["releases"] as const,
+    timeline: (projectId: string) => [...queryKeys.releases.all, "timeline", projectId] as const,
+    diff: (projectId: string, leftId: string, rightId: string) =>
+      [...queryKeys.releases.all, "diff", projectId, leftId, rightId] as const,
+  },
+  /** 2.6. Scoped by project: one project's bell must never show another's. */
+  notifications: {
+    all: ["notifications"] as const,
+    list: (projectId: string) => [...queryKeys.notifications.all, "list", projectId] as const,
+    preferences: (projectId: string) =>
+      [...queryKeys.notifications.all, "preferences", projectId] as const,
+  },
+  hostops: {
+    all: ["hostops"] as const,
+    dockerInventory: (projectId: string, stats: boolean) =>
+      [...queryKeys.hostops.all, "docker", projectId, stats] as const,
+    kubernetesInventory: (projectId: string, namespace: string | null) =>
+      [...queryKeys.hostops.all, "kubernetes", projectId, namespace ?? "all-namespaces"] as const,
+    containerLogs: (projectId: string, container: string) =>
+      [...queryKeys.hostops.all, "container-logs", projectId, container] as const,
+    podDetail: (projectId: string, namespace: string, pod: string) =>
+      [...queryKeys.hostops.all, "pod-detail", projectId, namespace, pod] as const,
+  },
 } as const;

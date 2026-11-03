@@ -15,6 +15,7 @@ import {
   Rocket,
   Cpu,
   FileSearch,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,17 +49,20 @@ const NAV_ITEMS = [
   { href: "/analysis", label: "Plan analysis", icon: FileSearch },
   { href: "/models", label: "Model tiers", icon: Cpu },
   { href: "/audit", label: "Audit", icon: ScrollText },
+  // Settings, not a feature: a GitHub link belongs to the person and outlives every project made
+  // with it, so it is inspected and revoked from here rather than from a project screen.
+  { href: "/settings/integrations", label: "Integrations", icon: Plug },
 ] as const;
 
 export function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r bg-sidebar-background md:block">
-      <div className="flex h-14 items-center border-b px-4">
+    <aside className="hidden w-64 shrink-0 border-r bg-sidebar-background md:flex md:flex-col h-full">
+      <div className="flex h-14 shrink-0 items-center border-b px-4">
         <span className="text-lg font-semibold text-sidebar-foreground">ForgeOps</span>
       </div>
-      <nav aria-label="Primary" className="p-2">
+      <nav aria-label="Primary" className="flex-1 overflow-y-auto overscroll-y-contain p-2">
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
           const active = pathname === href;
           return (

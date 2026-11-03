@@ -41,7 +41,11 @@ GENERATED_RUN_AS_USER: Final[int] = 1001
 #: A SHA, not a tag, because `pipeline_actions_pinned` requires exactly 40 lowercase hex characters and
 #: the supply-chain reason behind that rule applies to the user's pipeline as much as to ours. This
 #: value is not invented: it is the same pin `.github/workflows/` uses, so there is one place to update.
-CHECKOUT_ACTION: Final[str] = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2"
+#: TWO SPACES BEFORE THE COMMENT, which is not cosmetic here: `yamllint`'s `comments` rule requires two
+#: and the agent's own validator runs it over this artifact, so one space made the generated workflow
+#: fail the validator that generated it. Caught the moment the backend shard was given `yamllint` —
+#: before that the test could not run and reported a missing tool instead.
+CHECKOUT_ACTION: Final[str] = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2"
 
 #: Test command per runtime, keyed by the runtime `_render` detects. `pipeline_runs_tests` matches the
 #: step's COMMAND, so a job merely named "test" does not count — and rightly, since a pipeline with no

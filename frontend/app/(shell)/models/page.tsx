@@ -2,6 +2,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { AsyncState } from "@/components/ui/async-state";
 import { CustomEndpointForm } from "@/features/models/CustomEndpointForm";
@@ -103,7 +104,15 @@ function statusLabel(tier: TierInfo): { text: string; className: string } {
  * kept visibly distinct from "working". Loading this page still probes nothing, because a dashboard that
  * called every vendor on render would put load on all of them every time somebody glanced at it.
  */
+/** The Gemini models the Generation page can select, fastest-measured first (2026-11-02). */
+const GEMINI_MODELS = [
+  { id: "gemini-2.5-flash", note: "fastest measured, ~6s for a small file" },
+  { id: "gemini-3.5-flash", note: "~23s for a small file" },
+  { id: "gemini-3.8-flash", note: "newest; often overloaded" },
+] as const;
+
 export default function ModelTiersPage() {
+  const [geminiModel, setGeminiModel] = useState<string>(GEMINI_MODELS[0].id);
   const tiers = useQuery({
     queryKey: queryKeys.ai.tiers(),
     queryFn: () => api.get<TiersResponse>("/ai/tiers"),
@@ -123,6 +132,49 @@ export default function ModelTiersPage() {
           what is configured for it, and what the last real call to it actually said.
         </p>
       </div>
+
+      {/* GEMINI HAS ITS OWN SECTION because it is selected per run on the Manual Generation page rather
+          than reached through a tier's cascade. The model id is the one verified against Google's model
+          list; the key is write-only like every other here. */}
+      <section
+        className="rounded-lg border border-border p-4"
+        aria-label="Google Gemini"
+        data-testid="gemini-provider"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-base font-semibold">Google Gemini</h2>
+          <span className="text-xs text-muted-foreground">
+            Provider: Google Gemini · One key for every Gemini model
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Selectable on the Generation page. A run that selects Gemini calls Gemini only; if it is
+          unavailable the run fails with Google&rsquo;s reason and nothing else is called.
+        </p>
+        <label className="mt-3 block text-xs font-medium" htmlFor="gemini-test-model">
+          Model to test
+        </label>
+        <select
+          id="gemini-test-model"
+          data-testid="gemini-test-model"
+          value={geminiModel}
+          onChange={(event) => setGeminiModel(event.target.value)}
+          className="mt-1 w-full rounded-md border border-border bg-background p-2 text-xs"
+        >
+          {GEMINI_MODELS.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.id} — {model.note}
+            </option>
+          ))}
+        </select>
+        {/* Keyed by model so a result for one model is never shown beside another. */}
+        <ProviderCredentialForm
+          key={geminiModel}
+          keyRef="google"
+          endpointId={geminiModel}
+          configured={credentials.data?.find((entry) => entry.key_ref === "google")}
+        />
+      </section>
 
       <AsyncState
         isPending={tiers.isPending}

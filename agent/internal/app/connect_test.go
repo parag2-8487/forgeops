@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/parag8487/ForgeOps/agent/internal/config"
+	"github.com/parag8487/ForgeOps/agent/internal/session"
 )
 
 // `forgeops-agent connect` — the whole first run in one command.
@@ -216,5 +217,57 @@ func TestConnect_HasOnlyTheFlagsTheUIRenders(t *testing.T) {
 			t.Errorf("connect accepts --%s, which the UI does not know about; add it to "+
 				"AGENT_COMMANDS or to NOT_RENDERED", name)
 		}
+	}
+}
+
+func TestConnect_AlreadyPairedWithCodeRefusesWithoutReplace(t *testing.T) {
+	app := connectApp(t, map[string]string{
+		"AGENT_BACKEND_WSS_URL": "ws://127.0.0.1:1/api/v1/ws/agent",
+	})
+	store, err := app.CredentialStore()
+	if err != nil {
+		t.Fatalf("CredentialStore: %v", err)
+	}
+	err = store.Save(t.Context(), session.Credentials{
+		DeviceID:    "device-123",
+		ProjectID:   "project-123",
+		DeviceToken: []byte("token-123"),
+	})
+	if err != nil {
+		t.Fatalf("store.Save: %v", err)
+	}
+
+	_, err = runConnect(t, app, "--code", "NEWCOD")
+	if err == nil {
+		t.Fatal("connect must refuse when --code is passed to an already paired agent without --replace")
+	}
+	if !strings.Contains(err.Error(), "--replace") {
+		t.Errorf("refusal should mention --replace, got: %v", err)
+	}
+}
+
+func TestConnect_ReplaceRequiresCode(t *testing.T) {
+	app := connectApp(t, map[string]string{
+		"AGENT_BACKEND_WSS_URL": "ws://127.0.0.1:1/api/v1/ws/agent",
+	})
+	store, err := app.CredentialStore()
+	if err != nil {
+		t.Fatalf("CredentialStore: %v", err)
+	}
+	err = store.Save(t.Context(), session.Credentials{
+		DeviceID:    "device-123",
+		ProjectID:   "project-123",
+		DeviceToken: []byte("token-123"),
+	})
+	if err != nil {
+		t.Fatalf("store.Save: %v", err)
+	}
+
+	_, err = runConnect(t, app, "--replace")
+	if err == nil {
+		t.Fatal("connect must refuse when --replace is passed without --code")
+	}
+	if !strings.Contains(err.Error(), "--replace needs --code") {
+		t.Errorf("refusal should mention '--replace needs --code', got: %v", err)
 	}
 }

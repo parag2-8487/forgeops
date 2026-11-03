@@ -40,6 +40,19 @@ describe("suggestGenerationPrompt", () => {
     expect(s.addresses).toEqual(["dockerfile_non_root", "kubernetes_probes_declared"]);
   });
 
+  it("asks for a docker-compose.yml with exposed host ports when compose_file_present is failing", () => {
+    const s = suggestGenerationPrompt([
+      check("dockerfile_present", false),
+      check("compose_file_present", false),
+      check("kubernetes_manifests_present", false),
+    ]);
+    expect(s.prompt).toContain("a Dockerfile, a docker-compose.yml, and Kubernetes manifests");
+    expect(s.prompt).toContain("docker-compose.yml");
+    expect(s.prompt).toContain("exposed host ports");
+    expect(s.addresses).toContain("compose_file_present");
+    expect(s.outOfScope).not.toContain("a Compose file");
+  });
+
   it("offers NO prompt when every failing check needs an artifact generation does not emit", () => {
     // This is the case the real project hit: 86/100 with the four failures all being CI, environment
     // and IaC. A prompt here would be a run that cannot change the score.

@@ -56,6 +56,22 @@ class PlanDocument:
         if not isinstance(raw, dict):
             raise ValueError("Plan JSON must be an object")
 
+        # THE SHAPE THE ANALYSER WALKS IS CHECKED HERE, not discovered by crashing in it. A plan whose
+        # `resource_changes` was a string reached `SemanticPlanAnalyzer` and raised AttributeError, which
+        # the Plan Analysis page showed as "500 Internal Server Error" instead of naming the bad field
+        # (found 2026-11-02).
+        changes = raw.get("resource_changes", [])
+        if not isinstance(changes, list):
+            raise ValueError("resource_changes must be a list of resource change objects")
+        for index, entry in enumerate(changes):
+            if not isinstance(entry, dict):
+                raise ValueError(f"resource_changes[{index}] must be an object")
+            change = entry.get("change", {})
+            if not isinstance(change, dict):
+                raise ValueError(f"resource_changes[{index}].change must be an object")
+            if not isinstance(change.get("actions", []), list):
+                raise ValueError(f"resource_changes[{index}].change.actions must be a list")
+
         return cls(
             raw=raw,
             format_version=raw.get("format_version", ""),

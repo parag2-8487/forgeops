@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -226,7 +227,123 @@ func (r *Runner) Run(ctx context.Context, tool string, args ...string) (Outcome,
 	return outcome, nil
 }
 
+// RunWithStdin executes a tool with `stdin` written to its standard input and then closed.
+//
+// This exists for ONE REASON: a credential must not travel in argv. `docker login -p <secret>` and
+// `helm registry login -p <secret>` put the secret where `ps` shows it to every other user on the
+// machine, and both tools print a deprecation warning saying exactly that. The stdin path is the
+// supported one, so the runner has to be able to reach it.
+//
+// The input is written and the pipe closed before `Wait`, because a tool reading to EOF blocks for ever
+// against a pipe nobody closed ? which presents as the operation's timeout rather than as a mistake here.
+func (r *Runner) RunWithStdin(ctx context.Context, stdin string, tool string, args ...string) (Outcome, error) {
+	if _, err := r.Look(tool); err != nil {
+		return Outcome{Tool: tool}, err
+	}
+	return r.execWithStdin(ctx, stdin, tool, args...)
+}
+
+// LineCallback is called on each line emitted to stdout or stderr.
+type LineCallback func(string)
+
+type streamingWriter struct {
+	underlying io.Writer
+	onLine     LineCallback
+	buf        bytes.Buffer
+	mu         sync.Mutex
+}
+
+func (s *streamingWriter) Write(p []byte) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, err = s.underlying.Write(p)
+	s.buf.Write(p)
+	for {
+		line, err := s.buf.ReadString('\n')
+		if err != nil {
+			s.buf.WriteString(line)
+			break
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && s.onLine != nil {
+			s.onLine(trimmed)
+		}
+	}
+	return n, err
+}
+
+func (s *streamingWriter) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.buf.Len() > 0 && s.onLine != nil {
+		trimmed := strings.TrimSpace(s.buf.String())
+		if trimmed != "" {
+			s.onLine(trimmed)
+		}
+		s.buf.Reset()
+	}
+}
+
+// RunWithStreaming executes a tool and streams every stdout/stderr line to onLine in real time.
+func (r *Runner) RunWithStreaming(ctx context.Context, onLine LineCallback, tool string, args ...string) (Outcome, error) {
+	if _, err := r.Look(tool); err != nil {
+		return Outcome{Tool: tool}, err
+	}
+	return r.execWithStreaming(ctx, onLine, tool, args...)
+}
+
+func (r *Runner) execWithStreaming(ctx context.Context, onLine LineCallback, tool string, args ...string) (Outcome, error) {
+	started := time.Now()
+	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd.Dir = r.Dir
+	if len(r.Env) > 0 {
+		cmd.Env = append(cmd.Environ(), r.Env...)
+	}
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { return terminateGroup(cmd) }
+	cmd.WaitDelay = 5 * time.Second
+
+	var combined bytes.Buffer
+	limited := &limitedWriter{w: &combined, remaining: maxCaptureBytes}
+	streamer := &streamingWriter{underlying: limited, onLine: onLine}
+	cmd.Stdout = streamer
+	cmd.Stderr = streamer
+
+	runErr := cmd.Run()
+	streamer.Flush()
+
+	outcome := Outcome{
+		Tool:     tool,
+		Command:  append([]string{tool}, args...),
+		Output:   strings.TrimRight(combined.String(), "\r\n"),
+		Duration: time.Since(started),
+	}
+	if limited.truncated {
+		outcome.Output += fmt.Sprintf("\n[output truncated at %d bytes]", maxCaptureBytes)
+	}
+
+	var exitErr *exec.ExitError
+	switch {
+	case runErr == nil:
+		outcome.ExitCode = 0
+		outcome.Passed = true
+	case errors.As(runErr, &exitErr):
+		outcome.ExitCode = exitErr.ExitCode()
+		outcome.Passed = false
+	default:
+		return outcome, fmt.Errorf("validator: %s could not be run: %w", tool, runErr)
+	}
+	if ctx.Err() != nil {
+		return outcome, fmt.Errorf("validator: %s did not finish: %w", tool, ctx.Err())
+	}
+	return outcome, nil
+}
+
 func (r *Runner) exec(ctx context.Context, tool string, args ...string) (Outcome, error) {
+	return r.execWithStdin(ctx, "", tool, args...)
+}
+
+func (r *Runner) execWithStdin(ctx context.Context, stdin string, tool string, args ...string) (Outcome, error) {
 	started := time.Now()
 	cmd := exec.CommandContext(ctx, tool, args...)
 	cmd.Dir = r.Dir
@@ -246,6 +363,12 @@ func (r *Runner) exec(ctx context.Context, tool string, args ...string) (Outcome
 	limited := &limitedWriter{w: &combined, remaining: maxCaptureBytes}
 	cmd.Stdout = limited
 	cmd.Stderr = limited
+
+	if stdin != "" {
+		// A strings.Reader rather than a pipe written by hand: exec closes it at EOF and does not need a
+		// goroutine, so there is no path where the writer outlives the process.
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 
 	runErr := cmd.Run()
 	outcome := Outcome{

@@ -21,6 +21,7 @@ header still says `Bearer`, so a legitimate client knows what to present.
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 import httpx
@@ -29,6 +30,8 @@ from ..core.errors import ProblemException, problem
 from ..core.security import Claims, OidcTokenVerifier
 from .models import UserRole
 from .principal import Principal
+
+_log = logging.getLogger(__name__)
 
 
 class AppTokenVerifier(OidcTokenVerifier):
@@ -71,6 +74,7 @@ class AppTokenVerifier(OidcTokenVerifier):
         still accepted because the base class passes it, and refusing it would mean
         overriding `verify` too.
         """
+        _log.warning("token refused: %s (%s)", mode, detail)
         del title, detail
         return problem(self.problem_types[mode])
 
@@ -108,6 +112,7 @@ class AppTokenVerifier(OidcTokenVerifier):
     def _role_from_claims(raw: dict) -> UserRole:
         value = raw.get("forgeops_role")
         if not isinstance(value, str):
+            _log.warning("token refused: no forgeops_role claim")
             raise problem("unauthenticated")
         try:
             return UserRole(value)

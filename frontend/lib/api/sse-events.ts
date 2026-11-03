@@ -23,6 +23,10 @@ export const SSE_EVENTS = [
   "status",
   "token",
   "progress",
+  // 2.2's live deployment output. Added to the closed vocabulary rather than reusing `progress`, which
+  // carries a percentage and a phase while a log line carries text: a client rendering one as the other
+  // shows a progress bar made of sentences or a log made of percentages.
+  "log",
   "validation",
   "complete",
   "error",

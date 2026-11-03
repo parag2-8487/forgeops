@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { AppHeader } from "@/components/layout/app-header";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { ThemeProvider } from "@/components/providers/theme-provider";
 
 // Mock next/navigation
 let mockPathname = "/";
@@ -57,6 +58,9 @@ describe("AppSidebar", () => {
     ["/analysis", "Plan analysis"],
     ["/models", "Model tiers"],
     ["/audit", "Audit"],
+    // Settings rather than a feature: a GitHub link belongs to the person and outlives every project
+    // made with it, so it is inspected and revoked from here.
+    ["/settings/integrations", "Integrations"],
   ] as const;
 
   it("renders one navigation link per route, in order", () => {
@@ -156,5 +160,26 @@ describe("ThemeToggle", () => {
     const button = screen.getByRole("button", { name: /theme/i });
     await user.click(button);
     expect(mockSetTheme).toHaveBeenCalledWith("dark");
+  });
+
+  it("calls setTheme on click when theme is dark", async () => {
+    mockTheme = "dark";
+    render(<ThemeToggle />);
+    const user = userEvent.setup();
+    const button = screen.getByRole("button", { name: /switch to light theme/i });
+    expect(button).toBeInTheDocument();
+    await user.click(button);
+    expect(mockSetTheme).toHaveBeenCalledWith("light");
+  });
+});
+
+describe("ThemeProvider", () => {
+  it("renders children wrapped cleanly", () => {
+    const { container } = render(
+      <ThemeProvider attribute="class">
+        <span>Child content</span>
+      </ThemeProvider>,
+    );
+    expect(container).toHaveTextContent("Child content");
   });
 });

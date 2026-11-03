@@ -133,11 +133,21 @@ _COMMAND_STREAM: Final[str] = "forgeops:agentcmd:{device_id}"
 #: `hashes?` — none of which names the change set — and no column carries the pairing either.
 _COMMAND_CHANGE_SET: Final[str] = "forgeops:cmdchangeset:{command_id}"
 
-#: Comfortably longer than the longest operation timeout the agent applies (two minutes for a
-#: write), so a slow apply still finds its mapping, and short enough that the key is not a second
-#: durable record of every command ever sent.
-_COMMAND_CHANGE_SET_TTL_SECONDS: Final[int] = 900
+#: Comfortably longer than any build or apply timeout, so a long apply still finds its mapping,
+#: with durable SQL fallback if evicted.
+_COMMAND_CHANGE_SET_TTL_SECONDS: Final[int] = 86400
 _RESULT_CHANNEL: Final[str] = "forgeops:cmdresult:{command_id}"
+
+#: Which device a command was delivered to, so an unanswered command can be judged against THAT device's
+#: connection rather than against whichever agent happens to be connected to the project now.
+_COMMAND_DEVICE: Final[str] = "forgeops:cmddevice:{command_id}"
+
+#: The agent cancels any command after 30 minutes (`session/serve.go`, `execute`). A change set still
+#: `applying` well past that can no longer receive a result.
+UNANSWERED_COMMAND_LIMIT_SECONDS: Final[int] = 35 * 60
+#: How long a delivering device may be absent before its in-flight commands are declared lost. Longer than
+#: several heartbeats, so a brief reconnect -- which redelivers queued results -- is not misread as death.
+DISCONNECTED_GRACE_SECONDS: Final[int] = 180
 _PROGRESS_CHANNEL: Final[str] = "forgeops:sse:command:{command_id}"
 
 #: How long a delivered-but-unread command stays on the stream.
@@ -323,7 +333,14 @@ class CommandResultRecorder(Protocol):
     left its change set at `applying` for ever with an empty rollback manifest.
     """
 
-    async def record(self, *, change_set_id: uuid.UUID, status: str, backup_manifest: Any) -> str: ...
+    async def record(
+        self,
+        *,
+        change_set_id: uuid.UUID,
+        status: str,
+        backup_manifest: Any = None,
+        output: Any = None,
+    ) -> str: ...
 
     async def record_rolled_back(self, *, change_set_id: uuid.UUID, reason: str) -> str:
         """Finalise a change set the agent rolled back itself.
@@ -718,6 +735,16 @@ class AgentHub:
         with contextlib.suppress(Exception):
             change_set_id = await self._deps.redis.get(_COMMAND_CHANGE_SET.format(command_id=command_id))
         if not change_set_id:
+            with contextlib.suppress(Exception):
+                async with self._session_scope() as session:
+                    res = await session.execute(
+                        text("SELECT id FROM change_sets WHERE command_id = :cmd_id LIMIT 1"),
+                        {"cmd_id": command_id},
+                    )
+                    row = res.first()
+                    if row:
+                        change_set_id = str(row[0])
+        if not change_set_id:
             logger.warning(
                 "an apply-rolled-back report arrived with no known change set",
                 extra={"command_id": command_id},
@@ -774,8 +801,18 @@ class AgentHub:
         with contextlib.suppress(Exception):
             change_set_id = await self._deps.redis.get(_COMMAND_CHANGE_SET.format(command_id=command_id))
         if not change_set_id:
-            logger.warning(
-                "a command result arrived with no known change set; it cannot be finalised",
+            with contextlib.suppress(Exception):
+                async with self._session_scope() as session:
+                    res = await session.execute(
+                        text("SELECT id FROM change_sets WHERE command_id = :cmd_id LIMIT 1"),
+                        {"cmd_id": command_id},
+                    )
+                    row = res.first()
+                    if row:
+                        change_set_id = str(row[0])
+        if not change_set_id:
+            logger.debug(
+                "command result carries no associated change set (e.g. read operation); skipping finalisation",
                 extra={"command_id": command_id},
             )
             return
@@ -784,6 +821,7 @@ class AgentHub:
                 change_set_id=uuid.UUID(str(change_set_id)),
                 status=str(params.get("status") or ""),
                 backup_manifest=params.get("backup_manifest"),
+                output=params.get("output"),
             )
         except Exception as exc:  # noqa: BLE001 - a failed finalise must not close a healthy socket
             logger.error(
@@ -829,6 +867,8 @@ class AgentHub:
         # the apply timeout is two minutes — losing the mapping leaves the set `applying` and
         # retryable, which is the failure mode this whole path already treats as recoverable.
         change_set_id = str((envelope.get("args") or {}).get("change_set_id") or "")
+        if not change_set_id and hasattr(command, "authority") and getattr(command, "authority", None) is not None:
+            change_set_id = str(getattr(command.authority, "change_set_id", "") or "")
         if change_set_id:
             with contextlib.suppress(Exception):
                 await self._deps.redis.set(
@@ -836,6 +876,10 @@ class AgentHub:
                     change_set_id,
                     ex=_COMMAND_CHANGE_SET_TTL_SECONDS,
                 )
+        with contextlib.suppress(Exception):
+            await self._deps.redis.set(
+                _COMMAND_DEVICE.format(command_id=command_id), str(device_id), ex=_COMMAND_CHANGE_SET_TTL_SECONDS
+            )
 
         # Refuse rather than enqueue for a device with no live session, and fail closed when Redis
         # cannot answer. This preserves exactly what `UnavailableCommandSink` guaranteed before the
@@ -877,6 +921,74 @@ class AgentHub:
             raise
         future.add_done_callback(lambda _f: listener.cancel())
         return CommandFuture(command_id=command_id, _future=future)
+
+    async def settle_unanswered_commands(self) -> int:
+        """Fail every change set whose command can no longer be answered. Returns how many were settled.
+
+        THE STUCK "applying". A change set leaves `applying` only when its agent answers. When the answer
+        never comes -- the agent process was restarted or killed mid-command, or it is past its own
+        30-minute execution limit -- nothing moved it, and the deployment it carried read "applying, no
+        output yet" for ever (2026-11-02). Two verdicts, each with a reason the operator can act on:
+
+        * the device the command was delivered to has had no live session for DISCONNECTED_GRACE_SECONDS;
+        * the change set has been applying longer than UNANSWERED_COMMAND_LIMIT_SECONDS.
+
+        Settled through the recorder exactly as a real failure is, so the deployment and any autonomous
+        gate waiting on it settle too. The chokepoint's update is guarded by `status = 'applying'`, so a
+        genuine result that races this is never overwritten -- whichever lands first wins.
+        """
+        recorder = self._deps.results
+        if recorder is None:
+            return 0
+        async with self._session_scope() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, command_id, EXTRACT(EPOCH FROM (now() - created_at)) AS age FROM change_sets "
+                        "WHERE status = 'applying' AND command_id IS NOT NULL "
+                        "AND created_at < now() - make_interval(secs => :grace)"
+                    ),
+                    {"grace": DISCONNECTED_GRACE_SECONDS},
+                )
+            ).all()
+        settled = 0
+        for change_set_id, command_id, age in rows:
+            reason: str | None = None
+            if float(age) > UNANSWERED_COMMAND_LIMIT_SECONDS:
+                reason = (
+                    f"No result arrived from the agent within {UNANSWERED_COMMAND_LIMIT_SECONDS // 60} minutes; the "
+                    "agent stops any command after 30. Nothing was confirmed -- run it again."
+                )
+            else:
+                device_id: str | None = None
+                with contextlib.suppress(Exception):
+                    raw = await self._deps.redis.get(_COMMAND_DEVICE.format(command_id=command_id))
+                    device_id = raw.decode() if isinstance(raw, bytes) else raw
+                if device_id and not await self._has_live_session(uuid.UUID(str(device_id))):
+                    reason = (
+                        "The agent that was running this command disconnected before reporting a result (it was "
+                        "restarted, closed, or lost its connection). Nothing was confirmed -- reconnect the agent "
+                        "and run it again."
+                    )
+            if reason is None:
+                continue
+            try:
+                await recorder.record(change_set_id=change_set_id, status="failed", output=reason)
+                settled += 1
+                logger.warning(
+                    "settled an unanswered command as failed",
+                    extra={"change_set_id": str(change_set_id), "command_id": str(command_id), "reason": reason},
+                )
+            except Exception:  # noqa: BLE001 - one bad row must not stop the sweep
+                logger.exception("could not settle an unanswered command", extra={"change_set_id": str(change_set_id)})
+        return settled
+
+    async def run_unanswered_command_sweeper(self, *, interval_seconds: float = 30.0) -> None:
+        """Run `settle_unanswered_commands` for as long as the process lives."""
+        while True:
+            with contextlib.suppress(Exception):
+                await self.settle_unanswered_commands()
+            await asyncio.sleep(interval_seconds)
 
     async def _has_live_session(self, device_id: uuid.UUID) -> bool:
         """Whether any replica holds a heartbeating session for this device.

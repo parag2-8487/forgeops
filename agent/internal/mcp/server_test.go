@@ -20,6 +20,21 @@ import (
 type fakeRunner struct {
 	validateFn func(ctx context.Context, workdir string) (*iac.ValidateResult, error)
 	planFn     func(ctx context.Context, workdir string, opts iac.PlanOptions) (*iac.PlanResult, error)
+	// applyCalls counts something that must never happen. See `Apply` below.
+	applyCalls int
+}
+
+// Apply exists because `iac.Runner` gained it in Phase 2 and NOT because the MCP surface may apply
+// anything. It fails, loudly, and the count is asserted to be zero.
+//
+// THE COMPILE ERROR THAT BROUGHT THIS HERE IS THE INTERFACE DOING ITS JOB. Widening `iac.Runner` broke
+// every double in one obvious place, which is exactly what `contract_test.go` says the assertion is for.
+// The tempting fix was a method returning an empty result; that would have given the MCP tool surface a
+// silent, working apply that no approval covered -- an AI-initiated `tofu apply` outside the chokepoint,
+// which is the most serious thing this codebase could accidentally acquire.
+func (f *fakeRunner) Apply(ctx context.Context, workdir string, opts iac.ApplyOptions) (*iac.ApplyResult, error) {
+	f.applyCalls++
+	return nil, errors.New("the MCP surface must never apply infrastructure")
 }
 
 func (f *fakeRunner) Validate(ctx context.Context, workdir string) (*iac.ValidateResult, error) {
@@ -719,4 +734,24 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestTheMcpSurfaceNeverApplies is the assertion behind `fakeRunner.Apply`'s refusal.
+//
+// The MCP tools are a surface an AI drives. `validate` and `plan` read; an apply creates and destroys real
+// infrastructure and must travel the chokepoint's six stages with a human approval attached. `toolMeta` is
+// the registry every registered tool appears in, so walking it is walking the surface.
+func TestTheMcpSurfaceNeverApplies(t *testing.T) {
+	for name, meta := range toolMeta {
+		if strings.Contains(strings.ToLower(name), "apply") {
+			t.Fatalf("the MCP surface registers %q, which an AI could drive with no approval attached", name)
+		}
+		// AND NO TOOL MAY CLAIM A BLAST RADIUS BEYOND THE WORKSPACE. `read_only` and `workspace` are the
+		// only two this surface is allowed to have; anything wider is infrastructure, which belongs behind
+		// an approval and not behind a tool call.
+		if meta.BlastRadius != "read_only" && meta.BlastRadius != "workspace" {
+			t.Fatalf("MCP tool %q declares blast radius %q, which is wider than this surface may be",
+				name, meta.BlastRadius)
+		}
+	}
 }

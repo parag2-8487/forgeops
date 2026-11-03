@@ -44,13 +44,9 @@ func NewFilteredScanner(maxSizeBytes int64, projectLang string) *FilteredScanner
 	}
 }
 
-// IsBinary returns true if content appears to be binary data (contains null bytes in first 512 bytes).
+// IsBinary returns true if content appears to be binary data (contains any null byte).
 func IsBinary(content []byte) bool {
-	sample := content
-	if len(sample) > 512 {
-		sample = sample[:512]
-	}
-	return bytes.IndexByte(sample, 0) != -1
+	return bytes.IndexByte(content, 0) != -1
 }
 
 // scannedFile is one file that passed every filter, handed to a WalkFiles callback.

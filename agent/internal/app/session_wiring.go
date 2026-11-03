@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -39,9 +40,16 @@ import (
 // touches the filesystem cannot be loaded and validated without one. The container sets the
 // value explicitly (`/workspace`, where the project is mounted), so this default is for a
 // developer running the binary inside a checkout.
-func workspaceRoot(configured string) (string, error) {
+func workspaceRoot(configured string, store session.Store) (string, error) {
 	if configured != "" {
 		return configured, nil
+	}
+	if store != nil {
+		if creds, err := store.Load(context.Background()); err == nil && strings.TrimSpace(creds.WorkspaceRoot) != "" {
+			if info, err := os.Stat(creds.WorkspaceRoot); err == nil && info.IsDir() {
+				return creds.WorkspaceRoot, nil
+			}
+		}
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -189,7 +197,7 @@ func (a *App) buildSessionDeps(store *session.FileStore) (session.Deps, error) {
 		return zero, fmt.Errorf("agent: envelope verifier: %w", err)
 	}
 
-	root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot)
+	root, err := workspaceRoot(a.cfg.Executor.WorkspaceRoot, store)
 	if err != nil {
 		return zero, err
 	}

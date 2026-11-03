@@ -72,7 +72,7 @@ endpoints:
     protocol: openai_compatible
     base_url: ${SELF_HOSTED_BASE_URL}
     key_ref: null
-    timeout_seconds: 60
+    timeout_seconds: 1200
     rank_source: unranked
   qwen3-coder-standby:
     provider: self_hosted
@@ -84,7 +84,7 @@ endpoints:
     protocol: openai_compatible
     base_url: ${SELF_HOSTED_SECONDARY_BASE_URL}
     key_ref: null
-    timeout_seconds: 60
+    timeout_seconds: 1200
     rank_source: unranked
   glm-5.2:
     provider: self_hosted
@@ -126,3 +126,37 @@ endpoints:
     key_ref: google
     timeout_seconds: 60
     rank_source: internal_golden
+  gemini-2.5-flash:
+    provider: google
+    # VERIFIED in `GET /v1beta/models` on 2026-11-02 (generateContent, 1,048,576 in / 65,536 out). The
+    # generally-available model: measured the same day at 5.5-6.3s for a small artifact while 3.8 Flash
+    # took 114s and then timed out, because the newest models carry the most demand.
+    model: gemini-2.5-flash
+    protocol: google_native
+    base_url: ${GOOGLE_BASE_URL}
+    key_ref: google
+    timeout_seconds: 300
+    rank_source: unranked
+  gemini-3.5-flash:
+    provider: google
+    # VERIFIED in `GET /v1beta/models` on 2026-11-02; measured 22-24s for the same small artifact.
+    model: gemini-3.5-flash
+    protocol: google_native
+    base_url: ${GOOGLE_BASE_URL}
+    key_ref: google
+    timeout_seconds: 300
+    rank_source: unranked
+  gemini-3.8-flash:
+    provider: google
+    # VERIFIED, not assumed: `models/gemini-3.8-flash` was listed by `GET /v1beta/models` on 2026-11-02
+    # with `generateContent` among its supported methods (1,048,576 input / 65,536 output tokens).
+    # Selectable on the Manual Generation page; a run pinned here calls this endpoint and nothing else.
+    model: gemini-3.8-flash
+    protocol: google_native
+    base_url: ${GOOGLE_BASE_URL}
+    key_ref: google
+    # MEASURED 2026-11-02: under Google's "high demand" the first streamed byte arrived after 262s, and
+    # 503 UNAVAILABLE was returned on other calls minutes apart. 300s bounds a stalled stream without
+    # cutting off one Google is merely queueing.
+    timeout_seconds: 300
+    rank_source: unranked

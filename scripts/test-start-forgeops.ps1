@@ -315,6 +315,84 @@ Check 'the launcher file is pure ASCII' {
     $true
 }
 
+Write-Host ''
+Write-Host 'Installation Mode Detection & Self-Repair Audit' -ForegroundColor Cyan
+
+Check 'Get-ForgeOpsInstallationMode returns Fresh when env is empty' {
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{} -InstalledVer '' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $null
+    $plan.Mode -eq 'Fresh'
+}
+
+Check 'Get-ForgeOpsInstallationMode returns Fresh when IsFresh is true' {
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{'ENVELOPE_PEPPER'='abc'} -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $true -IsRebuild $false -IsNoReset $false -ComposePsResult $null
+    $plan.Mode -eq 'Fresh'
+}
+
+Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsRepair when required secret is missing' {
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig @{'BACKEND_PORT'='18000'} -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $null
+    $plan.Mode -eq 'ExistingNeedsRepair'
+}
+
+Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsUpdate when installed version is older' {
+    $mockPs = [PSCustomObject]@{
+        Ok = $true
+        Lines = @(
+            'postgres|running|healthy', 'redis|running|healthy', 'cerbos|running|healthy', 'opa|running|healthy',
+            'authentik-server|running|healthy', 'authentik-worker|running|healthy', 'backend|running|healthy',
+            'worker|running|healthy', 'backend-agent|running|healthy', 'frontend|running|healthy',
+            'inngest|running|healthy', 'ollama|running|healthy', 'ollama-secondary|running|healthy'
+        )
+    }
+    $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.1' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
+    $plan.Mode -eq 'ExistingNeedsUpdate'
+}
+
+Check 'Get-ForgeOpsInstallationMode returns ExistingHealthy when all services are healthy and version matches' {
+    $mockPs = [PSCustomObject]@{
+        Ok = $true
+        Lines = @(
+            'postgres|running|healthy', 'redis|running|healthy', 'cerbos|running|healthy', 'opa|running|healthy',
+            'authentik-server|running|healthy', 'authentik-worker|running|healthy', 'backend|running|healthy',
+            'worker|running|healthy', 'backend-agent|running|healthy', 'frontend|running|healthy',
+            'inngest|running|healthy', 'ollama|running|healthy', 'ollama-secondary|running|healthy'
+        )
+    }
+    $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
+    ($plan.Mode -eq 'ExistingHealthy') -and ($plan.MissingServices.Count -eq 0)
+}
+
+Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsRepair when a service is stopped or missing' {
+    $mockPs = [PSCustomObject]@{
+        Ok = $true
+        Lines = @(
+            'postgres|running|healthy', 'redis|running|healthy', 'cerbos|running|healthy', 'opa|running|healthy',
+            'authentik-server|running|healthy', 'authentik-worker|running|healthy', 'backend|running|healthy',
+            'worker|exited|', 'backend-agent|running|healthy', 'frontend|running|healthy',
+            'inngest|running|healthy', 'ollama|running|healthy', 'ollama-secondary|running|healthy'
+        )
+    }
+    $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $false -IsNoReset $false -ComposePsResult $mockPs
+    ($plan.Mode -eq 'ExistingNeedsRepair') -and ($plan.MissingServices -contains 'worker')
+}
+
+Check 'Get-ForgeOpsInstallationMode returns ExistingNeedsRepair when Rebuild is requested' {
+    $mockPs = [PSCustomObject]@{
+        Ok = $true
+        Lines = @(
+            'postgres|running|healthy', 'redis|running|healthy', 'cerbos|running|healthy', 'opa|running|healthy',
+            'authentik-server|running|healthy', 'authentik-worker|running|healthy', 'backend|running|healthy',
+            'worker|running|healthy', 'backend-agent|running|healthy', 'frontend|running|healthy',
+            'inngest|running|healthy', 'ollama|running|healthy', 'ollama-secondary|running|healthy'
+        )
+    }
+    $cfg = @{'ENVELOPE_PEPPER'='abc'; 'AUTHENTIK_SECRET_KEY'='def'; 'BACKEND_PORT'='18000'; 'FRONTEND_PORT'='13000'}
+    $plan = Get-ForgeOpsInstallationMode -EnvConfig $cfg -InstalledVer 'v0.1.3' -IntendedVer 'v0.1.3' -IsFresh $false -IsRebuild $true -IsNoReset $false -ComposePsResult $mockPs
+    $plan.Mode -eq 'ExistingNeedsRepair'
+}
+
 Check 'start.cmd points at the launcher that exists' {
     $cmdText = [System.IO.File]::ReadAllText((Join-Path $RepoRoot 'start.cmd'))
     if ($cmdText -notmatch 'scripts\\start-forgeops\.ps1') { return 'start.cmd does not reference the ps1' }

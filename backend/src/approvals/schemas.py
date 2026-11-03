@@ -82,6 +82,7 @@ class ChangeSetSummary(BaseModel):
     generation_run_id: uuid.UUID | None = None
     created_at: datetime
     applied_at: datetime | None = None
+    operation: str = "changeset.apply"
 
 
 class ChangeSetDetail(ChangeSetSummary):

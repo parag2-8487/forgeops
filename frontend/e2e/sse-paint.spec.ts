@@ -66,11 +66,11 @@ import { sqlScalar } from "./helpers/stack";
  * makes the test faster without making it weaker.
  */
 const PROMPT_POOL = [
-  "Write a multi-stage Dockerfile for a Rust service built with cargo, using a distroless runtime stage.",
-  "Write a multi-stage Dockerfile for a Go service built with go modules, using a scratch runtime stage.",
-  "Write a multi-stage Dockerfile for a Java service built with Maven, using a JRE-only runtime stage.",
-  "Write a multi-stage Dockerfile for a Ruby service installed with bundler, using an Alpine runtime stage.",
-  "Write a multi-stage Dockerfile for a .NET service built with the dotnet CLI, using a runtime-deps stage.",
+  "Write a multi-stage Dockerfile for a Rust service built with cargo, using a distroless runtime stage. Include comments for each stage.",
+  "Write a multi-stage Dockerfile for a Go service built with go modules, using a scratch runtime stage. Include comments for each stage.",
+  "Write a multi-stage Dockerfile for a Java service built with Maven, using a JRE-only runtime stage. Include comments for each stage.",
+  "Write a multi-stage Dockerfile for a Ruby service installed with bundler, using an Alpine runtime stage. Include comments for each stage.",
+  "Write a multi-stage Dockerfile for a .NET service built with the dotnet CLI, using a runtime-deps stage. Include comments for each stage.",
 ] as const;
 
 /**

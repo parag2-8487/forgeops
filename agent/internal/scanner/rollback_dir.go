@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 package scanner
 
 // rollbackStateDirName is the directory an apply writes its pre-images and single-use consumption

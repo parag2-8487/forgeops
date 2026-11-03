@@ -288,9 +288,9 @@ class TestEndpointRegistry:
         config = self._make_config()
         registry = EndpointRegistry.from_config(config)
 
-        # Native endpoints are not instantiated
+        # `anthropic_native` still has no adapter; `google_native` (Gemini) has one since 2026-11-02.
         assert registry.endpoint("claude-fable-5") is None
-        assert registry.endpoint("gemini-3-flash") is None
+        assert registry.endpoint("gemini-3-flash") is not None
 
         avail_claude = registry.get_availability("claude-fable-5")
         assert avail_claude is not None
@@ -300,12 +300,14 @@ class TestEndpointRegistry:
         assert "anthropic_native" in avail_claude.reason, "it names the protocol that has no adapter"
         assert "anthropic" in avail_claude.reason, "and the credential reference that is unset"
 
+        # Gemini is now unavailable for exactly ONE reason -- the missing credential -- and says only that.
         avail_gemini = registry.get_availability("gemini-3-flash")
         assert avail_gemini is not None
         assert avail_gemini.available is False
-        assert avail_gemini.protocol_supported is False
+        assert avail_gemini.protocol_supported is True
         assert avail_gemini.reason is not None
-        assert "google_native" in avail_gemini.reason
+        assert "no credential is configured for 'google'" in avail_gemini.reason
+        assert "no adapter" not in avail_gemini.reason
 
     def test_a_supported_protocol_with_no_credential_is_not_available(self):
         """The defect this file used to assert as correct behaviour.

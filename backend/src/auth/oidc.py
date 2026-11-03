@@ -180,9 +180,17 @@ class PendingLogin:
     verifier: str
     nonce: str
     next_path: str
+    redirect_uri: str = ""
 
     def to_json(self) -> str:
-        return json.dumps({"verifier": self.verifier, "nonce": self.nonce, "next": self.next_path})
+        return json.dumps(
+            {
+                "verifier": self.verifier,
+                "nonce": self.nonce,
+                "next": self.next_path,
+                "redirect_uri": self.redirect_uri,
+            }
+        )
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> PendingLogin:
@@ -191,6 +199,7 @@ class PendingLogin:
             verifier=str(data["verifier"]),
             nonce=str(data["nonce"]),
             next_path=str(data.get("next") or "/"),
+            redirect_uri=str(data.get("redirect_uri") or ""),
         )
 
 
@@ -364,6 +373,10 @@ class OidcClient:
     def client_id(self) -> str:
         return self._client_id
 
+    @property
+    def redirect_url(self) -> str:
+        return self._redirect_url
+
     async def metadata(self) -> OidcMetadata:
         """Fetch and cache the discovery document.
 
@@ -392,8 +405,14 @@ class OidcClient:
         self._metadata = OidcMetadata.from_document(self._issuer, document)
         return self._metadata
 
-    async def authorization_request(self, *, next_path: str = "/") -> tuple[AuthorizationRequest, PendingLogin]:
+    async def authorization_request(
+        self,
+        *,
+        next_path: str = "/",
+        redirect_uri: str | None = None,
+    ) -> tuple[AuthorizationRequest, PendingLogin]:
         """Build the redirect the browser follows, plus the record to hold server-side."""
+        effective_redirect = redirect_uri or self._redirect_url
         metadata = await self.metadata()
         pkce = PkceChallenge.generate()
         state = _b64url(secrets.token_bytes(32))
@@ -402,7 +421,7 @@ class OidcClient:
             {
                 "response_type": "code",
                 "client_id": self._client_id,
-                "redirect_uri": self._redirect_url,
+                "redirect_uri": effective_redirect,
                 "scope": " ".join(self._scopes),
                 "state": state,
                 "nonce": nonce,
@@ -420,16 +439,28 @@ class OidcClient:
                 nonce=nonce,
                 verifier=pkce.verifier,
             ),
-            PendingLogin(verifier=pkce.verifier, nonce=nonce, next_path=next_path),
+            PendingLogin(
+                verifier=pkce.verifier,
+                nonce=nonce,
+                next_path=next_path,
+                redirect_uri=effective_redirect,
+            ),
         )
 
-    async def exchange_code(self, *, code: str, verifier: str) -> TokenResponse:
+    async def exchange_code(
+        self,
+        *,
+        code: str,
+        verifier: str,
+        redirect_uri: str | None = None,
+    ) -> TokenResponse:
         """Exchange an authorization code, presenting the PKCE verifier."""
+        effective_redirect = redirect_uri or self._redirect_url
         return await self._token_request(
             {
                 "grant_type": "authorization_code",
                 "code": code,
-                "redirect_uri": self._redirect_url,
+                "redirect_uri": effective_redirect,
                 "client_id": self._client_id,
                 "code_verifier": verifier,
             }

@@ -12,7 +12,18 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 log=${FORGEOPS_PYTEST_LOG:-/tmp/forgeops-pytest.log}
 cd "$root/backend"
 set +e
-./.venv/Scripts/python.exe -m pytest "$@" >"$log" 2>&1
+if [ -x "./.venv/bin/python" ]; then
+  PY_BIN="./.venv/bin/python"
+elif [ -x "./.venv/Scripts/python.exe" ]; then
+  PY_BIN="./.venv/Scripts/python.exe"
+elif [ -x "./.venv/Scripts/python" ]; then
+  PY_BIN="./.venv/Scripts/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PY_BIN="python3"
+else
+  PY_BIN="python"
+fi
+"$PY_BIN" -m pytest "$@" >"$log" 2>&1
 status=$?
 set -e
 echo "pytest exit=$status  log=$log"

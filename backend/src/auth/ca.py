@@ -45,7 +45,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
+
+try:
+    from datetime import UTC
+except ImportError:  # Python < 3.11
+    UTC = UTC
 from typing import Final, Protocol, runtime_checkable
 
 from cryptography import x509

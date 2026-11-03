@@ -39,11 +39,16 @@ An artifact that passes here has been parsed and shaped, not grepped.
 
 from __future__ import annotations
 
+import fnmatch
+import json
+import posixpath
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 import yaml
+
+from ..core.manifest_facts import dockerfile_runtime_mismatch
 
 #: Kubernetes objects must declare these. `metadata.name` is included because a manifest with an
 #: anonymous object is rejected by every cluster, and the substring gate accepted it.
@@ -98,7 +103,189 @@ def validate_dockerfile(content: str) -> list[str]:
         )
     if "USER" not in instructions:
         findings.append("Dockerfile does not drop root with a USER instruction")
+    for line in content.splitlines():
+        stripped = line.strip()
+        # MULTIPLE SOURCES ARE LEGAL; A NON-DIRECTORY DESTINATION IS NOT. This used to reject every COPY with
+        # more than two arguments as "unquoted arguments containing spaces", which refused the ordinary
+        # `COPY package.json package-lock.json ./` -- Gemini's correct Node Dockerfile was refused on all three
+        # attempts and replaced by a broken fallback (2026-11-02). Docker's actual rule: with several sources,
+        # the destination must be a directory and end with `/`.
+        copy = re.match(r"(?i)^(COPY|ADD)\s+(.*)$", stripped)
+        if copy and not copy.group(2).lstrip().startswith("["):
+            operands = [t for t in copy.group(2).split() if not t.startswith("--")]
+            if len(operands) > 2 and not operands[-1].endswith("/"):
+                findings.append(
+                    f"Dockerfile instruction '{stripped}' copies {len(operands) - 1} sources to "
+                    f"'{operands[-1]}', which is not a directory. With more than one source Docker requires the "
+                    "destination to end with '/', e.g. './'."
+                )
+        if re.search(r"COPY\s+--from=\S+\s+\./(dist|build|public|out)\b", stripped, re.IGNORECASE):
+            findings.append(
+                "Dockerfile uses relative path in COPY --from=... (e.g. './dist'). "
+                "Use absolute path from builder WORKDIR (e.g. '/app/dist') to avoid '/dist: not found' build failures."
+            )
+        if re.search(
+            r"(?i)RUN\s+.*(npm run build|next build|go build|cargo build|gradle build|mvn package|pip install|npm install|npm ci|yarn install|pnpm install)\s+.*\|\|\s*(true|:|exit\s+0)\b",
+            stripped,
+        ):
+            findings.append(
+                "Dockerfile suppresses build or install failure with '|| true' or '|| exit 0'. "
+                "Build errors must return a non-zero exit code to prevent deploying broken artifacts."
+            )
+        if "--frozen-lockfile" in stripped and "npm" in stripped:
+            findings.append("Dockerfile uses invalid flag '--frozen-lockfile' with npm. Use 'npm ci' or 'npm install'.")
+        if "frontent" in stripped.lower():
+            findings.append(
+                "Dockerfile references hallucinated/typoed directory 'frontent'. Copy files directly from root: "
+                "`COPY package*.json ./`."
+            )
+    # Check if final stage invokes npm start or node without package.json copied
+    stages = re.split(r"(?i)^\s*FROM\s+", content, flags=re.MULTILINE)
+    if len(stages) > 1:
+        final_stage = stages[-1]
+        has_pkg_copy = (
+            bool(re.search(r"(?i)COPY\s+.*package.*\.json", final_stage))
+            or bool(re.search(r"(?i)COPY\s+(\S+\s+)?\.\s+", final_stage))
+            or bool(re.search(r"(?i)COPY\s+.*--from=\S+.*\s+(/app|\.)(\s+|/|$)", final_stage))
+        )
+        if re.search(r'(?i)(CMD|ENTRYPOINT)\s+.*["\']npm["\']', final_stage) and not has_pkg_copy:
+            findings.append(
+                "Dockerfile final stage executes 'npm' but does not copy 'package*.json' "
+                "(e.g. `COPY package*.json ./`). This will fail with ENOENT: Could not read package.json at runtime."
+            )
+    # Check workspace package installation ordering
+    lines = content.splitlines()
+    has_workspace_build = any(re.search(r"--workspace[=\s]|workspaces\b", line, re.IGNORECASE) for line in lines)
+    has_ws_copy = any(
+        (
+            re.search(r"COPY\s+.*package.*\.json\s+.*(/\w+|\./\w+)", line, re.IGNORECASE)
+            or re.search(r"COPY\s+\[\s*\"[^\"]+package[^\"]*\.json\"\s*,\s*\"[^\"]+\"\s*\]", line, re.IGNORECASE)
+        )
+        and not line.strip().startswith("COPY --from=")
+        for line in lines
+    )
+    if has_workspace_build or has_ws_copy:
+        install_line_idx = -1
+        first_ws_copy_idx = -1
+        for idx, line in enumerate(lines):
+            s = line.strip()
+            if s.startswith("RUN ") and any(
+                cmd in s for cmd in ["npm ci", "npm install", "yarn install", "pnpm install"]
+            ):
+                if install_line_idx == -1:
+                    install_line_idx = idx
+            if s.startswith("COPY ") and not s.startswith("COPY --from="):
+                parts = s.split()
+                is_ws_manifest_copy = False
+                if len(parts) >= 3 and not parts[1].startswith("["):
+                    src = parts[1]
+                    if ("/" in src or "\\" in src) and "package" in src.lower():
+                        is_ws_manifest_copy = True
+                elif "[" in s and "package" in s.lower():
+                    m = re.search(r'\[\s*"([^"]+)"', s)
+                    if m and ("/" in m.group(1) or "\\" in m.group(1)):
+                        is_ws_manifest_copy = True
+                elif re.search(r"COPY\s+.*package.*\.json\s+.*(/\w+|\./\w+)", s, re.IGNORECASE):
+                    is_ws_manifest_copy = True
+
+                if is_ws_manifest_copy and first_ws_copy_idx == -1:
+                    first_ws_copy_idx = idx
+        if install_line_idx != -1 and (first_ws_copy_idx == -1 or install_line_idx < first_ws_copy_idx):
+            findings.append(
+                "Dockerfile runs dependency installation (`RUN npm ci` or `install`) before copying workspace package manifests. "
+                "Workspace manifests (e.g. `COPY <workspace>/package*.json ./<workspace>/`) must be copied BEFORE running install "
+                "so monorepo workspace dependencies can be resolved."
+            )
+    findings.extend(_port_disagreements(content))
     return findings
+
+
+#: A listen port in a start command: an explicit flag, or the port of a `host:port` listen address.
+#:
+#: A BARE NUMBER IS NOT ACCEPTED. A CMD is full of numbers that are not ports — heap sizes, timeouts,
+#: worker counts — and treating the first one as a port is how a container ends up published on a
+#: number it never binds, which is the defect this whole check exists to catch.
+_CMD_PORT_PATTERNS: Final = (
+    re.compile(r"--(?:port|listen-port|http-port)[= ]+(\d{1,5})\b", re.IGNORECASE),
+    re.compile(r"(?:^|\s)-p[= ]+(\d{1,5})\b", re.IGNORECASE),
+    re.compile(r"(?:tcp|http)://[^:\"'\s]*:(\d{1,5})\b", re.IGNORECASE),
+    re.compile(r"(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})\b"),
+)
+
+_EXPOSE = re.compile(r"^\s*EXPOSE\s+(.+?)\s*$", re.IGNORECASE)
+_ENV_PORT = re.compile(r"(?:^|\s)(?:PORT|LISTEN_PORT|APP_PORT|HTTP_PORT|SERVER_PORT)=[\"']?(\d{1,5})", re.IGNORECASE)
+
+
+def _port_disagreements(content: str) -> list[str]:
+    """Reject a Dockerfile that states two different ports for the same service.
+
+    THE DEFECT THIS PREVENTS, and it reached a user. A generated Dockerfile declared `EXPOSE 8080`
+    while its start command bound 3000 and its `ENV PORT` said 3000. Nothing compared the two, so the
+    file shipped. The deployment then published the port `EXPOSE` named, the process listened on the
+    port the CMD named, and a browser got `ERR_EMPTY_RESPONSE` from a container that was genuinely
+    healthy — the healthcheck runs inside and probed the right port, so it passed, and every status
+    the platform reported was true. A port mismatch is invisible to every check that looks at one
+    line at a time, which is why this one looks at the file as a whole.
+
+    `EXPOSE` is the line reported as wrong, deliberately. The start command is what DETERMINES the
+    port: it is the process's own argument. `EXPOSE` is a declaration no runtime reads, so when they
+    disagree it is the declaration that is mistaken, and naming it tells the model which line to
+    change rather than leaving it to pick.
+
+    A Dockerfile with no `EXPOSE`, or whose CMD states no port, produces no finding. Both are legal
+    and neither is a contradiction — this checks for DISAGREEMENT, not for completeness.
+    """
+    exposed: list[int] = []
+    cmd_ports: set[int] = set()
+    env_ports: set[int] = set()
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        found = _EXPOSE.match(stripped)
+        if found:
+            for token in found.group(1).split():
+                # `EXPOSE 8080/tcp` is legal; the protocol is not part of the number.
+                number = token.split("/", 1)[0]
+                if number.isdigit() and 1 <= int(number) <= 65535:
+                    exposed.append(int(number))
+            continue
+
+        upper = stripped.upper()
+        if upper.startswith("CMD ") or upper.startswith("ENTRYPOINT "):
+            for pattern in _CMD_PORT_PATTERNS:
+                match = pattern.search(stripped)
+                if match and 1 <= int(match.group(1)) <= 65535:
+                    cmd_ports.add(int(match.group(1)))
+                    break
+        elif upper.startswith("ENV "):
+            for match in _ENV_PORT.finditer(stripped):
+                if 1 <= int(match.group(1)) <= 65535:
+                    env_ports.add(int(match.group(1)))
+
+    if not exposed:
+        return []
+
+    # The start command is the authority. `ENV PORT` is consulted only when the command states no port
+    # of its own, because a program may read the variable or ignore it, whereas a flag it was launched
+    # with is not in doubt.
+    bound = cmd_ports or env_ports
+    if not bound:
+        return []
+
+    if set(exposed) & bound:
+        return []
+
+    bound_list = ", ".join(str(port) for port in sorted(bound))
+    source = "its start command" if cmd_ports else "its ENV PORT"
+    return [
+        f"Dockerfile declares EXPOSE {exposed[0]} but {source} binds {bound_list}. "
+        f"A published port that nothing listens on accepts the connection and closes it, which reaches "
+        f"a browser as an empty response from a container that reports healthy. Change EXPOSE to "
+        f"{sorted(bound)[0]}, or bind the port EXPOSE names."
+    ]
 
 
 def validate_kubernetes(content: str) -> list[str]:
@@ -231,6 +418,9 @@ def validate_compose(content: str) -> list[str]:
         return ["Compose file declares no services"]
 
     findings: list[str] = []
+    #: Host port -> the service that publishes it. Two services cannot bind one host port: the second
+    #: fails with "port is already allocated" after the whole build (2026-11-02, three services on 9002).
+    published: dict[str, str] = {}
     for name, service in services.items():
         if not isinstance(service, Mapping):
             findings.append(f"compose service `{name}` is not a mapping")
@@ -240,7 +430,41 @@ def validate_compose(content: str) -> list[str]:
         ports = service.get("ports")
         if ports is not None and (not isinstance(ports, Sequence) or isinstance(ports, str)):
             findings.append(f"compose service `{name}` has a `ports` that is not a list")
+            continue
+        targets: set[str] = set()
+        for entry in ports or ():
+            parts = str(entry).strip().strip("'\"").split("/", 1)[0].split(":")
+            targets.add(parts[-1])
+            if len(parts) < 2 or not parts[-2].isdigit():
+                continue
+            host = parts[-2]
+            if host in published:
+                findings.append(
+                    f"compose services `{published[host]}` and `{name}` both publish host port {host}; "
+                    "each service needs its own host port"
+                )
+            else:
+                published[host] = str(name)
+        listen = _env_value(service.get("environment"), "PORT")
+        if listen and listen.isdigit() and targets and listen not in targets:
+            findings.append(
+                f"compose service `{name}` sets PORT={listen} but publishes container port(s) "
+                f"{', '.join(sorted(targets))}; the published container port must be the one the app listens on"
+            )
     return findings
+
+
+def _env_value(environment: Any, key: str) -> str | None:
+    """A Compose `environment` value, from either the mapping or the `KEY=value` list form."""
+    if isinstance(environment, Mapping):
+        value = environment.get(key)
+        return None if value is None else str(value).strip()
+    if isinstance(environment, Sequence) and not isinstance(environment, str):
+        for item in environment:
+            name, sep, value = str(item).partition("=")
+            if sep and name.strip() == key:
+                return value.strip()
+    return None
 
 
 #: Which checker applies to which artifact, chosen by path. A path this does not recognise is checked
@@ -271,7 +495,673 @@ def checker_for(path: str) -> Any | None:
     return None
 
 
-def validate_artifacts(files: Sequence[Any]) -> list[str]:
+def _extract_dockerfile_container_ports(content: str) -> set[int]:
+    """Extract all exposed or listening container ports from a Dockerfile."""
+    exposed: set[int] = set()
+    cmd_ports: set[int] = set()
+    env_ports: set[int] = set()
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        found = _EXPOSE.match(stripped)
+        if found:
+            for token in found.group(1).split():
+                number = token.split("/", 1)[0]
+                if number.isdigit() and 1 <= int(number) <= 65535:
+                    exposed.add(int(number))
+            continue
+
+        upper = stripped.upper()
+        if upper.startswith("CMD ") or upper.startswith("ENTRYPOINT "):
+            for pattern in _CMD_PORT_PATTERNS:
+                match = pattern.search(stripped)
+                if match and 1 <= int(match.group(1)) <= 65535:
+                    cmd_ports.add(int(match.group(1)))
+                    break
+        elif upper.startswith("ENV "):
+            for match in _ENV_PORT.finditer(stripped):
+                if 1 <= int(match.group(1)) <= 65535:
+                    env_ports.add(int(match.group(1)))
+
+    return cmd_ports or env_ports or exposed
+
+
+_INFRASTRUCTURE_SERVICE_NAMES: Final[set[str]] = {
+    "postgres",
+    "postgresql",
+    "db",
+    "database",
+    "redis",
+    "cache",
+    "memcached",
+    "mysql",
+    "mariadb",
+    "mongo",
+    "mongodb",
+    "rabbitmq",
+    "broker",
+    "kafka",
+    "zookeeper",
+    "minio",
+    "localstack",
+    "jaeger",
+    "prometheus",
+    "grafana",
+    "mailhog",
+    "elasticsearch",
+}
+
+
+def _is_infrastructure_service(svc_name: str, svc_data: Mapping[str, Any]) -> bool:
+    """Checks whether a service is an auxiliary/infrastructure container."""
+    name_clean = svc_name.lower().replace("-", "").replace("_", "")
+    if any(
+        infra in name_clean for infra in ("postgres", "postgresql", "redis", "mysql", "mariadb", "mongo", "mongodb")
+    ):
+        return True
+    if svc_name.lower() in _INFRASTRUCTURE_SERVICE_NAMES:
+        return True
+    image = str(svc_data.get("image") or "").lower()
+    if any(
+        image.startswith(prefix)
+        for prefix in (
+            "postgres:",
+            "redis:",
+            "mysql:",
+            "mongo:",
+            "mariadb:",
+            "rabbitmq:",
+            "memcached:",
+        )
+    ):
+        return True
+    return False
+
+
+def _extract_compose_service_specs(content: str) -> dict[str, dict[str, Any]]:
+    """Extracts application service specifications (context, image, container ports) from Compose."""
+    documents, reason = _load_documents(content)
+    if not documents or reason is not None or not isinstance(documents[0], Mapping):
+        return {}
+    services = documents[0].get("services")
+    if not isinstance(services, Mapping):
+        return {}
+
+    result: dict[str, dict[str, Any]] = {}
+    for svc_name, svc in services.items():
+        if not isinstance(svc, Mapping):
+            continue
+        if _is_infrastructure_service(str(svc_name), svc):
+            continue
+
+        ports: set[int] = set()
+        svc_ports = svc.get("ports")
+        if isinstance(svc_ports, Sequence) and not isinstance(svc_ports, str):
+            for p in svc_ports:
+                if isinstance(p, int) and 1 <= p <= 65535:
+                    ports.add(p)
+                elif isinstance(p, str):
+                    token = p.strip().strip("'\"").split("/", 1)[0]
+                    parts = token.split(":")
+                    target = parts[-1]  # Always container target port
+                    if target.isdigit() and 1 <= int(target) <= 65535:
+                        ports.add(int(target))
+        expose = svc.get("expose")
+        if isinstance(expose, Sequence) and not isinstance(expose, str):
+            for e in expose:
+                s = str(e).strip().split("/", 1)[0]
+                if s.isdigit() and 1 <= int(s) <= 65535:
+                    ports.add(int(s))
+
+        build_info = svc.get("build")
+        build_ctx = ""
+        dockerfile_name = "Dockerfile"
+        if isinstance(build_info, str):
+            build_ctx = build_info
+        elif isinstance(build_info, Mapping):
+            build_ctx = str(build_info.get("context") or "")
+            dockerfile_name = str(build_info.get("dockerfile") or "Dockerfile")
+
+        result[str(svc_name)] = {
+            "ports": ports,
+            "build_context": build_ctx,
+            "dockerfile": dockerfile_name,
+        }
+    return result
+
+
+def _extract_compose_container_ports(content: str) -> set[int]:
+    """Extract container target ports mapped or exposed for application services in Docker Compose."""
+    specs = _extract_compose_service_specs(content)
+    all_ports: set[int] = set()
+    for svc in specs.values():
+        all_ports.update(svc["ports"])
+    return all_ports
+
+
+def _extract_k8s_workload_ports(content: str) -> set[int]:
+    """Extract containerPort entries declared on Kubernetes pods/workloads."""
+    ports: set[int] = set()
+    documents, reason = _load_documents(content)
+    if not documents or reason is not None:
+        return ports
+    for doc in documents:
+        if not isinstance(doc, Mapping):
+            continue
+        kind = str(doc.get("kind", ""))
+        spec = doc.get("spec")
+        if not isinstance(spec, Mapping):
+            continue
+        pod_spec = spec
+        if kind in ("Deployment", "StatefulSet", "DaemonSet", "Job"):
+            template = spec.get("template")
+            if isinstance(template, Mapping):
+                pod_spec = template.get("spec")
+        if not isinstance(pod_spec, Mapping):
+            continue
+        containers = pod_spec.get("containers")
+        if isinstance(containers, Sequence) and not isinstance(containers, str):
+            for c in containers:
+                if not isinstance(c, Mapping):
+                    continue
+                c_ports = c.get("ports")
+                if isinstance(c_ports, Sequence) and not isinstance(c_ports, str):
+                    for cp in c_ports:
+                        if isinstance(cp, Mapping):
+                            c_port = cp.get("containerPort")
+                            if isinstance(c_port, int) and 1 <= c_port <= 65535:
+                                ports.add(c_port)
+                            elif isinstance(c_port, str) and c_port.isdigit() and 1 <= int(c_port) <= 65535:
+                                ports.add(int(c_port))
+    return ports
+
+
+def _extract_k8s_service_ports(content: str) -> set[int]:
+    """Extract targetPort (or port) entries declared on Kubernetes Services."""
+    ports: set[int] = set()
+    documents, reason = _load_documents(content)
+    if not documents or reason is not None:
+        return ports
+    for doc in documents:
+        if not isinstance(doc, Mapping):
+            continue
+        if str(doc.get("kind", "")) != "Service":
+            continue
+        spec = doc.get("spec")
+        if not isinstance(spec, Mapping):
+            continue
+        svc_ports = spec.get("ports")
+        if isinstance(svc_ports, Sequence) and not isinstance(svc_ports, str):
+            for sp in svc_ports:
+                if isinstance(sp, Mapping):
+                    tp = sp.get("targetPort")
+                    if isinstance(tp, int) and 1 <= tp <= 65535:
+                        ports.add(tp)
+                    elif isinstance(tp, str) and tp.isdigit() and 1 <= int(tp) <= 65535:
+                        ports.add(int(tp))
+                    elif tp is None:
+                        p = sp.get("port")
+                        if isinstance(p, int) and 1 <= p <= 65535:
+                            ports.add(p)
+                        elif isinstance(p, str) and p.isdigit() and 1 <= int(p) <= 65535:
+                            ports.add(int(p))
+    return ports
+
+
+def _check_k8s_service_and_workload_consistency(files: Sequence[Any]) -> list[str]:
+    """Verify Service selectors match workload labels and Ingress references exist."""
+    findings: list[str] = []
+    deployments: list[tuple[str, dict[str, str], str]] = []
+    services: list[tuple[str, dict[str, str], str]] = []
+    ingresses: list[tuple[str, list[str]]] = []
+
+    for artifact in files:
+        path = getattr(artifact, "path", "")
+        content = getattr(artifact, "content", "")
+        norm = path.replace("\\", "/")
+        if not (norm.startswith("k8s/") or "/k8s/" in norm or norm.endswith((".yaml", ".yml"))):
+            continue
+        docs, reason = _load_documents(content)
+        if not docs or reason is not None:
+            continue
+        for doc in docs:
+            if not isinstance(doc, Mapping):
+                continue
+            kind = str(doc.get("kind", ""))
+            metadata = doc.get("metadata") or {}
+            name = str(metadata.get("name", "")) if isinstance(metadata, Mapping) else ""
+            spec = doc.get("spec") or {}
+            if not isinstance(spec, Mapping):
+                continue
+            if kind in ("Deployment", "StatefulSet", "DaemonSet"):
+                template = spec.get("template") or {}
+                t_meta = template.get("metadata") or {} if isinstance(template, Mapping) else {}
+                labels = t_meta.get("labels") or {} if isinstance(t_meta, Mapping) else {}
+                if isinstance(labels, Mapping):
+                    deployments.append((path, {str(k): str(v) for k, v in labels.items()}, name))
+            elif kind == "Service":
+                selector = spec.get("selector") or {}
+                if isinstance(selector, Mapping):
+                    services.append((path, {str(k): str(v) for k, v in selector.items()}, name))
+            elif kind == "Ingress":
+                backend_names: list[str] = []
+                rules = spec.get("rules") or []
+                if isinstance(rules, Sequence) and not isinstance(rules, str):
+                    for r in rules:
+                        if isinstance(r, Mapping):
+                            http = r.get("http") or {}
+                            if isinstance(http, Mapping):
+                                paths = http.get("paths") or []
+                                if isinstance(paths, Sequence) and not isinstance(paths, str):
+                                    for p in paths:
+                                        if isinstance(p, Mapping):
+                                            backend = p.get("backend") or {}
+                                            if isinstance(backend, Mapping):
+                                                svc = backend.get("service") or {}
+                                                if isinstance(svc, Mapping) and svc.get("name"):
+                                                    backend_names.append(str(svc["name"]))
+                ingresses.append((path, backend_names))
+
+    for s_path, selector, _s_name in services:
+        if not selector:
+            continue
+        for d_path, labels, _d_name in deployments:
+            if not labels:
+                continue
+            mismatch = False
+            for k, v in selector.items():
+                if labels.get(k) != v:
+                    mismatch = True
+                    break
+            if mismatch:
+                findings.append(
+                    f"cross-artifact: {s_path} selector {selector} does not match {d_path} pod labels {labels}. "
+                    "Service will route traffic to zero pods."
+                )
+
+    service_names = {s_name for _, _, s_name in services if s_name}
+    if service_names:
+        for i_path, backend_names in ingresses:
+            for b_name in backend_names:
+                if b_name not in service_names:
+                    findings.append(
+                        f"cross-artifact: {i_path} references backend service '{b_name}' "
+                        f"which does not match any Service metadata.name ({sorted(service_names)})."
+                    )
+
+    return findings
+
+
+def validate_cross_artifact_consistency(files: Sequence[Any]) -> list[str]:
+    """Verify that ports and service names agree across Dockerfile, Compose, and Kubernetes.
+
+    Multi-service repositories are validated per-service: distinct microservices legitimately listen on
+    different ports. Infrastructure services (postgres, redis) are excluded from application port checks.
+    """
+    findings: list[str] = []
+
+    dockerfiles: dict[str, set[int]] = {}
+    compose_specs: dict[str, dict[str, dict[str, Any]]] = {}
+    k8s_workloads: dict[str, set[int]] = {}
+    k8s_services: dict[str, set[int]] = {}
+
+    for artifact in files:
+        path = getattr(artifact, "path", "")
+        content = getattr(artifact, "content", "")
+        norm = path.replace("\\", "/")
+
+        if norm == "Dockerfile" or norm.endswith("/Dockerfile"):
+            df_ports = _extract_dockerfile_container_ports(content)
+            if df_ports:
+                dockerfiles[path] = df_ports
+        elif norm in ("docker-compose.yml", "docker-compose.yaml") or norm.endswith(
+            ("/docker-compose.yml", "/docker-compose.yaml")
+        ):
+            specs = _extract_compose_service_specs(content)
+            if specs:
+                compose_specs[path] = specs
+        elif norm.startswith("k8s/") or "/k8s/" in norm or norm.endswith((".yaml", ".yml")):
+            kp_ports = _extract_k8s_workload_ports(content)
+            if kp_ports:
+                k8s_workloads[path] = kp_ports
+            sp_ports = _extract_k8s_service_ports(content)
+            if sp_ports:
+                k8s_services[path] = sp_ports
+
+    # 1. Reconcile Dockerfile(s) against Docker Compose application services
+    for cp_path, services in compose_specs.items():
+        all_app_ports: set[int] = set()
+        for svc_data in services.values():
+            all_app_ports.update(svc_data["ports"])
+
+        for df_path, df_ports in dockerfiles.items():
+            df_dir = df_path.rsplit("/Dockerfile", 1)[0].replace("\\", "/").lower() if "/Dockerfile" in df_path else "."
+
+            matched_svc_ports: set[int] | None = None
+            if len(services) == 1:
+                # Single service application
+                matched_svc_ports = next(iter(services.values()))["ports"]
+            else:
+                for svc_name, svc_data in services.items():
+                    ctx = str(svc_data.get("build_context") or "").lower().rstrip("/")
+                    s_name_norm = svc_name.lower().replace("-", "").replace("_", "")
+                    dir_norm = df_dir.replace("-", "").replace("_", "").lower()
+                    if ctx == df_dir or (
+                        df_dir != "." and (ctx.endswith(df_dir) or dir_norm in s_name_norm or s_name_norm in dir_norm)
+                    ):
+                        matched_svc_ports = svc_data["ports"]
+                        break
+
+            if matched_svc_ports is not None:
+                if matched_svc_ports and not (df_ports & matched_svc_ports):
+                    findings.append(
+                        f"cross-artifact: port mismatch between {df_path} {sorted(df_ports)} and {cp_path} container port {sorted(matched_svc_ports)}. "
+                        "Matching service must target the same container port."
+                    )
+            elif all_app_ports and not (df_ports & all_app_ports):
+                findings.append(
+                    f"cross-artifact: port mismatch between {df_path} {sorted(df_ports)} and {cp_path} application container ports {sorted(all_app_ports)}. "
+                    "All application artifacts must target a matching container port."
+                )
+
+    # 2. Reconcile Kubernetes workloads and services
+    for w_path, w_ports in k8s_workloads.items():
+        for s_path, s_ports in k8s_services.items():
+            if not (w_ports & s_ports):
+                findings.append(
+                    f"cross-artifact: port mismatch between {w_path} containerPort {sorted(w_ports)} and {s_path} targetPort {sorted(s_ports)}. "
+                    "Service targetPort must match container listening port."
+                )
+
+    # 3. Reconcile root Dockerfile against single Kubernetes workload if single-service
+    if len(dockerfiles) == 1 and len(k8s_workloads) == 1:
+        df_path, df_ports = next(iter(dockerfiles.items()))
+        w_path, w_ports = next(iter(k8s_workloads.items()))
+        if not (df_ports & w_ports):
+            findings.append(
+                f"cross-artifact: port mismatch between {df_path} {sorted(df_ports)} and {w_path} {sorted(w_ports)}. "
+                "Workload containerPort must match Dockerfile EXPOSE port."
+            )
+
+    findings.extend(_check_k8s_service_and_workload_consistency(files))
+    return findings
+
+
+#: `npm start`, `npm run x`, `npm run-script x`, `yarn x`, `yarn run x`, `pnpm x`, `pnpm run x`, in RUN/CMD/ENTRYPOINT.
+_SCRIPT_CALL = re.compile(
+    r"\b(?:npm\s+(?:run(?:-script)?\s+(?P<npm>[\w:.-]+)|(?P<npmstart>start|test)\b)"
+    r"|(?:yarn|pnpm)\s+(?:run\s+)?(?P<other>[\w:.-]+))"
+)
+_PACKAGE_MANAGER_BUILTINS = frozenset(
+    {
+        "install",
+        "ci",
+        "add",
+        "remove",
+        "exec",
+        "dlx",
+        "i",
+        "audit",
+        "cache",
+        "config",
+        "prune",
+        "init",
+        "set",
+        "dedupe",
+        "fetch",
+        "import",
+        "link",
+        "pack",
+        "publish",
+        "rebuild",
+        "store",
+        "up",
+        "update",
+        "upgrade",
+        "why",
+        "workspace",
+        "workspaces",
+        "global",
+        "info",
+        "list",
+        "ls",
+        "outdated",
+    }
+)
+
+
+def _package_scripts(existing: Mapping[str, str]) -> tuple[dict[str, str], set[str]]:
+    """Every script any package.json in the project declares, and every devDependency name."""
+    scripts: dict[str, str] = {}
+    dev: set[str] = set()
+    for path, body in existing.items():
+        norm = path.replace("\\", "/")
+        if norm.rsplit("/", 1)[-1] != "package.json" or "node_modules/" in norm:
+            continue
+        try:
+            data = json.loads(body)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict):
+            for name, command in (data.get("scripts") or {}).items():
+                scripts.setdefault(str(name), str(command))
+            dev.update(str(k) for k in (data.get("devDependencies") or {}))
+    return scripts, dev
+
+
+_PRODUCTION_INSTALL = re.compile(
+    r"(?i)\bnpm\s+(?:install|ci|i)\b[^&;|\n]*(?:--prod(?:uction)?\b|--omit[= ]dev|--only[= ]prod)"
+    r"|\byarn\s+install\b[^&;|\n]*--prod(?:uction)?\b"
+    r"|\bpnpm\s+install\b[^&;|\n]*(?:--prod\b|\s-P\b)"
+)
+_ANY_INSTALL = re.compile(r"(?i)\b(?:npm\s+(?:install|ci|i)\b|yarn\s+install\b|yarn\s*$|pnpm\s+(?:install|i)\b)")
+#: Executables whose package has a different name. Without this `tsc` was never recognised as needing
+#: `typescript`, so a production-only install before `tsc -b` passed the gate.
+_BIN_PACKAGES: Final[dict[str, str]] = {
+    "tsc": "typescript",
+    "ng": "@angular/cli",
+    "vue-cli-service": "@vue/cli-service",
+    "react-scripts": "react-scripts",
+    "nest": "@nestjs/cli",
+    "svelte-kit": "@sveltejs/kit",
+    "tsx": "tsx",
+    "ts-node": "ts-node",
+}
+
+
+def _tools_needed(command: str, dev: set[str]) -> list[str]:
+    """devDependencies a script command invokes, by package name or by the executable it provides."""
+    needed = {t for t in dev if re.search(rf"(?<![\w@/-]){re.escape(t)}\b", command)}
+    for binary, package in _BIN_PACKAGES.items():
+        if package in dev and re.search(rf"(?<![\w@/-]){re.escape(binary)}\b", command):
+            needed.add(package)
+    return sorted(needed)
+
+
+def _copy_brings(operands: list[str], source_root: str | None) -> tuple[bool, bool]:
+    """Whether a COPY's sources bring a package.json and/or a node_modules tree into the stage.
+
+    `source_root` is the WORKDIR of the stage named by `--from`, or None for the build context. Copying that
+    directory (or `.` from the context) brings the whole application; copying `/app/dist` does not.
+    """
+    manifest = modules = False
+    for source in operands:
+        norm = "." if source in (".", "./") else posixpath.normpath(source)
+        base = norm.rstrip("/").rsplit("/", 1)[-1]
+        if source_root is None:
+            whole_dir = norm == "."
+        else:
+            whole_dir = norm in (".", "/", posixpath.normpath(source_root))
+        if whole_dir or base == "package*.json" or (base.startswith("package") and base.endswith(".json")):
+            manifest = True
+        if (whole_dir and source_root is not None) or base == "node_modules":
+            modules = True
+    return manifest, modules
+
+
+def dockerfile_script_findings(dockerfile: str, existing: Mapping[str, str]) -> list[str]:
+    """Package-manager scripts that cannot run where the Dockerfile runs them.
+
+    Judged per build stage, because each `FROM` starts from nothing: a stage must have the package.json that
+    declares a script, and the dependencies the script's tools come from (installed in the stage, or copied
+    in with `node_modules`). Observed in generated Dockerfiles for a Vite project (2026-11-02):
+    `CMD ["npm", "start"]` with no start script; `npm install --prod` before `tsc -b && vite build`; and
+    `npm run preview` in a final stage holding only `dist/`.
+    """
+    scripts, dev = _package_scripts(existing)
+    if not scripts and not dev:
+        return []
+    findings: list[str] = []
+    has_manifest, install, has_modules = False, "none", False
+    workdirs: dict[str, str] = {}
+    stage, workdir = "", "/"
+    for line in dockerfile.splitlines():
+        stripped = line.strip()
+        start = re.match(r"(?i)^FROM\s+\S+(?:\s+AS\s+(\S+))?", stripped)
+        if start:
+            if stage:
+                workdirs[stage] = workdir
+            stage, workdir = (start.group(1) or "").lower(), "/"
+            has_manifest, install, has_modules = False, "none", False
+            continue
+        wd = re.match(r"(?i)^WORKDIR\s+(\S+)", stripped)
+        if wd:
+            workdir = posixpath.normpath(posixpath.join(workdir, wd.group(1).strip('"')))
+            continue
+        copy = re.match(r"(?i)^(?:COPY|ADD)\s+(.*)$", stripped)
+        if copy:
+            tokens = [t.strip('"[],') for t in copy.group(1).split()]
+            origin = next((t.split("=", 1)[1].lower() for t in tokens if t.lower().startswith("--from=")), None)
+            sources = [t for t in tokens if t and not t.startswith("--")][:-1]
+            manifest, modules = _copy_brings(sources, None if origin is None else workdirs.get(origin, "/"))
+            has_manifest = has_manifest or manifest
+            has_modules = has_modules or modules
+            continue
+        if not re.match(r"(?i)^(RUN|CMD|ENTRYPOINT)\s", stripped):
+            continue
+        flat = re.sub(r"[\"\[\],]", " ", stripped)
+        if _PRODUCTION_INSTALL.search(flat):
+            install = "production"
+        elif _ANY_INSTALL.search(flat) and install == "none":
+            install = "all"
+        for match in _SCRIPT_CALL.finditer(flat):
+            name = match.group("npm") or match.group("npmstart") or match.group("other")
+            if not name or name in _PACKAGE_MANAGER_BUILTINS or name.startswith("-"):
+                continue
+            if name not in scripts:
+                findings.append(
+                    f"'{stripped}' runs the script '{name}', but no package.json in the project declares it "
+                    f"(declared: {', '.join(sorted(scripts)) or 'none'})"
+                )
+                continue
+            if not has_manifest:
+                findings.append(
+                    f"'{stripped}' runs '{name}' in a stage that never copies package.json, so the package "
+                    "manager cannot find the script"
+                )
+                continue
+            needs = _tools_needed(scripts[name], dev)
+            if needs and install == "production":
+                findings.append(
+                    f"'{stripped}' runs '{name}' ({scripts[name]}), which needs the devDependencies "
+                    f"{', '.join(needs)}, but this stage installed production dependencies only"
+                )
+            elif needs and install == "none" and not has_modules:
+                findings.append(
+                    f"'{stripped}' runs '{name}' ({scripts[name]}), which needs {', '.join(needs)}, but this "
+                    "stage neither installs dependencies nor copies node_modules from an earlier stage"
+                )
+    return findings
+
+
+def dockerfile_missing_copy_sources(dockerfile: str, existing: Mapping[str, str]) -> list[str]:
+    """`COPY`/`ADD` sources from the build context that do not exist in the project.
+
+    `COPY package.json yarn.lock ./` in a project that has package-lock.json fails the build on the missing
+    file. Sources copied from another stage (`--from`), URLs, variables and the whole context are not judged.
+    """
+    lowered = [p.replace("\\", "/").removeprefix("./").lower() for p in existing]
+    findings: list[str] = []
+    for line in dockerfile.splitlines():
+        stripped = line.strip()
+        copy = re.match(r"(?i)^(?:COPY|ADD)\s+(.*)$", stripped)
+        if not copy:
+            continue
+        body = copy.group(1).strip()
+        if any(t.lower().startswith("--from=") for t in body.split()):
+            continue
+        flags_removed = " ".join(t for t in body.split() if not t.startswith("--"))
+        if flags_removed.startswith("["):
+            try:
+                operands = [str(x) for x in json.loads(flags_removed)]
+            except ValueError:
+                continue
+        else:
+            operands = flags_removed.split()
+        for source in operands[:-1]:
+            clean = source.removeprefix("./").rstrip("/")
+            if clean in ("", ".") or "://" in clean or "$" in clean:
+                continue
+            target = clean.lower()
+            if any(c in target for c in "*?["):
+                matched = any(fnmatch.fnmatch(p, target) for p in lowered)
+            else:
+                matched = any(p == target or p.startswith(target + "/") for p in lowered)
+            if not matched:
+                findings.append(f"'{stripped}' copies '{source}', which does not exist in the project")
+    return findings
+
+
+_COMPOSE_NAMES: Final[frozenset[str]] = frozenset(
+    {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+)
+
+
+def compose_missing_dockerfiles(files: Sequence[Any], existing: Mapping[str, str]) -> list[str]:
+    """Compose services that build from a Dockerfile which will not exist once this set is applied.
+
+    Observed 2026-11-02: a generation run's Dockerfile was rejected and withheld, but its compose file -- which
+    builds from `Dockerfile` -- was delivered. The deployment then built from a Dockerfile the agent made up
+    on the spot, so what ran was not what the run produced.
+    """
+    available = {str(p).replace("\\", "/").lower().removeprefix("./") for p in existing}
+    available |= {str(getattr(f, "path", "")).replace("\\", "/").lower().removeprefix("./") for f in files}
+    findings: list[str] = []
+    for artifact in files:
+        path = str(getattr(artifact, "path", "")).replace("\\", "/")
+        if path.rsplit("/", 1)[-1].lower() not in _COMPOSE_NAMES:
+            continue
+        try:
+            document = yaml.safe_load(artifact.content) or {}
+        except yaml.YAMLError:
+            continue
+        services = document.get("services") if isinstance(document, Mapping) else None
+        if not isinstance(services, Mapping):
+            continue
+        base = path.rsplit("/", 1)[0] if "/" in path else ""
+        for name, service in services.items():
+            build = service.get("build") if isinstance(service, Mapping) else None
+            if build is None:
+                continue
+            context = build if isinstance(build, str) else str((build or {}).get("context") or ".")
+            dockerfile = (
+                "Dockerfile" if isinstance(build, str) else str((build or {}).get("dockerfile") or "Dockerfile")
+            )
+            if (not isinstance(build, str)) and (build or {}).get("dockerfile_inline"):
+                continue
+            joined = posixpath.normpath(posixpath.join(base, context, dockerfile)).removeprefix("./")
+            if joined.lower() not in available:
+                findings.append(
+                    f"{path}: service '{name}' builds from '{joined}', which is neither in this change set nor "
+                    "in the project; deliver that Dockerfile or point the build at one that exists"
+                )
+    return findings
+
+
+def validate_artifacts(files: Sequence[Any], existing: Mapping[str, str] | None = None) -> list[str]:
     """Check every generated artifact that has a checker, and report every finding.
 
     EVERY finding rather than the first: a repair iteration is handed this list, and telling a model
@@ -284,4 +1174,91 @@ def validate_artifacts(files: Sequence[Any]) -> list[str]:
             continue
         for finding in checker(artifact.content):
             findings.append(f"{artifact.path}: {finding}")
+    findings.extend(validate_cross_artifact_consistency(files))
+    findings.extend(compose_missing_dockerfiles(files, existing or {}))
+
+    if existing:
+        # THE DOCKERFILE MUST BUILD THIS PROJECT. Without this the gate accepted a Python Dockerfile for a Node
+        # project, because each of its instructions was individually valid (2026-11-02).
+        for artifact in files:
+            if checker_for(getattr(artifact, "path", "")) is not validate_dockerfile:
+                continue
+            mismatch = dockerfile_runtime_mismatch(artifact.content, list(existing))
+            if mismatch:
+                findings.append(f"{artifact.path}: {mismatch}")
+            findings.extend(f"{artifact.path}: {f}" for f in dockerfile_script_findings(artifact.content, existing))
+            findings.extend(
+                f"{artifact.path}: {f}" for f in dockerfile_missing_copy_sources(artifact.content, existing)
+            )
+        # A PATH WITH A SPACE, judged against the project's REAL paths rather than guessed from token counts:
+        # an unquoted `COPY live classroom/ ./` is two sources to Docker. Flagged only when the joined
+        # operands name a path that actually exists with a space in it.
+        spaced = {p.replace("\\", "/") for p in existing if " " in p}
+        spaced_dirs = {"/".join(p.split("/")[: i + 1]) for p in spaced for i in range(p.count("/") + 1)}
+        spaced_prefixes = {d for d in spaced_dirs if " " in d}
+        for artifact in files:
+            if checker_for(getattr(artifact, "path", "")) is not validate_dockerfile:
+                continue
+            for line in artifact.content.splitlines():
+                copy = re.match(r"(?i)^\s*(COPY|ADD)\s+(.*)$", line)
+                if not copy or copy.group(2).lstrip().startswith("["):
+                    continue
+                operands = [t for t in copy.group(2).split() if not t.startswith("--")]
+                for i in range(len(operands) - 1):
+                    joined = f"{operands[i]} {operands[i + 1]}".lstrip("./").rstrip("/")
+                    if any(
+                        prefix == joined or prefix.startswith(joined + "/") or joined.startswith(prefix)
+                        for prefix in spaced_prefixes
+                    ):
+                        findings.append(
+                            f"{artifact.path}: '{line.strip()}' names the path '{joined}', which contains a space; "
+                            'Docker splits unquoted operands, so use JSON array syntax, e.g. COPY ["a b/", "./a b/"]'
+                        )
+                        break
+        ws_dirs: list[str] = []
+        if "package.json" in existing:
+            try:
+                pkg_data = json.loads(existing["package.json"])
+                ws_entry = pkg_data.get("workspaces")
+                if isinstance(ws_entry, list):
+                    ws_dirs.extend([w for w in ws_entry if isinstance(w, str) and "*" not in w])
+                elif isinstance(ws_entry, dict) and "packages" in ws_entry:
+                    ws_dirs.extend([w for w in ws_entry["packages"] if isinstance(w, str) and "*" not in w])
+            except Exception:
+                pass
+
+        if ws_dirs:
+            for artifact in files:
+                norm_p = getattr(artifact, "path", "").replace("\\", "/")
+                if norm_p == "Dockerfile" or norm_p.endswith("/Dockerfile"):
+                    df_lines = str(getattr(artifact, "content", "")).splitlines()
+                    install_idx = -1
+                    copied_workspaces: set[str] = set()
+                    copied_all = False
+                    for idx, line in enumerate(df_lines):
+                        s = line.strip()
+                        if s.startswith("RUN ") and any(
+                            cmd in s for cmd in ["npm ci", "npm install", "yarn install", "pnpm install"]
+                        ):
+                            if install_idx == -1:
+                                install_idx = idx
+                        if s.startswith("COPY ") and not s.startswith("COPY --from="):
+                            if s.startswith("COPY . .") or s.startswith("COPY . /"):
+                                if install_idx == -1:
+                                    copied_all = True
+                            for w in ws_dirs:
+                                if (
+                                    (w in s or f'"{w}' in s)
+                                    and "package" in s.lower()
+                                    and (install_idx == -1 or idx < install_idx)
+                                ):
+                                    copied_workspaces.add(w)
+
+                    if install_idx != -1 and not copied_all and len(copied_workspaces) < len(ws_dirs):
+                        missing_ws = [w for w in ws_dirs if w not in copied_workspaces]
+                        findings.append(
+                            f"{artifact.path}: Workspace repository runs dependency installation before copying workspace package manifests. "
+                            f"Workspace manifests ({', '.join(missing_ws)}) must be copied before RUN install to prevent missing executables (exit code 127)."
+                        )
+
     return findings

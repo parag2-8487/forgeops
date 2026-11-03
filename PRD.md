@@ -239,7 +239,7 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-60 | Manage volumes and networks | P2 |
 | FR-61 | Live resource stats (CPU, memory, network) | P1 |
 
-### 3.10 Kubernetes Management Dashboard (Phase 3)
+### 3.10 Kubernetes Management Dashboard (Phase 2)
 
 | ID | Requirement | Priority |
 |:---|:---|---:|
@@ -248,7 +248,7 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-64 | Scale deployments, view logs, view cluster info | P2 |
 | FR-65 | No kubectl needed — all via API | P2 |
 
-### 3.11 Monitoring & Observability (Phase 3)
+### 3.11 Monitoring & Observability (Phase 2)
 
 | ID | Requirement | Priority |
 |:---|:---|---:|
@@ -259,7 +259,7 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-70 | Unified dashboard: infrastructure health, container performance, app metrics | P2 |
 | FR-71 | AI-generated health/metrics endpoint code emits OTLP | P2 |
 
-### 3.12 AI Troubleshooting / Root-Cause Analysis (Phase 3)
+### 3.12 AI Troubleshooting / Root-Cause Analysis (Phase 2)
 
 | ID | Requirement | Priority |
 |:---|:---|---:|
@@ -267,7 +267,7 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-73 | Output: plain-language root cause → exact problem location → recommended fix | P2 |
 | FR-74 | Optionally generate corrected config/file that enters approval pipeline | P2 |
 
-### 3.13 Self-Healing (Phase 3)
+### 3.13 Self-Healing (Phase 2)
 
 | ID | Requirement | Priority |
 |:---|:---|---:|
@@ -284,7 +284,7 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-80 | Intent routing: Deploy, Diagnostic, Generate, Policy, General Chat | P1 |
 | FR-81 | Defense-in-depth guard-rails: deterministic, model-based, policy, approval, sandbox | P1 |
 
-### 3.15 AI Learning History (Phase 3)
+### 3.15 AI Learning History (Phase 2)
 
 | ID | Requirement | Priority |
 |:---|:---|---:|
@@ -294,7 +294,7 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-85 | Two-tier memory: short-term (session) + long-term (preference graph) | P2 |
 | FR-86 | Memory is per-project, inspectable, and editable by the user | P2 |
 
-### 3.16 Technology Recommendation Engine (Phase 3)
+### 3.16 Technology Recommendation Engine (Phase 2)
 
 | ID | Requirement | Priority |
 |:---|:---|---:|
@@ -302,7 +302,7 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-88 | Examples: "Use PostgreSQL instead of SQLite", "Add Redis for caching" | P2 |
 | FR-89 | Each recommendation links to one-click generation flow (through approval pipeline) | P2 |
 
-### 3.16a Knowledge Base Mode (Phase 3)
+### 3.16a Knowledge Base Mode (Phase 2)
 
 | ID | Requirement | Priority |
 |:---|:---|---:|
@@ -310,32 +310,38 @@ The **AI-Powered DevOps Automation Platform** is a web-based system that acts as
 | FR-89b | Answer topics: "Explain this Dockerfile", "Explain this error", "Best practices for..." | P2 |
 | FR-89c | Always uses the current project as the example (never generic) | P2 |
 
-### 3.17 Features Deferred to Phase 4+
+### 3.17 Features Deferred to Phase 3+
 
 | ID | Feature | Phase |
 |:---|:---|---:|
-| FR-90 | Visual Pipeline Designer (drag-and-drop) | 4 |
-| FR-91 | AI Architecture Diagram Generator | 4 |
-| FR-92 | Dependency Health (full scanner) | 4 |
-| FR-93 | Cost Analysis | 4 |
-| FR-94 | Backup & Disaster Recovery | 4 |
-| FR-95 | API Explorer | 4 |
-| FR-96 | Team Collaboration (full RBAC with review requests) | 4 |
-| FR-97 | Rollback Visualization & Release Timeline | 4 |
-| FR-98 | Deployment Analytics (DORA metrics) | 4 |
-| FR-99 | Notification Center (multi-channel) | 4 |
-| FR-100 | Local Development Tools (run tests, lint, build) | 4 |
+| FR-90 | Visual Pipeline Designer (drag-and-drop) | 3 |
+| FR-91 | AI Architecture Diagram Generator | 3 |
+| FR-92 | Dependency Health (full scanner) | 3 |
+| FR-93 | Cost Analysis | 3 |
+| FR-94 | Backup & Disaster Recovery | 3 |
+| FR-95 | API Explorer | 3 |
+| FR-96 | Team Collaboration (full RBAC with review requests) | 3 |
+| FR-97 | Rollback Visualization & Release Timeline | 2 |
+| FR-98 | Deployment Analytics (DORA metrics) | 3 |
+| FR-99 | Notification Center (multi-channel) | 2 |
+| FR-100 | Local Development Tools (run tests, lint, build) | 2 |
 
-### 3.18 Advanced & Ecosystem (Phase 5)
+> **FR-97, FR-99 and FR-100 are Phase 2, not deferred**, and that is a correction rather than a
+> renumbering. `phases.md` has delivered them in-phase since before the merge — 2.3 Rollback & Release
+> Timeline, 2.6 Notification Center, 2.8 Local Development Tools — while this table said Phase 4. The
+> two documents contradicted each other; the phase plan is the one with the deliverable boxes, so this
+> table now agrees with it.
+
+### 3.18 Advanced & Ecosystem (Phase 4)
 
 | ID | Feature | Phase |
 |:---|:---|---:|
-| FR-101 | Multi-Agent Collaboration (Analyzer, Generator, Safety Reviewer, Deployment Manager + human orchestrator) | 5 |
-| FR-102 | Air-Gapped Mode (fully offline, local models only, no cloud backend dependency) | 5 |
-| FR-103 | Backstage Plugin (catalog + software templates integration) | 5 |
-| FR-104 | Enterprise SSO & Compliance (SAML, LDAP, SOC2, audit export, data retention) | 5 |
-| FR-105 | "Deploy to..." one-click templates for popular stacks (Next.js→Vercel, Django→Railway, Spring Boot→ECS) | 5 |
-| FR-106 | Platform SDK (REST API, webhook system, plugin architecture for community extensions) | 5 |
+| FR-101 | Multi-Agent Collaboration (Analyzer, Generator, Safety Reviewer, Deployment Manager + human orchestrator) | 4 |
+| FR-102 | Air-Gapped Mode (fully offline, local models only, no cloud backend dependency) | 4 |
+| FR-103 | Backstage Plugin (catalog + software templates integration) | 4 |
+| FR-104 | Enterprise SSO & Compliance (SAML, LDAP, SOC2, audit export, data retention) | 4 |
+| FR-105 | "Deploy to..." one-click templates for popular stacks (Next.js→Vercel, Django→Railway, Spring Boot→ECS) | 4 |
+| FR-106 | Platform SDK (REST API, webhook system, plugin architecture for community extensions) | 4 |
 
 ---
 
@@ -666,10 +672,9 @@ ai-devops-platform/
 |:---|:---|---:|---:|
 | **Phase 0** | Foundation | Go agent scaffold, FastAPI scaffold, Next.js scaffold, Docker Compose dev env, MCP integration, GitOps workflow, Plan Analyzer, OpenTofu switch | 2-3 weeks |
 | **Phase 1** | MVP Core | Agent pairing, project workspace, codebase scan + readiness report, AI file generation (Dockerfile, K8s, CI/CD), validation loop, approval center, policy engine, secret vault, audit logging | 8-12 weeks |
-| **Phase 2** | Deploy & Manage | Multi-environment, deployment automation, Docker dashboard, AI Command Center, rollback timeline, notification center | 8-12 weeks |
-| **Phase 3** | Observe & Heal | OTel monitoring, K8s dashboard, AI troubleshooting, self-healing, AI learning history, knowledge base | 10-14 weeks |
-| **Phase 4** | Scale & Polish | Visual pipeline designer, architecture diagrams, dependency health, cost analysis, team collaboration, backup/DR, API explorer, analytics | 12-16 weeks |
-| **Phase 5** | Advanced & Ecosystem | Multi-agent collaboration, air-gapped mode, Backstage plugin, enterprise SSO & compliance (SAML/LDAP/SOC2), "Deploy to..." one-click templates, platform SDK (REST API/webhooks/plugins) | 16+ weeks |
+| **Phase 2** | Deploy, Manage, Observe & Heal | Multi-environment, deployment automation, Docker + K8s dashboards, AI Command Center, rollback timeline, notification center, ArgoCD GitOps, Argo Rollouts, service mesh, local dev tools, OTel two-tier monitoring, AI troubleshooting, guard-railed self-healing, AI learning history, knowledge base | 18-26 weeks |
+| **Phase 3** | Scale & Polish | Visual pipeline designer, architecture diagrams, dependency health, cost analysis, team collaboration, backup/DR, API explorer, analytics | 12-16 weeks |
+| **Phase 4** | Advanced & Ecosystem | Multi-agent collaboration, air-gapped mode, Backstage plugin, enterprise SSO & compliance (SAML/LDAP/SOC2), "Deploy to..." one-click templates, platform SDK (REST API/webhooks/plugins) | 16+ weeks |
 
 ---
 
@@ -690,7 +695,7 @@ ai-devops-platform/
 
 ## 12. Success Metrics
 
-| Metric | Target (Phase 1) | Target (Phase 4) |
+| Metric | Target (Phase 1) | Target (Phase 3) |
 |:---|---:|---:|
 | Readiness score accuracy | ±10 points | ±5 points |
 | AI generation success rate (first attempt) | 60% | 85% |

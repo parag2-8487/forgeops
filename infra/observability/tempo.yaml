@@ -1,0 +1,58 @@
+# Tempo — Phase 2 §2.10's trace store, behind the Grafana datasource that links metrics and logs to it.
+#
+# WHY TEMPO AND NOT JAEGER. Tempo indexes only the trace id and keeps spans in object storage, so its cost is
+# a function of volume rather than of cardinality. Jaeger's index grows with the attributes, which means a
+# well-instrumented service becomes an expensive one — exactly backwards from what this product wants, since
+# `gen_ai.*` attributes are the reason for tracing at all.
+#
+# THE COST OF THAT CHOICE: you cannot search traces by arbitrary attribute cheaply. Which is acceptable here
+# because the entry points are a metric exemplar (a trace id from a latency spike) and a log line (a trace id
+# from an error) — both of which arrive holding the id. TraceQL covers the rest.
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9097
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  # Five minutes, then flush. A longer window loses more on a restart; a shorter one multiplies small blocks
+  # that the compactor then has to merge.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # MATCHES LOKI'S RETENTION RATHER THAN MIMIR'S. A trace is only useful alongside its logs, so keeping
+    # traces longer than the logs they correlate with buys a trace nobody can explain.
+    block_retention: 720h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+# The span-metrics connector, which is what fills Grafana's service graph. Without it that panel is empty,
+# and an empty service graph reads as "no services talk to each other" rather than as "not configured".
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

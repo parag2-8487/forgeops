@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from ..secrets.redaction import RedactedPrompt
 
@@ -90,9 +90,50 @@ class ArtifactModelPort(Protocol):
     @property
     def tier_name(self) -> str: ...
 
+    @property
+    def pinned_endpoint_id(self) -> str | None:
+        """The one endpoint this port may call, or None when it routes through its tier's chain.
+
+        Exposed because a domain must behave differently for an operator's explicit choice: a pinned run
+        that fails is reported as failed with the provider's reason, never papered over with a template or
+        another provider's answer.
+        """
+        ...
+
+    def pinned_to(self, endpoint_id: str) -> ArtifactModelPort:
+        """A port that calls `endpoint_id` only. Raises `KeyError` for an undeclared endpoint."""
+        ...
+
+    def endpoint_choices(self, extra_endpoint_ids: list[str]) -> list[dict[str, Any]]:
+        """The default chain plus each listed endpoint, with whether it can be called and why not."""
+        ...
+
     async def complete(
         self,
         *,
         prompt: RedactedPrompt,
         on_token: TokenSink | None = None,
+        # The caller declaring whether a cached answer is acceptable FOR THIS CALL. A domain that
+        # retries its own work must say so: otherwise the second call is served the entry the first
+        # one wrote, and the run records a provenance no cache held when it began. This is the one
+        # routing fact a domain legitimately knows and the router cannot see -- two attempts of one
+        # run and two separate runs are indistinguishable from inside the router -- which is why it
+        # is on this otherwise deliberately narrow port.
+        may_serve_from_cache: bool = True,
+        # Whether this answer is fit to keep. A caller whose output faces a validation gate AFTER
+        # this returns does not know yet, and must pass False -- otherwise a rejected artifact is
+        # cached and every later run with the same prompt is served the known-bad one, failing the
+        # gate again and burning its whole attempt budget. Such a caller calls `remember` on the
+        # content it accepted.
+        store_in_cache: bool = True,
     ) -> ModelCompletion: ...
+
+    async def remember(self, *, prompt: RedactedPrompt, content: str) -> None:
+        """Keep `content` as the cached answer for `prompt`.
+
+        Separated from `complete` so that WHAT WAS PRODUCED and WHAT WAS ACCEPTED can differ, which for
+        any caller with a validation gate they always do. This does not widen the port towards routing:
+        it still names no tier, breaker or endpoint, and a caller cannot ask which cache tier was
+        written or read one back.
+        """
+        ...
