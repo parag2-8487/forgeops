@@ -42,7 +42,23 @@ export interface ConnectionTest {
   detail: string;
   model_reported: string | null;
   latency_ms: number;
+  /** `connected`, or the kind of refusal, so the result can name the remedy. */
+  category?: string;
 }
+
+/** What each outcome means for the operator, in words that point at the fix. */
+const CATEGORY_LABEL: Record<string, string> = {
+  connected: "Connected successfully",
+  invalid_credential: "Invalid API key",
+  model_unavailable: "Model unavailable",
+  quota_exceeded: "Quota or rate limit exceeded",
+  provider_unavailable: "Provider temporarily unavailable",
+  network_error: "Network error",
+  timeout: "Timed out",
+  provider_slow: "Key and model accepted; provider too slow to finish a test generation",
+  bad_request: "Request rejected",
+  provider_error: "Provider error",
+};
 
 export function ProviderCredentialForm({
   keyRef,
@@ -188,9 +204,10 @@ export function ProviderCredentialForm({
           className={testResult.ok ? "text-xs text-emerald-600" : "text-xs text-destructive"}
           data-testid={`cred-test-result-${keyRef}`}
         >
-          <p className="font-medium">
-            {testResult.ok ? "The endpoint answered" : "The endpoint refused"} ·{" "}
-            {testResult.latency_ms}ms
+          <p className="font-medium" data-testid={`cred-test-category-${keyRef}`}>
+            {CATEGORY_LABEL[testResult.category ?? ""] ??
+              (testResult.ok ? "The endpoint answered" : "The endpoint refused")}{" "}
+            · {testResult.latency_ms}ms
           </p>
           {/* The provider's own words. 401, 404 and a DNS failure have three different remedies, and no
               operator can choose between them from "test failed". */}

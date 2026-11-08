@@ -1,0 +1,102 @@
+# OTel Collector — TIER 1: the AGENT, one per host.
+#
+# Phase 2 §2.10's two-tier architecture. Read `infra/observability/README.md` for why there are two tiers
+# at all; this file is the near side of it.
+#
+# WHAT THIS TIER IS FOR: being close to the process. It receives on localhost, adds the facts only a
+# host knows, batches, and forwards. It does NOT sample, does NOT aggregate across services, and does not
+# talk to a backend store.
+#
+# WHY IT MUST NOT SAMPLE. Tail-based sampling needs every span of a trace in one place to decide whether the
+# trace is interesting, and a trace crosses hosts. An agent that dropped 90% of spans locally would leave the
+# gateway deciding on fragments — and the decision it would most often get wrong is the one that matters:
+# an error span whose siblings were dropped looks like a complete, uneventful trace.
+#
+# WHY IT BATCHES ANYWAY. Batching is not sampling: nothing is discarded, and a batch processor here is what
+# stops one export per span crossing the network. The `send_batch_max_size` bound exists because a gateway
+# rejecting an oversized payload drops the whole batch, and the failure names a gRPC limit rather than a
+# configuration choice.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        # LOCALHOST ONLY. An agent listening on 0.0.0.0 accepts telemetry from anything that can reach the
+        # host, which is both an injection route into an operator's own dashboards and a denial-of-service
+        # surface. The gateway is the only component that accepts from off-box.
+        endpoint: 127.0.0.1:4317
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  # Resource detection first, so everything downstream carries the host's identity. Order matters in a
+  # pipeline: a processor that needs an attribute another adds must come after it.
+  resourcedetection:
+    detectors: [env, system]
+    system:
+      hostname_sources: [os]
+    timeout: 5s
+
+  resource:
+    attributes:
+      - key: forgeops.tier
+        value: agent
+        action: upsert
+
+  # MEMORY LIMITER BEFORE THE BATCHER, deliberately. It refuses new data when the process is near its
+  # ceiling, which sheds load rather than being killed by the OOM killer — and a collector killed mid-batch
+  # loses everything it held, whereas one refusing data loses only what it refused and says so.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+    # A hard ceiling, because a gateway rejecting an oversized payload drops the WHOLE batch and the error
+    # names a gRPC message limit rather than a configuration choice anybody would look for.
+    send_batch_max_size: 1024
+
+exporters:
+  otlp/gateway:
+    endpoint: ${env:FORGEOPS_OTEL_GATEWAY_ENDPOINT}
+    tls:
+      # Insecure by default because the default deployment is one machine and the gateway is a sibling
+      # container. A fleet deployment sets FORGEOPS_OTEL_GATEWAY_TLS and supplies certificates; that is a
+      # decision, and leaving TLS on with no certificates would fail at startup for everybody.
+      insecure: ${env:FORGEOPS_OTEL_GATEWAY_INSECURE}
+    # RETRY ON FAILURE, with a queue that has a bound. An unbounded queue is a memory leak wearing a
+    # reliability costume: a gateway down for an hour would grow it until the collector is killed, losing
+    # the very data the queue existed to protect.
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 1000
+
+service:
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      # The collector's OWN metrics, on localhost. Without them, "is telemetry flowing" is unanswerable
+      # except by looking for its absence downstream — which is indistinguishable from a quiet system.
+      address: 127.0.0.1:8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp/gateway]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp/gateway]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, resource, batch]
+      exporters: [otlp/gateway]

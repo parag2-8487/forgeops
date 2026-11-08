@@ -128,8 +128,12 @@ func TestEveryDeclaredOperationHasAHandlerAndViceVersa(t *testing.T) {
 	if len(handlerTable) != len(allOperations) {
 		t.Errorf("table has %d rows, %d operations declared", len(handlerTable), len(allOperations))
 	}
-	if len(allOperations) != 17 {
-		t.Errorf("§7.7's catalogue has 17 operations; this build declares %d. If that is "+
+	// 24: Phase 1's 19 plus Phase 2's five — two reads (docker.inventory, kubernetes.inventory) and
+	// three actions (docker.container_action, docker.image_action, kubernetes.workload_action).
+	// 28 since Phase 2 2.2 added `iac.apply`. The count is pinned so growth stays deliberate: every
+	// entry here is a thing an operator's machine can be told to do.
+	if len(allOperations) != 30 {
+		t.Errorf("the catalogue is pinned at 30 operations; this build declares %d. If that is "+
 			"deliberate, change this number in the same commit as the table.", len(allOperations))
 	}
 }
@@ -143,6 +147,24 @@ func TestTheMutatingSetIsExactlySevenSevensSecondColumn(t *testing.T) {
 		OpGitBranchCommitPush: true,
 		OpGitOpenPR:           true,
 		OpSecretsInject:       true,
+		// A clone creates the directory a project points at, which is a mutation on the operator's
+		// machine even though nothing inside an existing tree changes.
+		OpRepositoryClone: true,
+		// A deployment changes what is RUNNING. The largest blast radius in the table, and unlike a
+		// file write it cannot be undone by restoring bytes.
+		OpDeploymentApplyManifests: true,
+		// The three Phase 2 actions. Each changes what is RUNNING on the operator's host or cluster.
+		// The two Phase 2 INVENTORIES are deliberately absent from this map: they are reads, and a read
+		// appearing here would mean a dashboard refresh had acquired mutating authority.
+		OpDockerContainerAction:    true,
+		OpDockerImageAction:        true,
+		OpKubernetesWorkloadAction: true,
+		// Running the project's own scripts is the largest execution authority here, so it is mutating.
+		OpDevToolsRun: true,
+		// 2.2. An apply creates and destroys real infrastructure, so it is mutating by any reading.
+		OpIacApply: true,
+		// 2.7. A sync applies Git to a live cluster.
+		OpArgoAppAction: true,
 	}
 	for op, row := range handlerTable {
 		if row.mutating != want[op] {
@@ -622,11 +644,14 @@ func TestOperations_IsDerivedFromTheTable(t *testing.T) {
 	//
 	// Named individually rather than counted alone, because a count that matches for the wrong reason
 	// is the failure this pin exists to catch.
-	const expectedImplemented = 15
+	const expectedImplemented = 28
 	if implemented != expectedImplemented {
 		t.Errorf("%d operations report Implemented, expected %d: changeset.apply, changeset.revert, "+
 			"the six validate.* operations, readiness.inventory, secretscan.run, secrets.inject, "+
-			"project.register, project.unregister, git.branch_commit_push and git.open_pr. "+
+			"project.register, project.unregister, git.branch_commit_push, git.open_pr and "+
+			"repository.clone, deployment.apply_manifests, docker.inventory, kubernetes.inventory, "+
+			"docker.container_action, docker.image_action, kubernetes.workload_action, "+
+			"docker.container_logs, kubernetes.pod_detail and devtools.run. "+
 			"Update this number in the same commit as the new handler.", implemented, expectedImplemented)
 	}
 	for _, op := range []Operation{

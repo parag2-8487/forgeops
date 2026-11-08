@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -346,6 +347,20 @@ async def delete_policy(
 #: `DryRunResult.rule`: a decision the caller cannot attribute to a query is not an auditable answer.
 DECISION_QUERY = "data.forgeops.governance.decision"
 
+_PACKAGE_LINE = re.compile(r"^\s*package\s+([A-Za-z_][\w.]*)\s*$", re.MULTILINE)
+
+
+def decision_query_for(rego: str) -> str:
+    """The `decision` rule of the package this policy DECLARES, or the bundle's own rule.
+
+    The query was always `data.forgeops.governance.decision`. The templates were later moved into their
+    own packages (`forgeops.policy.scheduling`, ...) so they would not collide with the bundle, and from
+    then on every template-based policy dry-ran as `undefined` -- the query asked about a package the
+    policy does not define, so the Test button could never return allow or deny for them (2026-11-02).
+    """
+    match = _PACKAGE_LINE.search(rego)
+    return f"data.{match.group(1)}.decision" if match else DECISION_QUERY
+
 
 def _opa_version(opa_bin: str) -> str:
     """The evaluator's own version string, read from the binary.
@@ -389,6 +404,7 @@ async def test_policy_dry_run(
     (§4.2, Appendix C.1's registry is closed).
     """
     policy = await load_visible_policy(session, policy_id=policy_id, tenant_id=principal.tenant_id)
+    query = decision_query_for(policy.rego_rules or "")
 
     opa_bin = shutil.which("opa")
     if not opa_bin:
@@ -407,7 +423,7 @@ async def test_policy_dry_run(
 
     try:
         result = subprocess.run(  # noqa: S603
-            [opa_bin, "eval", "-d", temp_path, "-I", "-f", "json", DECISION_QUERY],
+            [opa_bin, "eval", "-d", temp_path, "-I", "-f", "json", query],
             input=json.dumps(test_input.input),
             capture_output=True,
             text=True,
@@ -437,7 +453,7 @@ async def test_policy_dry_run(
             # that looks like enforcement.
             return DryRunResult(
                 decision="undefined",
-                rule=DECISION_QUERY,
+                rule=query,
                 evaluated_with=_opa_version(opa_bin),
                 undefined=True,
             )
@@ -445,7 +461,7 @@ async def test_policy_dry_run(
         value = expressions[0]["value"]
         return DryRunResult(
             decision=value if isinstance(value, str) else json.dumps(value),
-            rule=DECISION_QUERY,
+            rule=query,
             evaluated_with=_opa_version(opa_bin),
         )
     except subprocess.TimeoutExpired as exc:

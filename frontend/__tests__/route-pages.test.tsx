@@ -46,9 +46,6 @@ vi.mock("@/lib/api", async () => {
     api: {
       get: mockGet,
       post: mockPost,
-      // `patch` and `deleteWith` are new verbs, added for secret rotation, policy update and the two
-      // destructive routes that require a reason in the body. Mocked here so a page that calls one
-      // fails on an assertion rather than on `api.patch is not a function`.
       patch: mockPatch,
       put: mockPut,
       delete: mockDelete,
@@ -57,6 +54,18 @@ vi.mock("@/lib/api", async () => {
     },
   };
 });
+
+vi.mock("@/lib/api/client", () => ({
+  api: {
+    get: mockGet,
+    post: mockPost,
+    patch: mockPatch,
+    put: mockPut,
+    delete: mockDelete,
+    deleteWith: mockDeleteWith,
+    stream: vi.fn(),
+  },
+}));
 
 let mockPathname = "/";
 vi.mock("next/navigation", () => ({ usePathname: () => mockPathname }));
@@ -87,6 +96,9 @@ import VaultPage from "@/app/(shell)/vault/page";
 import ApprovalsPage from "@/app/(shell)/approvals/page";
 import GenerationPage from "@/app/(shell)/generation/page";
 import PairingPage from "@/app/(shell)/pairing/page";
+import MonitoringPage from "@/app/(shell)/monitoring/page";
+import IncidentsPage from "@/app/(shell)/incidents/page";
+import IntegrationsPage from "@/app/(shell)/settings/integrations/page";
 
 /** A client with retries off, so a rejection surfaces as an error state in one tick. */
 function renderPage(ui: React.ReactElement) {
@@ -685,12 +697,17 @@ describe("Approvals renders a real diff and submits a real decision", () => {
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/approve", {
-        comment: "looks right",
-        // The version THIS screen displayed, so a stale tab gets a 409 rather than deciding on
-        // state the reviewer never saw.
-        expected_version: 3,
-      }),
+      expect(mockPost).toHaveBeenCalledWith(
+        "/approvals/cs-1/approve",
+        {
+          comment: "looks right",
+          // The version THIS screen displayed, so a stale tab gets a 409 rather than deciding on
+          // state the reviewer never saw.
+          expected_version: 3,
+        },
+        // A decision waits on the backend, which is slower than the default request budget.
+        { timeoutMs: 180_000 },
+      ),
     );
   });
 
@@ -703,10 +720,14 @@ describe("Approvals renders a real diff and submits a real decision", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/reject", {
-        comment: null,
-        expected_version: 3,
-      }),
+      expect(mockPost).toHaveBeenCalledWith(
+        "/approvals/cs-1/reject",
+        {
+          comment: null,
+          expected_version: 3,
+        },
+        { timeoutMs: 180_000 },
+      ),
     );
   });
 
@@ -782,7 +803,10 @@ describe("Approvals renders a real diff and submits a real decision", () => {
     const deliver = await screen.findByTestId("deliver-button");
     await userEvent.click(deliver);
     await waitFor(() =>
-      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/deliver", undefined),
+      // Delivery waits on the agent host, which is slower than the default request budget.
+      expect(mockPost).toHaveBeenCalledWith("/approvals/cs-1/deliver", undefined, {
+        timeoutMs: 180_000,
+      }),
     );
     await waitFor(() => expect(screen.getByTestId("deliver-panel")).toHaveTextContent(/applying/i));
   });
@@ -1396,5 +1420,99 @@ describe("Pairing heartbeat is an observation, not a claim", () => {
     mockGet.mockResolvedValue(device({ cert_fingerprint: null }));
     renderPage(<PairingPage />);
     expect(await screen.findByText(/no certificate has been issued/i)).toBeInTheDocument();
+  });
+});
+
+describe("Supplementary shell route pages", () => {
+  it("renders MonitoringPage with heading", async () => {
+    mockGet.mockResolvedValue({
+      metrics_store_configured: true,
+      explanation: "Metrics configured",
+    });
+    renderPage(<MonitoringPage />);
+    expect(await screen.findByRole("heading", { name: "Monitoring" })).toBeInTheDocument();
+  });
+
+  it("renders IncidentsPage across project presence states and handles incident selection", async () => {
+    const { unmount } = renderPage(<IncidentsPage />);
+    expect(screen.getByRole("heading", { name: "Troubleshooting" })).toBeInTheDocument();
+    expect(screen.getByText(/No project is selected/i)).toBeInTheDocument();
+    unmount();
+
+    window.history.pushState({}, "", "/incidents?project=proj-123");
+    mockGet.mockImplementation((p: string) => {
+      if (p.startsWith("/incidents/inc-1")) {
+        return Promise.resolve({
+          incident: {
+            id: "inc-1",
+            source: "worker",
+            severity: "critical",
+            title: "Worker crash",
+            occurrences: 3,
+            detected_at: "2026-10-23T00:00:00Z",
+            last_seen_at: "2026-10-23T00:00:00Z",
+            resolved_at: null,
+            origin_kind: "pod",
+            origin_id: "pod-1",
+            analysis_state: "analysed",
+            evidence_reachable: 2,
+            evidence_consulted: 2,
+            fingerprint: "fp-1",
+            detail: {},
+          },
+          evidence: [],
+          analyses: [
+            {
+              id: "a-1",
+              state: "analysed",
+              problem: "Out of memory",
+              location: "app.go:42",
+              fix: "Increase memory limit",
+              evidence_reachable: 2,
+              evidence_consulted: 2,
+              model: "gemini",
+            },
+          ],
+          suggestions: [],
+          evidence_caveat: "All evidence consulted",
+        });
+      }
+      return Promise.resolve({
+        incidents: [
+          {
+            id: "inc-1",
+            source: "worker",
+            severity: "critical",
+            title: "Worker crash",
+            occurrences: 3,
+            detected_at: "2026-10-23T00:00:00Z",
+            last_seen_at: "2026-10-23T00:00:00Z",
+            resolved_at: null,
+            origin_kind: "pod",
+            origin_id: "pod-1",
+            analysis_state: "analysed",
+            evidence_reachable: 2,
+            evidence_consulted: 2,
+          },
+        ],
+        explanation: "Reported incidents",
+      });
+    });
+
+    renderPage(<IncidentsPage />);
+    expect(screen.getByRole("heading", { name: "Troubleshooting" })).toBeInTheDocument();
+
+    const row = await screen.findByText(/Worker crash/i);
+    await userEvent.click(row);
+    expect(await screen.findByText(/Out of memory/i)).toBeInTheDocument();
+
+    window.history.pushState({}, "", "/");
+  });
+
+  it("renders IntegrationsPage with heading and connections", async () => {
+    mockGet.mockResolvedValue({ connected: false });
+    renderPage(<IntegrationsPage />);
+    expect(await screen.findByRole("heading", { name: "Integrations" })).toBeInTheDocument();
+    expect(screen.getByText(/Connections to outside services/i)).toBeInTheDocument();
   });
 });

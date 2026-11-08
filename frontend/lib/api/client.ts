@@ -3,7 +3,7 @@ import { asRole, clearSession, getAccessToken, setSession } from "@/lib/session"
 import { ApiProblemError, ApiTransportError } from "./errors";
 import { isProblemDetails, PROBLEM_CONTENT_TYPE } from "./problem";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
  * The HTTP header carrying the access token, and the auth scheme it names (RFC 6750 §2.1).
@@ -32,7 +32,39 @@ export { AUTH_HEADER, BEARER_SCHEME };
  * Returns the token on success and null when there is no live session — a failure here is the
  * ordinary "not signed in" case, not an error worth propagating.
  */
-export async function refreshAccessToken(): Promise<string | null> {
+export function refreshAccessToken(): Promise<string | null> {
+  // ONE REFRESH AT A TIME, and that is what stopped the random sign-outs.
+  //
+  // `POST /auth/refresh` rotates the session cookie: the presented token is revoked and a new one set.
+  // When the access token expired, every panel on the page got its 401 within a few hundred
+  // milliseconds and each started its own refresh. The first rotated the cookie; a later one still
+  // carried the pre-rotation cookie, the backend answered 401 (as a replay, correctly), and this
+  // function cleared the session -- "Not authenticated to read projects", then the sign-in page.
+  // Reproduced against the real backend on 2026-11-02: refresh A 200, refresh B with A's old cookie 401.
+  //
+  // In-tab callers share the in-flight promise. Across tabs, the Web Locks API serialises the call, so
+  // the second tab refreshes AFTER the first and sends the cookie the first one just received.
+  if (inflightRefresh === null) {
+    inflightRefresh = withRefreshLock(performRefresh).finally(() => {
+      inflightRefresh = null;
+    });
+  }
+  return inflightRefresh;
+}
+
+let inflightRefresh: Promise<string | null> | null = null;
+
+/** Run `task` under a cross-tab lock where the browser offers one; directly otherwise. */
+async function withRefreshLock(task: () => Promise<string | null>): Promise<string | null> {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  if (locks && typeof locks.request === "function") {
+    // `await` unwraps the callback's promise; the DOM typings model `request` as returning it nested.
+    return await locks.request("forgeops-auth-refresh", task);
+  }
+  return task();
+}
+
+async function performRefresh(): Promise<string | null> {
   let res: Response;
   try {
     res = await fetch(`${env.NEXT_PUBLIC_API_BASE_URL}/auth/refresh`, {
@@ -87,6 +119,13 @@ async function request<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  if (init.signal) {
+    if (init.signal.aborted) {
+      controller.abort();
+    } else {
+      init.signal.addEventListener("abort", () => controller.abort());
+    }
+  }
 
   const token = getAccessToken();
 

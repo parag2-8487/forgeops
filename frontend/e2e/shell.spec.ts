@@ -111,7 +111,9 @@ test.describe("Shell layout", () => {
     // nav entry without a route to back it fails here — which is the whole point of the assertion and
     // the reason this number has to be edited deliberately each time.
     const links = nav.locator("a");
-    await expect(links).toHaveCount(12);
+    // THIRTEEN since Settings -> Integrations was added: a GitHub link belongs to the person and
+    // outlives every project made with it, so it is inspected and revoked from its own route.
+    await expect(links).toHaveCount(13);
     // No disabled elements
     const disabled = nav.locator('[aria-disabled="true"], [disabled]');
     await expect(disabled).toHaveCount(0);

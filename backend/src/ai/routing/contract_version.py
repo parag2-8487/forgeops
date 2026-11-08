@@ -45,4 +45,6 @@ from typing import Final
 #:     score-lowering refusal, the repaired template library, and the two readiness checks that stopped
 #:     being presence checks. Every one of those changes which answers the gate accepts, so entries
 #:     cached under version 1 must not be served.
-GENERATION_CONTRACT_VERSION: Final[int] = 2
+#: 3 - Enforces monorepo workspace manifest copy ordering before install in prompt compiler,
+#:     artifact checks, and recovery resolvers, plus Next.js SSR /app build artifact copy rules.
+GENERATION_CONTRACT_VERSION: Final[int] = 3

@@ -202,6 +202,7 @@ services:
       OIDC_APP_AUDIENCE: "${E2E_OIDC_APP_AUDIENCE:-forgeops-frontend}"
       CORS_ALLOW_ORIGINS: "${E2E_FRONTEND_URL:-http://localhost:3000}"
       APP_ENV: "test"
+      GENERATION_RUN_DEADLINE_SECONDS: "2400.0"
 
   # ── the frontend, told where the API is ──────────────────────────────────
   frontend:

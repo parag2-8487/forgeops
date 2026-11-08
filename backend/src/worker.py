@@ -39,7 +39,10 @@ def _import_task_modules() -> None:
     registry, so a handler added without being imported here fails the build.
     """
     from . import mcp  # noqa: F401 - registers the Phase 0 MCP tasks
+    from .auth.models import User  # noqa: F401 - registers users table
+    from .deployments import tasks as deployment_tasks  # noqa: F401 - registers autonomous_deploy_run
     from .policies import tasks  # noqa: F401 - registers policy.bundle.publish
+    from .projects.models import Project  # noqa: F401 - registers projects table
 
 
 async def _startup(ctx: dict[str, Any]) -> None:

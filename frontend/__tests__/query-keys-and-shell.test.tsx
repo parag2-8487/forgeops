@@ -21,6 +21,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { queryKeys } from "@/lib/api/query-keys";
+import * as apiBarrel from "@/lib/api/index";
 
 describe("queryKeys", () => {
   it("prefixes every key with its family, so invalidating the family reaches all of it", () => {
@@ -43,13 +44,69 @@ describe("queryKeys", () => {
         ],
       ],
       [queryKeys.audit.all, [queryKeys.audit.events(50)]],
-      [queryKeys.policies.all, [queryKeys.policies.templates()]],
+      [
+        queryKeys.policies.all,
+        [
+          queryKeys.policies.templates(),
+          queryKeys.policies.list(10),
+          queryKeys.policies.detail("pol-1"),
+        ],
+      ],
+      [
+        queryKeys.codebase.all,
+        [
+          queryKeys.codebase.status("p1"),
+          queryKeys.codebase.symbols("p1", "sym"),
+          queryKeys.codebase.chunk("p1", "c1"),
+        ],
+      ],
       [
         queryKeys.approvals.all,
-        [queryKeys.approvals.list("pending"), queryKeys.approvals.detail("a1")],
+        [
+          queryKeys.approvals.list("pending"),
+          queryKeys.approvals.detail("a1"),
+          queryKeys.approvals.history("p1"),
+        ],
       ],
       [queryKeys.devices.all, [queryKeys.devices.list(), queryKeys.devices.detail("d1")]],
       [queryKeys.secrets.all, [queryKeys.secrets.list("p1")]],
+      [
+        queryKeys.integrations.all,
+        [queryKeys.integrations.github(), queryKeys.integrations.githubRepositories("repo", 1, 10)],
+      ],
+      [
+        queryKeys.environments.all,
+        [
+          queryKeys.environments.list("p1"),
+          queryKeys.environments.variables("e1"),
+          queryKeys.environments.promotion("e1"),
+        ],
+      ],
+      [
+        queryKeys.deployments.all,
+        [
+          queryKeys.deployments.list("p1"),
+          queryKeys.deployments.rollbackTarget("e1"),
+          queryKeys.deployments.detectedManifests("p1"),
+        ],
+      ],
+      [
+        queryKeys.releases.all,
+        [queryKeys.releases.timeline("p1"), queryKeys.releases.diff("p1", "rel-1", "rel-2")],
+      ],
+      [
+        queryKeys.notifications.all,
+        [queryKeys.notifications.list("p1"), queryKeys.notifications.preferences("p1")],
+      ],
+      [
+        queryKeys.hostops.all,
+        [
+          queryKeys.hostops.dockerInventory("p1", true),
+          queryKeys.hostops.kubernetesInventory("p1", "ns"),
+          queryKeys.hostops.containerLogs("p1", "c1"),
+          queryKeys.hostops.podDetail("p1", "ns", "p1"),
+        ],
+      ],
     ];
 
     for (const [family, members] of families) {
@@ -103,6 +160,13 @@ describe("queryKeys", () => {
       queryKeys.approvals.all,
       queryKeys.devices.all,
       queryKeys.secrets.all,
+      queryKeys.codebase.all,
+      queryKeys.integrations.all,
+      queryKeys.environments.all,
+      queryKeys.deployments.all,
+      queryKeys.releases.all,
+      queryKeys.notifications.all,
+      queryKeys.hostops.all,
     ].map((k) => JSON.stringify(k));
     expect(new Set(all).size).toBe(all.length);
   });
@@ -200,5 +264,16 @@ describe("the shell layout", () => {
     vi.doUnmock("@/components/layout/app-sidebar");
     vi.doUnmock("@/components/layout/app-header");
     vi.doUnmock("@/components/layout/auth-boundary");
+  });
+});
+
+describe("api module barrel export", () => {
+  it("re-exports client, errors, problem, and queryKeys", () => {
+    expect(apiBarrel.api).toBeDefined();
+    expect(apiBarrel.ApiProblemError).toBeDefined();
+    expect(apiBarrel.ApiTransportError).toBeDefined();
+    expect(apiBarrel.isProblemDetails).toBeDefined();
+    expect(apiBarrel.PROBLEM_CONTENT_TYPE).toBeDefined();
+    expect(apiBarrel.queryKeys).toBeDefined();
   });
 });

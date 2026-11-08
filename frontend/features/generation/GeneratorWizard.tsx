@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-ALv2
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, ApiProblemError } from "@/lib/api";
 import { isSseEvent, isTerminalSseEvent, type SseEvent } from "@/lib/api/sse-events";
 import { readSSEResponse } from "@/lib/sse-reader";
@@ -48,9 +48,69 @@ interface CompletePayload {
 interface ErrorPayload {
   detail?: string;
 }
+interface ProgressPayload {
+  state?: string;
+  attempt?: number;
+  max_attempts?: number;
+  endpoint_id?: string | null;
+  model?: string | null;
+  first_token_seconds?: number;
+  wait_seconds?: number;
+}
+
+/** Mirrors `GenerationModelChoice` in `backend/src/generation/routes.py`. */
+export interface GenerationModelChoice {
+  endpoint_id: string | null;
+  provider: string;
+  model: string;
+  available: boolean;
+  reason: string | null;
+  default: boolean;
+}
+
+/** Plain-language names for the phases the backend reports, so a silent screen is never ambiguous. */
+const PHASE_LABEL: Record<string, string> = {
+  preparing_context: "Preparing project context",
+  compiling_instruction: "Compiling the instruction",
+  instruction_recorded: "Instruction recorded",
+  requesting_model: "Waiting for the model (loading and reading the prompt)",
+  model_streaming: "Model is streaming its answer",
+  provider_busy_retrying: "Provider is busy; retrying after a short wait",
+};
+
+function describeProgress(payload: ProgressPayload): string {
+  const label = PHASE_LABEL[payload.state ?? ""] ?? payload.state ?? "Working";
+  const parts = [label];
+  if (payload.attempt)
+    parts.push(
+      `attempt ${payload.attempt}${payload.max_attempts ? ` of ${payload.max_attempts}` : ""}`,
+    );
+  if (payload.first_token_seconds !== undefined)
+    parts.push(`first token after ${payload.first_token_seconds.toFixed(1)}s`);
+  if (payload.wait_seconds) parts.push(`waiting ${payload.wait_seconds}s`);
+  return parts.join(" · ");
+}
 
 export function GeneratorWizard({ projectId }: { projectId: string }) {
   const [prompt, setPrompt] = useState("");
+  // "" is the default chain (local Ollama); anything else pins the run to that one endpoint.
+  const [endpointId, setEndpointId] = useState("");
+  const [phase, setPhase] = useState<string | null>(null);
+  const [models, setModels] = useState<GenerationModelChoice[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    // A failed read leaves only the default option, which is what the server runs without a selection.
+    api
+      .get<GenerationModelChoice[]>("/generation/models")
+      .then((choices) => {
+        if (!cancelled && Array.isArray(choices)) setModels(choices);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const selected = models?.find((choice) => (choice.endpoint_id ?? "") === endpointId);
   const [state, setState] = useState<RunState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
   const [liveOutput, setLiveOutput] = useState("");
@@ -68,13 +128,21 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
     setFailure(null);
     setSeen([]);
     setRunId(null);
+    setLiveOutput("");
+    setPhase("Submitting");
 
     let sawTerminal = false;
 
     try {
       const response = await api.stream("/generation/runs", {
         method: "POST",
-        body: JSON.stringify({ project_id: projectId, prompt }),
+        // `endpoint_id` only when a model was chosen: omitting it keeps the default chain, and the backend
+        // never substitutes another provider for an explicit choice.
+        body: JSON.stringify(
+          endpointId === ""
+            ? { project_id: projectId, prompt }
+            : { project_id: projectId, prompt, endpoint_id: endpointId },
+        ),
       });
 
       // Accumulated per path where the stream says which file a token belongs to, and into ONE live
@@ -127,7 +195,12 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
             // the only place the stream is observable at all.
             live += payload.text;
             setLiveOutput(live);
+            if (import.meta.env.MODE !== "test") {
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
           }
+        } else if (event === "progress") {
+          setPhase(describeProgress(message.data as ProgressPayload));
         } else if (event === "validation") {
           setValidation(message.data as ValidationPayload);
         } else if (event === "complete") {
@@ -148,6 +221,7 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
 
       // A stream that merely stopped is not one that finished. Treating the two alike would report
       // an accepted run for a dropped connection.
+      setPhase(null);
       if (!sawTerminal) {
         setState("failed");
         setFailure("The stream ended without a terminal event, so the run's outcome is unknown.");
@@ -157,7 +231,7 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
       setFailure(problem?.detail ?? problem?.title ?? "The generation request failed.");
       setState("failed");
     }
-  }, [projectId, prompt]);
+  }, [endpointId, projectId, prompt]);
 
   return (
     <div className="space-y-4">
@@ -181,9 +255,68 @@ export function GeneratorWizard({ projectId }: { projectId: string }) {
         </p>
       </div>
 
-      <Button disabled={state === "streaming" || prompt.trim() === ""} onClick={() => void run()}>
+      <div className="space-y-1">
+        <label className="block text-sm font-medium" htmlFor="generation-model">
+          Model
+        </label>
+        <select
+          id="generation-model"
+          data-testid="generation-model"
+          value={endpointId}
+          disabled={state === "streaming"}
+          onChange={(event) => setEndpointId(event.target.value)}
+          className="w-full rounded-md border border-border bg-background p-2 text-sm"
+        >
+          {(
+            models ?? [
+              {
+                endpoint_id: null,
+                provider: "self_hosted",
+                model: "default",
+                available: true,
+                reason: null,
+                default: true,
+              },
+            ]
+          ).map((choice) => (
+            <option
+              key={choice.endpoint_id ?? "default"}
+              value={choice.endpoint_id ?? ""}
+              disabled={!choice.available}
+            >
+              {choice.default
+                ? `Ollama · ${choice.model} (default)`
+                : `${choice.provider === "google" ? "Google Gemini" : choice.provider} · ${choice.model}`}
+              {choice.available ? "" : " — not configured"}
+            </option>
+          ))}
+        </select>
+        {models
+          ?.filter((choice) => !choice.available && choice.reason)
+          .map((choice) => (
+            <p
+              key={choice.endpoint_id ?? "default"}
+              className="text-xs text-amber-600"
+              data-testid="model-unavailable"
+            >
+              {choice.model}: {choice.reason}. Configure it under Model tiers.
+            </p>
+          ))}
+      </div>
+
+      <Button
+        disabled={state === "streaming" || prompt.trim() === "" || selected?.available === false}
+        onClick={() => void run()}
+      >
         {state === "streaming" ? "Generating…" : "Generate artifacts"}
       </Button>
+
+      {state === "streaming" && phase ? (
+        <p role="status" className="text-sm text-muted-foreground" data-testid="generation-phase">
+          {selected && !selected.default ? `${selected.model}: ` : ""}
+          {phase}
+        </p>
+      ) : null}
 
       {runId ? (
         <div className="space-y-2">

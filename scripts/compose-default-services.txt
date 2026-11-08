@@ -83,3 +83,18 @@ ollama-secondary
 # Unprofiled, and its host port published, for the reason `worker` is unprofiled: a stack that accepts
 # an approval it can never carry out is not a working default.
 backend-agent
+
+# 2.2 / 2.4a: the durable-execution engine, added to the DEFAULT set deliberately.
+#
+# The alternative was a profile, as the 2.10 observability tier uses -- and the difference is the
+# number of containers and whether the feature degrades honestly. The observability tier is six
+# services and the backend's telemetry is a no-op without them, so a deployment that skips it behaves
+# identically. Inngest is ONE service and is the engine of the deployment pipeline: behind a profile,
+# every pipeline route would answer `pipeline-engine-absent` for anyone who did not know to start it,
+# which is a supported failure but a poor default for a shipped feature.
+#
+# `test_unprofiled_compose_matches_the_committed_default_service_list` and
+# `test_no_optional_profile_services` both read this file, and both failed until this line was added --
+# which is the intended friction: promoting a service into everyone's default stack should require
+# writing down why.
+inngest

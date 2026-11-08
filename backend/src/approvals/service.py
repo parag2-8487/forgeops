@@ -46,7 +46,7 @@ DEFAULT_PAGE_SIZE = 25
 
 _SUMMARY_COLUMNS = (
     "id, project_id, status, origin, blast_radius_score, blast_radius_verdict, "
-    "version, generation_run_id, created_at, applied_at"
+    "version, generation_run_id, created_at, applied_at, operation"
 )
 
 

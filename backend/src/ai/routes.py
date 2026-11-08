@@ -15,8 +15,10 @@ Security/admission order for /complete:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Annotated, Any
 
+import httpx
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, text
@@ -30,12 +32,18 @@ from ..core.db import get_session
 from ..core.errors import ProblemException
 from ..core.security import TokenVerifier, VerifiedClaims
 from .custom_endpoints import load_custom_endpoints
-from .endpoint_probe import probe_endpoint
+from .endpoint_probe import ProbeResult, probe_endpoint
 from .provider_credentials import derive_seal_key, hint_for, seal, unseal
 from .provider_models import SUPPORTED_CUSTOM_PROTOCOL, ProviderCredential
 from .rate_limit.redis_bucket import RateLimitServiceError, RedisTokenBucketLimiter
 from .routing.breaker import BreakerState, CircuitBreaker
-from .routing.endpoints import CompletionRequest, EndpointRegistry, _availability_reason
+from .routing.endpoints import (
+    CompletionRequest,
+    EndpointRegistry,
+    GoogleNativeEndpoint,
+    ProviderRequestError,
+    _availability_reason,
+)
 from .routing.router import ModelRouter, RoutingResult
 from .routing.tiers import ModelTier, TierConfig
 
@@ -278,6 +286,10 @@ class ConnectionTestResponse(BaseModel):
     #: different model is a real misconfiguration and invisible from the status code alone.
     model_reported: str | None = None
     latency_ms: int = 0
+    #: What kind of outcome this was, so the screen can name the remedy: `connected`, `invalid_credential`,
+    #: `model_unavailable`, `quota_exceeded`, `provider_unavailable`, `network_error`, `bad_request`,
+    #: `timeout` or `provider_error`.
+    category: str = "provider_error"
 
 
 @read_router.put("/credentials/{key_ref}", response_model=ProviderCredentialResponse)
@@ -396,7 +408,7 @@ async def test_endpoint_connection(
             title="Unknown endpoint",
             detail=f"No endpoint named '{endpoint_id}' is configured.",
         )
-    if descriptor.protocol.value != "openai_compatible":
+    if descriptor.protocol.value not in ("openai_compatible", "google_native"):
         raise ProblemException(
             status=422,
             type_suffix="unsupported-protocol",
@@ -428,12 +440,15 @@ async def test_endpoint_connection(
             )
         credential = secret.get_secret_value()
 
-    result = await probe_endpoint(
-        base_url=descriptor.base_url,
-        model=descriptor.model,
-        credential=credential,
-        timeout_seconds=request.app.state.settings.model_http_timeout_seconds,
-    )
+    if descriptor.protocol.value == "google_native":
+        result = await _probe_google(descriptor, credential)
+    else:
+        result = await probe_endpoint(
+            base_url=descriptor.base_url,
+            model=descriptor.model,
+            credential=credential,
+            timeout_seconds=request.app.state.settings.model_http_timeout_seconds,
+        )
 
     if descriptor.key_ref and descriptor.key_ref in stored:
         await session.execute(
@@ -451,6 +466,47 @@ async def test_endpoint_connection(
         detail=result.detail,
         model_reported=result.model_reported,
         latency_ms=result.latency_ms,
+        category=getattr(result, "category", None) or ("connected" if result.ok else "provider_error"),
+    )
+
+
+async def _probe_google(descriptor: Any, credential: str | None) -> ProbeResult:
+    """A Gemini connection test: `models.get` (free) then one tiny `generateContent`.
+
+    Bounded at 150s. MEASURED 2026-11-02: under Google's "high demand" a one-word generateContent took 119s
+    while `models.get` answered in 0.3s, so 60s reported a working key as a failure. A generation that still
+    does not finish is reported as `provider_slow` -- the key and model ARE proven by then -- not as a
+    broken connection.
+    """
+    started = time.perf_counter()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(150.0, connect=10.0)) as http:
+        endpoint = GoogleNativeEndpoint(descriptor=descriptor, http=http)
+        try:
+            model_version, tokens = await endpoint.probe(credential=credential)
+        except ProviderRequestError as exc:
+            return ProbeResult(
+                ok=False,
+                detail=str(exc),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                category=exc.category,
+            )
+        except httpx.TimeoutException:
+            return ProbeResult(
+                ok=False,
+                detail=(
+                    "provider_slow: the API key and model were accepted (models.get), but a one-line test "
+                    "generation did not finish within 150s. Google is queueing requests; generation runs "
+                    "may be slow or return 503 until demand drops."
+                ),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                category="provider_slow",
+            )
+    return ProbeResult(
+        ok=True,
+        detail=f"connected: {descriptor.model} answered a test generation ({tokens} output tokens)",
+        model_reported=model_version,
+        latency_ms=int((time.perf_counter() - started) * 1000),
+        category="connected",
     )
 
 

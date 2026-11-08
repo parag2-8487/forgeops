@@ -344,6 +344,18 @@ CHECK_EXPLANATIONS: Final[dict[str, CheckExplanation]] = {
         fixability=_gen(),
         artifact="dockerfile",
     ),
+    "dockerfile_matches_project_runtime": CheckExplanation(
+        looked_for="a Dockerfile whose base images and install commands match the project's manifests",
+        looked_in="the FROM, RUN, COPY and CMD instructions of the Dockerfile, against the manifest files present",
+        remedy=(
+            "Build with the toolchain of the manifests the project actually has: `package.json` means a Node "
+            "image and npm/yarn/pnpm, `requirements.txt` or `pyproject.toml` means Python and pip, `go.mod` "
+            "means Go, `Cargo.toml` means Rust. Do not install with a toolchain whose manifest is absent."
+        ),
+        remedy_path="Dockerfile",
+        fixability=_gen(),
+        artifact="dockerfile",
+    ),
     "dockerignore_present": CheckExplanation(
         looked_for="a .dockerignore file",
         looked_in=".dockerignore at the repository root",

@@ -38,7 +38,7 @@ from pathlib import Path
 #: reads `ci.yml` and fails when the two disagree. Parsing YAML to discover the split would make this
 #: script depend on the workflow's shape; asserting the two agree keeps one authority and no drift.
 SHARDS: dict[str, tuple[str, ...]] = {
-    "unit": ("tests/unit", "tests/property", "tests/generation", "tests/secrets"),
+    "unit": ("tests/unit", "tests/property", "tests/generation", "tests/secrets", "tests/regression"),
     "meta": ("tests/meta",),
     "integration": ("tests/integration",),
 }

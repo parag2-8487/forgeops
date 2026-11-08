@@ -23,7 +23,7 @@ pytestmark = pytest.mark.mandatory
 INTEGRATION_ROOT = Path(__file__).resolve().parent
 
 
-@wires("settings", "engine", "sessionmaker", "redis")
+@wires("settings", "engine", "sessionmaker", "redis", "task_dispatcher")
 class TestCompositionSurfaceIsDeclared:
     """The infrastructure edges of the composition, declared here.
 

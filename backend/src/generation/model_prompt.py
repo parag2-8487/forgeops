@@ -36,18 +36,27 @@ template path is a separate, LABELLED outcome in `service.py`.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 #: The artifacts §12.6 step 6 names. Ordered, because the change set the governance chokepoint
 #: receives is built from this sequence and a stable order makes two runs comparable.
+#:
+#: MANDATORY, AND THAT WORD IS LOAD-BEARING. Every path here must come back or the whole attempt is
+#: discarded, so a path belongs in this tuple only when an attempt without it is genuinely unusable.
+#: `docker-compose.yml` is OFFERED rather than required (see `OPTIONAL_ARTIFACTS`): a Kubernetes
+#: deployment is complete without it, and requiring it discarded four correct files on every run whose
+#: model chose not to write a compose stack — strictly worse than the partial result it replaced.
 REQUIRED_ARTIFACTS: tuple[str, ...] = (
     "Dockerfile",
     "k8s/deployment.yaml",
     "k8s/service.yaml",
     "k8s/ingress.yaml",
 )
+
+#: Artifacts the run asks for and accepts, without treating their absence as a failed attempt.
+OPTIONAL_ARTIFACTS: tuple[str, ...] = ("docker-compose.yml",)
 
 #: `### FILE: <path>`, tolerating any number of leading hashes and surrounding whitespace.
 #:
@@ -190,6 +199,14 @@ def build_generation_prompt(
         "- The Dockerfile contains a line that is exactly `USER 1001`, placed after the RUN",
         "  instructions and before CMD, so the container does not run as root.",
         f"- The Dockerfile EXPOSEs port {facts.port}.",
+        "- All application source files are at the root of the repository. Do NOT invent "
+        "subdirectories like `frontend/`, `frontent/`, `backend/`, or `server/` when copying files.",
+        "- In Dockerfile, copy files directly from the root context: `COPY package*.json ./` "
+        "followed by `RUN npm install`, then `COPY . .`. Do NOT invent `COPY frontent/...` "
+        "or `COPY backend/...`.",
+        f"- The docker-compose.yml defines a top-level name '{facts.app_name}' and a services "
+        f"mapping with at least one service mapping host port {facts.port} to container port "
+        f"{facts.port}, with build context set to `.`.",
         "- Every Kubernetes manifest has top-level `apiVersion:`, `kind:`, `metadata:` and `spec:` keys.",
         f"- The Deployment labels its pods `app: {facts.app_name}` and the Service selects on that label.",
         f"- The Service is named `{facts.app_name}`, is type ClusterIP, publishes port 80 and targets",
@@ -198,10 +215,10 @@ def build_generation_prompt(
         f"- Use the real name `{facts.app_name}` everywhere. Never emit a placeholder such as",
         "  `<your-username>` or `example.com`: these files are applied as written.",
         "",
-        "OUTPUT FORMAT. Emit exactly these four files, in this order, and nothing else -",
+        "OUTPUT FORMAT. Emit exactly these files, in this order, and nothing else -",
         "no explanation, no summary, no extra files:",
     ]
-    for path in REQUIRED_ARTIFACTS:
+    for path in (*REQUIRED_ARTIFACTS, *OPTIONAL_ARTIFACTS):
         lines.append(f"### FILE: {path}")
         lines.append("```")
         lines.append("<the file's complete contents>")
@@ -211,7 +228,7 @@ def build_generation_prompt(
         lines += [
             "",
             f"ATTEMPT {attempt}. YOUR PREVIOUS ATTEMPT WAS REJECTED. Fix exactly these findings and",
-            "re-emit all four files:",
+            "re-emit all files:",
         ]
         lines += [f"- {finding}" for finding in previous_findings]
 
@@ -297,6 +314,74 @@ def _join(body: Sequence[str]) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
+#: A manifest file names its ecosystem more reliably than any language statistic: GitHub calls a Vite site
+#: "CSS", and an index can be empty on a project's first run. Checked in this order, by file name.
+_MANIFEST_RUNTIMES: tuple[tuple[str, str], ...] = (
+    ("package.json", "node"),
+    ("go.mod", "go"),
+    ("cargo.toml", "rust"),
+    ("pyproject.toml", "python"),
+    ("requirements.txt", "python"),
+    ("pipfile", "python"),
+    ("setup.py", "python"),
+)
+_LANGUAGE_RUNTIMES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("typescript", "javascript", "tsx", "jsx", "node"), "node"),
+    (("python", "py"), "python"),
+    (("go",), "go"),
+    (("rust",), "rust"),
+)
+_FRONTEND_FRAMEWORKS = ("next", "vite", "react", "vue", "nuxt", "svelte", "remix", "astro", "angular")
+
+
+def infer_runtime(
+    *, settings: Mapping[str, Any], inventory: Mapping[str, Any], paths: Iterable[str] = (), prompt: str = ""
+) -> str:
+    """The project's runtime, from the strongest evidence available.
+
+    Operator setting, then manifest files present in the project, then indexed languages, then the
+    operator's own words. ONE derivation for the model prompt and the template fallback, so they cannot
+    describe different applications.
+
+    THE OLD DEFAULT WAS PYTHON. With no indexed languages -- a project's first run, before its index exists
+    -- every project became Python, and a Vite site with a `package.json` got `pip install -r
+    requirements.txt` and `CMD ["python", "main.py"]` (2026-11-02).
+    """
+    configured = str(settings.get("runtime") or "").strip().lower()
+    if configured:
+        return configured
+    names = [str(m).replace("\\", "/").rsplit("/", 1)[-1].lower() for m in (inventory.get("manifests") or [])]
+    names += [str(m).replace("\\", "/").rsplit("/", 1)[-1].lower() for m in paths]
+    # The SHALLOWEST manifest wins, so a root `package.json` outranks a nested tool's `requirements.txt`.
+    ranked = sorted(
+        (str(m).replace("\\", "/").count("/"), order, runtime)
+        for m in [*(inventory.get("manifests") or []), *paths]
+        for order, (name, runtime) in enumerate(_MANIFEST_RUNTIMES)
+        if str(m).replace("\\", "/").rsplit("/", 1)[-1].lower() == name
+    )
+    if ranked:
+        return ranked[0][2]
+    languages = [str(lang).lower() for lang in (inventory.get("languages") or [])]
+    for aliases, runtime in _LANGUAGE_RUNTIMES:
+        if any(lang in aliases for lang in languages):
+            return runtime
+    lowered = prompt.lower()
+    for word, runtime in (("node", "node"), ("express", "node"), ("react", "node"), ("golang", "go"), ("rust", "rust")):
+        if word in lowered:
+            return runtime
+    return "python" if names or languages or "python" in lowered else "unknown"
+
+
+def is_frontend_project(*, inventory: Mapping[str, Any], prompt: str = "") -> bool:
+    """A build-then-serve frontend, from declared frameworks first and the operator's words second."""
+    frameworks = [
+        str(f.get("name") if isinstance(f, Mapping) else f).lower() for f in (inventory.get("frameworks") or [])
+    ]
+    if any(any(name in fw for name in _FRONTEND_FRAMEWORKS) for fw in frameworks):
+        return True
+    return any(k in prompt.lower() for k in ("vite", "react", "vue", "frontend", "spa", "static"))
+
+
 def facts_from_project(
     *,
     project: Mapping[str, Any] | None,
@@ -316,13 +401,17 @@ def facts_from_project(
         if isinstance(raw_settings, Mapping):
             settings = raw_settings
 
-    runtime = str(settings.get("runtime") or "").strip().lower()
-    if not runtime:
-        lowered = operator_prompt.lower()
-        runtime = "node" if ("node" in lowered or "express" in lowered) else "python"
+    inventory: Mapping[str, Any] = {}
+    if project is not None and isinstance(project.get("inventory"), Mapping):
+        inventory = project["inventory"]
+    runtime = infer_runtime(settings=settings, inventory=inventory, prompt=operator_prompt)
 
+    is_spa = is_frontend_project(inventory=inventory, prompt=operator_prompt)
     if runtime.startswith("node"):
-        base_image, start, port = "node:20-alpine", ("node", "server.js"), 3000
+        if is_spa:
+            base_image, start, port = "node:22-alpine", ("npx", "serve", "-s", ".", "-l", "3000"), 3000
+        else:
+            base_image, start, port = "node:20-alpine", ("node", "server.js"), 3000
     else:
         base_image, start, port = "python:3.11-slim", ("python", "main.py"), 8000
 

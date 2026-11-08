@@ -36,6 +36,7 @@ a machine without a container engine:
 
 Usage: check-compose-validate.py <docker-compose.yml>
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -47,6 +48,7 @@ try:
 except ImportError:  # pragma: no cover
     print("FAIL: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
     sys.exit(1)
+
 
 #: The default set is READ from `scripts/compose-default-services.txt`, not restated
 #: here. That file's own header already claimed it was "Read by the `compose-smoke` CI
@@ -66,14 +68,18 @@ def _load_default_services() -> set[str]:
     """
     path = pathlib.Path(__file__).resolve().parent / "compose-default-services.txt"
     if not path.is_file():
-        raise SystemExit(f"FAIL: {path} is missing; it is the source of the default set")
+        raise SystemExit(
+            f"FAIL: {path} is missing; it is the source of the default set"
+        )
     names = {
         line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
     if not names:
-        raise SystemExit(f"FAIL: {path} lists no services; an empty expected set proves nothing")
+        raise SystemExit(
+            f"FAIL: {path} lists no services; an empty expected set proves nothing"
+        )
     return names
 
 
@@ -81,7 +87,17 @@ DEFAULT_SERVICES = _load_default_services()
 # Optional services and the profile each MUST be gated behind. They were absent
 # until their owning task landed (agent-dev in 9.5, infisical in 13.5); now the
 # invariant is that they stay out of the unprofiled default selection.
-OPTIONAL_SERVICE_PROFILES = {"infisical": "vault", "agent-dev": "tools"}
+OPTIONAL_SERVICE_PROFILES = {
+    "infisical": "vault",
+    "agent-dev": "tools",
+    "otel-agent": "observability",
+    "otel-gateway": "observability",
+    "prometheus": "observability",
+    "mimir": "observability",
+    "loki": "observability",
+    "tempo": "observability",
+    "grafana": "observability",
+}
 #: Services built from a local context rather than pulled by digest. `worker` builds from ./backend,
 #: the same image the API runs: a worker whose code differs from the API's is a class of bug worth
 #: designing out, and it is why this is a build rather than a second pinned image.
@@ -110,7 +126,9 @@ INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-[^}]*)?\}")
 #: reaching docker-compose.yml would be an image reference that cannot be pulled —
 #: failing at `docker compose up` rather than at review, and looking like a pinned
 #: reference in a diff.
-PLACEHOLDER_DIGEST = re.compile(r"<[^>]*digest[^>]*>|@sha256:<|@sha256:\s*$|@sha256:(?:x|X|0){6,}")
+PLACEHOLDER_DIGEST = re.compile(
+    r"<[^>]*digest[^>]*>|@sha256:<|@sha256:\s*$|@sha256:(?:x|X|0){6,}"
+)
 
 #: A `user:` override that puts the container back on uid 0. Compose accepts
 #: `root`, `0`, `0:0`, `root:root` and `0:root`; all of them defeat an image whose
@@ -273,11 +291,11 @@ def check(compose_path: str) -> list[str]:
                 errors.append(
                     f"service {name!r}: ./.env.example must be required: true"
                 )
-            override_path = str(override.get("path", "")) if isinstance(override, dict) else ""
+            override_path = (
+                str(override.get("path", "")) if isinstance(override, dict) else ""
+            )
             if not override_path.endswith(".env"):
-                errors.append(
-                    f"service {name!r}: second env_file entry must be ./.env"
-                )
+                errors.append(f"service {name!r}: second env_file entry must be ./.env")
             elif override.get("required") is not False:
                 errors.append(f"service {name!r}: ./.env must be required: false")
 
@@ -327,9 +345,10 @@ def check(compose_path: str) -> list[str]:
                     "BROWSER-reachable URL, not the server-internal hostname"
                 )
         depends = frontend.get("depends_on")
-        if not isinstance(depends, dict) or depends.get("backend", {}).get(
-            "condition"
-        ) != "service_healthy":
+        if (
+            not isinstance(depends, dict)
+            or depends.get("backend", {}).get("condition") != "service_healthy"
+        ):
             errors.append(
                 "service 'frontend': must depend on backend with condition "
                 "service_healthy (design §13.3)"
@@ -373,7 +392,9 @@ def _check_opa_loads_only_rego(data: dict, compose_path: str) -> list[str]:
 
     command = opa.get("command")
     if not isinstance(command, list) or not command:
-        return ["service 'opa': command must be a list naming the policy paths it loads"]
+        return [
+            "service 'opa': command must be a list naming the policy paths it loads"
+        ]
 
     # Container paths OPA is told to load: every bare argument after the flags.
     loaded = [str(arg) for arg in command[1:] if not str(arg).startswith("-")]
@@ -387,26 +408,38 @@ def _check_opa_loads_only_rego(data: dict, compose_path: str) -> list[str]:
         if len(parts) >= 2:
             mounts.append((parts[0], parts[1]))
     if not mounts:
-        return ["service 'opa': no volume mounts, so the loaded paths resolve to nothing"]
+        return [
+            "service 'opa': no volume mounts, so the loaded paths resolve to nothing"
+        ]
 
     repo_root = pathlib.Path(compose_path).resolve().parent
     checked = 0
     for container_path in loaded:
         host_dir: pathlib.Path | None = None
         for host_src, container_dst in mounts:
-            if container_path == container_dst or container_path.startswith(container_dst + "/"):
+            if container_path == container_dst or container_path.startswith(
+                container_dst + "/"
+            ):
                 suffix = container_path[len(container_dst) :].lstrip("/")
                 host_dir = (repo_root / host_src.lstrip("./") / suffix).resolve()
                 break
         if host_dir is None:
-            errors.append(f"service 'opa': loads {container_path} but no volume mounts it")
+            errors.append(
+                f"service 'opa': loads {container_path} but no volume mounts it"
+            )
             continue
         if not host_dir.is_dir():
-            errors.append(f"service 'opa': loads {container_path}, which resolves to {host_dir}, not a directory")
+            errors.append(
+                f"service 'opa': loads {container_path}, which resolves to {host_dir}, not a directory"
+            )
             continue
 
-        rego = sorted(p for p in host_dir.rglob("*") if p.is_file() and p.suffix == ".rego")
-        other = sorted(p for p in host_dir.rglob("*") if p.is_file() and p.suffix != ".rego")
+        rego = sorted(
+            p for p in host_dir.rglob("*") if p.is_file() and p.suffix == ".rego"
+        )
+        other = sorted(
+            p for p in host_dir.rglob("*") if p.is_file() and p.suffix != ".rego"
+        )
         if not rego:
             errors.append(
                 f"service 'opa': loads {container_path} but it contains no .rego file; "
@@ -422,7 +455,9 @@ def _check_opa_loads_only_rego(data: dict, compose_path: str) -> list[str]:
         checked += 1
 
     if checked == 0 and not errors:
-        errors.append("service 'opa': no loaded path could be checked, so this rule proved nothing")
+        errors.append(
+            "service 'opa': no loaded path could be checked, so this rule proved nothing"
+        )
     return errors
 
 
@@ -433,7 +468,10 @@ def main() -> int:
 
     errors = check(sys.argv[1])
     if errors:
-        print("FAIL: docker-compose.yml default-profile validation failed:", file=sys.stderr)
+        print(
+            "FAIL: docker-compose.yml default-profile validation failed:",
+            file=sys.stderr,
+        )
         for err in errors:
             print(f"  - {err}", file=sys.stderr)
         return 1

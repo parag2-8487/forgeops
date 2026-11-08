@@ -336,7 +336,10 @@ describe("the once-only 401 retry", () => {
 
     // All three completed. None was starved by another's retry.
     expect(results.map((r) => r.path)).toEqual([`${BASE}/a`, `${BASE}/b`, `${BASE}/c`]);
-    expect(refreshes).toBe(3);
+    // ...and they SHARED one refresh. This asserted 3 until 2026-11-02, which was the defect itself: the
+    // backend rotates the cookie on each refresh, so the later ones replayed a revoked cookie, got 401,
+    // and cleared the session -- the "Not authenticated" panel and the bounce to sign-in.
+    expect(refreshes).toBe(1);
   });
 });
 
@@ -554,5 +557,72 @@ describe("requestStream", () => {
     await expect(api.stream("/x")).rejects.toMatchObject({
       problem: { detail: "Unknown transport failure" },
     });
+  });
+});
+
+describe("refresh is single-flight (the random sign-out, 2026-11-02)", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    clearSession();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    clearSession();
+  });
+
+  it("concurrent callers share ONE refresh, so a rotated cookie is never replayed", async () => {
+    // The backend rotates the cookie on every refresh and answers 401 to the old one. A second refresh
+    // in parallel would therefore fail and clear the session -- so it must not happen at all.
+    let release: (r: Response) => void = () => undefined;
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { refreshAccessToken } = await import("@/lib/api/client");
+
+    const calls = [refreshAccessToken(), refreshAccessToken(), refreshAccessToken()];
+    await Promise.resolve();
+    release(json({ access_token: "fresh", subject: "u1", session_id: "s1", role: "admin" }));
+
+    expect(await Promise.all(calls)).toEqual(["fresh", "fresh", "fresh"]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getAccessToken()).toBe("fresh");
+  });
+
+  it("three panels that 401 together trigger one refresh and all succeed, with no sign-out", async () => {
+    setSession("expired", { subject: "u1", sessionId: "s1", role: "admin" });
+    let refreshes = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/auth/refresh")) {
+        refreshes += 1;
+        return Promise.resolve(
+          json({ access_token: "fresh", subject: "u1", session_id: "s2", role: "admin" }),
+        );
+      }
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      const presented = Object.values(headers).join(" ");
+      return Promise.resolve(
+        presented.includes("fresh")
+          ? json({ ok: true })
+          : problem({ type: "about:blank", title: "Unauthenticated", status: 401 }, 401),
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { api } = await import("@/lib/api");
+
+    const results = await Promise.all([
+      api.get("/projects"),
+      api.get("/policies"),
+      api.get("/analysis/reports"),
+    ]);
+
+    expect(results).toEqual([{ ok: true }, { ok: true }, { ok: true }]);
+    expect(refreshes).toBe(1);
+    expect(getSession()).not.toBeNull();
   });
 });

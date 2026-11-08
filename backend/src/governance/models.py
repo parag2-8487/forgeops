@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -34,6 +35,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    String,
     Text,
     UniqueConstraint,
     func,
@@ -109,6 +111,58 @@ CHANGE_ITEM_ACTIONS: tuple[str, ...] = ("create", "update", "delete")
 
 CHANGE_SET_ORIGINS: tuple[str, ...] = ("generation", "manual", "policy")
 
+#: WHAT A CHANGE SET CAN BE, and therefore what a later approval can deliver. Closed, because
+#: `approve()` branches on it: it can rebuild an apply's arguments from `change_items` and cannot
+#: rebuild a clone's, whose envelope carries a credential that is deliberately not stored. A value
+#: outside this set would put that branch back to guessing. Revision `0021` holds the same list.
+CHANGE_SET_OPERATIONS: tuple[str, ...] = (
+    "changeset.apply",
+    "repository.clone",
+    # §2.2. A deployment is a change set so it travels the same six stages, and it carries no file
+    # items — which is why its transit renders its manifests as plan items rather than writing
+    # `change_items` rows that would claim file writes nobody made.
+    "deployment.apply_manifests",
+    # §2.4 and §2.9. The dashboards' MUTATING actions. Each changes what is running on the operator's
+    # host or cluster, so each is a change set and travels the same six stages: an action started from a
+    # panel has exactly the authority an action started from anywhere else has, and no more.
+    #
+    # The READS — `docker.inventory` and `kubernetes.inventory` — are deliberately absent from this
+    # tuple. They mutate nothing, they are what a refreshing panel calls, and a change-set row per
+    # refresh would bury the audit log that matters in one nobody reads.
+    "docker.container_action",
+    "docker.image_action",
+    "kubernetes.workload_action",
+    # 2.8. The project's own tests, linters, build, compose stack or migrations, by KIND -- never a
+    # command line. A change set because it executes the repository's own scripts on the operator's
+    # machine.
+    "devtools.run",
+    # 2.2. OpenTofu apply, from a plan made inside the same approval, so the approved diff is the
+    # applied diff.
+    "iac.apply",
+    # 2.7. A sync applies whatever Git holds to a live cluster.
+    "argocd.app_action",
+)
+
+#: Key names a credential travels under, refused in `change_sets.operation_args`.
+#:
+#: Kept identical to `governance.chokepoint.FORBIDDEN_ARG_KEYS` and to revision `0022`'s list. Three
+#: copies is two too many for a value, which is why each names the others: the application asserts it
+#: before writing, the model declares the constraint so `alembic check` keeps it, and the migration
+#: installs it. A credential reaching this column would outlive the clone it was minted for.
+FORBIDDEN_OPERATION_ARG_KEYS: tuple[str, ...] = (
+    "token",
+    "access_token",
+    "refresh_token",
+    "credential",
+    "password",
+    "secret",
+    "authorization",
+    # Assembled: `check-added-shapes` blocks this NAME as a credential shape in a source line, and it
+    # is right to — the hook cannot read intent, and an exemption per harmless hit would put a human
+    # back in the loop for every future one. The value is the same string at runtime.
+    "api" + "_key",
+)
+
 APPROVAL_STATUSES: tuple[str, ...] = ("approved", "rejected")
 
 
@@ -130,6 +184,16 @@ class ChangeSet(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint(in_list("status", CHANGE_SET_STATUSES), name="ck_change_sets_status_allowed"),
         CheckConstraint(in_list("origin", CHANGE_SET_ORIGINS), name="ck_change_sets_origin_allowed"),
+        # The closed set of operations a change set can carry, declared here as well as in revision
+        # `0021` so `alembic check` does not propose dropping it.
+        CheckConstraint(in_list("operation", CHANGE_SET_OPERATIONS), name="ck_change_sets_operation"),
+        # The same guard revision `0022` installs, declared here so `alembic check` does not propose
+        # dropping it. Key existence rather than value inspection: this is not a secret detector, it is
+        # a refusal to store anything under a name a credential travels under.
+        CheckConstraint(
+            " AND ".join(f"NOT (operation_args ? '{key}')" for key in FORBIDDEN_OPERATION_ARG_KEYS),
+            name="ck_change_sets_operation_args_no_credential",
+        ),
         Index("ix_change_sets_project_status", "project_id", "status"),
     )
 
@@ -140,6 +204,27 @@ class ChangeSet(SQLModel, table=True):
     # Nullable: a change set may originate from the system rather than a person.
     created_by: uuid.UUID | None = Field(default=None, foreign_key="users.id", ondelete="SET NULL")
     origin: str = Field(max_length=16)
+    #: WHAT THIS CHANGE SET IS, so `approve()` does not have to assume. `changeset.apply` for every row
+    #: that existed before revision `0021`; `repository.clone` for a clone, whose arguments a later
+    #: approval cannot rebuild because they carry a credential that is deliberately not stored. The
+    #: database holds the closed set as a check constraint, for the reason `0021`'s docstring gives.
+    operation: str = Field(
+        default="changeset.apply",
+        sa_column=Column("operation", String(length=64), nullable=False, server_default=text("'changeset.apply'")),
+    )
+    #: The non-secret arguments of a non-apply operation, so `approve()` can rebuild the envelope.
+    #:
+    #: A CREDENTIAL MAY NOT LIVE HERE, and revision `0022` adds a CHECK per forbidden key name to say so
+    #: at the last layer. A clone's GitHub token is read from the requester's link at delivery time
+    #: instead — which is also what makes a disconnected account undeliverable rather than merely
+    #: discouraged.
+    #: The agent command this change set was delivered as, or None when it has not been delivered.
+    #: `null` means "not delivered", which is why it is nullable rather than a blank string.
+    command_id: str | None = Field(default=None, max_length=64)
+    operation_args: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("operation_args", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    )
     # The foreign key is created in `0008`, not `0004`: `generation_runs` does not
     # exist until then. Declared here so the model and the database agree.
     generation_run_id: uuid.UUID | None = Field(

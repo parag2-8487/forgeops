@@ -5,11 +5,13 @@ import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api";
 import { GovernanceRefusal } from "@/components/ui/governance-refusal";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 /**
  * A secret REFERENCE. Deliberately no value field: `SecretResponse` on the backend returns the
- * key, the environment and where the material lives, never the material. Typing it without a
- * value keeps that property visible in the client too, so a future edit cannot casually add one.
+ * key, the environment and where the material lives, never the material.
  */
 export interface SecretRefUI {
   id: string;
@@ -20,32 +22,7 @@ export interface SecretRefUI {
 }
 
 /**
- * The vault: list, add, rotate, delete — phases.md §1.8 "Frontend: Secret vault UI (add, edit, delete)".
- *
- * The screen only listed. `POST /api/v1/secrets`, `PATCH /api/v1/secrets/{id}` and
- * `DELETE /api/v1/secrets/{id}` were all served and all uncalled, so a secret could be read about and
- * not created.
- *
- * WRITE-ONLY IS MADE STRUCTURAL HERE, NOT PROMISED IN A COMMENT
- * The requirement is that the UI must never display or cache a secret value it wrote. Three things
- * enforce that, and none of them is discipline:
- *
- *  1. **The value never enters React state.** `SecretValueField` below is an UNCONTROLLED input read
- *     through a ref at submit time. A `useState` value would live in the component's state for the
- *     lifetime of the form, appear in a React DevTools inspection, and — the part that actually
- *     matters — be captured in any error boundary or state snapshot. There is no `value` prop and no
- *     `onChange`, so there is nowhere for it to be held.
- *  2. **The ref is cleared in the mutation, not in a success handler.** `finally`-style clearing means
- *     a failed request clears it too. Leaving it on failure so the user can retry would keep live
- *     credential material in the DOM for as long as they left the tab open, which is the exact
- *     tradeoff not worth making — retyping a secret is cheap.
- *  3. **The mutation returns `SecretResponse`, which has no value field**, and the query cache is
- *     keyed on the list endpoint that also has none. So even TanStack Query's cache cannot hold one:
- *     there is no response shape in this module that carries a value, in either direction after the
- *     request.
- *
- * `type="password"` is on the input as well, but that is only about shoulder-surfing and is the least
- * of the three.
+ * The vault: list, add, rotate, delete — phases.md §1.8.
  */
 export function SecretVault({
   secrets,
@@ -55,7 +32,7 @@ export function SecretVault({
   secrets: SecretRefUI[];
   /** Required to create. Absent on screens that only display, which is what `readOnly` expresses. */
   projectId?: string;
-  /** True on the project detail page, where the vault is shown for context rather than edited. */
+  /** True on screens where the vault is shown for context rather than edited. */
   readOnly?: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -77,76 +54,93 @@ export function SecretVault({
   });
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-border bg-background p-4">
-        <h3 className="text-sm font-semibold">Secret references</h3>
-        {secrets.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">None registered.</p>
-        ) : (
-          <ul className="mt-2 divide-y divide-border">
-            {secrets.map((secret) => (
-              <li
-                key={secret.id}
-                className="flex flex-wrap items-center justify-between gap-3 py-3"
-                data-testid={`secret-${secret.id}`}
-              >
-                <div className="min-w-0">
-                  <p className="font-mono text-sm font-semibold">{secret.key}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {secret.environment}
-                    {secret.infisical_path ? ` · ${secret.infisical_path}` : ""}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-muted px-2 py-1 text-xs">
-                    {secret.is_local ? "local" : "Infisical"}
-                  </span>
-                  {readOnly ? null : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setRotating((current) => (current === secret.id ? null : secret.id))
-                        }
-                        aria-expanded={rotating === secret.id}
-                        data-testid={`rotate-${secret.id}`}
-                        className="rounded-md border border-border px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        Rotate
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleting(secret)}
-                        data-testid={`delete-secret-${secret.id}`}
-                        className="rounded-md border border-destructive/50 px-2 py-1 text-xs text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        Delete
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {rotating === secret.id && !readOnly ? (
-                  <div className="w-full">
-                    <RotateForm
-                      secret={secret}
-                      onDone={() => {
-                        setRotating(null);
-                        invalidate();
-                      }}
-                    />
+    <div className="space-y-6">
+      <Card className="border border-border">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base font-semibold">Secret references</CardTitle>
+            <Badge variant="outline">{secrets.length} references</Badge>
+          </div>
+          <CardDescription>
+            References link credentials (API keys, tokens, passwords) to deployment manifests
+            without exposing raw values.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {secrets.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+              <p>
+                None registered yet. Add a secret reference below to inject credentials into your
+                deployment manifests.
+              </p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-border rounded-lg border border-border bg-card">
+              {secrets.map((secret) => (
+                <li
+                  key={secret.id}
+                  className="flex flex-wrap items-center justify-between gap-3 p-4"
+                  data-testid={`secret-${secret.id}`}
+                >
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm font-semibold text-foreground">{secret.key}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Target Environment:{" "}
+                      <span className="font-medium text-foreground">{secret.environment}</span>
+                      {secret.infisical_path ? ` · ${secret.infisical_path}` : ""}
+                    </p>
                   </div>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-4 text-xs text-muted-foreground">
-          References only. The API returns the key, the environment and the storage path — never the
-          secret material — so there is nothing here to reveal, including for secrets created on
-          this screen. A value can be written and rotated; it can never be read back.
-        </p>
-      </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{secret.is_local ? "local" : "Infisical"}</Badge>
+                    {readOnly ? null : (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setRotating((current) => (current === secret.id ? null : secret.id))
+                          }
+                          aria-expanded={rotating === secret.id}
+                          data-testid={`rotate-${secret.id}`}
+                        >
+                          Rotate
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => setDeleting(secret)}
+                          data-testid={`delete-secret-${secret.id}`}
+                        >
+                          Delete
+                        </Button>
+                      </>
+                    )}
+                  </div>
+
+                  {rotating === secret.id && !readOnly ? (
+                    <div className="w-full pt-3">
+                      <RotateForm
+                        secret={secret}
+                        onDone={() => {
+                          setRotating(null);
+                          invalidate();
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-muted-foreground pt-1">
+            References only. The API returns the key, the environment and the storage path — never
+            the secret material — so there is nothing here to reveal, including for secrets created
+            on this screen. A value can be written and rotated; it can never be read back.
+          </p>
+        </CardContent>
+      </Card>
 
       {deleting ? (
         <div
@@ -154,32 +148,29 @@ export function SecretVault({
           aria-labelledby="delete-secret-heading"
           className="space-y-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm"
         >
-          <h3 id="delete-secret-heading" className="font-semibold">
+          <h3 id="delete-secret-heading" className="font-semibold text-foreground">
             Delete the reference to {deleting.key}?
           </h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground leading-relaxed">
             This removes the metadata record, so deployments that inject this key will stop finding
             it. For an Infisical-backed secret the material in Infisical is <strong>not</strong>{" "}
             removed — this platform does not own that store, and silently deleting from it would be
             acting outside what it manages.
           </p>
-          <div className="flex gap-3">
-            <button
+          <div className="flex gap-3 pt-1">
+            <Button
               type="button"
+              variant="destructive"
+              size="sm"
               onClick={() => remove.mutate(deleting.id)}
               disabled={remove.isPending}
               data-testid="confirm-delete-secret"
-              className="rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {remove.isPending ? "Deleting…" : "Delete reference"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeleting(null)}
-              className="rounded-md border border-border px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => setDeleting(null)}>
               Cancel
-            </button>
+            </Button>
           </div>
           <GovernanceRefusal error={remove.error} action="delete this secret reference" />
         </div>
@@ -194,9 +185,6 @@ export function SecretVault({
 
 /**
  * The value input: uncontrolled, by design.
- *
- * See the module docstring. Exposed as its own component so the property is enforced in one place and
- * a second form cannot reintroduce a `useState` for a secret without editing this file.
  */
 function SecretValueField({
   id,
@@ -208,7 +196,7 @@ function SecretValueField({
   label: string;
 }) {
   return (
-    <div>
+    <div className="space-y-1.5">
       <label htmlFor={id} className="block text-sm font-medium">
         {label}
       </label>
@@ -218,10 +206,9 @@ function SecretValueField({
         type="password"
         required
         autoComplete="new-password"
-        // No `value`, no `onChange`. The DOM node is the only place this string exists before the
-        // request, and it is cleared the moment the request settles either way.
         aria-describedby={`${id}-help`}
-        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        placeholder="Paste or enter secret value"
+        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <p id={`${id}-help`} className="mt-1 text-xs text-muted-foreground">
         Write-only. This field is uncontrolled, so the value never enters application state, and it
@@ -240,9 +227,6 @@ function CreateSecretForm({ projectId, onDone }: { projectId: string; onDone: ()
   const create = useMutation({
     mutationFn: () => {
       const value = valueRef.current?.value ?? "";
-      // Cleared BEFORE awaiting, so the material is out of the DOM while the request is in flight
-      // rather than after it returns. The local `value` is the only live copy from here, and it dies
-      // with this function.
       if (valueRef.current) valueRef.current.value = "";
       return api.post<SecretRefUI>("/secrets", {
         project_id: projectId,
@@ -258,63 +242,75 @@ function CreateSecretForm({ projectId, onDone }: { projectId: string; onDone: ()
   });
 
   return (
-    <form
-      className="space-y-4 rounded-lg border border-border bg-background p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        create.mutate();
-      }}
-    >
-      <h3 className="text-sm font-semibold">Add a secret</h3>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label htmlFor="secret-key" className="block text-sm font-medium">
-            Key
-          </label>
-          <input
-            id="secret-key"
-            value={key}
-            onChange={(event) => setKey(event.target.value)}
-            required
-            placeholder="DATABASE_PASSWORD"
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
-        <div>
-          <label htmlFor="secret-environment" className="block text-sm font-medium">
-            Environment
-          </label>
-          <input
-            id="secret-environment"
-            value={environment}
-            onChange={(event) => setEnvironment(event.target.value)}
-            required
-            className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </div>
-      </div>
-
-      <SecretValueField id="secret-value" inputRef={valueRef} label="Value" />
-
-      <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={key.trim() === "" || create.isPending}
-          data-testid="create-secret"
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <Card className="border border-border">
+      <CardHeader>
+        <CardTitle className="text-base font-semibold">Add a secret reference</CardTitle>
+        <CardDescription>
+          Enter the secret key name, target environment, and write-only value to store.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            create.mutate();
+          }}
         >
-          {create.isPending ? "Storing…" : "Store secret"}
-        </button>
-        {create.isSuccess ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            Stored. The reference is listed above; the value is not readable from here.
-          </p>
-        ) : null}
-      </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label htmlFor="secret-key" className="block text-sm font-medium">
+                Key
+              </label>
+              <input
+                id="secret-key"
+                value={key}
+                onChange={(event) => setKey(event.target.value)}
+                required
+                placeholder="DATABASE_PASSWORD"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="secret-environment" className="block text-sm font-medium">
+                Environment
+              </label>
+              <input
+                id="secret-environment"
+                value={environment}
+                onChange={(event) => setEnvironment(event.target.value)}
+                required
+                placeholder="development"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+          </div>
 
-      <GovernanceRefusal error={create.error} action="store this secret" />
-    </form>
+          <SecretValueField id="secret-value" inputRef={valueRef} label="Value" />
+
+          <div className="flex flex-wrap items-center gap-3 pt-2">
+            <Button
+              type="submit"
+              disabled={key.trim() === "" || create.isPending}
+              data-testid="create-secret"
+              className="px-5 py-2 font-medium"
+            >
+              {create.isPending ? "Storing…" : "Store secret"}
+            </Button>
+            {create.isSuccess ? (
+              <p
+                role="status"
+                className="text-sm text-emerald-600 dark:text-emerald-400 font-medium"
+              >
+                Stored. The reference is listed above; the value is not readable from here.
+              </p>
+            ) : null}
+          </div>
+
+          <GovernanceRefusal error={create.error} action="store this secret" />
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -332,27 +328,27 @@ function RotateForm({ secret, onDone }: { secret: SecretRefUI; onDone: () => voi
 
   return (
     <form
-      className="mt-3 space-y-3 rounded-md border border-border bg-muted/30 p-3"
+      className="space-y-3 rounded-lg border border-border bg-muted/30 p-4"
       onSubmit={(event) => {
         event.preventDefault();
         rotate.mutate();
       }}
     >
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground leading-relaxed">
         Rotating replaces the stored material for <code>{secret.key}</code> in {secret.environment}.
         The key and the environment do not change, so nothing that injects this secret needs
         reconfiguring — which is the point of rotation being a PATCH of the value rather than a
         delete and a re-create.
       </p>
       <SecretValueField id={`rotate-value-${secret.id}`} inputRef={valueRef} label="New value" />
-      <button
+      <Button
         type="submit"
+        size="sm"
         disabled={rotate.isPending}
         data-testid={`confirm-rotate-${secret.id}`}
-        className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {rotate.isPending ? "Rotating…" : "Rotate"}
-      </button>
+      </Button>
       <GovernanceRefusal error={rotate.error} action="rotate this secret" />
     </form>
   );

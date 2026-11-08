@@ -20,7 +20,7 @@ This document presents a thorough technology-by-technology audit of the existing
 | Celery is **legacy** — lacks native `asyncio` | 🟡 Warning | Use ARQ/Dramatiq (asyncio-native) for P1; one durable engine (Temporal/Inngest) at P2 |
 | Renovate license is **AGPL v3** (not MIT as stated) | 🟡 Warning | Keep Renovate (AGPL used as a tool, not linked); Dependabot **rejected** — far less configurable |
 | Missing **testing frameworks** (pytest, vitest, k6, Playwright) | 🟡 Warning | Add to tech stack |
-| Missing **Mimir for long-term Prometheus storage** | 🟢 Minor | Add to Phase 3 observability stack |
+| Missing **Mimir for long-term Prometheus storage** | 🟢 Minor | Add to Phase 2 observability stack |
 | Missing **GitOps tooling** (ArgoCD/Flux) | 🟢 Minor | Add for Phase 2+ deployment automation |
 | Most core choices (Go, FastAPI, PostgreSQL, Next.js, OpenTofu, OTel) | ✅ **Confirmed Best Fit** | Continue with these choices |
 
@@ -549,7 +549,7 @@ The following technologies are essential but **not explicitly included** in the 
 | Technology | Purpose | Priority | Recommendation |
 |:-----------|:--------|:--------:|:---------------|
 | **ArgoCD** | GitOps deployment (Phase 2+) | Medium | Add — pull-based deployment automation |
-| **Grafana Mimir** | Long-term Prometheus metrics storage | Medium | Add to Phase 3 observability |
+| **Grafana Mimir** | Long-term Prometheus metrics storage | Medium | Add to Phase 2 observability |
 | **React Hook Form + Zod** | Form validation | Medium | Add explicitly to tech stack |
 | **pnpm** or **Bun** | Package management | Low | Add — faster installs, deterministic |
 
@@ -557,10 +557,10 @@ The following technologies are essential but **not explicitly included** in the 
 
 | Technology | Purpose | When | Recommendation |
 |:-----------|:--------|:----:|:---------------|
-| **Dagger.io** | Portable CI/CD pipelines | Phase 5 (deferred) | Deferred — standard GitHub Actions + goreleaser is sufficient; programmable pipelines add complexity for current needs |
+| **Dagger.io** | Portable CI/CD pipelines | Phase 4 (deferred) | Deferred — standard GitHub Actions + goreleaser is sufficient; programmable pipelines add complexity for current needs |
 | **Checkly** | Synthetic monitoring as code | — (rejected) | Rejected — synthetic monitoring is a small subset of the full observability stack; not comprehensive enough |
-| **Better Stack** | Incident management + status pages | Phase 3 | Aligns with notification system |
-| **SigNoz** | APM alternative | Phase 3 | OTel-native, simpler than Grafana stack |
+| **Better Stack** | Incident management + status pages | Phase 2 | Aligns with notification system |
+| **SigNoz** | APM alternative | Phase 2 | OTel-native, simpler than Grafana stack |
 | **SOPS** | GitOps-native secret encryption | — (rejected) | Rejected — Infisical already provides web dashboard, RBAC, audit logs, and rotation that SOPS lacks |
 | **Dependabot** | GitHub-native dependency updates | — (rejected) | Rejected — Renovate already chosen and is significantly more configurable (grouping, scheduling, monorepo, merge confidence) |
 
@@ -570,13 +570,13 @@ The following technologies are essential but **not explicitly included** in the 
 |:-----------|:---------|:--------|:-----:|:--------|
 | **GLM-5.2 (Z.ai)** | AI Model | Self-hosted open-weight model; frontier-adjacent SWE-bench Pro performance | Phase 1 | Apache 2.0 |
 | **Grok 4.5** | AI Model | High-performance agentic coding at 1/3 frontier cost; medium complexity tier | Phase 1 | Proprietary |
-| **Kimi K2.7 Code** | AI Model | Multimodal open-weight model for autonomous agentic execution | Phase 3 | Community |
+| **Kimi K2.7 Code** | AI Model | Multimodal open-weight model for autonomous agentic execution | Phase 2 | Community |
 | **Official Tree-sitter Go bindings** | Code Analysis | Production-grade AST parsing for Go agent | Phase 1 | MIT |
 | **PostgreSQL RLS** | Multi-Tenant | Row-Level Security for tenant isolation; single-DB multi-tenancy | Phase 1 | PostgreSQL |
 | **Redis Cluster** | Scaling | Sharded Redis for WebSocket Pub/Sub at 10K+ concurrent agents | Phase 2 | Redis |
 | **Safe Default Template Library** | Error Recovery | Hardcoded, verified fallback templates for 8+ languages (Node.js, Python, Go, Rust, Java, Ruby, PHP, .NET) | Phase 1 | Proprietary (Part of Platform) |
 | **PgBouncer** | Scaling | Connection pooling for PostgreSQL at high concurrency | Phase 1 | PostgreSQL |
-| **Temporal (Durable Execution)** | Workflow | Stateful workflow-as-code for multi-step agentic workflows | Phase 3 | MIT |
+| **Temporal (Durable Execution)** | Workflow | Stateful workflow-as-code for multi-step agentic workflows | Phase 2 | MIT |
 
 ---
 
@@ -807,7 +807,7 @@ The existing security invariants are **all current best practices:**
 | **Python Linting** | Ruff | Latest | MIT | Phase 1 |
 | **Forms** | React Hook Form + Zod | Latest | MIT | Phase 1 |
 | **GitOps** | ArgoCD | Latest | Apache 2.0 | Phase 2 |
-| **Metrics Long-term** | Grafana Mimir | Latest | AGPL v3 | Phase 3 |
+| **Metrics Long-term** | Grafana Mimir | Latest | AGPL v3 | Phase 2 |
 | **CI/CD Portability** | Dagger.io | Latest | Apache 2.0 | Phase 2 |
 
 ---
@@ -857,7 +857,7 @@ The following migration steps should be planned:
    - Store deployment configs in git
    - Drift detection and automated sync
 
-### Phase 3
+### Phase 2
 
 8. **Add Grafana Mimir for long-term metrics:**
    - PromQL-compatible
@@ -912,7 +912,7 @@ The following migration steps should be planned:
 | **Phase 0** | Use constructor injection (not wire/uber-fx), set up GoReleaser with Cosign signing + Syft SBOM, use mark3labs/mcp-go for MCP server, set up pre-commit framework with Gitleaks + Ruff + gofmt |
 | **Phase 1** | Implement SSE streaming with FastAPI native `EventSourceResponse` (in-tree since 0.139.2; no `sse-starlette` dependency) for all LLM operations, use JSON-RPC 2.0 over WebSocket for agent protocol, use URL-based API versioning (/api/v1/), implement RFC 9457 error responses, create golden dataset of 20+ project archetypes for regression testing |
 | **Phase 2** | Set up DeepEval for LLM evaluation in CI, set up LangFuse for production AI tracing, create AsyncAPI spec for WebSocket protocol, set up KEDA autoscaling for ARQ/Dramatiq + durable-engine workers, configure NGINX Ingress with WebSocket/SSE tuning, deploy CloudNativePG for PostgreSQL on K8s |
-| **Phase 3** | Deploy OTel Collector two-tier architecture (sidecar + gateway), implement hybrid sampling strategy (head-based 10% + tail-based errors), add gen_ai.* semantic conventions to all AI spans, add per-tenant cost tracking via OTel custom metrics, deploy Cilium service mesh for mTLS (Istio Ambient fallback) |
+| **Phase 2** | Deploy OTel Collector two-tier architecture (sidecar + gateway), implement hybrid sampling strategy (head-based 10% + tail-based errors), add gen_ai.* semantic conventions to all AI spans, add per-tenant cost tracking via OTel custom metrics, deploy Cilium service mesh for mTLS (Istio Ambient fallback) |
 
 ### References Added (Late July 2026 Update)
 

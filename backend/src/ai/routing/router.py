@@ -23,6 +23,7 @@ from .endpoints import (
     CompletionResponse,
     EndpointRegistry,
     MalformedResponseError,
+    ProviderRequestError,
     StreamingModelEndpoint,
     TokenSink,
 )
@@ -94,6 +95,22 @@ class ModelRouter:
         self._breakers = breakers
         self._key_resolver = key_resolver
 
+    async def remember(
+        self,
+        *,
+        model: str,
+        prompt: RedactedPrompt,
+        params: dict[str, object],
+        content: str,
+    ) -> None:
+        """Cache an answer a caller has accepted, for callers that passed `store_in_cache=False`.
+
+        A named operation rather than a public `cache` attribute: exposing the cache would let a caller
+        read entries, choose a tier, or clear it, none of which belong to anyone outside routing. This
+        adds exactly the one verb a gated caller needs.
+        """
+        await self._cache.store(model=model, prompt=prompt, params=params, content=content)
+
     async def complete(
         self,
         *,
@@ -101,8 +118,16 @@ class ModelRouter:
         request: CompletionRequest,
         prompt: RedactedPrompt,
         on_token: TokenSink | None = None,
+        may_serve_from_cache: bool = True,
+        store_in_cache: bool = True,
+        only_endpoint: str | None = None,
     ) -> RoutingResult:
         """Route a completion request through the tier cascade.
+
+        `only_endpoint` PINS THE CALL TO ONE ENDPOINT and disables the cascade for it. An operator who picked
+        a provider by hand asked for THAT provider: falling through to another one would answer with a model
+        they did not choose and report it as success. A pinned call that fails ends EXHAUSTED with the one
+        attempt's reason, and the caller decides what to tell them.
 
         Returns a RoutingResult with outcome OK or EXHAUSTED.
 
@@ -121,11 +146,32 @@ class ModelRouter:
         """
         attempts: list[Attempt] = []
 
-        # 1. Check semantic cache first
-        cache_hit = await self._cache.lookup(
-            model=request.model,
-            prompt=prompt,
-            params={"temperature": request.temperature, "max_tokens": request.max_tokens},
+        # 1. Check the cache -- UNLESS THE CALLER SAYS THIS IS A RETRY OF ITS OWN WORK.
+        #
+        # `may_serve_from_cache=False` exists for one specific, real defect. A generation run that
+        # iterates -- artifacts rejected by the gate, so it asks again -- called this method once per
+        # attempt. Attempt 1 missed the cache, called a provider, and STORED the result. Attempt 2 then
+        # found that entry and was served from it. The run therefore recorded `served_from='l1'` or
+        # `'l2'` for work no cache held when it began, and `iterations_used=0` for a run that iterated --
+        # corrupting the NFR-04 iteration average that column exists to measure.
+        #
+        # A cache hit is a property of a RUN, not of an attempt. Reading back one's own write inside the
+        # same run is never a legitimate hit: the entry did not exist when the run started, and its
+        # content is what this run just produced and the gate just rejected. Serving it again would also
+        # guarantee the retry produced the identical rejected output, so the loop could never converge --
+        # the run would burn every attempt re-delivering the artifact that failed.
+        #
+        # The guard is a CALLER'S DECLARATION rather than something inferred here, because the router
+        # cannot see run boundaries: two attempts of one run and two separate runs are identical from
+        # inside this method. Defaulting to True leaves every other caller unchanged.
+        cache_hit = (
+            await self._cache.lookup(
+                model=request.model,
+                prompt=prompt,
+                params={"temperature": request.temperature, "max_tokens": request.max_tokens},
+            )
+            if may_serve_from_cache
+            else None
         )
         if cache_hit is not None:
             return RoutingResult(
@@ -138,15 +184,21 @@ class ModelRouter:
                 staleness_seconds=cache_hit.staleness_seconds,
             )
 
-        # 2. Build deduplicated chain from tier config
-        tier_chain = self._tier_config.tiers.get(tier)
-        if tier_chain is None:
-            return RoutingResult(
-                outcome=RoutingOutcome.EXHAUSTED,
-                attempts=attempts,
-            )
+        if only_endpoint is not None:
+            if only_endpoint not in self._tier_config.endpoints:
+                attempts.append(Attempt(endpoint_id=only_endpoint, result="skipped", reason="unknown_endpoint"))
+                return RoutingResult(outcome=RoutingOutcome.EXHAUSTED, attempts=attempts)
+            endpoint_ids = [only_endpoint]
+        else:
+            # 2. Build deduplicated chain from tier config
+            tier_chain = self._tier_config.tiers.get(tier)
+            if tier_chain is None:
+                return RoutingResult(
+                    outcome=RoutingOutcome.EXHAUSTED,
+                    attempts=attempts,
+                )
 
-        endpoint_ids = tier_chain.ordered_ids()
+            endpoint_ids = tier_chain.ordered_ids()
 
         # 3. Iterate through chain, invoke at most once per endpoint
         invoked: set[str] = set()
@@ -245,13 +297,23 @@ class ModelRouter:
                     )
                 )
 
-                # Store in cache for future hits
-                await self._cache.store(
-                    model=request.model,
-                    prompt=prompt,
-                    params={"temperature": request.temperature, "max_tokens": request.max_tokens},
-                    content=response.content,
-                )
+                # STORED ONLY IF THE CALLER SAYS SO, and the default is to store because for a caller
+                # that simply wants an answer, an answer is an answer.
+                #
+                # `store_in_cache=False` exists because a caller may not know yet whether the content
+                # is fit to keep. Generation is exactly that case: its output faces a validation gate
+                # AFTER this method returns, and caching it here means caching artifacts the gate then
+                # rejects. The consequence is not a wasted entry but a POISONED one -- every later run
+                # with the same prompt is served the known-bad artifact, fails the gate again, and
+                # burns its whole attempt budget re-delivering it. Such a caller passes False and
+                # calls `remember` once the content has been accepted.
+                if store_in_cache:
+                    await self._cache.store(
+                        model=request.model,
+                        prompt=prompt,
+                        params={"temperature": request.temperature, "max_tokens": request.max_tokens},
+                        content=response.content,
+                    )
 
                 return RoutingResult(
                     outcome=RoutingOutcome.OK,
@@ -278,6 +340,9 @@ class ModelRouter:
                 # the endpoint is not speaking the protocol we validated against.
                 if isinstance(exc, MalformedResponseError):
                     attempt_result = "malformed_response"
+                elif isinstance(exc, ProviderRequestError):
+                    # The category (invalid_credential, quota_exceeded, ...) leads the reason string.
+                    attempt_result = "error"
                 elif isinstance(exc, httpx.TimeoutException):
                     attempt_result = "timeout"
                 else:

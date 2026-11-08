@@ -51,6 +51,7 @@ from .manifest_facts import (
     ItemAudit,
     dockerfile_base_pinned,
     dockerfile_healthcheck,
+    dockerfile_runtime_mismatch,
     kubernetes_image_tags_audit,
     kubernetes_image_tags_pinned,
     kubernetes_probes,
@@ -598,6 +599,30 @@ class ReadinessEngine:
                 found=(f"{dockerfile} declares no HEALTHCHECK" if dockerfile else "there is no Dockerfile to examine"),
             )
         )
+        # A DOCKERFILE FOR A DIFFERENT PROJECT PASSES EVERY CHECK ABOVE. A Vite site carrying `FROM python` and
+        # `pip install -r requirements.txt` had a pinned base, a USER, a HEALTHCHECK and no secrets -- full
+        # marks -- so nothing ever selected it for repair, and every deploy failed on the missing
+        # requirements.txt (2026-11-02). This compares what the Dockerfile builds with the manifests present.
+        # Scored only when there IS a Dockerfile: with none, `dockerfile_present` already says so, and failing
+        # this too would count one absence twice.
+        if dockerfile:
+            mismatch = dockerfile_runtime_mismatch(docker_body, paths) if docker_body else None
+            checks.append(
+                self._check(
+                    "dockerfile_matches_project_runtime",
+                    "containerization",
+                    bool(docker_body) and mismatch is None,
+                    20,
+                    dockerfile if (docker_body and mismatch is None) else "",
+                    "A Dockerfile for another language cannot build this code: the build fails on files the "
+                    "project does not have, or produces an image without the application in it.",
+                    found=(
+                        f"{dockerfile}: {mismatch}"
+                        if mismatch
+                        else f"{dockerfile} was found but its content was not indexed"
+                    ),
+                )
+            )
         dockerignore = _match_exact(paths, (".dockerignore",))
         checks.append(
             self._check(

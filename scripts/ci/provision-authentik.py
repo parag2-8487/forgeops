@@ -155,7 +155,24 @@ def _ensure_claims_mapping(api: object, audience: str) -> None:
 
     found = http.get("/api/v3/propertymappings/provider/scope/", params={"search": name})
     rows = found.json().get("results", []) if found.status_code < 400 else []
-    pk = next((row["pk"] for row in rows if row["name"] == name), None)
+    match = next((row for row in rows if row["name"] == name), None)
+    pk = match["pk"] if match else None
+
+    # `scope_name` IS PART OF THE REPAIR, NOT ONLY OF THE CREATE.
+    #
+    # The update path used to PATCH the expression alone. A mapping created by an older run of this
+    # script — or by hand — could exist with an EMPTY `scope_name`, and this function would then
+    # update its expression forever without ever making it reachable. Authentik evaluates a scope
+    # mapping only when a request asks for the scope its `scope_name` names, so a mapping with no
+    # scope name is attached to the provider, holds correct code, and is never evaluated.
+    #
+    # The effect is exactly the failure `DEFAULT_SCOPES` was changed to prevent: the backend asks for
+    # `forgeops`, the IdP has no such scope to grant, `forgeops_role` never reaches the token, and
+    # `AppTokenVerifier` refuses every one — so `/auth/refresh` returns 200 in a loop while every
+    # panel reports 401. Nothing in the IdP's own logs says so, because from its side nothing failed.
+    #
+    # Idempotent: setting a value it already has is a no-op, and re-running this stays safe.
+    must_set_scope_name = match is None or (match.get("scope_name") or "") != "forgeops"
 
     if pk is None:
         created = http.post(
@@ -172,8 +189,16 @@ def _ensure_claims_mapping(api: object, audience: str) -> None:
             return
         pk = created.json()["pk"]
     else:
+        body: dict[str, str] = {"expression": expression}
+        if must_set_scope_name:
+            body["scope_name"] = "forgeops"
+            print(
+                "provision-authentik: the claims mapping existed with no scope name, so it was being "
+                "evaluated by nothing; setting scope_name=forgeops",
+                file=sys.stderr,
+            )
         patched = http.patch(
-            f"/api/v3/propertymappings/provider/scope/{pk}/", json={"expression": expression}
+            f"/api/v3/propertymappings/provider/scope/{pk}/", json=body
         )
         if patched.status_code >= 400:
             print(f"provision-authentik: could not update the claims mapping: {patched.text[:200]}", file=sys.stderr)

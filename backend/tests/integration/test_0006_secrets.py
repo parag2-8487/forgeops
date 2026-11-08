@@ -155,14 +155,40 @@ class TestTheDanglingReferenceWasNotBuilt:
         )
         assert {(name, target) for name, target in found} == {("fk_secrets_project_id_projects", "projects")}, found
 
-    async def test_no_environments_table_exists(self, conn) -> None:
-        """Creating a stub would violate §1.3's no-stub rule and would put a Phase 2
-        table under Phase 1's migration numbering."""
+    async def test_secrets_does_not_reference_the_environments_table(self, conn) -> None:
+        """The dangling reference was never built, and Phase 2 did not retroactively build it.
+
+        THIS ASSERTION HAS CHANGED SHAPE, and the reasoning is worth keeping. It used to be
+        `test_no_environments_table_exists`: `secrets.environment` is constrained text, and creating an
+        `environments` table to point it at would have been a Phase 2 stub under Phase 1's migration
+        numbering, which §1.3's no-stub rule forbids.
+
+        Phase 2 §2.1 has now created `environments` for real, in revision `0023`, with its own columns, its
+        own approval semantics and no relationship to this column whatsoever. So the absence of the TABLE is
+        no longer the property worth holding — the absence of the REFERENCE is, and it is the half that
+        actually mattered. `secrets.environment` remains constrained text (asserted above), and `secrets`
+        must still have exactly one foreign key, to `projects`.
+
+        Rewriting rather than deleting: a test whose subject has legitimately arrived should say what it
+        now protects, or the reasoning that produced it is lost with it.
+        """
         present = await scalar(
             conn,
             "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' AND tablename = 'environments'",
         )
-        assert present == 0
+        # Present, because §2.1 built it. Asserted so this test fails loudly if it disappears rather than
+        # silently passing for the wrong reason.
+        assert present == 1, "revision 0023 creates `environments`; this test is out of date"
+
+        referencing = await rows(
+            conn,
+            """
+            SELECT conname, confrelid::regclass::text
+            FROM pg_constraint
+            WHERE conrelid = 'secrets'::regclass AND contype = 'f'
+            """,
+        )
+        assert all(target != "environments" for _, target in referencing), referencing
 
 
 class TestNoPlaintextValueColumn:

@@ -24,6 +24,7 @@ from src.ai.routing.endpoints import (
     CompletionRequest,
     EndpointAvailability,
     EndpointRegistry,
+    GoogleNativeEndpoint,
     OpenAICompatibleEndpoint,
 )
 from src.ai.routing.keys import KeyResolver, SecretValue
@@ -662,11 +663,9 @@ class TestUnsupportedNativeProtocolSkip:
         # It was previously the one string `unsupported_protocol_phase_0` for every failure, so a gap in
         # ForgeOps and a gap in the operator's configuration were indistinguishable.
         skipped = [a for a in result.attempts if a.result == "skipped"]
-        assert len(skipped) == 2
+        assert len(skipped) == 1
         assert "no adapter exists" in skipped[0].reason
         assert "anthropic_native" in skipped[0].reason
-        assert "no adapter exists" in skipped[1].reason
-        assert "google_native" in skipped[1].reason
 
         # Fallback should succeed
         assert result.endpoint_id == "ep-fallback"
@@ -745,13 +744,14 @@ class TestOpenAICompatibleIsOnlyProductionAdapter:
 
         registry = EndpointRegistry.from_config(config)
 
-        # Only ep-oai should have an endpoint adapter
+        # ep-oai and ep-goog should have endpoint adapters
         assert registry.endpoint("ep-oai") is not None
         assert isinstance(registry.endpoint("ep-oai"), OpenAICompatibleEndpoint)
+        assert registry.endpoint("ep-goog") is not None
+        assert isinstance(registry.endpoint("ep-goog"), GoogleNativeEndpoint)
 
-        # Native protocol endpoints have no adapter
+        # Native protocol endpoints without adapter
         assert registry.endpoint("ep-anth") is None
-        assert registry.endpoint("ep-goog") is None
 
         # But they have availability entries with reason
         avail_anth = registry.get_availability("ep-anth")
@@ -790,4 +790,4 @@ class TestOpenAICompatibleIsOnlyProductionAdapter:
             if has_endpoint_id and has_provider_kind and has_complete:
                 classes_with_complete.append(name)
 
-        assert classes_with_complete == ["OpenAICompatibleEndpoint"]
+        assert set(classes_with_complete) == {"OpenAICompatibleEndpoint", "GoogleNativeEndpoint"}

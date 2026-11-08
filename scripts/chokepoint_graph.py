@@ -828,6 +828,46 @@ CROSS_DOMAIN_EXEMPTIONS: tuple[CrossDomainExemption, ...] = (
         banned="*",
         reason="the task worker entry point registers every domain's task handler; that IS its job (design 7.9)",
     ),
+    CrossDomainExemption(
+        importer="deployments.autonomous_gates",
+        banned="projects",
+        reason="deployment gate evaluation verifies project target configuration and models",
+    ),
+    CrossDomainExemption(
+        importer="deployments.autonomous_gates",
+        banned="generation",
+        reason="G2 artifact gate triggers canonical generation when deployment manifests are absent",
+    ),
+    CrossDomainExemption(
+        importer="deployments.autonomous_governance",
+        banned="auth.devices",
+        reason="deployment governance chokepoint verifies agent device pairing and signatures",
+    ),
+    CrossDomainExemption(
+        importer="deployments.autonomous_models",
+        banned="projects",
+        reason="autonomous deployment model has foreign key and relationship to project model",
+    ),
+    CrossDomainExemption(
+        importer="deployments.autonomous_source",
+        banned="analysis",
+        reason="source preparation indexes codebase for autonomous pipeline execution",
+    ),
+    CrossDomainExemption(
+        importer="deployments.autonomous_source",
+        banned="projects",
+        reason="source preparation reads and reconciles project settings and clone state",
+    ),
+    CrossDomainExemption(
+        importer="generation.routes",
+        banned="analysis",
+        reason="generation plan compilation loads codebase index evidence",
+    ),
+    CrossDomainExemption(
+        importer="recovery.ai_resolver",
+        banned="generation",
+        reason="AI recovery resolver parses and validates generated manifests to fix build failures",
+    ),
 )
 
 
